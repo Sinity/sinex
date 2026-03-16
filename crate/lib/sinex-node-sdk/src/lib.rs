@@ -68,6 +68,7 @@ pub mod diagnostics;
 pub mod dlq_retry;
 
 #[cfg(feature = "messaging")]
+#[allow(deprecated)] // Module defines + uses the deprecated AutomatonNode trait
 pub mod automaton_node;
 #[cfg(feature = "messaging")]
 pub mod derived_node;
@@ -146,11 +147,12 @@ pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, 
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 
+// AutomatonNode + AutomatonNodeAdapter are superseded by the derived_node traits
+// (TransducerNode, WindowedNode, ScopeReconcilerNode). The module remains for
+// shared infrastructure (PersistedState, ErrorAction, NodeAdapterConfig) used by
+// DerivedNodeAdapter internals.
 #[cfg(feature = "messaging")]
-pub use automaton_node::{
-    AutomatonNode, AutomatonNodeAdapter, ErrorAction, NodeAdapterConfig, NodeEventContext,
-    NodeLogicError, OutputEvent, PersistedState,
-};
+pub use automaton_node::{ErrorAction, NodeAdapterConfig, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use derived_node::{
     DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,

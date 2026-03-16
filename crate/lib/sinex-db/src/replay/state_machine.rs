@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
-use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -566,6 +566,9 @@ impl ReplayStateMachine {
             });
         }
 
+        // Cascade impact: expand from root IDs to find all downstream derived events
+        let cascade_impact = self.preview_cascade_impact(scope, window).await;
+
         let preview = serde_json::json!({
             "node_id": scope.node_id,
             "time_window": {
@@ -581,10 +584,146 @@ impl ReplayStateMachine {
                 }))
                 .collect::<Vec<_>>(),
             "material_filter": material_summary,
+            "cascade_impact": cascade_impact,
             "replay_semantics": "reexecute_material_roots_via_node_scan",
         });
 
         Ok(preview)
+    }
+
+    /// Compute cascade impact for preview: how many derived events would be archived.
+    ///
+    /// Uses the same cascade expansion as real execution but in a read-only transaction
+    /// that gets rolled back. Returns a JSON blob with cascade stats, or null on error
+    /// (preview remains useful even without cascade data).
+    async fn preview_cascade_impact(
+        &self,
+        scope: &ReplayScope,
+        window: (Timestamp, Timestamp),
+    ) -> serde_json::Value {
+        // Gather root IDs (same query as execution)
+        let root_query_result: std::result::Result<Vec<Uuid>, SinexError> = async {
+            let mut builder =
+                Self::build_filter_query(scope, window, "SELECT id::uuid FROM core.events");
+            let rows: Vec<(Uuid,)> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| SinexError::database(format!("cascade root query: {e}")))?;
+            Ok(rows.into_iter().map(|(id,)| id).collect())
+        }
+        .await;
+
+        let root_ids = match root_query_result {
+            Ok(ids) if !ids.is_empty() => ids,
+            _ => return serde_json::Value::Null,
+        };
+
+        // Expand cascade in a transaction we'll roll back
+        let cascade_result: std::result::Result<serde_json::Value, SinexError> = async {
+            use crate::repositories::EventRepositoryTx;
+
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
+
+            // Phase 1: cascade expansion via repo_tx (borrows &mut tx)
+            let (all_cascade_ids, derived_ids) = {
+                let mut repo_tx = EventRepositoryTx::new(&mut tx);
+                let session_id = format!("preview_{}", Uuid::now_v7().simple());
+
+                let table_name = repo_tx
+                    .prepare_cascade_session(&session_id, false)
+                    .await
+                    .map_err(|e| SinexError::database(format!("prepare cascade: {e}")))?;
+                repo_tx
+                    .populate_cascade_roots(&table_name, &root_ids)
+                    .await
+                    .map_err(|e| SinexError::database(format!("populate roots: {e}")))?;
+                repo_tx
+                    .expand_cascade(&table_name, 64)
+                    .await
+                    .map_err(|e| SinexError::database(format!("expand cascade: {e}")))?;
+
+                let deps = repo_tx
+                    .get_event_dependencies(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("get deps: {e}")))?;
+
+                repo_tx
+                    .cleanup_cascade_session(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("cleanup cascade: {e}")))?;
+
+                let all_ids: Vec<Uuid> = deps.iter().map(|(id, _)| *id).collect();
+                let root_set: HashSet<Uuid> = root_ids.iter().copied().collect();
+                let derived: Vec<Uuid> = all_ids
+                    .iter()
+                    .filter(|id| !root_set.contains(id))
+                    .copied()
+                    .collect();
+                (all_ids, derived)
+            };
+            // repo_tx dropped — tx is free to use directly
+
+            // Phase 2: query metadata for derived events
+            let affected_nodes: Vec<String> = if derived_ids.is_empty() {
+                Vec::new()
+            } else {
+                sqlx::query!(
+                    "SELECT DISTINCT source FROM core.events WHERE id = ANY($1::uuid[])",
+                    &derived_ids
+                )
+                .fetch_all(tx.as_mut())
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.source)
+                .collect()
+            };
+
+            let affected_scopes: Vec<(String, String)> = if derived_ids.is_empty() {
+                Vec::new()
+            } else {
+                sqlx::query!(
+                    "SELECT DISTINCT event_type, scope_key FROM core.events \
+                     WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
+                    &derived_ids
+                )
+                .fetch_all(tx.as_mut())
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|r| r.scope_key.map(|sk| (r.event_type, sk)))
+                .collect()
+            };
+
+            // Roll back — this is preview only, no persistent state change
+            tx.rollback()
+                .await
+                .map_err(|e| SinexError::database(format!("cascade preview rollback: {e}")))?;
+
+            Ok(serde_json::json!({
+                "cascade_total": all_cascade_ids.len(),
+                "direct_events": root_ids.len(),
+                "derived_events": derived_ids.len(),
+                "affected_nodes": affected_nodes,
+                "affected_scopes": affected_scopes.into_iter()
+                    .map(|(et, sk)| serde_json::json!({"event_type": et, "scope_key": sk}))
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        .await;
+
+        match cascade_result {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "Failed to compute cascade impact for preview");
+                serde_json::Value::Null
+            }
+        }
     }
 
     /// Approve operation for execution
@@ -879,29 +1018,31 @@ impl ReplayStateMachine {
         Ok(())
     }
 
-    /// List operations optionally filtered by state
+    /// List operations with optional filters.
     pub async fn list_operations(
         &self,
         filter_state: Option<ReplayState>,
+        filter_node: Option<&str>,
+        limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
-        self.list_operations_with_executor(&self.pool, filter_state)
-            .await
-    }
+        let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+            "SELECT id::uuid as id, operator, scope, preview_summary \
+             FROM core.operations_log WHERE operation_type = 'replay'",
+        );
 
-    /// List operations optionally filtered by state using a provided executor.
-    pub async fn list_operations_with_executor<'e, E>(
-        &self,
-        executor: E,
-        filter_state: Option<ReplayState>,
-    ) -> Result<Vec<ReplayOperation>>
-    where
-        E: Executor<'e, Database = Postgres>,
-    {
-        let rows = sqlx::query(
-            "SELECT id::uuid as id, operator, scope, preview_summary FROM core.operations_log WHERE operation_type = 'replay' ORDER BY id DESC",
-        )
-        .fetch_all(executor)
-        .await?;
+        if let Some(node) = filter_node {
+            qb.push(" AND scope->>'node_id' = ");
+            qb.push_bind(node.to_string());
+        }
+
+        qb.push(" ORDER BY id DESC");
+
+        if let Some(lim) = limit {
+            qb.push(" LIMIT ");
+            qb.push_bind(lim);
+        }
+
+        let rows = qb.build().fetch_all(&self.pool).await?;
 
         let mut operations = Vec::new();
         for row in rows {

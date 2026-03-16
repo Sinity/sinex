@@ -3,15 +3,14 @@
 //! Analytics automaton — [`WindowedNode`] implementation.
 //!
 //! Model classification: **Windowed** — accumulates events in a sliding window
-//! (last 1000), emits a summary every 100 events. `ts_orig` is window-boundary
-//! time (the report represents an observation at that moment).
+//! (last 1000), emits a summary every 100 events. `ts_orig` is derived from the
+//! latest event in the window, ensuring temporal determinism across replays.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::{Timestamp, now};
 use std::collections::{HashMap, VecDeque};
 
@@ -79,19 +78,26 @@ impl WindowedNode for AnalyticsAutomaton {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        context: &DerivedTriggerContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let source_event_ids: Vec<Uuid> = state.recent_events.iter().map(|e| e.event_id).collect();
+
+        // Derive ts_orig from the latest event in the window — deterministic across replays.
+        let ts_orig = state
+            .recent_events
+            .back()
+            .map_or(context.ts_coided, |e| e.timestamp);
 
         let payload = serde_json::json!({
             "top_events": state.event_counts,
             "window_size": state.recent_events.len(),
         });
 
-        Ok(Some(
-            DerivedOutput::windowed(payload, source_event_ids)
-                .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary),
-        ))
+        Ok(Some(DerivedOutput::windowed(
+            payload,
+            ts_orig,
+            source_event_ids,
+        )))
     }
 }
 

@@ -17,7 +17,7 @@ pub struct DerivedOutput<T> {
     /// Original timestamp for the derived event.
     ///
     /// - Transducers: inherit from input event
-    /// - Windowed: wall-clock (report time)
+    /// - Windowed: derived from latest input event (deterministic across replays)
     /// - Scope reconcilers: varies by domain logic
     pub ts_orig: Timestamp,
 
@@ -59,8 +59,33 @@ impl<T> DerivedOutput<T> {
         }
     }
 
-    /// Create a windowed output: wall-clock `ts_orig`, multiple source events.
-    pub fn windowed(payload: T, source_event_ids: Vec<Uuid>) -> Self {
+    /// Create a windowed output with an explicit `ts_orig`.
+    ///
+    /// The `ts_orig` should typically be derived from the latest event in the
+    /// accumulation window (e.g. `state.recent_events.back().map(|e| e.timestamp)`).
+    /// This ensures temporal determinism: replaying the same inputs produces the
+    /// same timestamp on the derived output.
+    ///
+    /// Use [`windowed_now`](Self::windowed_now) only when wall-clock semantics
+    /// are the genuine domain requirement.
+    pub fn windowed(payload: T, ts_orig: Timestamp, source_event_ids: Vec<Uuid>) -> Self {
+        Self {
+            payload,
+            ts_orig,
+            source_event_ids,
+            temporal_policy: SyntheticTemporalPolicy::LatestInput,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+        }
+    }
+
+    /// Create a windowed output using wall-clock `Timestamp::now()`.
+    ///
+    /// Only use this when the output genuinely represents an observation at the
+    /// current wall-clock time. For most derived nodes, prefer [`windowed`](Self::windowed)
+    /// with a timestamp derived from input events.
+    pub fn windowed_now(payload: T, source_event_ids: Vec<Uuid>) -> Self {
         Self {
             payload,
             ts_orig: Timestamp::now(),

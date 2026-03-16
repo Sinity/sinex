@@ -58,6 +58,8 @@ where
     last_revision: u64,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
+    #[cfg(feature = "messaging")]
+    self_observer: Option<Arc<crate::self_observation::SelfObserver>>,
 }
 
 impl<N> DerivedNodeAdapter<N>
@@ -81,6 +83,8 @@ where
             last_revision: 0,
             #[cfg(feature = "messaging")]
             health_reporter: None,
+            #[cfg(feature = "messaging")]
+            self_observer: None,
         }
     }
 
@@ -397,8 +401,10 @@ where
     ///
     /// For each affected scope:
     /// 1. Loads the current working set from DB (events matching `scope_key` + `input_event_type`)
-    /// 2. Calls `process_invalidation_derived()` to recompute
-    /// 3. Returns replacement events (caller is responsible for archiving old outputs)
+    /// 2. Archives existing derived outputs for that scope (moves to `audit.archived_events`)
+    /// 3. Calls `process_invalidation_derived()` to recompute
+    /// 4. Records replacement relations in `audit.event_replacements` (old→new linkage)
+    /// 5. Returns replacement events for emission
     ///
     /// Transducer nodes return empty — their outputs are archived with their inputs.
     #[cfg(feature = "db")]
@@ -406,7 +412,7 @@ where
         &mut self,
         invalidation: &super::invalidation::DerivedScopeInvalidation,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
-        use sinex_db::repositories::DbPoolExt;
+        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
         use sinex_primitives::prelude::*;
 
         // Only process invalidations for our input type
@@ -422,6 +428,9 @@ where
         };
 
         let operation_id = invalidation.operation_id.map(Id::<Operation>::from_uuid);
+        let operation_uuid = invalidation
+            .operation_id
+            .unwrap_or_else(|| *Id::<Operation>::new().as_uuid());
 
         // Determine scope keys to recompute
         let scope_keys = if invalidation.affected_scope_keys.is_empty() {
@@ -455,15 +464,76 @@ where
             return Ok(Vec::new());
         }
 
+        let output_source = self.node.output_event_source();
+        let output_type = self.node.output_event_type();
         let mut all_outputs = Vec::new();
 
         for scope_key in &scope_keys {
-            // Query working set: all live events for this scope + input type
+            // ── Step 1: Find existing derived outputs for this scope ──
+            let stale_query = EventQuery {
+                sources: vec![EventSource::new(output_source)?],
+                event_types: vec![EventType::new(output_type)?],
+                scope_key: Some(scope_key.clone()),
+                direction: SortDirection::Asc,
+                limit: 10_000,
+                ..EventQuery::default()
+            };
+
+            let stale_ids: Vec<Uuid> = match pool.events().query(stale_query).await {
+                Ok(EventQueryResult::Events { events, .. }) => events
+                    .iter()
+                    .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
+                    .collect(),
+                Ok(_) => Vec::new(),
+                Err(e) => {
+                    warn!(
+                        node = %self.node.name(),
+                        scope_key,
+                        error = %e,
+                        "Failed to query stale outputs — proceeding without archive"
+                    );
+                    Vec::new()
+                }
+            };
+
+            // ── Step 2: Archive stale outputs ──
+            if !stale_ids.is_empty() {
+                match pool
+                    .events()
+                    .execute_cascade_archive(
+                        &stale_ids,
+                        "scope_invalidation_recompute",
+                        &operation_uuid.to_string(),
+                        &format!("derived:{}", self.node.name()),
+                    )
+                    .await
+                {
+                    Ok(archived) => {
+                        info!(
+                            node = %self.node.name(),
+                            scope_key,
+                            archived_count = archived,
+                            "Archived stale derived outputs before recomputation"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            node = %self.node.name(),
+                            scope_key,
+                            error = %e,
+                            "Failed to archive stale outputs — skipping scope to prevent duplicates"
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            // ── Step 3: Load working set (input events for this scope) ──
             let query = EventQuery {
                 event_types: vec![EventType::new(self.node.input_event_type())?],
                 scope_key: Some(scope_key.clone()),
                 direction: SortDirection::Asc,
-                limit: 10_000, // reasonable upper bound for a single scope
+                limit: 10_000,
                 ..EventQuery::default()
             };
 
@@ -500,7 +570,7 @@ where
                 "Recomputing scope from working set"
             );
 
-            // Delegate to the trait implementation
+            // ── Step 4: Recompute via trait implementation ──
             let outputs = self
                 .node
                 .process_invalidation_derived(
@@ -518,9 +588,44 @@ where
 
             // Build output events
             let fallback_id = Id::new();
+            let mut new_event_ids = Vec::new();
             for output in outputs {
+                let equivalence_key = output.equivalence_key.clone();
                 let output_event = self.build_output_event(output, fallback_id)?;
+                let new_id = *output_event.id.unwrap_or_else(Id::new).as_uuid();
+                new_event_ids.push((new_id, equivalence_key));
                 all_outputs.push(output_event);
+            }
+
+            // ── Step 5: Record replacement relations ──
+            if !stale_ids.is_empty() && !new_event_ids.is_empty() {
+                let replacements: Vec<ReplacementRecord> = stale_ids
+                    .iter()
+                    .flat_map(|old_id| {
+                        new_event_ids
+                            .iter()
+                            .map(move |(new_id, eq_key)| ReplacementRecord {
+                                old_event_id: *old_id,
+                                new_event_id: *new_id,
+                                relation_kind: ReplacementKind::Recomputed,
+                                scope_key: Some(scope_key.clone()),
+                                equivalence_key: eq_key.clone(),
+                            })
+                    })
+                    .collect();
+
+                if let Err(e) = pool
+                    .events()
+                    .record_replacements(operation_uuid, &replacements)
+                    .await
+                {
+                    warn!(
+                        node = %self.node.name(),
+                        scope_key,
+                        error = %e,
+                        "Failed to record replacement relations — events still correct"
+                    );
+                }
             }
         }
 
@@ -536,40 +641,263 @@ where
 
     // ── Continuous + Historical ─────────────────────────────────────────
 
+    /// Handle a received invalidation message: deserialize, process, emit outputs.
+    ///
+    /// Emits observability metrics via `SelfObserver` when available:
+    /// - `invalidation.received` counter (always)
+    /// - `invalidation.processed` counter (on success)
+    /// - `invalidation.errors` counter (on failure)
+    /// - `invalidation.outputs_emitted` counter (on success, with output count)
+    /// - `invalidation.processing_duration_ms` gauge (on success)
+    async fn handle_invalidation_message(&mut self, payload: &[u8]) -> Option<u64> {
+        let node_name = self.node.name();
+        let processing_start = Instant::now();
+
+        // Emit "received" counter
+        #[cfg(feature = "messaging")]
+        if let Some(ref obs) = self.self_observer {
+            let _ = obs.emit_counter("invalidation.received", 1, None).await;
+        }
+
+        let invalidation = match serde_json::from_slice::<
+            super::invalidation::DerivedScopeInvalidation,
+        >(payload)
+        {
+            Ok(inv) => inv,
+            Err(e) => {
+                warn!(
+                    node = %node_name,
+                    error = %e,
+                    payload_len = payload.len(),
+                    "Failed to deserialize invalidation signal"
+                );
+                #[cfg(feature = "messaging")]
+                if let Some(ref obs) = self.self_observer {
+                    let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                }
+                return None;
+            }
+        };
+
+        debug!(
+            node = %node_name,
+            action = %invalidation.action,
+            affected_events = invalidation.affected_event_ids.len(),
+            scope_keys = ?invalidation.affected_scope_keys,
+            "Received invalidation signal"
+        );
+
+        #[cfg(feature = "db")]
+        {
+            match self.process_invalidation(&invalidation).await {
+                Ok(outputs) => {
+                    let count = outputs.len() as u64;
+                    let duration_ms = processing_start.elapsed().as_millis() as f64;
+
+                    if let Some(ref sender) = self.event_sender {
+                        for event in outputs {
+                            if let Err(e) = sender.send(event).await {
+                                error!(
+                                    node = %node_name,
+                                    error = %e,
+                                    "Failed to emit invalidation output event"
+                                );
+                            }
+                        }
+                    }
+                    if self.should_checkpoint() {
+                        if let Err(e) = self.save_state().await {
+                            warn!(
+                                node = %node_name,
+                                error = %e,
+                                "Failed to checkpoint after invalidation"
+                            );
+                        }
+                    }
+
+                    // Emit success metrics
+                    #[cfg(feature = "messaging")]
+                    if let Some(ref obs) = self.self_observer {
+                        let _ = obs.emit_counter("invalidation.processed", 1, None).await;
+                        let _ = obs
+                            .emit_counter_with_delta(
+                                "invalidation.outputs_emitted",
+                                count,
+                                count,
+                                None,
+                            )
+                            .await;
+                        let _ = obs
+                            .emit_gauge("invalidation.processing_duration_ms", duration_ms, None)
+                            .await;
+                    }
+
+                    Some(count)
+                }
+                Err(e) => {
+                    error!(
+                        node = %node_name,
+                        error = %e,
+                        action = %invalidation.action,
+                        "Invalidation processing failed"
+                    );
+                    #[cfg(feature = "messaging")]
+                    if let Some(ref obs) = self.self_observer {
+                        let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                    }
+                    None
+                }
+            }
+        }
+
+        #[cfg(not(feature = "db"))]
+        {
+            let _ = invalidation;
+            let _ = processing_start;
+            warn!(
+                node = %node_name,
+                "Invalidation received but db feature not enabled — cannot process"
+            );
+            None
+        }
+    }
+
     async fn run_continuous(&mut self, _from: Checkpoint) -> NodeResult<ScanReport> {
         let start = Instant::now();
+        let node_name = self.node.name().to_string();
+        let mut invalidations_processed: u64 = 0;
 
         info!(
-            node = %self.node.name(),
+            node = %node_name,
             model = %self.node.node_model(),
             input_type = %self.node.input_event_type(),
             output_type = %self.node.output_event_type(),
             "DerivedNode initialized — awaiting events via process_batch()"
         );
 
+        // Subscribe to scope invalidation signals via NATS queue group.
+        // Queue group ensures only one instance per node type processes each signal,
+        // preventing redundant recomputation when multiple replicas are running.
+        //
+        // Note: requires `messaging` feature (default). run_continuous is only called
+        // by the runtime kernel which itself requires messaging infrastructure.
+        // Subscribe to scope invalidation signals when messaging is available.
+        // The two `#[cfg]` blocks produce different types but both work with
+        // `recv_invalidation()` which has matching cfg'd signatures.
+        #[cfg(feature = "messaging")]
+        let mut invalidation_sub: Option<async_nats::Subscriber> = {
+            let nats_client = self.runtime.as_ref().and_then(|r| r.nats_client());
+
+            match nats_client {
+                Some(client) => {
+                    let env = sinex_primitives::environment::environment();
+                    let subject = env.nats_subject(super::invalidation::INVALIDATION_SUBJECT);
+                    let queue_group = format!("derived.invalidation.{}", self.node.name());
+                    match client
+                        .queue_subscribe(subject.clone(), queue_group.clone())
+                        .await
+                    {
+                        Ok(sub) => {
+                            info!(
+                                node = %node_name,
+                                subject = %subject,
+                                queue_group = %queue_group,
+                                "Subscribed to invalidation signals"
+                            );
+                            Some(sub)
+                        }
+                        Err(e) => {
+                            warn!(
+                                node = %node_name,
+                                error = %e,
+                                "Failed to subscribe to invalidation signals — \
+                                 scope recomputation will not be triggered"
+                            );
+                            None
+                        }
+                    }
+                }
+                None => {
+                    debug!(node = %node_name, "No NATS client — invalidation subscription skipped");
+                    None
+                }
+            }
+        };
+        #[cfg(not(feature = "messaging"))]
+        let mut invalidation_sub = ();
+
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         self.shutdown_tx = Some(shutdown_tx);
+
+        // Invalidation debounce: buffer signals and process after a quiet period.
+        // This prevents a replay archiving N scopes from triggering N immediate
+        // recomputations — instead they coalesce into a single batch.
+        let debounce_ms: u64 = std::env::var("SINEX_DERIVED_INVALIDATION_DEBOUNCE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(500);
+        let debounce_duration = Duration::from_millis(debounce_ms);
+        let mut pending_invalidations: Vec<Vec<u8>> = Vec::new();
+        let mut debounce_deadline: Option<tokio::time::Instant> = None;
 
         loop {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
-                        info!(node = %self.node.name(), "Shutdown signal received");
+                        info!(node = %node_name, "Shutdown signal received");
+                        // Process any pending invalidations before shutdown
+                        for payload in pending_invalidations.drain(..) {
+                            if self.handle_invalidation_message(&payload).await.is_some() {
+                                invalidations_processed += 1;
+                            }
+                        }
                         break;
                     }
                 }
+
+                // Invalidation signal: buffer and set debounce deadline.
+                payload = recv_invalidation(&mut invalidation_sub) => {
+                    if let Some(payload) = payload {
+                        pending_invalidations.push(payload);
+                        debounce_deadline = Some(tokio::time::Instant::now() + debounce_duration);
+                    }
+                }
+
+                // Debounce timer: process buffered invalidations after quiet period.
+                () = async {
+                    match debounce_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let batch_size = pending_invalidations.len();
+                    debug!(
+                        node = %node_name,
+                        batch_size,
+                        debounce_ms,
+                        "Processing debounced invalidation batch"
+                    );
+                    for payload in pending_invalidations.drain(..) {
+                        if self.handle_invalidation_message(&payload).await.is_some() {
+                            invalidations_processed += 1;
+                        }
+                    }
+                    debounce_deadline = None;
+                }
+
+                // Periodic checkpoint
                 () = tokio::time::sleep(Duration::from_mins(1)) => {
                     if self.events_since_checkpoint > 0
                         && let Err(e) = self.save_state().await
                     {
-                        warn!(node = %self.node.name(), error = %e, "Failed to save periodic checkpoint");
+                        warn!(node = %node_name, error = %e, "Failed to save periodic checkpoint");
                     }
                 }
             }
         }
 
         if let Err(e) = self.save_state().await {
-            warn!(node = %self.node.name(), error = %e, "Failed to save final checkpoint");
+            warn!(node = %node_name, error = %e, "Failed to save final checkpoint");
         }
 
         Ok(ScanReport {
@@ -577,10 +905,16 @@ where
             duration: start.elapsed(),
             final_checkpoint: self.current_checkpoint_internal(),
             time_range: None,
-            node_stats: HashMap::from([(
-                "total_processed".to_string(),
-                self.persisted_state.events_processed,
-            )]),
+            node_stats: HashMap::from([
+                (
+                    "total_processed".to_string(),
+                    self.persisted_state.events_processed,
+                ),
+                (
+                    "invalidations_processed".to_string(),
+                    invalidations_processed,
+                ),
+            ]),
             successful_targets: vec![],
             failed_targets: vec![],
             warnings: vec![],
@@ -759,6 +1093,27 @@ where
     }
 }
 
+// ── Invalidation subscription helper ─────────────────────────────────
+
+/// Receive the next invalidation message payload from a NATS subscription.
+/// Returns `None` only when the subscription stream ends.
+/// When `sub` is `None` (no NATS available), pends forever — effectively
+/// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
+#[cfg(feature = "messaging")]
+async fn recv_invalidation(sub: &mut Option<async_nats::Subscriber>) -> Option<Vec<u8>> {
+    use futures::StreamExt;
+    match sub.as_mut() {
+        Some(s) => s.next().await.map(|msg| msg.payload.to_vec()),
+        None => std::future::pending().await,
+    }
+}
+
+/// Stub when messaging feature is disabled — always pends.
+#[cfg(not(feature = "messaging"))]
+async fn recv_invalidation(_sub: &mut ()) -> Option<Vec<u8>> {
+    std::future::pending().await
+}
+
 // ── Node trait implementation ──────────────────────────────────────────
 
 impl<N> crate::runtime::stream::Node for DerivedNodeAdapter<N>
@@ -797,9 +1152,10 @@ where
 
                     self.health_reporter = Some(Arc::new(HealthReporter::new(
                         self.node.name().to_string(),
-                        observer,
+                        Arc::clone(&observer),
                         thresholds,
                     )));
+                    self.self_observer = Some(observer);
 
                     info!(node = %self.node.name(), "Health monitoring auto-enabled");
                 }

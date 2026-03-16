@@ -334,6 +334,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
+    execute_sql(pool, DERIVED_SCOPE_SUMMARY_SQL).await?;
 
     Ok(())
 }
@@ -1433,6 +1434,27 @@ SELECT
     e.node_model
 FROM core.events e
 WHERE e.source_event_ids IS NOT NULL;
+";
+
+/// Scope health dashboard for derived nodes.
+///
+/// Provides a per-node, per-scope summary of derived events: how many exist,
+/// when last updated, and what processing metadata (`semantics_version`, `temporal_policy`)
+/// they carry. Operators query this to find stale scopes or version mismatches.
+const DERIVED_SCOPE_SUMMARY_SQL: &str = r"
+CREATE OR REPLACE VIEW core.derived_scope_summary AS
+SELECT
+    source AS node,
+    scope_key,
+    event_type,
+    COUNT(*) AS event_count,
+    MAX(ts_coided) AS last_updated,
+    semantics_version,
+    temporal_policy
+FROM core.events
+WHERE scope_key IS NOT NULL
+GROUP BY source, scope_key, event_type, semantics_version, temporal_policy
+ORDER BY last_updated DESC;
 ";
 
 const ROLE_GRANTS_SQL: &str = r"

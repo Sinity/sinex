@@ -1,8 +1,9 @@
-//! `AutomatonNode` trait for LLM-friendly node development.
+//! Legacy `AutomatonNode` trait — superseded by `TransducerNode`, `WindowedNode`,
+//! and `ScopeReconcilerNode` in the `derived_node` module.
 //!
-//! This module provides a high-level abstraction that reduces typical node
-//! implementations from 200+ lines to ~10 lines. The trait is designed to be
-//! simple enough that LLMs can reliably generate correct implementations.
+//! This module is retained for shared infrastructure (`PersistedState`, `ErrorAction`,
+//! `NodeAdapterConfig`) used by `DerivedNodeAdapter` internals. New nodes should
+//! use the derived_node traits instead.
 //!
 //! # Example
 //!
@@ -125,8 +126,9 @@ pub struct NodeEventContext {
 ///
 /// - **1:1 transforms** (e.g. canonicalizer): use `context.ts_orig` — the output
 ///   semantically happened at the same time as the input.
-/// - **Windowed aggregations** (e.g. analytics): use wall-clock (`Timestamp::now()`) —
-///   the report represents "computed now".
+/// - **Windowed aggregations** (e.g. analytics): use `ts_orig` derived from
+///   input events (e.g. latest event timestamp). Use `DerivedOutput::windowed_now()`
+///   only when wall-clock semantics are the genuine domain requirement.
 /// - **Periodic reports** (e.g. health): use the latest contributing input's timestamp.
 ///
 /// # Choosing `source_event_ids`
@@ -234,11 +236,11 @@ impl<S: Default> Default for PersistedState<S> {
 /// - **LLM-friendly**: Constrained enough that LLMs generate correct code
 /// - **State-aware**: Custom state with automatic persistence
 /// - **Hot-reload-ready**: State survives process restarts
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `AutomatonNode`",
-    label = "missing AutomatonNode implementation",
-    note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()` — see crate/lib/sinex-node-sdk/docs/overview.md"
+#[deprecated(
+    since = "0.1.0",
+    note = "Superseded by derived_node traits: TransducerNode, WindowedNode, ScopeReconcilerNode"
 )]
+#[doc(hidden)]
 pub trait AutomatonNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.
     /// Must implement Serialize, Deserialize, Default, and Send + Sync.

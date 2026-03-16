@@ -392,8 +392,15 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn list(&self, state: Option<ReplayState>) -> Result<Vec<ReplayOperation>> {
-        let response = self.send(ReplayControlRequest::List { state }).await?;
+    pub async fn list(
+        &self,
+        state: Option<ReplayState>,
+        node: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<ReplayOperation>> {
+        let response = self
+            .send(ReplayControlRequest::List { state, node, limit })
+            .await?;
         Ok(response.operations.unwrap_or_default())
     }
 }
@@ -571,8 +578,10 @@ impl ReplayControlServer {
                 let op = replay.load_operation(operation_id).await?;
                 ReplayControlResponse::success(Some(op), None, None)
             }
-            ReplayControlRequest::List { state } => {
-                let ops = replay.list_operations(state).await?;
+            ReplayControlRequest::List { state, node, limit } => {
+                let ops = replay
+                    .list_operations(state, node.as_deref(), limit)
+                    .await?;
                 ReplayControlResponse::success(None, None, Some(ops))
             }
         };
@@ -1523,7 +1532,7 @@ impl ReplayTelemetry {
     }
 
     async fn sample(&self) -> Result<()> {
-        let operations = self.replay.list_operations(None).await?;
+        let operations = self.replay.list_operations(None, None, None).await?;
         let mut counts: HashMap<ReplayState, usize> = HashMap::new();
         for op in &operations {
             *counts.entry(op.state).or_default() += 1;
@@ -2334,6 +2343,8 @@ pub enum ReplayControlRequest {
     },
     List {
         state: Option<ReplayState>,
+        node: Option<String>,
+        limit: Option<i64>,
     },
 }
 

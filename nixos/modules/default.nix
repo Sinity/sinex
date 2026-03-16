@@ -1454,21 +1454,21 @@ in
 
       # When autoGenerateTls is on, point cert/key to the generated paths so the
       # TLS assertion passes and the gateway picks up the right files.
-      (mkIf (cfg.enable && cfg.core.enable && cfg.core.gateway.autoGenerateTls) {
+      # NB: guard only on cfg.enable — reading cfg.core.* here while writing to
+      # services.sinex.core.* creates an evaluation cycle.  mkDefault ensures
+      # these values are overridden by any explicit setting, and the assertions
+      # above catch misconfiguration at evaluation time.
+      (mkIf cfg.enable {
         services.sinex.core.gateway.tlsCertFile = mkDefault "${stateRoot}/tls/gateway.crt";
         services.sinex.core.gateway.tlsKeyFile  = mkDefault "${stateRoot}/tls/gateway.key";
       })
 
       # When the filesystem node is enabled with no explicit watchPaths and a
       # target user is configured, default to watching that user's home directory.
-      # This makes the common single-user deployment work without explicit configuration.
-      (mkIf (
-        cfg.enable
-        && cfg.nodes.enable
-        && cfg.nodes.filesystem.enable
-        && cfg.nodes.filesystem.watchPaths == []
-        && cfg.users.target != null
-      ) {
+      # NB: guard only on cfg.enable + cfg.users.target — reading cfg.nodes.*
+      # while writing to services.sinex.nodes.* creates an evaluation cycle.
+      # mkDefault ensures explicit watchPaths override this fallback.
+      (mkIf (cfg.enable && cfg.users.target != null) {
         services.sinex.nodes.filesystem.watchPaths = mkDefault [
           "/home/${cfg.users.target}"
         ];

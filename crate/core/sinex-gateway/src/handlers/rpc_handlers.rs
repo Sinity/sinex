@@ -224,7 +224,12 @@ pub async fn handle_replay_list_operations(
         .optional_str("state")
         .map(parse_replay_state)
         .transpose()?;
-    let operations = client.list(state).await?;
+    let node = params.optional_str("node").map(String::from);
+    let limit = params
+        .inner
+        .get("limit")
+        .and_then(serde_json::Value::as_i64);
+    let operations = client.list(state, node, limit).await?;
     Ok(json!({ "operations": operations }))
 }
 

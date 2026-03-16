@@ -150,11 +150,19 @@ pub enum ReplayCommands {
     },
 
     /// List replay operations
-    #[command(alias = "ls")]
+    #[command(alias = "ls", alias = "history")]
     List {
         /// Filter by state
         #[arg(long, value_enum)]
         state: Option<ReplayStateFilter>,
+
+        /// Filter by node ID
+        #[arg(long)]
+        node: Option<String>,
+
+        /// Maximum number of results
+        #[arg(long, default_value = "50")]
+        limit: i64,
 
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
@@ -334,8 +342,15 @@ impl ReplayCommands {
                 execute_watch(client, operation_id, *interval, format).await?;
             }
 
-            Self::List { state, format } => {
-                let operations = client.replay_list_filtered(state.map(Into::into)).await?;
+            Self::List {
+                state,
+                node,
+                limit,
+                format,
+            } => {
+                let operations = client
+                    .replay_list_filtered(state.map(Into::into), node.as_deref(), Some(*limit))
+                    .await?;
                 CommandOutput::list(
                     operations,
                     "No replay operations found.",
@@ -444,7 +459,30 @@ async fn execute_run(
         .get("total_events")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-    eprintln!("  Preview: {total} events in scope");
+    eprintln!("  Preview: {total} direct events in scope");
+
+    // Show cascade impact if available
+    if let Some(cascade) = preview.get("cascade_impact")
+        && !cascade.is_null()
+    {
+        let derived = cascade
+            .get("derived_events")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        if derived > 0 {
+            let cascade_total = cascade
+                .get("cascade_total")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            eprintln!("  Cascade: {cascade_total} total ({total} direct + {derived} derived)");
+            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+                if !names.is_empty() {
+                    eprintln!("  Affected: {}", names.join(", "));
+                }
+            }
+        }
+    }
 
     if total == 0 {
         eprintln!("No events to replay. Cancelling.");
@@ -492,7 +530,7 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
         .get("total_events")
         .and_then(serde_json::Value::as_u64)
     {
-        output.push_str(&format!("  Total Events: {total}\n"));
+        output.push_str(&format!("  Direct Events: {total}\n"));
     }
     if let Some(window) = preview.get("time_window")
         && let (Some(start), Some(end)) = (
@@ -500,7 +538,52 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
             window.get("end").and_then(|v| v.as_str()),
         )
     {
-        output.push_str(&format!("  Time Window:  {start} to {end}\n"));
+        output.push_str(&format!("  Time Window:   {start} to {end}\n"));
+    }
+
+    // Cascade impact section
+    if let Some(cascade) = preview.get("cascade_impact")
+        && !cascade.is_null()
+    {
+        let cascade_total = cascade
+            .get("cascade_total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let direct = cascade
+            .get("direct_events")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let derived = cascade
+            .get("derived_events")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+
+        if derived > 0 {
+            output.push_str(&format!(
+                "  Cascade Total: {cascade_total} ({direct} direct + {derived} derived)\n"
+            ));
+
+            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+                if !names.is_empty() {
+                    output.push_str(&format!("  Affected Nodes: {}\n", names.join(", ")));
+                }
+            }
+
+            if let Some(scopes) = cascade.get("affected_scopes").and_then(|v| v.as_array()) {
+                let scope_count = scopes.len();
+                let type_count = scopes
+                    .iter()
+                    .filter_map(|s| s.get("event_type").and_then(|v| v.as_str()))
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                if scope_count > 0 {
+                    output.push_str(&format!(
+                        "  Affected Scopes: {scope_count} scope keys across {type_count} event types\n"
+                    ));
+                }
+            }
+        }
     }
 
     output.push_str(&format!(

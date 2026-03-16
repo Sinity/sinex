@@ -344,7 +344,8 @@ impl WindowedNode for TestWindowed {
 
         Ok(Some(DerivedOutput::windowed(
             WOutput { sum, window_size },
-            vec![], // simplified for test
+            Timestamp::now(), // test: no real window to derive from
+            vec![],
         )))
     }
 }
@@ -370,6 +371,124 @@ async fn windowed_recomputes_from_working_set() -> TestResult<()> {
     let output: serde_json::Value = results[0].payload.clone();
     assert_eq!(output["sum"], 20);
     assert_eq!(output["window_size"], 2);
+
+    Ok(())
+}
+
+// ── Serialization + Wire Format ───────────────────────────────────────
+
+#[sinex_test]
+async fn invalidation_signal_serialization_roundtrip() -> TestResult<()> {
+    let op_id = Uuid::now_v7();
+    let ids = vec![Uuid::now_v7(), Uuid::now_v7()];
+    let inv = DerivedScopeInvalidation::archived(ids.clone(), "fs-watcher", "file.created")
+        .with_operation(op_id)
+        .with_scope_keys(vec!["scope-a".into()]);
+
+    // Serialize to JSON (this is what goes over NATS)
+    let json = serde_json::to_vec(&inv).expect("should serialize");
+
+    // Deserialize back (this is what the adapter does on receive)
+    let restored: DerivedScopeInvalidation =
+        serde_json::from_slice(&json).expect("should deserialize");
+
+    assert_eq!(restored.action, InvalidationAction::Archived);
+    assert_eq!(restored.affected_event_ids, ids);
+    assert_eq!(restored.event_source, "fs-watcher");
+    assert_eq!(restored.event_type, "file.created");
+    assert_eq!(restored.operation_id, Some(op_id));
+    assert_eq!(restored.affected_scope_keys, vec!["scope-a"]);
+
+    Ok(())
+}
+
+// ── Reconciler: multi-scope recomputation ─────────────────────────────
+
+#[sinex_test]
+async fn reconciler_recomputes_independent_scopes_correctly() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+
+    let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
+    let mut state = ReconcilerState;
+    let ctx = make_context();
+
+    // Scope A: events summing to 100
+    let ws_a: Vec<sinex_primitives::Event<JsonValue>> = (1..=4)
+        .map(|i| event_stub(serde_json::json!({ "value": i * 25 })))
+        .collect();
+
+    let results_a = wrapper
+        .process_invalidation_derived(&mut state, "scope-a", ws_a, &ctx)
+        .await?;
+
+    assert_eq!(results_a.len(), 1);
+    assert_eq!(results_a[0].payload["total"], 250);
+    assert_eq!(results_a[0].payload["count"], 4);
+
+    // Scope B: different working set
+    let ws_b: Vec<sinex_primitives::Event<JsonValue>> =
+        vec![event_stub(serde_json::json!({ "value": 7 }))];
+
+    let results_b = wrapper
+        .process_invalidation_derived(&mut state, "scope-b", ws_b, &ctx)
+        .await?;
+
+    assert_eq!(results_b.len(), 1);
+    assert_eq!(results_b[0].payload["total"], 7);
+    assert_eq!(results_b[0].payload["count"], 1);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn reconciler_output_carries_scope_key() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+
+    let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
+    let mut state = ReconcilerState;
+    let ctx = make_context();
+
+    let ws: Vec<sinex_primitives::Event<JsonValue>> =
+        vec![event_stub(serde_json::json!({ "value": 42 }))];
+
+    let results = wrapper
+        .process_invalidation_derived(&mut state, "my-scope", ws, &ctx)
+        .await?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].scope_key.as_deref(),
+        Some("default"),
+        "scope key should be set on reconciler output"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn windowed_output_has_latest_input_temporal_policy() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, WindowedWrapper};
+    use sinex_primitives::domain::SyntheticTemporalPolicy;
+
+    let mut wrapper = WindowedWrapper(TestWindowed);
+    let mut state = WindowState::default();
+    let ctx = make_context();
+
+    let ws: Vec<sinex_primitives::Event<JsonValue>> = vec![
+        event_stub(serde_json::json!({ "value": 1 })),
+        event_stub(serde_json::json!({ "value": 2 })),
+    ];
+
+    let results = wrapper
+        .process_invalidation_derived(&mut state, "any", ws, &ctx)
+        .await?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].temporal_policy,
+        SyntheticTemporalPolicy::LatestInput,
+        "windowed invalidation output should use LatestInput policy"
+    );
 
     Ok(())
 }

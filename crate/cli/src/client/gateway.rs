@@ -617,23 +617,20 @@ impl GatewayClient {
 
     /// List all replay operations
     pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
-        let req = ReplayListRequest::default();
-        let result = self
-            .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
-            .await?;
-
-        let response: ReplayListResponse = serde_json::from_value(result)?;
-        Ok(response.operations)
+        self.replay_list_filtered(None, None, None).await
     }
 
-    /// List replay operations with optional state filter
+    /// List replay operations with optional filters
     pub async fn replay_list_filtered(
         &self,
         state: Option<ReplayState>,
+        node: Option<&str>,
+        limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest {
             state,
-            ..Default::default()
+            node: node.map(String::from),
+            limit,
         };
         let result = self
             .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)

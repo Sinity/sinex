@@ -26,6 +26,21 @@ fn make_context(event_type: &str) -> DerivedTriggerContext {
     }
 }
 
+/// Helper: create a context with an explicit `ts_orig` for determinism testing.
+fn make_context_with_ts(event_type: &str, ts_orig: Timestamp) -> DerivedTriggerContext {
+    let event_id: Id<Event<JsonValue>> = Id::new();
+    DerivedTriggerContext {
+        trigger_event_id: event_id,
+        source: "test".into(),
+        event_type: event_type.into(),
+        ts_orig: Some(ts_orig),
+        ts_coided: event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+    }
+}
+
 /// Helper that mirrors the `WindowedWrapper` dispatch:
 /// accumulate → check `window_complete` → emit if ready.
 async fn process(
@@ -275,7 +290,7 @@ async fn test_default_state_is_empty() -> TestResult<()> {
 // ── Windowed Output Metadata ────────────────────────────────────────────
 
 #[sinex_test]
-async fn test_windowed_temporal_policy_is_window_boundary() -> TestResult<()> {
+async fn test_windowed_temporal_policy_is_latest_input() -> TestResult<()> {
     let mut automaton = AnalyticsAutomaton;
     let mut state = AnalyticsState::default();
 
@@ -296,9 +311,10 @@ async fn test_windowed_temporal_policy_is_window_boundary() -> TestResult<()> {
         .await?
         .expect("200th event should emit");
 
+    // windowed() uses LatestInput — ts_orig derived from input events, not wall-clock.
     assert_eq!(
         result.temporal_policy,
-        sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary,
+        sinex_primitives::domain::SyntheticTemporalPolicy::LatestInput,
     );
     Ok(())
 }
@@ -326,5 +342,78 @@ async fn test_windowed_source_event_ids_contains_window_events() -> TestResult<(
     // Source events should contain all window events (up to 1000)
     assert!(!result.source_event_ids.is_empty());
     assert_eq!(result.source_event_ids.len(), 200);
+    Ok(())
+}
+
+// ── Temporal Determinism (Slice 2.3) ──────────────────────────────────
+
+#[sinex_test]
+async fn test_windowed_ts_orig_equals_latest_input_timestamp() -> TestResult<()> {
+    let mut automaton = AnalyticsAutomaton;
+    let mut state = AnalyticsState::default();
+
+    // Use known, deterministic timestamps: each event gets ts_orig = 1_700_000_000 + i
+    let base_ts = 1_700_000_000i64;
+    for i in 0..100i64 {
+        let ts = Timestamp::from_unix_timestamp(base_ts + i).unwrap();
+        let ctx = make_context_with_ts("file.created", ts);
+        process(&mut automaton, &mut state, serde_json::json!({}), &ctx).await?;
+    }
+
+    // The 100th event triggers emission. Reaccumulate another window.
+    for i in 100..199i64 {
+        let ts = Timestamp::from_unix_timestamp(base_ts + i).unwrap();
+        let ctx = make_context_with_ts("file.created", ts);
+        process(&mut automaton, &mut state, serde_json::json!({}), &ctx).await?;
+    }
+
+    // 200th event triggers second emission — this is the one we inspect.
+    let latest_ts = Timestamp::from_unix_timestamp(base_ts + 199).unwrap();
+    let ctx = make_context_with_ts("file.created", latest_ts);
+    let result = process(&mut automaton, &mut state, serde_json::json!({}), &ctx)
+        .await?
+        .expect("200th event should emit");
+
+    // ts_orig must equal the latest event's timestamp, not wall-clock.
+    assert_eq!(
+        result.ts_orig, latest_ts,
+        "windowed ts_orig should be derived from the latest input event"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_replay_same_events_produces_identical_ts_orig() -> TestResult<()> {
+    let mut automaton = AnalyticsAutomaton;
+    let base_ts = 1_700_000_000i64;
+
+    // Run the same sequence twice and compare outputs.
+    let mut outputs = Vec::new();
+    for _run in 0..2 {
+        let mut state = AnalyticsState::default();
+        for i in 0..100i64 {
+            let ts = Timestamp::from_unix_timestamp(base_ts + i).unwrap();
+            let ctx = make_context_with_ts("file.created", ts);
+            if let Some(output) =
+                process(&mut automaton, &mut state, serde_json::json!({}), &ctx).await?
+            {
+                outputs.push(output);
+            }
+        }
+    }
+
+    assert_eq!(
+        outputs.len(),
+        2,
+        "each run should produce one emission at 100th event"
+    );
+    assert_eq!(
+        outputs[0].ts_orig, outputs[1].ts_orig,
+        "replaying the same events must produce identical ts_orig"
+    );
+    assert_eq!(
+        outputs[0].temporal_policy, outputs[1].temporal_policy,
+        "temporal policy must be identical across replays"
+    );
     Ok(())
 }

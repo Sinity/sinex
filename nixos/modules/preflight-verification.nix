@@ -13,7 +13,7 @@ let
   preflightEnabled = sinexEnabled && preflight.enable;
   updatesEnabled = sinexEnabled && updates.enable;
 
-  generatedUnits = config.services.sinex.nodes.generatedUnits or [];
+  generatedUnits = config.sinex._generatedUnits;
   # Guard core units only when the core subsystem is enabled.
   # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
   # before either layer accepts production traffic.
