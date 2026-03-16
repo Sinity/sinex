@@ -15,7 +15,6 @@ pub mod history;
 pub mod infra;
 pub mod jobs;
 pub mod lint_forbidden;
-pub mod mutants;
 pub mod privacy;
 pub mod reset;
 pub mod run;

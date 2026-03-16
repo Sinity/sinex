@@ -7,7 +7,7 @@
 //! "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.
 
 use std::process::Command;
-use xtask::command::{CommandContext, CommandResult, XtaskCommand};
+use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;

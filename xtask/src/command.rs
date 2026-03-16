@@ -402,6 +402,32 @@ impl CommandContext {
         }
     }
 
+    /// Create a `CommandContext` with an explicit history DB path override.
+    ///
+    /// Used in tests to inject an ephemeral SQLite database rather than touching
+    /// the real history DB. Set `XTASK_HISTORY_DB` env var before constructing,
+    /// or pass the path directly here.
+    #[must_use]
+    pub fn new_with_db_override(
+        writer: crate::output::OutputWriter,
+        background: bool,
+        invocation_id: Option<i64>,
+        command_name: impl Into<String>,
+        db_path: PathBuf,
+    ) -> Self {
+        Self {
+            start_time: std::time::Instant::now(),
+            writer,
+            background,
+            command_name: command_name.into(),
+            invocation_id,
+            finished: AtomicBool::new(false),
+            history_db: Mutex::new(None),
+            db_path,
+            completed_stages: Mutex::new(Vec::new()),
+        }
+    }
+
     /// Get the name of the command this context was created for.
     #[must_use]
     pub fn command_name(&self) -> &str {
@@ -445,6 +471,21 @@ impl CommandContext {
                 None
             }
         }
+    }
+
+    /// Execute a closure with a `HistoryAnalysis` view over the cached DB.
+    ///
+    /// Convenience wrapper around `try_with_history_db` for commands that use
+    /// `HistoryAnalysis` queries. Returns `None` only if the DB can't be opened;
+    /// propagates `Err` from the closure.
+    pub fn with_history_analysis<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryAnalysis<'_>) -> Result<R>,
+    {
+        self.try_with_history_db(|db| {
+            let analysis = crate::history::HistoryAnalysis::new(db);
+            f(&analysis)
+        })
     }
 
     /// Execute a closure with the cached history DB, propagating errors.

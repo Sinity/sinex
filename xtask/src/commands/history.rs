@@ -339,9 +339,10 @@ impl XtaskCommand for HistoryCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let db = open_history_db()?;
-
-        match &self.subcommand {
+        use color_eyre::eyre::eyre;
+        ctx.try_with_history_db(|db| {
+            db.warn_if_synthetic(&crate::config::config().history_db_path());
+            match &self.subcommand {
             HistorySubcommand::List {
                 limit,
                 command,
@@ -543,20 +544,13 @@ impl XtaskCommand for HistoryCommand {
                 window,
             } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
         }
+        })
+        .ok_or_else(|| eyre!("history DB unavailable"))?
     }
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
     }
-}
-
-/// Open the history database and emit a one-time-per-process warning if synthetic.
-fn open_history_db() -> Result<HistoryDb> {
-    let cfg = config();
-    let path = cfg.history_db_path();
-    let db = HistoryDb::open(&path)?;
-    db.warn_if_synthetic(&path);
-    Ok(db)
 }
 
 /// Parse a human-readable duration string into seconds (G5 --since).

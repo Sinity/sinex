@@ -1393,9 +1393,9 @@ fn collect_status_data() -> (
                 .and_then(|jm| jm.list_recent(20).ok())
                 .unwrap_or_default();
 
-            let recent = open_history_db()
+            let recent = HistoryDb::open(&cfg.history_db_path())
                 .ok()
-                .and_then(|h| h.get_recent(10, None).ok())
+                .and_then(|db| db.get_recent(10, None).ok())
                 .unwrap_or_default();
 
             let (pg, pg_lat, nats, nats_lat, svcs) =
@@ -1623,10 +1623,6 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
     Ok(CommandResult::success().with_duration(ctx.elapsed()))
 }
 
-fn open_history_db() -> Result<HistoryDb> {
-    let cfg = config();
-    HistoryDb::open(&cfg.history_db_path())
-}
 
 #[cfg(test)]
 mod tests {

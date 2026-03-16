@@ -24,7 +24,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
 use crate::history::TestStatus;
-use crate::history::{HistoryDb, InvocationStatus};
+use crate::history::InvocationStatus;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue
@@ -396,15 +396,13 @@ async fn execute_test(
     }
 
     // Open history DB for recording (Q3)
-    let maybe_db = open_history_db_for_vm();
-    let invocation_id = maybe_db.as_ref().ok().and_then(|db| {
+    let invocation_id = ctx.with_history_db(|db| {
         let args = serde_json::json!({
             "category": category,
             "parallel": parallel,
             "tests": tests_to_run,
         });
         db.start_invocation("test", Some("vm"), None, Some(&args.to_string()))
-            .ok()
     });
 
     let suite_start = Instant::now();
@@ -441,7 +439,7 @@ async fn execute_test(
     println!();
 
     // Record results to history DB (Q3)
-    if let (Some(db), Some(inv_id)) = (maybe_db.as_ref().ok(), invocation_id) {
+    if let Some(inv_id) = invocation_id {
         for r in &results {
             let status = if r.timed_out {
                 "timeout"
@@ -455,8 +453,9 @@ async fn execute_test(
             } else {
                 Some(r.output.as_str())
             };
-            let _ =
-                db.record_test_result(inv_id, &r.name, "vm", status, r.duration_secs, output, "vm");
+            ctx.with_history_db(|db| {
+                db.record_test_result(inv_id, &r.name, "vm", status, r.duration_secs, output, "vm")
+            });
         }
         let final_status = if failed.is_empty() {
             InvocationStatus::Success
@@ -464,7 +463,7 @@ async fn execute_test(
             InvocationStatus::Failed
         };
         let exit_code = if failed.is_empty() { 0 } else { 1 };
-        let _ = db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration);
+        ctx.with_history_db(|db| db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration));
     }
 
     if failed.is_empty() {
@@ -642,12 +641,6 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
 
     Ok(CommandResult::success()
         .with_message(format!("validated {valid} files ({missing} missing)")))
-}
-
-/// Open history DB for VM test recording. Returns Ok only if available.
-fn open_history_db_for_vm() -> Result<HistoryDb> {
-    let path = crate::config::config().history_db_path();
-    HistoryDb::open(&path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
