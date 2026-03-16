@@ -178,8 +178,8 @@ fn try_extract_from_path(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_primitives::events::payloads::FileCreatedPayload;
     use sinex_primitives::events::EventPayload;
+    use sinex_primitives::events::payloads::FileCreatedPayload;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -205,9 +205,11 @@ mod tests {
     async fn extract_from_path_convention() -> TestResult<()> {
         let json = json!({"type": "object"});
 
-        let path = format!("schemas/{}/{}/1.0.0.json",
+        let path = format!(
+            "schemas/{}/{}/1.0.0.json",
             FileCreatedPayload::SOURCE.as_str(),
-            FileCreatedPayload::EVENT_TYPE.as_str());
+            FileCreatedPayload::EVENT_TYPE.as_str()
+        );
         let schema = try_extract_from_path(&json, &path);
         assert!(schema.is_some());
         let schema = schema.expect("should extract");

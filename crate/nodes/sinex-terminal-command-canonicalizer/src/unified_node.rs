@@ -16,7 +16,10 @@ use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::events::payloads::{CanonicalCommandPayload, KittyCommandExecutedPayload};
+use sinex_primitives::events::payloads::{
+    AtuinCommandExecutedPayload, BashCommandExecutedPayload, CanonicalCommandPayload,
+    FishCommandExecutedPayload, KittyCommandExecutedPayload, ZshCommandExecutedPayload,
+};
 use sinex_primitives::temporal::now;
 use tracing::info;
 
@@ -44,7 +47,7 @@ impl TransducerNode for TerminalCommandCanonicalizer {
     }
 
     fn output_event_type(&self) -> &'static str {
-        "command.canonical"
+        CanonicalCommandPayload::EVENT_TYPE.as_static_str()
     }
 
     async fn process(
@@ -53,10 +56,8 @@ impl TransducerNode for TerminalCommandCanonicalizer {
         input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        match context.source.as_str() {
-            "shell.kitty" | "shell.atuin" | "shell.history.bash" | "shell.history.zsh"
-            | "shell.history.fish" => {}
-            _ => return Ok(None),
+        if !is_accepted_source(context.source.as_str()) {
+            return Ok(None);
         }
 
         let command = input
@@ -125,6 +126,15 @@ impl TransducerNode for TerminalCommandCanonicalizer {
                 .with_temporal_policy(SyntheticTemporalPolicy::InheritParent),
         ))
     }
+}
+
+/// Returns `true` for sources whose `command.executed` events this node canonicalizes.
+fn is_accepted_source(source: &str) -> bool {
+    source == KittyCommandExecutedPayload::SOURCE.as_static_str()
+        || source == AtuinCommandExecutedPayload::SOURCE.as_static_str()
+        || source == BashCommandExecutedPayload::SOURCE.as_static_str()
+        || source == ZshCommandExecutedPayload::SOURCE.as_static_str()
+        || source == FishCommandExecutedPayload::SOURCE.as_static_str()
 }
 
 /// Node type alias for use with `node_entrypoint!`.

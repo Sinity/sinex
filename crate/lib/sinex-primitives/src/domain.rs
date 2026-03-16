@@ -428,7 +428,9 @@ impl EventSource {
     pub fn as_static_str(&self) -> &'static str {
         match &self.0 {
             Cow::Borrowed(s) => s,
-            Cow::Owned(_) => panic!("EventSource::as_static_str called on a dynamically-allocated value; use from_static or EventSource::new for runtime values"),
+            Cow::Owned(_) => unreachable!(
+                "EventSource::as_static_str called on a dynamically-allocated value; use from_static for static values"
+            ),
         }
     }
 
@@ -593,7 +595,9 @@ impl EventType {
     pub fn as_static_str(&self) -> &'static str {
         match &self.0 {
             Cow::Borrowed(s) => s,
-            Cow::Owned(_) => panic!("EventType::as_static_str called on a dynamically-allocated value; use from_static or EventType::new for runtime values"),
+            Cow::Owned(_) => unreachable!(
+                "EventType::as_static_str called on a dynamically-allocated value; use from_static for static values"
+            ),
         }
     }
 

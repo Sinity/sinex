@@ -171,9 +171,20 @@ impl AnalyticsDataset {
         expected_source_counts.insert(FileCreatedPayload::SOURCE.as_static_str().to_string(), 2);
 
         let mut expected_event_type_counts = std::collections::HashMap::new();
-        expected_event_type_counts.insert(KittyCommandExecutedPayload::EVENT_TYPE.as_static_str().to_string(), 3);
-        expected_event_type_counts.insert(FileCreatedPayload::EVENT_TYPE.as_static_str().to_string(), 1);
-        expected_event_type_counts.insert(FileModifiedPayload::EVENT_TYPE.as_static_str().to_string(), 1);
+        expected_event_type_counts.insert(
+            KittyCommandExecutedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            3,
+        );
+        expected_event_type_counts.insert(
+            FileCreatedPayload::EVENT_TYPE.as_static_str().to_string(),
+            1,
+        );
+        expected_event_type_counts.insert(
+            FileModifiedPayload::EVENT_TYPE.as_static_str().to_string(),
+            1,
+        );
 
         let mut expected_command_counts = std::collections::HashMap::new();
         expected_command_counts.insert("ls".to_string(), 2);
@@ -195,8 +206,11 @@ impl AnalyticsDataset {
         let mut events = Vec::with_capacity(count);
         for i in 0..count {
             events.push(
-                EventSpec::new("shell.bash", KittyCommandExecutedPayload::EVENT_TYPE.as_static_str())
-                    .with_payload(json!({"command": format!("cmd-{}", i), "exit_code": 0})),
+                EventSpec::new(
+                    "shell.bash",
+                    KittyCommandExecutedPayload::EVENT_TYPE.as_static_str(),
+                )
+                .with_payload(json!({"command": format!("cmd-{}", i), "exit_code": 0})),
             );
         }
 
@@ -204,7 +218,12 @@ impl AnalyticsDataset {
         expected_source_counts.insert("shell.bash".to_string(), count as i64);
 
         let mut expected_event_type_counts = std::collections::HashMap::new();
-        expected_event_type_counts.insert(KittyCommandExecutedPayload::EVENT_TYPE.as_static_str().to_string(), count as i64);
+        expected_event_type_counts.insert(
+            KittyCommandExecutedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            count as i64,
+        );
 
         Self {
             name: "analytics-perf".to_string(),
@@ -302,7 +321,10 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test"))?;
         assert_eq!(spec.source, FileCreatedPayload::SOURCE.as_static_str());
-        assert_eq!(spec.event_type, FileCreatedPayload::EVENT_TYPE.as_static_str());
+        assert_eq!(
+            spec.event_type,
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
         // Typed payload serializes with correct structure
         assert!(spec.payload.get("path").is_some());
         assert!(spec.payload.get("size").is_some());
@@ -317,7 +339,12 @@ mod tests {
         assert_eq!(dataset.expected_total, 5);
         // Shell commands should have correct source from KittyCommandExecutedPayload
         assert_eq!(dataset.expected_source_counts.get("shell.kitty"), Some(&3));
-        assert_eq!(dataset.expected_source_counts.get(FileCreatedPayload::SOURCE.as_static_str()), Some(&2));
+        assert_eq!(
+            dataset
+                .expected_source_counts
+                .get(FileCreatedPayload::SOURCE.as_static_str()),
+            Some(&2)
+        );
         Ok(())
     }
 }

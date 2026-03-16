@@ -1264,7 +1264,10 @@ mod tests {
             .await?
             .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event not emitted"))?;
 
-        assert_eq!(event.event_type.as_str(), FileCreatedPayload::EVENT_TYPE.as_static_str());
+        assert_eq!(
+            event.event_type.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
 
         let material_uuid = match event.provenance() {
             Provenance::Material { id, .. } => *id.as_uuid(),
