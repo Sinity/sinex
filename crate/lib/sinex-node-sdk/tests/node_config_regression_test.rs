@@ -20,9 +20,7 @@ async fn test_no_replay_config_field() -> TestResult<()> {
 
     let json = serde_json::to_value(&config)?;
     let obj = json.as_object().unwrap_or_else(|| {
-        panic!(
-            "NodeConfig should serialize to a JSON object but got: {json:?}"
-        )
+        panic!("NodeConfig should serialize to a JSON object but got: {json:?}")
     });
 
     assert!(

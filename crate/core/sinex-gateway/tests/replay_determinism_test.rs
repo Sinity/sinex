@@ -39,8 +39,14 @@ impl LiveGateway {
         tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
         tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
-        env_guard.set("SINEX_GATEWAY_TLS_CERT", cert_file.path().to_string_lossy().to_string());
-        env_guard.set("SINEX_GATEWAY_TLS_KEY", key_file.path().to_string_lossy().to_string());
+        env_guard.set(
+            "SINEX_GATEWAY_TLS_CERT",
+            cert_file.path().to_string_lossy().to_string(),
+        );
+        env_guard.set(
+            "SINEX_GATEWAY_TLS_KEY",
+            key_file.path().to_string_lossy().to_string(),
+        );
         env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
         env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
@@ -197,11 +203,14 @@ async fn run_replay(
 
     let op_id = plan_result["operation"]["operation_id"]
         .as_str()
-        .expect("operation_id")
+        .ok_or_else(|| color_eyre::eyre::eyre!("operation_id missing from plan response"))?
         .to_string();
 
-    gw.rpc(methods::REPLAY_PREVIEW_OPERATION, json!({ "operation_id": op_id }))
-        .await?;
+    gw.rpc(
+        methods::REPLAY_PREVIEW_OPERATION,
+        json!({ "operation_id": op_id }),
+    )
+    .await?;
     gw.rpc(
         methods::REPLAY_APPROVE_OPERATION,
         json!({ "operation_id": op_id, "approver": "admin:superuser" }),
@@ -216,7 +225,10 @@ async fn run_replay(
     // Poll for completion
     for _ in 0..120 {
         let status = gw
-            .rpc(methods::REPLAY_OPERATION_STATUS, json!({ "operation_id": op_id }))
+            .rpc(
+                methods::REPLAY_OPERATION_STATUS,
+                json!({ "operation_id": op_id }),
+            )
             .await?;
         match status["operation"]["state"].as_str() {
             Some("Completed") => return Ok(op_id),
@@ -250,7 +262,10 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
         .from_material(material_id)
         .build()?;
         let inserted = ctx.pool.events().insert(event).await?;
-        let id = inserted.id.expect("seeded event must have an id").to_uuid();
+        let id = inserted
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("seeded event must have an id"))?
+            .to_uuid();
         original_payloads.push(inserted.payload.clone());
         seeded_ids.push(id);
     }
@@ -264,21 +279,26 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
     let scope_start = ts - time::Duration::seconds(60);
     let scope_end = ts + time::Duration::seconds(60);
 
-    run_replay(&gw, "det-node", scope_start, scope_end, &[*material_id.as_uuid()]).await?;
+    run_replay(
+        &gw,
+        "det-node",
+        scope_start,
+        scope_end,
+        &[*material_id.as_uuid()],
+    )
+    .await?;
     scan_handle.await?;
 
     // Verify archived events preserve payload content
     for (i, original_id) in seeded_ids.iter().enumerate() {
-        let archived: Option<serde_json::Value> = sqlx::query_scalar(
-            "SELECT payload FROM audit.archived_events WHERE id = $1::uuid",
-        )
-        .bind(original_id)
-        .fetch_optional(&ctx.pool)
-        .await?;
+        let archived: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT payload FROM audit.archived_events WHERE id = $1::uuid")
+                .bind(original_id)
+                .fetch_optional(&ctx.pool)
+                .await?;
 
-        let archived_payload = archived.unwrap_or_else(|| {
-            panic!("Event {original_id} should be in audit.archived_events")
-        });
+        let archived_payload = archived
+            .unwrap_or_else(|| panic!("Event {original_id} should be in audit.archived_events"));
 
         assert_eq!(
             archived_payload, original_payloads[i],
@@ -320,15 +340,21 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
     let scan1 = spawn_fake_scan_node(nats.clone(), env.clone(), "dbl-node", 2).await?;
-    run_replay(&gw, "dbl-node", scope_start, scope_end, &[*material_id.as_uuid()]).await?;
+    run_replay(
+        &gw,
+        "dbl-node",
+        scope_start,
+        scope_end,
+        &[*material_id.as_uuid()],
+    )
+    .await?;
     scan1.await?;
 
     // Count events + archives after first replay
-    let live_after_1: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM core.events WHERE source = 'dbl-node'",
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
+    let live_after_1: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE source = 'dbl-node'")
+            .fetch_one(&ctx.pool)
+            .await?;
     let archived_after_1: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE source = 'dbl-node'",
     )
@@ -337,14 +363,20 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
 
     // Second replay of same scope — need a new fake node since the first was consumed
     let scan2 = spawn_fake_scan_node(nats.clone(), env, "dbl-node", live_after_1 as u64).await?;
-    run_replay(&gw, "dbl-node", scope_start, scope_end, &[*material_id.as_uuid()]).await?;
+    run_replay(
+        &gw,
+        "dbl-node",
+        scope_start,
+        scope_end,
+        &[*material_id.as_uuid()],
+    )
+    .await?;
     scan2.await?;
 
-    let live_after_2: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM core.events WHERE source = 'dbl-node'",
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
+    let live_after_2: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE source = 'dbl-node'")
+            .fetch_one(&ctx.pool)
+            .await?;
 
     // Live count should be stable: second replay archives the first replay's
     // outputs and the fake node re-emits the same count.

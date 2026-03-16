@@ -36,7 +36,7 @@ impl<'a> RpcParams<'a> {
     }
 
     pub(crate) fn optional_bool(&self, key: &str) -> Option<bool> {
-        self.inner.get(key).and_then(|v| v.as_bool())
+        self.inner.get(key).and_then(serde_json::Value::as_bool)
     }
 
     pub(crate) fn optional_object(&self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {

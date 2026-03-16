@@ -101,7 +101,11 @@ impl RoleGateway {
 
     /// Make an authenticated JSON-RPC call, returning the full response body.
     /// Does NOT bail on JSON-RPC errors — caller inspects the response.
-    async fn rpc_raw(&self, method: &str, params: serde_json::Value) -> TestResult<serde_json::Value> {
+    async fn rpc_raw(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> TestResult<serde_json::Value> {
         let body = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -162,7 +166,9 @@ async fn readonly_can_list_operations(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    let resp = gw.rpc_raw(methods::REPLAY_LIST_OPERATIONS, json!({})).await?;
+    let resp = gw
+        .rpc_raw(methods::REPLAY_LIST_OPERATIONS, json!({}))
+        .await?;
     assert!(
         RoleGateway::has_result(&resp),
         "ReadOnly should be able to list operations: {resp}"
@@ -262,21 +268,37 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Admin should be able to: list, create, preview, approve, cancel
-    let list_resp = gw.rpc_raw(methods::REPLAY_LIST_OPERATIONS, json!({})).await?;
-    assert!(RoleGateway::has_result(&list_resp), "Admin list failed: {list_resp}");
+    let list_resp = gw
+        .rpc_raw(methods::REPLAY_LIST_OPERATIONS, json!({}))
+        .await?;
+    assert!(
+        RoleGateway::has_result(&list_resp),
+        "Admin list failed: {list_resp}"
+    );
 
-    let create_resp = gw.rpc_raw(methods::REPLAY_CREATE_OPERATION, test_scope_params()).await?;
-    assert!(RoleGateway::has_result(&create_resp), "Admin create failed: {create_resp}");
+    let create_resp = gw
+        .rpc_raw(methods::REPLAY_CREATE_OPERATION, test_scope_params())
+        .await?;
+    assert!(
+        RoleGateway::has_result(&create_resp),
+        "Admin create failed: {create_resp}"
+    );
 
     let op_id = create_resp["result"]["operation"]["operation_id"]
         .as_str()
-        .expect("operation_id in create response")
+        .ok_or_else(|| color_eyre::eyre::eyre!("operation_id missing from create response"))?
         .to_string();
 
     let preview_resp = gw
-        .rpc_raw(methods::REPLAY_PREVIEW_OPERATION, json!({ "operation_id": op_id }))
+        .rpc_raw(
+            methods::REPLAY_PREVIEW_OPERATION,
+            json!({ "operation_id": op_id }),
+        )
         .await?;
-    assert!(RoleGateway::has_result(&preview_resp), "Admin preview failed: {preview_resp}");
+    assert!(
+        RoleGateway::has_result(&preview_resp),
+        "Admin preview failed: {preview_resp}"
+    );
 
     let approve_resp = gw
         .rpc_raw(
@@ -284,7 +306,10 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
             json!({ "operation_id": op_id, "approver": "admin:superuser" }),
         )
         .await?;
-    assert!(RoleGateway::has_result(&approve_resp), "Admin approve failed: {approve_resp}");
+    assert!(
+        RoleGateway::has_result(&approve_resp),
+        "Admin approve failed: {approve_resp}"
+    );
 
     // Cancel instead of execute (no fake node to handle scan)
     let cancel_resp = gw
@@ -293,7 +318,10 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
             json!({ "operation_id": op_id, "reason": "auth test cleanup" }),
         )
         .await?;
-    assert!(RoleGateway::has_result(&cancel_resp), "Admin cancel failed: {cancel_resp}");
+    assert!(
+        RoleGateway::has_result(&cancel_resp),
+        "Admin cancel failed: {cancel_resp}"
+    );
 
     Ok(())
 }

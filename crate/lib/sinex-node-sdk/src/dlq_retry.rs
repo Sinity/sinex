@@ -168,7 +168,9 @@ impl DlqRetryHandler {
                 }
                 // Timeout or stream ended — stop draining
                 Ok(None) | Err(_) => {
-                    info!("DLQ drain stopped after {processed}/{target_count} messages (stream exhausted or timeout)");
+                    info!(
+                        "DLQ drain stopped after {processed}/{target_count} messages (stream exhausted or timeout)"
+                    );
                     break;
                 }
             }

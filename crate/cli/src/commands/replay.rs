@@ -507,7 +507,11 @@ async fn execute_run(
 
     eprintln!(
         "{}...",
-        if dry_run { "Dry-run (no changes persisted)" } else { "Executing replay" }
+        if dry_run {
+            "Dry-run (no changes persisted)"
+        } else {
+            "Executing replay"
+        }
     );
     let operation = client.replay_execute(&op_id, dry_run).await?;
 

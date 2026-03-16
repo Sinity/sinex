@@ -567,7 +567,10 @@ impl ReplayControlServer {
                     let operation = replay.load_operation(operation_id).await?;
                     let preview = replay.generate_preview_summary(&operation.scope).await?;
                     replay
-                        .cancel(operation_id, "dry-run completed (no changes persisted)".into())
+                        .cancel(
+                            operation_id,
+                            "dry-run completed (no changes persisted)".into(),
+                        )
                         .await?;
                     let updated = replay.load_operation(operation_id).await?;
                     ReplayControlResponse::success(Some(updated), Some(preview), None)
