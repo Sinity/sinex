@@ -104,9 +104,9 @@ progressively into JetStream rather than buffered in memory.
 
 ### Node (direct impl) — "The adapters don't fit my use case"
 
-Almost never needed. Both `IngestorNodeAdapter` and `AutomatonNodeAdapter` implement
+Almost never needed. Both `IngestorNodeAdapter` and `DerivedNodeAdapter` implement
 this trait for you. Only implement directly if you need custom scan dispatching or
-a node type that doesn't fit the ingestor/automaton dichotomy.
+a node type that doesn't fit the ingestor/derived-node model.
 
 ## Real Implementations
 
