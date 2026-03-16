@@ -15,7 +15,8 @@ use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, Transdu
 use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
-use sinex_primitives::events::payloads::CanonicalCommandPayload;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{CanonicalCommandPayload, KittyCommandExecutedPayload};
 use sinex_primitives::temporal::now;
 use tracing::info;
 
@@ -39,7 +40,7 @@ impl TransducerNode for TerminalCommandCanonicalizer {
     }
 
     fn input_event_type(&self) -> &'static str {
-        "command.executed"
+        KittyCommandExecutedPayload::EVENT_TYPE.as_static_str()
     }
 
     fn output_event_type(&self) -> &'static str {

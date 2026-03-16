@@ -420,6 +420,18 @@ impl EventSource {
         &self.0
     }
 
+    /// Get the underlying `&'static str`.
+    ///
+    /// Only valid for values constructed with [`EventSource::from_static`].
+    /// Panics at runtime if the inner value is an owned `String` (i.e., not `'static`).
+    #[must_use]
+    pub fn as_static_str(&self) -> &'static str {
+        match &self.0 {
+            Cow::Borrowed(s) => s,
+            Cow::Owned(_) => panic!("EventSource::as_static_str called on a dynamically-allocated value; use from_static or EventSource::new for runtime values"),
+        }
+    }
+
     /// Convert to owned `String`.
     #[must_use]
     pub fn into_string(self) -> String {
@@ -571,6 +583,18 @@ impl EventType {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Get the underlying `&'static str`.
+    ///
+    /// Only valid for values constructed with [`EventType::from_static`].
+    /// Panics at runtime if the inner value is an owned `String` (i.e., not `'static`).
+    #[must_use]
+    pub fn as_static_str(&self) -> &'static str {
+        match &self.0 {
+            Cow::Borrowed(s) => s,
+            Cow::Owned(_) => panic!("EventType::as_static_str called on a dynamically-allocated value; use from_static or EventType::new for runtime values"),
+        }
     }
 
     /// Convert to owned `String`.

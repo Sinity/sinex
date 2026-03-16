@@ -31,7 +31,7 @@ use sinex_node_sdk::{
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
-    events::{EventPayload, enums::FileModificationType},
+    events::{EventPayload, enums::FileModificationType, payloads::filesystem::FileCreatedPayload},
     temporal::Timestamp,
     units::Bytes,
     validation::{
@@ -325,7 +325,7 @@ impl FilesystemNode {
         for path in &self.config.watch_paths {
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
-                "fs-watcher",
+                FileCreatedPayload::SOURCE.as_static_str(),
                 path.clone(),
             )?);
             let stage_with_acquisition = stage_context
@@ -1264,7 +1264,7 @@ mod tests {
             .await?
             .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event not emitted"))?;
 
-        assert_eq!(event.event_type.as_str(), "file.created");
+        assert_eq!(event.event_type.as_str(), FileCreatedPayload::EVENT_TYPE.as_static_str());
 
         let material_uuid = match event.provenance() {
             Provenance::Material { id, .. } => *id.as_uuid(),

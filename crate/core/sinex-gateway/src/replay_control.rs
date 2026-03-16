@@ -1595,6 +1595,7 @@ mod tests {
     use sinex_db::repositories::state::Operation;
     use sinex_node_sdk::runtime::stream::ScanReport;
     use sinex_primitives::{DynamicPayload, Id, Uuid};
+    use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
     use tokio::time::sleep;
     use xtask::sandbox::sinex_test;
 
@@ -1848,7 +1849,7 @@ mod tests {
             let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
             let event = DynamicPayload::new(
                 "fs-test",
-                "file.created",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
                 json!({ "path": "/tmp/replay.txt" }),
             )
             .from_material(material_id)
@@ -1884,7 +1885,7 @@ mod tests {
             .await?;
         let nonmatch_event = DynamicPayload::new(
             "fs-test",
-            "file.created",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
             json!({ "path": "/tmp/replay-nonmatch.txt" }),
         )
         .from_material(nonmatch_material)
@@ -1919,7 +1920,7 @@ mod tests {
         scope.material_filter = Some(vec![*material_id.as_uuid()]);
         scope
             .filters
-            .insert("event_types".to_string(), json!(["file.created"]));
+            .insert("event_types".to_string(), json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]));
 
         let planned = client
             .plan("test:replay-user".into(), scope.clone())
@@ -1986,7 +1987,7 @@ mod tests {
         );
         assert_eq!(
             replay_context.replay_scope.event_types,
-            Some(vec!["file.created".to_string()]),
+            Some(vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()]),
             "gateway must preserve normalized event type filter in replay scope"
         );
 
@@ -2075,7 +2076,7 @@ mod tests {
             .await?;
         let root = DynamicPayload::new(
             "reexecution-test",
-            "file.created",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
             json!({ "path": "/tmp/reexecution-root.txt" }),
         )
         .from_material(material_root_id)
@@ -2181,7 +2182,7 @@ mod tests {
         let material_id = ctx.create_source_material(Some("replay-timeout")).await?;
         let event = DynamicPayload::new(
             "timeout-test",
-            "file.created",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
             json!({ "path": "/tmp/replay-timeout.txt" }),
         )
         .from_material(material_id)
