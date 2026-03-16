@@ -458,8 +458,8 @@ async fn reconciler_output_carries_scope_key() -> TestResult<()> {
     assert_eq!(results.len(), 1);
     assert_eq!(
         results[0].scope_key.as_deref(),
-        Some("default"),
-        "scope key should be set on reconciler output"
+        Some("my-scope"),
+        "scope key should match the scope passed to process_invalidation_derived"
     );
 
     Ok(())

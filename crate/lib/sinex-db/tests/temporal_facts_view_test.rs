@@ -154,11 +154,13 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     // Synthetic events should NOT have ts_capture (from ledger)
     assert!(row.ts_capture.is_none());
     // Inline columns should be populated
-    assert_eq!(row.temporal_policy.as_deref(), Some("LatestInput"));
+    // serde(rename_all = "snake_case") on SyntheticTemporalPolicy → "latest_input" in DB
+    assert_eq!(row.temporal_policy.as_deref(), Some("latest_input"));
     assert_eq!(row.semantics_version.as_deref(), Some("v1.0.0"));
     assert_eq!(row.scope_key.as_deref(), Some("test-scope"));
     assert_eq!(row.equivalence_key.as_deref(), Some("test-equiv"));
     assert_eq!(row.created_by_operation_id, Some(operation_id));
+    // DerivedNodeModel uses default PascalCase serde (no rename_all)
     assert_eq!(row.node_model.as_deref(), Some("Windowed"));
 
     Ok(())
