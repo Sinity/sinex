@@ -587,6 +587,7 @@ impl GatewayClient {
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
             executor: Some("service:sinexctl".to_string()),
+            dry_run: false,
         };
         let result = self
             .call_rpc(
@@ -674,11 +675,17 @@ impl GatewayClient {
         Ok(response.operation)
     }
 
-    /// Execute an approved replay operation
-    pub async fn replay_execute(&self, operation_id: &str) -> Result<ReplayOperation> {
+    /// Execute an approved replay operation.
+    /// When `dry_run` is true, computes cascade impact without persisting changes.
+    pub async fn replay_execute(
+        &self,
+        operation_id: &str,
+        dry_run: bool,
+    ) -> Result<ReplayOperation> {
         let req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
             executor: Some("service:sinexctl".to_string()),
+            dry_run,
         };
         let result = self
             .call_rpc(

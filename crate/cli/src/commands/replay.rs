@@ -96,6 +96,10 @@ pub enum ReplayCommands {
         /// Operation ID
         operation_id: String,
 
+        /// Dry-run: compute cascade impact without persisting changes
+        #[arg(long)]
+        dry_run: bool,
+
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
@@ -190,6 +194,10 @@ pub enum ReplayCommands {
         /// Filter by event type (repeatable)
         #[arg(long = "event-type", value_name = "TYPE")]
         event_types: Vec<String>,
+
+        /// Dry-run: compute cascade impact without persisting changes
+        #[arg(long)]
+        dry_run: bool,
 
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
@@ -286,9 +294,10 @@ impl ReplayCommands {
 
             Self::Execute {
                 operation_id,
+                dry_run,
                 format,
             } => {
-                let operation = client.replay_execute(operation_id).await?;
+                let operation = client.replay_execute(operation_id, *dry_run).await?;
                 CommandOutput::single(operation, format_replay_execute_table).display(format)?;
             }
 
@@ -365,6 +374,7 @@ impl ReplayCommands {
                 until,
                 materials,
                 event_types,
+                dry_run,
                 format,
             } => {
                 execute_run(
@@ -374,6 +384,7 @@ impl ReplayCommands {
                     until.as_deref(),
                     materials,
                     event_types,
+                    *dry_run,
                     format,
                 )
                 .await?;
@@ -444,6 +455,7 @@ async fn execute_run(
     until: Option<&str>,
     materials: &[String],
     event_types: &[String],
+    dry_run: bool,
     format: &OutputFormat,
 ) -> Result<()> {
     eprintln!("Creating replay plan for node '{node}'...");
@@ -493,8 +505,11 @@ async fn execute_run(
     eprintln!("Approving...");
     let _ = client.replay_approve(&op_id).await?;
 
-    eprintln!("Executing replay...");
-    let operation = client.replay_execute(&op_id).await?;
+    eprintln!(
+        "{}...",
+        if dry_run { "Dry-run (no changes persisted)" } else { "Executing replay" }
+    );
+    let operation = client.replay_execute(&op_id, dry_run).await?;
 
     execute_watch(client, &op_id, 2, format).await?;
 

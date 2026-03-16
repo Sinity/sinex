@@ -35,6 +35,10 @@ impl<'a> RpcParams<'a> {
             .map(Vec::as_slice)
     }
 
+    pub(crate) fn optional_bool(&self, key: &str) -> Option<bool> {
+        self.inner.get(key).and_then(|v| v.as_bool())
+    }
+
     pub(crate) fn optional_object(&self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
         self.inner.get(key).and_then(|v| v.as_object())
     }
@@ -184,7 +188,8 @@ pub async fn handle_replay_execute_operation(
         .optional_str("executor")
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
-    let operation = client.execute(operation_id, executor).await?;
+    let dry_run = params.optional_bool("dry_run").unwrap_or(false);
+    let operation = client.execute(operation_id, executor, dry_run).await?;
     Ok(json!({ "operation": operation }))
 }
 

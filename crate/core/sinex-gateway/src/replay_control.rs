@@ -349,7 +349,12 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn execute(&self, operation_id: Uuid, executor: String) -> Result<ReplayOperation> {
+    pub async fn execute(
+        &self,
+        operation_id: Uuid,
+        executor: String,
+        dry_run: bool,
+    ) -> Result<ReplayOperation> {
         // Validate executor identity
         validate_actor_for_action(&executor, ReplayAction::Execute)?;
 
@@ -357,6 +362,7 @@ impl ReplayControlClient {
             .send(ReplayControlRequest::Execute {
                 operation_id,
                 executor,
+                dry_run,
             })
             .await?;
         response
@@ -551,12 +557,24 @@ impl ReplayControlServer {
             ReplayControlRequest::Execute {
                 operation_id,
                 executor: actor,
+                dry_run,
             } => {
                 // Server-side validation of executor (defense in depth)
                 validate_actor_for_action(&actor, ReplayAction::Execute)?;
 
-                let updated = executor.execute(operation_id, actor).await?;
-                ReplayControlResponse::success(Some(updated), None, None)
+                if dry_run {
+                    // Dry-run: compute cascade impact then cancel. No side effects.
+                    let operation = replay.load_operation(operation_id).await?;
+                    let preview = replay.generate_preview_summary(&operation.scope).await?;
+                    replay
+                        .cancel(operation_id, "dry-run completed (no changes persisted)".into())
+                        .await?;
+                    let updated = replay.load_operation(operation_id).await?;
+                    ReplayControlResponse::success(Some(updated), Some(preview), None)
+                } else {
+                    let updated = executor.execute(operation_id, actor).await?;
+                    ReplayControlResponse::success(Some(updated), None, None)
+                }
             }
             ReplayControlRequest::Cancel {
                 operation_id,
@@ -1927,7 +1945,7 @@ mod tests {
         assert_eq!(approved.state, ReplayState::Approved);
 
         let executed = client
-            .execute(planned.operation_id, "service:executor-node".into())
+            .execute(planned.operation_id, "service:executor-node".into(), false)
             .await?;
         assert_eq!(executed.state, ReplayState::Completed);
         assert_eq!(executed.checkpoint.processed_events, 1);
@@ -2104,6 +2122,7 @@ mod tests {
             .execute(
                 planned_reexecution.operation_id,
                 "service:executor-node".into(),
+                false,
             )
             .await?;
         assert_eq!(reexecution_executed.state, ReplayState::Completed);
@@ -2201,7 +2220,7 @@ mod tests {
             .approve(previewed.operation_id, "admin:approver".into())
             .await?;
         let err = client
-            .execute(approved.operation_id, "service:executor-node".into())
+            .execute(approved.operation_id, "service:executor-node".into(), false)
             .await
             .expect_err("execute should fail when the node never reports completion");
         assert!(
@@ -2332,6 +2351,8 @@ pub enum ReplayControlRequest {
     Execute {
         operation_id: Uuid,
         executor: String,
+        #[serde(default)]
+        dry_run: bool,
     },
     Cancel {
         operation_id: Uuid,
