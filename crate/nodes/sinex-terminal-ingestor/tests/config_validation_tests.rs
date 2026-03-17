@@ -29,25 +29,40 @@ async fn rejects_polling_intervals_above_limit() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.polling_interval_secs = Seconds::from_secs(4000);
 
-    assert!(config.validate_config().is_err());
+    let err = config.validate_config().unwrap_err();
+    assert!(
+        err.message().contains("3600"),
+        "error should cite the 3600s bound, got: {}",
+        err.message()
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn rejects_zero_batch_size() -> TestResult<()> {
+async fn rejects_below_minimum_capture_size() -> TestResult<()> {
     let mut config = TerminalConfig::default();
-    config.max_capture_bytes = Bytes::from_bytes(32); // below minimum
+    config.max_capture_bytes = Bytes::from_bytes(32); // below 64B minimum
 
-    assert!(config.validate_config().is_err());
+    let err = config.validate_config().unwrap_err();
+    assert!(
+        err.message().contains("64"),
+        "error should cite the 64B minimum, got: {}",
+        err.message()
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn rejects_overlarge_capture_size() -> TestResult<()> {
     let mut config = TerminalConfig::default();
-    config.max_capture_bytes = Bytes::from_bytes(2 * 1024 * 1024);
+    config.max_capture_bytes = Bytes::from_bytes(2 * 1024 * 1024); // above 1MB maximum
 
-    assert!(config.validate_config().is_err());
+    let err = config.validate_config().unwrap_err();
+    assert!(
+        err.message().contains("1MB") || err.message().contains("1048576"),
+        "error should cite the 1MB bound, got: {}",
+        err.message()
+    );
     Ok(())
 }
 
@@ -59,12 +74,20 @@ async fn rejects_path_traversal_inputs() -> TestResult<()> {
         shell: "bash".to_string(),
     }];
 
-    assert!(config.validate_config().is_err());
+    let err = config.validate_config().unwrap_err();
+    assert!(
+        err.message().to_lowercase().contains("path") || err.message().contains("Invalid"),
+        "error should describe a path problem, got: {}",
+        err.message()
+    );
     Ok(())
 }
 
+/// Invariant: a maximally-broken config fails validation.
+/// Note: validate_config bail-fast returns the FIRST error encountered —
+/// multiple violations do not produce multiple error messages.
 #[sinex_test]
-async fn multiple_validation_errors_are_reported() -> TestResult<()> {
+async fn maximally_invalid_config_fails_validation() -> TestResult<()> {
     let config = TerminalConfig {
         history_sources: vec![HistorySourceConfig {
             path: Utf8PathBuf::from("../invalid"),
@@ -74,7 +97,13 @@ async fn multiple_validation_errors_are_reported() -> TestResult<()> {
         max_capture_bytes: Bytes::from_bytes(0),
     };
 
-    let result = config.validate_config();
-    assert!(result.is_err(), "config with multiple violations should fail validation");
+    let err = config
+        .validate_config()
+        .expect_err("config with multiple violations must fail validation");
+    // Bail-fast: returns the first error (path validation), which is a configuration error.
+    assert!(
+        err.is_client_error(),
+        "validation error should be a client error, got: {err}"
+    );
     Ok(())
 }
