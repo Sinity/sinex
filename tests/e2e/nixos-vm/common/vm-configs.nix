@@ -36,7 +36,7 @@
     };
   };
   
-  # Performance testing VM
+  # Performance testing VM — deterministic virtual time via -icount
   performance = {
     virtualisation = {
       memorySize = 4096;
@@ -48,9 +48,20 @@
         "-enable-kvm"
         "-cpu host"
         "-smp 4"
+        # Deterministic instruction counter: decouples VM virtual time from host load.
+        # Throughput measurements reproducible across CI machines and developer laptops.
+        "-icount"
+        "shift=4,align=off,sleep=off"
       ];
     };
-    
+
+    # Bench workspace on tmpfs: eliminates disk I/O from timing
+    fileSystems."/tmp/sinex-bench" = {
+      device = "tmpfs";
+      fsType = "tmpfs";
+      options = [ "size=2g" "mode=1777" "nosuid" "nodev" ];
+    };
+
     # Tune kernel for performance
     boot.kernel.sysctl = {
       "vm.swappiness" = 10;
