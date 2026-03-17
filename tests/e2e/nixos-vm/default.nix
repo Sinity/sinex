@@ -67,4 +67,14 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli xtask;
   };
 
+  # ─── Environmental hostility ──────────────────────────────────────────────────
+
+  "hostile-host" = import ./test-scenarios/hostile-host.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "migration-stress" = import ./test-scenarios/migration-stress.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
 }
