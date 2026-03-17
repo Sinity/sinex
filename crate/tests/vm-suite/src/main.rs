@@ -42,7 +42,8 @@ async fn main() -> Result<()> {
             categories::smoke::run(&mut runner, &args.database_url).await?;
             categories::integration::run(&mut runner, &args.database_url).await?;
         }
-        other => bail!("Unknown category: {other}. Valid: smoke, integration, all"),
+        "concurrency" => categories::concurrency::run(&mut runner)?,
+        other => bail!("Unknown category: {other}. Valid: smoke, integration, all, concurrency"),
     }
 
     runner.finish()

@@ -65,7 +65,7 @@
   # ─── xtask concurrency (requires pre-built xtask binary) ─────────────────────
 
   "xtask-concurrency" = import ./test-scenarios/xtask-concurrency.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli xtask;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli xtask sinexVmTestSuite;
   };
 
   # ─── Environmental hostility ──────────────────────────────────────────────────
