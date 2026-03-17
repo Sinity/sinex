@@ -10,7 +10,7 @@ use xtask::sandbox::prelude::*;
 /// Each scope gets its own NATS namespace and ingestd consumer, so event
 /// counts observed via `wait_for_event_count` must be scope-local.
 #[sinex_test]
-#[ignore = "requires multi-namespace infrastructure"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 

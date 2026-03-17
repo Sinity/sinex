@@ -5,7 +5,7 @@ use sinex_primitives::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore = "performance-only ordering checks are excluded from the default suite"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn perf_uuid_sequence_ordering_validation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -37,7 +37,7 @@ async fn perf_uuid_sequence_ordering_validation(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-#[ignore = "performance-only ordering checks are excluded from the default suite"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn perf_concurrent_uuid_generation_ordering(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -86,7 +86,7 @@ async fn perf_concurrent_uuid_generation_ordering(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-#[ignore = "performance-only ordering checks are excluded from the default suite"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn perf_database_ordering_consistency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

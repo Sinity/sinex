@@ -12,7 +12,7 @@ use xtask::sandbox::prelude::*;
 /// Start a pipeline, seed a few events, then immediately request shutdown.
 /// Verifies the pipeline terminates cleanly without panicking or hanging.
 #[sinex_test]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -37,7 +37,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
 
 /// Send multiple concurrent shutdown signals and verify no double-free or panic.
 #[sinex_test]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
@@ -79,7 +79,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResu
 /// Heavy concurrent event seeding on a single pipeline, verifying all events
 /// arrive intact without data corruption.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
