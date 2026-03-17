@@ -182,6 +182,239 @@ async fn test_regression_scan_empty_on_clean_history() -> ::xtask::sandbox::Test
     Ok(())
 }
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+/// Seed a check invocation with specific diagnostic counts on a package.
+/// Also records `invocation_packages` so the "latest per package" CTE can find it.
+fn seed_check_with_diagnostics(
+    db: &HistoryDb,
+    package: &str,
+    errors: usize,
+    warnings: usize,
+    fixable: usize,
+    duration: f64,
+) -> Result<i64> {
+    let inv = seed_invocation(db, "check", InvocationStatus::Failed, duration)?;
+    db.record_compiled_packages(inv, &HashSet::from([package.to_string()]))?;
+    for i in 0..errors {
+        db.record_diagnostic(inv, &make_diag("error", package, false, &format!("e{i}")))?;
+    }
+    for i in 0..warnings {
+        let is_fixable = i < fixable;
+        db.record_diagnostic(inv, &make_diag("warning", package, is_fixable, &format!("w{i}")))?;
+    }
+    Ok(inv)
+}
+
+// ─── workspace_health_report: build_score formula ────────────────────────────
+
+/// Formula: build_score = clamp(100 - errors*10 - warnings/5, 0, 100)
+/// 5 errors + 20 warnings → 100 - 50 - 4 = 46
+#[sinex_test]
+async fn test_build_score_with_5_errors_20_warnings() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_with_diagnostics(&db, "sinex-primitives", 5, 20, 0, 10.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let report = analysis.workspace_health_report()?;
+    assert_eq!(report.build_score, 46, "build_score: 100 - 5*10 - 20/5 = 46");
+    assert_eq!(report.error_count, 5);
+    assert_eq!(report.warning_count, 20);
+    Ok(())
+}
+
+/// Zero diagnostics → build_score = 100
+#[sinex_test]
+async fn test_build_score_zero_diagnostics_is_100() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    let analysis = HistoryAnalysis::new(&db);
+    let report = analysis.workspace_health_report()?;
+    assert_eq!(report.build_score, 100, "zero diagnostics → build_score 100");
+    Ok(())
+}
+
+/// 10 errors → 100 - 100 - 0 = 0 (clamped, not negative)
+#[sinex_test]
+async fn test_build_score_clamped_to_zero_on_many_errors() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_with_diagnostics(&db, "sinex-db", 10, 0, 0, 8.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let report = analysis.workspace_health_report()?;
+    assert_eq!(report.build_score, 0, "10 errors clamps build_score to 0");
+    Ok(())
+}
+
+/// Full composite score: 5 errors + 20 warnings, no tests, no velocity.
+/// build=46, test=75, velocity=75 → score = 46*0.5 + 75*0.3 + 75*0.2 = 23+22.5+15 = 60.5 → 61
+#[sinex_test]
+async fn test_composite_score_formula() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_with_diagnostics(&db, "sinex-primitives", 5, 20, 0, 10.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let report = analysis.workspace_health_report()?;
+    assert_eq!(report.build_score, 46);
+    assert_eq!(report.test_score, 75, "no test data → default 75");
+    assert_eq!(report.velocity_score, 75, "insufficient invocations → default 75");
+    assert_eq!(report.score, 61, "46*0.5 + 75*0.3 + 75*0.2 = 60.5 → rounds to 61");
+    Ok(())
+}
+
+/// Clean workspace → perfect scores → score = 100
+#[sinex_test]
+async fn test_composite_score_clean_workspace_is_100() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    let analysis = HistoryAnalysis::new(&db);
+    let report = analysis.workspace_health_report()?;
+    // No data: build=100, test=75, velocity=75 → 100*0.5 + 75*0.3 + 75*0.2 = 50+22.5+15 = 87.5 → 88
+    assert_eq!(report.build_score, 100);
+    assert_eq!(report.score, 88, "100*0.5 + 75*0.3 + 75*0.2 = 87.5 → 88");
+    Ok(())
+}
+
+// ─── velocity_trends: delta_pct and trend label ───────────────────────────────
+
+/// Seed N successful check invocations. Higher N → higher ID → DESC-first (more "recent").
+fn seed_check_invocations(db: &HistoryDb, n: usize, duration: f64) -> Result<()> {
+    for _ in 0..n {
+        seed_invocation(db, "check", InvocationStatus::Success, duration)?;
+    }
+    Ok(())
+}
+
+/// Insert 4 at 20s (older by ID) then 4 at 10s (newer by ID).
+/// DESC order → [10,10,10,10,20,20,20,20], mid=4.
+/// delta_pct = (10-20)/20*100 = -50 → "faster"
+#[sinex_test]
+async fn test_velocity_trend_detects_faster_builds() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_invocations(&db, 4, 20.0)?;  // older by insertion order
+    seed_check_invocations(&db, 4, 10.0)?;  // newer by insertion order → first in DESC
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends.iter().find(|t| t.command == "check").expect("check trend present");
+    let delta = check.delta_pct.expect("delta_pct should be present with 8 data points");
+    assert!(
+        (delta - (-50.0)).abs() < 1.0,
+        "expected delta_pct ≈ -50, got {delta}"
+    );
+    assert_eq!(check.trend, "faster");
+    Ok(())
+}
+
+/// Insert 4 at 10s (older) then 4 at 20s (newer by ID → first in DESC).
+/// delta_pct = (20-10)/10*100 = 100 → "slower"
+#[sinex_test]
+async fn test_velocity_trend_detects_slower_builds() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_invocations(&db, 4, 10.0)?;  // older by insertion order
+    seed_check_invocations(&db, 4, 20.0)?;  // newer → first in DESC
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends.iter().find(|t| t.command == "check").expect("check trend present");
+    let delta = check.delta_pct.expect("delta_pct should be present");
+    assert!(
+        (delta - 100.0).abs() < 1.0,
+        "expected delta_pct ≈ 100, got {delta}"
+    );
+    assert_eq!(check.trend, "slower");
+    Ok(())
+}
+
+/// All same duration → delta_pct = 0 → "stable"
+#[sinex_test]
+async fn test_velocity_trend_stable_when_constant() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_invocations(&db, 8, 15.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends.iter().find(|t| t.command == "check").expect("check trend");
+    assert_eq!(check.trend, "stable");
+    let delta = check.delta_pct.expect("delta_pct present");
+    assert!((delta).abs() < 0.01, "expected delta_pct ≈ 0, got {delta}");
+    Ok(())
+}
+
+/// < 4 invocations → trend is "no_data", delta_pct is None
+#[sinex_test]
+async fn test_velocity_trend_no_data_with_few_invocations() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_invocations(&db, 3, 10.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends.iter().find(|t| t.command == "check").expect("check trend");
+    assert_eq!(check.trend, "no_data");
+    assert!(check.delta_pct.is_none(), "no delta_pct with insufficient data");
+    Ok(())
+}
+
+// ─── package_reliability ─────────────────────────────────────────────────────
+
+/// When all test runs are within 7d (and thus also within 30d), 7d=30d → "stable"
+///
+/// Note: `package_reliability` uses `get_known_packages()` which reads from
+/// `build_diagnostics`. We must seed at least one diagnostic to make the package
+/// appear. The test invocations are "recent" so 7d rate == 30d rate → "stable".
+#[sinex_test]
+async fn test_reliability_stable_when_rates_identical() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    // Register package in build_diagnostics so get_known_packages() finds it
+    seed_check_with_diagnostics(&db, "sinex-node-sdk", 0, 1, 0, 2.0)?;
+    // 8 pass + 2 fail for "sinex-node-sdk" (80% pass rate, same in both windows)
+    let inv = seed_invocation(&db, "test", InvocationStatus::Failed, 5.0)?;
+    seed_tests(&db, inv, "sinex-node-sdk", 8, 2)?;
+
+    let analysis = HistoryAnalysis::new(&db);
+    let reliability = analysis.package_reliability(10)?;
+    let pkg = reliability.iter().find(|r| r.package == "sinex-node-sdk")
+        .expect("sinex-node-sdk should appear (registered via build_diagnostics)");
+    assert_eq!(pkg.trend, "stable", "same data in 7d and 30d windows → stable");
+    assert!((pkg.pass_rate - 0.8).abs() < f64::EPSILON, "pass rate {}", pkg.pass_rate);
+    Ok(())
+}
+
+// ─── recommendations ─────────────────────────────────────────────────────────
+
+/// Errors → critical "build" recommendation.
+#[sinex_test]
+async fn test_recommendations_critical_on_errors() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    seed_check_with_diagnostics(&db, "sinex-primitives", 2, 0, 0, 10.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let recs = analysis.recommendations()?;
+    let critical = recs.iter().find(|r| r.severity == "critical" && r.category == "build");
+    assert!(critical.is_some(), "should emit critical build recommendation on errors");
+    assert_eq!(critical.unwrap().action, "xtask check --lint");
+    Ok(())
+}
+
+/// Fixable diagnostics → warning recommendation with xtask fix --smart.
+#[sinex_test]
+async fn test_recommendations_warning_on_fixable() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    // 0 errors, 3 warnings of which 2 are fixable
+    seed_check_with_diagnostics(&db, "sinex-db", 0, 3, 2, 5.0)?;
+    let analysis = HistoryAnalysis::new(&db);
+    let recs = analysis.recommendations()?;
+    let warn = recs.iter().find(|r| r.severity == "warning" && r.action == "xtask fix --smart");
+    assert!(warn.is_some(), "should emit fix --smart warning on fixable diagnostics");
+    Ok(())
+}
+
+/// Clean workspace → no recommendations at all.
+#[sinex_test]
+async fn test_recommendations_empty_on_clean_workspace() -> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+    let analysis = HistoryAnalysis::new(&db);
+    let recs = analysis.recommendations()?;
+    // Without errors, fixable diagnostics, or passing test packages, no recommendations
+    let critical_or_warning: Vec<_> = recs.iter()
+        .filter(|r| r.severity == "critical" || (r.severity == "warning" && r.action == "xtask fix --smart"))
+        .collect();
+    assert!(critical_or_warning.is_empty(), "clean workspace should emit no critical/fix recommendations");
+    Ok(())
+}
+
+// ─── pass rate aggregation ────────────────────────────────────────────────────
+
 /// pass rate aggregates across multiple invocations, not just the last one.
 #[sinex_test]
 async fn test_pass_rate_aggregates_across_invocations() -> ::xtask::sandbox::TestResult<()> {
