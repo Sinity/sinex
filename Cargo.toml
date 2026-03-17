@@ -197,7 +197,7 @@ console-subscriber = "0.4"
 
 # IDs and time
 
-uuid = { version = "1.17.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.17.0", features = ["v4", "v5", "v7", "serde"] }
 
 # HTTP and metrics
 axum = "0.7"
@@ -248,6 +248,7 @@ rstest = "0.25"
 insta = { version = "1.42", features = ["json", "yaml", "redactions"] }
 tracing-test = "0.2"
 turmoil = "0.6"
+trybuild = { version = "1.0", features = ["diff"] }
 
 # System
 gethostname = "0.4"
