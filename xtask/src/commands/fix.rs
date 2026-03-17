@@ -1,8 +1,6 @@
 use crate::cargo_diagnostics::run_cargo_clippy;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::config::config;
 use crate::graph::WorkspaceGraph;
-use crate::history::HistoryDb;
 use crate::preflight;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, eyre};
@@ -194,17 +192,17 @@ impl FixCommand {
     /// Resolve packages with fixable diagnostics from history DB.
     /// Falls back to normal resolve_packages() if no data available.
     fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
-        let cfg = config();
-        let db = if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
-            db
-        } else {
-            if ctx.is_human() {
-                println!("No diagnostic history available, falling back to normal fix...");
+        let fixable = match ctx.try_with_history_db(|db| {
+            db.get_current_diagnostics(None, None, None, None, true)
+        }) {
+            Some(result) => result?,
+            None => {
+                if ctx.is_human() {
+                    println!("No diagnostic history available, falling back to normal fix...");
+                }
+                return self.resolve_packages();
             }
-            return self.resolve_packages();
         };
-
-        let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
 
         if fixable.is_empty() {
             if ctx.is_human() {

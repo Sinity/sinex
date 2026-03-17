@@ -294,7 +294,7 @@ struct SummaryData {
 }
 
 /// Collect all data for --summary in parallel threads.
-fn collect_summary_data() -> SummaryData {
+fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     let nats_port = current_nats_port();
     let cfg = config();
 
@@ -476,12 +476,11 @@ fn collect_summary_data() -> SummaryData {
             health_report,
             velocity,
             recommendations,
-        ) = HistoryDb::open(&cfg.history_db_path())
-            .ok()
-            .map(|h| {
+        ) = ctx
+            .with_history_db(|h: &HistoryDb| {
                 let r = h.get_recent(50, None).unwrap_or_default();
                 let d = h.get_current_diagnostic_counts().unwrap_or_default();
-                let flaky = h.get_flaky_tests(50).map(|v| v.len()).unwrap_or(0);
+                let flaky = h.get_flaky_tests(50).map(|v: Vec<_>| v.len()).unwrap_or(0);
                 let synthetic = h.is_synthetic;
 
                 // Error package names for contextual display
@@ -489,7 +488,7 @@ fn collect_summary_data() -> SummaryData {
                 let err_pkgs: Vec<String> = DiagnosticQuery::new()
                     .level("error")
                     .limit(50)
-                    .run(&h)
+                    .run(h)
                     .ok()
                     .map(|diags| {
                         let mut pkgs: Vec<String> =
@@ -501,12 +500,12 @@ fn collect_summary_data() -> SummaryData {
                     .unwrap_or_default();
 
                 // Analytics (SQLite-local, fast)
-                let analysis = HistoryAnalysis::new(&h);
+                let analysis = HistoryAnalysis::new(h);
                 let hr = analysis.workspace_health_report().ok();
                 let vel = analysis.velocity_trends().ok().unwrap_or_default();
                 let recs = analysis.recommendations().ok().unwrap_or_default();
 
-                (r, d, err_pkgs, flaky, synthetic, hr, vel, recs)
+                Ok((r, d, err_pkgs, flaky, synthetic, hr, vel, recs))
             })
             .unwrap_or_default();
 
@@ -578,7 +577,7 @@ fn parse_git_age(age: &str) -> Option<i64> {
 
 /// Execute --summary (rich multi-section MOTD)
 fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
-    let data = collect_summary_data();
+    let data = collect_summary_data(ctx);
 
     let now = time::OffsetDateTime::now_utc();
     let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
@@ -1323,7 +1322,7 @@ fn current_nats_port() -> u16 {
 }
 
 /// Collect one round of workspace status data.
-fn collect_status_data() -> (
+fn collect_status_data(ctx: &CommandContext) -> (
     bool,
     u64,
     bool,
@@ -1393,9 +1392,8 @@ fn collect_status_data() -> (
                 .and_then(|jm| jm.list_recent(20).ok())
                 .unwrap_or_default();
 
-            let recent = HistoryDb::open(&cfg.history_db_path())
-                .ok()
-                .and_then(|db| db.get_recent(10, None).ok())
+            let recent = ctx
+                .with_history_db(|db: &HistoryDb| db.get_recent(10, None))
                 .unwrap_or_default();
 
             let (pg, pg_lat, nats, nats_lat, svcs) =
@@ -1429,7 +1427,7 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
         active_jobs,
         all_jobs,
         recent,
-    ) = collect_status_data();
+    ) = collect_status_data(ctx);
 
     let recent_failures = all_jobs
         .iter()

@@ -541,10 +541,8 @@ impl XtaskCommand for CheckCommand {
 /// This pre-warms the test binary compilation so `xtask test` starts faster.
 /// Fire-and-forget: errors are silently ignored since this is a pure optimization.
 fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
-    let cfg = crate::config::config();
-    let probability = crate::history::HistoryDb::open(&cfg.history_db_path())
-        .ok()
-        .and_then(|db| db.get_transition_probability("check", "test", 5, 20).ok())
+    let probability = ctx
+        .with_history_db(|db| db.get_transition_probability("check", "test", 5, 20))
         .unwrap_or(0.0);
 
     if probability > 70.0 {
