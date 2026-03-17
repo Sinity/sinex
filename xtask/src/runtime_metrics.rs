@@ -89,11 +89,12 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         .await?;
 
     // 1. Heartbeat status from node_manifests
-    let heartbeat_row = sqlx::query_as::<_, HeartbeatRow>(
+    let heartbeat_row = sqlx::query_as!(
+        HeartbeatRow,
         r#"
         SELECT
             status,
-            EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::bigint AS age_secs
+            EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::bigint AS "age_secs: i64"
         FROM core.node_manifests
         WHERE node_name = 'sinex-ingestd'
         ORDER BY last_heartbeat_at DESC NULLS LAST
@@ -120,9 +121,10 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     };
 
     // 2. Latest consumer lag from metric.gauge events
-    let lag_row = sqlx::query_scalar::<_, f64>(
+    // `(payload->>'value')::float8` is non-null when the row exists (gauge always has a value)
+    let consumer_lag_pending = sqlx::query_scalar!(
         r#"
-        SELECT (payload->>'value')::float8
+        SELECT (payload->>'value')::float8 AS "value!"
         FROM core.events
         WHERE source = 'sinex'
           AND event_type = 'metric.gauge'
@@ -135,9 +137,10 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     .await?;
 
     // 3. Latest batch latency from batch.stats events
-    let batch_row = sqlx::query_scalar::<_, f64>(
+    // `(payload->>'fetch_to_ack_ms')::float8` is non-null when the row exists
+    let last_batch_latency_ms = sqlx::query_scalar!(
         r#"
-        SELECT (payload->>'fetch_to_ack_ms')::float8
+        SELECT (payload->>'fetch_to_ack_ms')::float8 AS "value!"
         FROM core.events
         WHERE source = 'sinex.ingestd'
           AND event_type = 'batch.stats'
@@ -153,8 +156,8 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     Ok(RuntimeMetrics {
         ingestd_status,
         last_heartbeat_age_secs,
-        consumer_lag_pending: lag_row,
-        last_batch_latency_ms: batch_row,
+        consumer_lag_pending,
+        last_batch_latency_ms,
     })
 }
 
