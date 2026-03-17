@@ -17,7 +17,8 @@ mod runner;
 #[derive(Parser)]
 #[command(name = "run-suite", about = "NixOS VM test suite for sinex")]
 struct Args {
-    /// Test category: smoke | integration | all
+    /// Test category: smoke | integration | all | concurrency |
+    ///   chaos-network-partition | chaos-process-restart | chaos-clock-skew
     #[arg(long, default_value = "smoke")]
     category: String,
 

@@ -34,15 +34,17 @@ const SMOKE_TESTS: &[&str] = &["basic", "basic-flow-unified", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
-    "satellite-matrix",
+    "node-matrix",
     "multi-source",
     "failure-recovery",
-    "node-matrix",
     "kitty-eventsource",
     "mtls-enforcement",
     "sinexctl-e2e",
+    // Environmental hostility tests (Phase 10b/10c)
+    "hostile-host",
+    "migration-stress",
 ];
-const PERFORMANCE_TESTS: &[&str] = &["performance"];
+const PERFORMANCE_TESTS: &[&str] = &["performance", "production-scale"];
 const CHAOS_TESTS: &[&str] = &[
     "chaos-network-partition",
     "chaos-process-restart",
@@ -59,6 +61,8 @@ const EXTENDED_TIMEOUT_SECS: u64 = 1800;
 const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
     "maintenance",
     "performance",
+    "production-scale",
+    "migration-stress",
     "chaos-network-partition",
     "chaos-process-restart",
     "chaos-clock-skew",

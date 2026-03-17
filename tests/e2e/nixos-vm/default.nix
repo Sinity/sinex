@@ -15,6 +15,14 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
+  "basic-flow-unified" = import ./test-scenarios/basic-flow-unified.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "replay-smoke" = import ./test-scenarios/replay-smoke.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
   preflight = import ./preflight_deployment_test.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
     lib = pkgs.lib;
@@ -45,6 +53,14 @@
   };
 
   "mtls-enforcement" = import ./test-scenarios/mtls-enforcement.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "kitty-eventsource" = import ./test-scenarios/kitty-eventsource.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "sinexctl-e2e" = import ./test-scenarios/sinexctl-e2e.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
 
