@@ -352,7 +352,8 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,
         handle_coordination_list_instances, handle_create_entities, handle_create_note,
         handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
-        handle_events_lineage, handle_events_query, handle_gitops_create_source,
+        handle_events_ingest, handle_events_lineage, handle_events_query,
+        handle_gitops_create_source,
         handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
         handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_heartbeat,
@@ -477,6 +478,12 @@ pub(crate) fn build_registry() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
+        // Event ingest (Write - publishes to JetStream)
+        .nats_rpc(
+            "events.ingest",
+            Role::Write,
+            boxed!(handle_events_ingest, 3),
+        )
         // PKM methods (Write)
         .register("pkm.create_note", Role::Write, |params, services, _auth| {
             Box::pin(async move { handle_create_note(services.pkm.as_ref(), params).await })

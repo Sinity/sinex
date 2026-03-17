@@ -10,6 +10,7 @@ pub mod content;
 pub mod coordination;
 pub mod dlq;
 pub mod gitops;
+pub mod ingest;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
@@ -21,6 +22,7 @@ pub mod shadow;
 pub mod system;
 pub mod telemetry;
 
+pub use ingest::handle_events_ingest;
 pub use query::{handle_events_lineage, handle_events_query};
 pub use rpc_handlers::*;
 
