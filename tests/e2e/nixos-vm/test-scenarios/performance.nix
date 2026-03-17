@@ -591,11 +591,47 @@ pkgs.testers.nixosTest {
       autovacuum_analyze_scale_factor = "0.02";
     };
     
-    # Optimize VM for performance testing
+    # ─── Bench workspace on tmpfs ──────────────────────────────────────────────
+    # Eliminates disk I/O latency from throughput measurements.
+    fileSystems."/tmp/sinex-bench" = {
+      device = "tmpfs";
+      fsType = "tmpfs";
+      options = [ "size=2g" "mode=1777" "nosuid" "nodev" ];
+    };
+
+    # ─── VM config for reproducible performance measurement ─────────────────────
     virtualisation = {
       memorySize = 4096;
       diskSize = 8192;
       cores = 4;
+      qemu.options = [
+        "-enable-kvm"
+        "-cpu host"
+        "-smp 4"
+        # Deterministic virtual instruction counter.
+        # Virtual time advances at 2^4 ns per ICOUNT unit, decoupled from host load.
+        # Throughput measurements become reproducible across CI machines and dev laptops.
+        # Host testScript timing (time.sleep, machine.wait_*) is unaffected — those
+        # run on the host, outside the VM's virtual clock.
+        "-icount"
+        "shift=4,align=off,sleep=off"
+      ];
+
+      # Optional CPU pinning for dedicated core isolation.
+      # Set SINEX_BENCH_CPU_AFFINITY=2,3 (or similar) to enable.
+      # Default: no pinning (safe for all CI environments).
+      qemu.package = pkgs.symlinkJoin {
+        name = "qemu-bench";
+        paths = [ pkgs.qemu_kvm ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram $out/bin/qemu-system-x86_64 \
+            --run 'if [ -n "''${SINEX_BENCH_CPU_AFFINITY}" ]; then
+                     exec ${pkgs.util-linux}/bin/taskset \
+                       --cpu-list "''${SINEX_BENCH_CPU_AFFINITY}" "''$0" "''$@"
+                   fi'
+        '';
+      };
     };
   };
 

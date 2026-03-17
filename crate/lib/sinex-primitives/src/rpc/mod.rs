@@ -29,6 +29,7 @@ pub mod content;
 pub mod coordination;
 pub mod dlq;
 pub mod gitops;
+pub mod ingest;
 pub mod lifecycle;
 pub mod methods;
 pub mod nodes;
@@ -37,6 +38,7 @@ pub mod pkm;
 pub mod replay;
 pub mod shadow;
 pub mod system;
+pub mod telemetry;
 
 /// Re-export all RPC types for convenience
 pub mod prelude {
@@ -46,6 +48,7 @@ pub mod prelude {
     pub use super::coordination::*;
     pub use super::dlq::*;
     pub use super::gitops::*;
+    pub use super::ingest::*;
     pub use super::lifecycle::*;
     pub use super::methods;
     pub use super::nodes::*;
@@ -54,4 +57,5 @@ pub mod prelude {
     pub use super::replay::*;
     pub use super::shadow::*;
     pub use super::system::*;
+    pub use super::telemetry::*;
 }

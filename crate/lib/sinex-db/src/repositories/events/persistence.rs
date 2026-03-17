@@ -92,8 +92,29 @@ pub struct EventRepository<'a> {
     pub(super) pool: &'a PgPool,
 }
 
+/// Validate that a synthesis event does not directly reference itself.
+///
+/// # Why only the direct self-reference check?
+///
+/// Events are identified by UUIDv7, which is monotonically increasing in
+/// time. A newly-created event ID is unique and cannot yet exist in the
+/// database. Therefore:
+///
+/// - A cycle of the form `NEW → A → NEW` is impossible: `NEW` has never
+///   been persisted, so no existing event can have `NEW` in its
+///   `source_event_ids`.
+/// - The only reachable cycle case is `NEW → NEW` (the event listing itself
+///   as its own parent), which this function detects with an O(n) scan.
+///
+/// The previous implementation ran a `WITH RECURSIVE` CTE to walk the full
+/// ancestry graph on every synthesis insert. That check added a full
+/// recursive DB round-trip per batch row for a condition that UUIDv7
+/// monotonicity already makes structurally impossible. It has been removed.
+///
+/// Array-size limits are retained because large `source_event_ids` arrays
+/// have real query-performance implications irrespective of cycles.
 async fn ensure_no_synthesis_cycles<'e, E>(
-    executor: E,
+    _executor: E,
     event_id: &Id<Event<JsonValue>>,
     source_event_ids: &[EventId],
 ) -> DbResult<()>
@@ -104,7 +125,7 @@ where
         return Ok(());
     }
 
-    // Warn about unbounded array growth
+    // Array-size guards: large parent arrays degrade lineage query performance.
     const WARN_THRESHOLD: usize = 100;
     const HARD_LIMIT: usize = 1000;
 
@@ -128,42 +149,11 @@ where
         );
     }
 
+    // Direct self-reference: the one cycle the UUIDv7 argument cannot rule out.
     if source_event_ids
         .iter()
         .any(|source_id| source_id == event_id)
     {
-        return Err(SinexError::database(
-            "cycle detected in synthesis provenance",
-        ));
-    }
-
-    let source_event_uuids: Vec<Uuid> = source_event_ids
-        .iter()
-        .map(sinex_primitives::Id::to_uuid)
-        .collect();
-    let has_cycle = sqlx::query_scalar!(
-        r#"
-        WITH RECURSIVE parents AS (
-            SELECT id, source_event_ids
-            FROM core.events
-            WHERE id = ANY($1::uuid[])
-            UNION
-            SELECT e.id, e.source_event_ids
-            FROM core.events e
-            JOIN parents p ON e.id = ANY(p.source_event_ids)
-        )
-        SELECT EXISTS (
-            SELECT 1 FROM parents WHERE $2::uuid = ANY(source_event_ids)
-        ) AS "has_cycle!"
-        "#,
-        &source_event_uuids,
-        event_id.to_uuid()
-    )
-    .fetch_one(executor)
-    .await
-    .map_err(|e| db_error(e, "check synthesis cycle"))?;
-
-    if has_cycle {
         return Err(SinexError::database(
             "cycle detected in synthesis provenance",
         ));

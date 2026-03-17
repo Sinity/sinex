@@ -1835,4 +1835,275 @@ mod tests {
         ingest_handle.stop().await?;
         Ok(())
     }
+
+    // ─── PTY-boundary filtering tests ────────────────────────────────────────────
+    //
+    // These tests are inline (not in tests/) because HistoryWatcherContext is
+    // private — extracting to tests/ would require exposing internal structs.
+    // Each test simulates writing what a real terminal session would write to
+    // $HISTFILE and asserts the canonical captured commands.
+
+    struct WatcherFixture {
+        ctx: HistoryWatcherContext,
+        commands: Arc<Mutex<Vec<String>>>,
+        history_path: std::path::PathBuf,
+        _temp_dir: tempfile::TempDir,
+        _ingest_handle: xtask::sandbox::TestIngestdHandle,
+    }
+
+    async fn make_watcher(
+        test_ctx: &TestContext,
+        test_name: &str,
+        max_capture_bytes: u64,
+    ) -> TestResult<WatcherFixture> {
+        let TestRuntime { runtime, nats, .. } = TestRuntimeBuilder::new(test_ctx, test_name)
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: test_ctx.database_url().to_string(),
+            work_dir: None,
+            ..Default::default()
+        };
+        let ingest_handle =
+            start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/tmp/test-history",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("history.txt");
+        let state_path = temp_dir.path().join("history_state.json");
+        let history_utf8 = Utf8PathBuf::from_path_buf(history_path.clone())
+            .map_err(|p| color_eyre::eyre::eyre!("path not utf8: {}", p.display()))?;
+
+        let mut ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "bash".to_string(),
+            path: history_utf8,
+            max_capture_bytes: Bytes::from_bytes(max_capture_bytes),
+            polling_interval: Duration::from_millis(50),
+            state_path: Some(state_path),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            is_fish_sqlite: false,
+        };
+
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        #[cfg(test)]
+        {
+            ctx.processed_commands = Some(commands.clone());
+        }
+
+        Ok(WatcherFixture {
+            ctx,
+            commands,
+            history_path,
+            _temp_dir: temp_dir,
+            _ingest_handle: ingest_handle,
+        })
+    }
+
+    /// Invariant: commands containing null bytes (\0) are rejected — they indicate
+    /// binary data or corrupted history entries, not shell commands.
+    #[sinex_test]
+    async fn history_rejects_null_byte_commands(ctx: TestContext) -> TestResult<()> {
+        let mut fix = make_watcher(&ctx, "null-byte-filter", 4096).await?;
+        tokio::fs::write(&fix.history_path, "echo hello\necho\x00null\ngit status\n").await?;
+
+        let mut offset = 0u64;
+        let mut line_number = 0u64;
+        let mut last_inode: Option<u64> = None;
+        let mut hashes: VecDeque<u64> = VecDeque::new();
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let commands = fix.commands.lock().await.clone();
+        assert!(
+            !commands.iter().any(|c| c.contains('\0')),
+            "commands with null bytes must be rejected, got: {commands:?}"
+        );
+        assert!(
+            commands.contains(&"echo hello".to_string()),
+            "clean commands before null-byte line must still be captured, got: {commands:?}"
+        );
+        assert!(
+            commands.contains(&"git status".to_string()),
+            "clean commands after null-byte line must still be captured, got: {commands:?}"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    /// Invariant: commands containing ANSI escape sequences or other non-printable
+    /// control characters are rejected — they indicate readline corruption or terminal
+    /// escape sequences that were erroneously written to the history file.
+    #[sinex_test]
+    async fn history_rejects_ansi_escape_commands(ctx: TestContext) -> TestResult<()> {
+        let mut fix = make_watcher(&ctx, "ansi-escape-filter", 4096).await?;
+        // \x1b = ESC (start of ANSI escape sequence like \x1b[A = cursor up)
+        tokio::fs::write(
+            &fix.history_path,
+            "echo clean\necho\x1b[Acorrupted\nls -la\n",
+        )
+        .await?;
+
+        let mut offset = 0u64;
+        let mut line_number = 0u64;
+        let mut last_inode: Option<u64> = None;
+        let mut hashes: VecDeque<u64> = VecDeque::new();
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let commands = fix.commands.lock().await.clone();
+        assert!(
+            !commands.iter().any(|c| c.contains('\x1b')),
+            "commands with ANSI escapes must be rejected, got: {commands:?}"
+        );
+        assert!(
+            commands.contains(&"echo clean".to_string()),
+            "clean commands must be captured, got: {commands:?}"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    /// Invariant: the same command appearing twice in the history file produces
+    /// exactly one captured event — the dedup window prevents duplicate ingestion.
+    #[sinex_test]
+    async fn history_deduplicates_repeated_commands(ctx: TestContext) -> TestResult<()> {
+        let mut fix = make_watcher(&ctx, "dedup-filter", 4096).await?;
+        tokio::fs::write(
+            &fix.history_path,
+            "git status\ngit diff\ngit status\n",
+        )
+        .await?;
+
+        let mut offset = 0u64;
+        let mut line_number = 0u64;
+        let mut last_inode: Option<u64> = None;
+        let mut hashes: VecDeque<u64> = VecDeque::new();
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let commands = fix.commands.lock().await.clone();
+        assert_eq!(
+            commands.iter().filter(|c| c.as_str() == "git status").count(),
+            1,
+            "repeated 'git status' must be deduplicated to exactly 1 capture, got: {commands:?}"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    /// Invariant: a partial line at the end of the history file (no trailing newline)
+    /// is not captured on the first poll — it's held until the line is complete.
+    /// This prevents capturing half-written commands that are still being typed.
+    #[sinex_test]
+    async fn history_withholds_incomplete_trailing_line(ctx: TestContext) -> TestResult<()> {
+        let mut fix = make_watcher(&ctx, "incomplete-line", 4096).await?;
+        // "echo complete" has a newline; "echo incomplete" does not
+        tokio::fs::write(&fix.history_path, "echo complete\necho incomplete").await?;
+
+        let mut offset = 0u64;
+        let mut line_number = 0u64;
+        let mut last_inode: Option<u64> = None;
+        let mut hashes: VecDeque<u64> = VecDeque::new();
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let after_first_poll = fix.commands.lock().await.clone();
+        assert!(
+            after_first_poll.contains(&"echo complete".to_string()),
+            "complete line must be captured on first poll, got: {after_first_poll:?}"
+        );
+        assert!(
+            !after_first_poll.contains(&"echo incomplete".to_string()),
+            "incomplete line (no trailing newline) must NOT be captured on first poll, got: {after_first_poll:?}"
+        );
+
+        // Now append the terminating newline — next poll must capture the previously held line
+        let mut f = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&fix.history_path)
+            .await?;
+        tokio::io::AsyncWriteExt::write_all(&mut f, b"\n").await?;
+        f.flush().await?;
+        drop(f);
+
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let after_second_poll = fix.commands.lock().await.clone();
+        assert!(
+            after_second_poll.contains(&"echo incomplete".to_string()),
+            "line completed by newline must be captured on subsequent poll, got: {after_second_poll:?}"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    /// Invariant: a command whose byte length exceeds `max_capture_bytes` is dropped
+    /// entirely — the ingestor does not truncate silently, it skips and logs.
+    #[sinex_test]
+    async fn history_rejects_oversized_commands(ctx: TestContext) -> TestResult<()> {
+        let max_bytes = 64u64;
+        let mut fix = make_watcher(&ctx, "oversized-cmd", max_bytes).await?;
+
+        let oversized = "A".repeat(max_bytes as usize + 1);
+        let content = format!("echo small\n{oversized}\ngit log\n");
+        tokio::fs::write(&fix.history_path, &content).await?;
+
+        let mut offset = 0u64;
+        let mut line_number = 0u64;
+        let mut last_inode: Option<u64> = None;
+        let mut hashes: VecDeque<u64> = VecDeque::new();
+        #[cfg(unix)]
+        let _ = fix
+            .ctx
+            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .await;
+
+        let commands = fix.commands.lock().await.clone();
+        assert!(
+            !commands.iter().any(|c| c.len() > max_bytes as usize),
+            "oversized command must be dropped entirely (not truncated), got: {commands:?}"
+        );
+        assert!(
+            commands.contains(&"echo small".to_string()),
+            "commands within size limit must still be captured, got: {commands:?}"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
 }

@@ -7,7 +7,6 @@ use tabled::{builder::Builder, settings::Style};
 use color_eyre::eyre::WrapErr;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::config::config;
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
     DiagnosticQuery, HistoryDb, InvocationStatus, InvocationTimelineEntry, LifecycleStatus,
@@ -350,7 +349,7 @@ impl XtaskCommand for HistoryCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
         ctx.try_with_history_db(|db| {
-            db.warn_if_synthetic(&crate::config::config().history_db_path());
+            db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
             HistorySubcommand::List {
                 limit,
@@ -2794,7 +2793,7 @@ fn execute_query(db: &HistoryDb, sql: &str, ctx: &CommandContext) -> Result<Comm
 
 /// I2: Open an interactive SQLite shell on the history database.
 fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
-    let db_path = config().history_db_path();
+    let db_path = ctx.history_db_path();
     if !db_path.exists() {
         return Err(color_eyre::eyre::eyre!(
             "History database not found at {}. Run a command first.",
@@ -3175,7 +3174,7 @@ fn execute_seed(
 
     seed_history(db, &opts)?;
 
-    let db_path = config().history_db_path();
+    let db_path = ctx.history_db_path();
     if ctx.is_human() {
         println!("  ✓ Done. Database: {}", db_path.display());
         println!("  The database is now marked synthetic.");

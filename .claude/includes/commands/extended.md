@@ -52,10 +52,19 @@ See `xtask exercise --help` for all flags.
 ```bash
 # NixOS compatibility gate via `xtask test vm` subcommand
 xtask test vm                            # Run smoke tests (fast, ~5-10min)
-xtask test vm --category smoke           # Explicit smoke category
-xtask test vm --category integration     # Integration scenarios
+xtask test vm --category smoke           # basic, basic-flow-unified, replay-smoke
+xtask test vm --category integration     # preflight, maintenance, node-matrix, multi-source,
+                                         #   failure-recovery, kitty-eventsource, mtls-enforcement,
+                                         #   sinexctl-e2e, hostile-host, migration-stress
+xtask test vm --category performance     # performance (icount-deterministic), production-scale
+xtask test vm --category chaos           # chaos-network-partition, chaos-process-restart,
+                                         #   chaos-clock-skew, xtask-concurrency
 xtask test vm --category all             # Full suite
 xtask test vm --parallel                 # Parallel execution
+xtask test vm --list                     # Show all tests by category
+
+# Performance bench: set CPU affinity for dedicated isolation (optional)
+SINEX_BENCH_CPU_AFFINITY=2,3 xtask test vm --category performance
 
 # VM lifecycle (infrastructure management)
 xtask infra vm start minimal             # Boot minimal NixOS VM

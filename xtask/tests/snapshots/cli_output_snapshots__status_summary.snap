@@ -1,0 +1,28 @@
+---
+source: xtask/tests/cli_output_snapshots.rs
+expression: json
+---
+{
+  "command": "status",
+  "data": {
+    "active_jobs": "[volatile]",
+    "diagnostics": "[volatile]",
+    "files_changed": "[volatile]",
+    "git": "[volatile]",
+    "health": "[volatile]",
+    "health_indicator": "[volatile]",
+    "health_score": "[volatile]",
+    "infrastructure": "[volatile]",
+    "last_commands": "[volatile]",
+    "last_commit": "[volatile]",
+    "recommendations": "[volatile]",
+    "stash_count": "[volatile]",
+    "summary": "[volatile]",
+    "uncommitted_count": "[volatile]",
+    "velocity": "[volatile]",
+    "warnings": "[volatile]"
+  },
+  "duration_secs": "[duration]",
+  "status": "success",
+  "timestamp": "[timestamp]"
+}
