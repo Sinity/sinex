@@ -9,45 +9,8 @@ use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
-const EVENTS_REQUIRED_COLUMNS: &[&str] = &[
-    "id",
-    "source",
-    "event_type",
-    "host",
-    "payload",
-    "ts_orig",
-    "ts_orig_subnano",
-    "ts_coided",
-    "ts_persisted",
-    "source_material_id",
-    "anchor_byte",
-    "offset_start",
-    "offset_end",
-    "offset_kind",
-    "source_event_ids",
-    "associated_blob_ids",
-    "payload_schema_id",
-    "node_run_id",
-    "temporal_policy",
-    "semantics_version",
-    "scope_key",
-    "equivalence_key",
-    "created_by_operation_id",
-    "node_model",
-];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] =
     &["trg_events_no_update", "trg_events_archive_before_delete"];
-const EVENTS_REQUIRED_CONSTRAINTS: &[&str] = &[
-    "events_source_event_ids_non_empty",
-    "events_source_event_ids_no_nulls",
-    "events_source_material_only_offsets",
-    "events_material_anchor_required",
-    "events_offsets_pairing",
-    "events_offsets_require_kind",
-    "events_offset_order",
-    "events_temporal_policy_valid",
-    "events_node_model_valid",
-];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_material_anchor",
     "ix_events_ts_orig",
@@ -69,7 +32,6 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_superseded_by_event_id",
     "ix_archived_events_source_event_ids",
 ];
-const NODE_MANIFESTS_REQUIRED_COLUMNS: &[&str] = &["status", "last_heartbeat_at"];
 const NODE_MANIFESTS_REQUIRED_INDEXES: &[&str] =
     &["idx_processors_status", "idx_processors_heartbeat"];
 
@@ -112,7 +74,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     ensure_required_extensions(pool).await?;
     execute_sql(pool, BOOTSTRAP_SQL).await?;
     create_tables(pool).await?;
-    enforce_current_state(pool).await?;
+    crate::converge::converge_tables(pool, &crate::converge::convergible_tables()).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
@@ -123,32 +85,25 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
 pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     let mut drifts = Vec::new();
 
+    // Table existence.
     for table in crate::schema::all_tables() {
-        let exists = relation_exists(pool, table.qualified_name).await?;
-        if !exists {
+        if !relation_exists(pool, table.qualified_name).await? {
             drifts.push(format!("missing table {}", table.qualified_name));
         }
     }
 
-    if relation_exists(pool, "core.events").await? {
-        for column in EVENTS_REQUIRED_COLUMNS {
-            if !column_exists(pool, "core", "events", column).await? {
-                drifts.push(format!("missing core.events.{column}"));
-            }
-        }
+    // Column and named constraint gaps — derived from sea-query declarations.
+    let column_gaps =
+        crate::converge::report_column_gaps(pool, &crate::converge::convergible_tables()).await?;
+    drifts.extend(column_gaps);
 
+    // Trigger existence (triggers are managed by CREATE OR REPLACE, not convergence).
+    if relation_exists(pool, "core.events").await? {
         for trigger in EVENTS_REQUIRED_TRIGGERS {
             if !trigger_exists(pool, "core.events", trigger).await? {
                 drifts.push(format!("missing core.events trigger {trigger}"));
             }
         }
-
-        for constraint in EVENTS_REQUIRED_CONSTRAINTS {
-            if !constraint_exists(pool, "core.events", constraint).await? {
-                drifts.push(format!("missing core.events constraint {constraint}"));
-            }
-        }
-
         for index in EVENTS_REQUIRED_INDEXES {
             if !index_exists(pool, "core", "events", index).await? {
                 drifts.push(format!("missing core.events index {index}"));
@@ -165,12 +120,6 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     }
 
     if relation_exists(pool, "core.node_manifests").await? {
-        for column in NODE_MANIFESTS_REQUIRED_COLUMNS {
-            if !column_exists(pool, "core", "node_manifests", column).await? {
-                drifts.push(format!("missing core.node_manifests.{column}"));
-            }
-        }
-
         for index in NODE_MANIFESTS_REQUIRED_INDEXES {
             if !index_exists(pool, "core", "node_manifests", index).await? {
                 drifts.push(format!("missing core.node_manifests index {index}"));
@@ -248,12 +197,6 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     }
 
     execute_sql(pool, &ArchivedEvents::create_table_sql()).await?;
-    Ok(())
-}
-
-async fn enforce_current_state(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_sql(pool, EVENTS_ENFORCEMENT_SQL).await?;
-    execute_sql(pool, NODE_MANIFESTS_ENFORCEMENT_SQL).await?;
     Ok(())
 }
 
@@ -362,33 +305,11 @@ fn render_indexes(stmts: Vec<IndexCreateStatement>) -> Vec<String> {
     stmts.into_iter().map(render_index).collect()
 }
 
-async fn relation_exists(pool: &PgPool, qualified_name: &str) -> Result<bool, ApplyError> {
+pub(crate) async fn relation_exists(pool: &PgPool, qualified_name: &str) -> Result<bool, ApplyError> {
     let exists = sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
         .bind(qualified_name)
         .fetch_one(pool)
         .await?;
-    Ok(exists)
-}
-
-async fn column_exists(
-    pool: &PgPool,
-    schema: &str,
-    table: &str,
-    column: &str,
-) -> Result<bool, ApplyError> {
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
-        )",
-    )
-    .bind(schema)
-    .bind(table)
-    .bind(column)
-    .fetch_one(pool)
-    .await?;
-
     Ok(exists)
 }
 
@@ -407,27 +328,6 @@ async fn trigger_exists(
     )
     .bind(qualified_table)
     .bind(trigger_name)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(exists)
-}
-
-async fn constraint_exists(
-    pool: &PgPool,
-    qualified_table: &str,
-    constraint_name: &str,
-) -> Result<bool, ApplyError> {
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conrelid = to_regclass($1)
-              AND conname = $2
-        )",
-    )
-    .bind(qualified_table)
-    .bind(constraint_name)
     .fetch_one(pool)
     .await?;
 
@@ -497,114 +397,6 @@ CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON sinex_schemas.dlq_events
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-";
-
-const EVENTS_ENFORCEMENT_SQL: &str = r"
-ALTER TABLE core.events
-    ADD COLUMN IF NOT EXISTS ts_coided TIMESTAMPTZ GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED;
-
-ALTER TABLE core.events
-    ADD COLUMN IF NOT EXISTS ts_persisted TIMESTAMPTZ NOT NULL DEFAULT now();
-
--- Slice 3A: Replace node_version with node_run_id
--- Drop the old string column and add the new UUID column
-ALTER TABLE core.events DROP COLUMN IF EXISTS node_version;
-ALTER TABLE core.events ADD COLUMN IF NOT EXISTS node_run_id UUID;
-
--- Synthetic event metadata columns (Slice 3: inline on core.events for derived/synthesized events)
-ALTER TABLE core.events
-    ADD COLUMN IF NOT EXISTS temporal_policy TEXT,
-    ADD COLUMN IF NOT EXISTS semantics_version TEXT,
-    ADD COLUMN IF NOT EXISTS scope_key TEXT,
-    ADD COLUMN IF NOT EXISTS equivalence_key TEXT,
-    ADD COLUMN IF NOT EXISTS created_by_operation_id UUID,
-    ADD COLUMN IF NOT EXISTS node_model TEXT;
-
-ALTER TABLE core.events
-    DROP CONSTRAINT IF EXISTS events_temporal_policy_valid,
-    DROP CONSTRAINT IF EXISTS events_node_model_valid;
-
-ALTER TABLE core.events
-    ADD CONSTRAINT events_temporal_policy_valid
-        CHECK (temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')) NOT VALID,
-    ADD CONSTRAINT events_node_model_valid
-        CHECK (node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')) NOT VALID;
-
-ALTER TABLE core.events VALIDATE CONSTRAINT events_temporal_policy_valid;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_node_model_valid;
-
-ALTER TABLE core.events
-    DROP CONSTRAINT IF EXISTS events_source_event_ids_non_empty,
-    DROP CONSTRAINT IF EXISTS events_source_event_ids_no_nulls,
-    DROP CONSTRAINT IF EXISTS events_source_material_only_offsets,
-    DROP CONSTRAINT IF EXISTS events_material_anchor_required,
-    DROP CONSTRAINT IF EXISTS events_offsets_pairing,
-    DROP CONSTRAINT IF EXISTS events_offsets_require_kind,
-    DROP CONSTRAINT IF EXISTS events_offset_order;
-
-ALTER TABLE core.events
-    ADD CONSTRAINT events_source_event_ids_non_empty
-        CHECK (source_event_ids IS NULL OR cardinality(source_event_ids) > 0) NOT VALID,
-    ADD CONSTRAINT events_source_event_ids_no_nulls
-        CHECK (source_event_ids IS NULL OR array_position(source_event_ids, NULL) IS NULL) NOT VALID,
-    ADD CONSTRAINT events_source_material_only_offsets
-        CHECK (
-            source_material_id IS NOT NULL
-            OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)
-        ) NOT VALID,
-    ADD CONSTRAINT events_material_anchor_required
-        CHECK (source_material_id IS NULL OR anchor_byte IS NOT NULL) NOT VALID,
-    ADD CONSTRAINT events_offsets_pairing
-        CHECK ((offset_start IS NULL) = (offset_end IS NULL)) NOT VALID,
-    ADD CONSTRAINT events_offsets_require_kind
-        CHECK (offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)) NOT VALID,
-    ADD CONSTRAINT events_offset_order
-        CHECK (offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start) NOT VALID;
-
-ALTER TABLE core.events VALIDATE CONSTRAINT events_source_event_ids_non_empty;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_source_event_ids_no_nulls;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_source_material_only_offsets;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_material_anchor_required;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_pairing;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_require_kind;
-ALTER TABLE core.events VALIDATE CONSTRAINT events_offset_order;
-
--- Keep audit.archived_events structurally in sync with core.events.
--- LIKE core.events INCLUDING ALL only runs at CREATE TABLE time, so existing
--- tables need explicit column additions when core.events evolves.
-ALTER TABLE audit.archived_events DROP COLUMN IF EXISTS node_version;
-ALTER TABLE audit.archived_events ADD COLUMN IF NOT EXISTS node_run_id UUID;
-ALTER TABLE audit.archived_events
-    ADD COLUMN IF NOT EXISTS temporal_policy TEXT,
-    ADD COLUMN IF NOT EXISTS semantics_version TEXT,
-    ADD COLUMN IF NOT EXISTS scope_key TEXT,
-    ADD COLUMN IF NOT EXISTS equivalence_key TEXT,
-    ADD COLUMN IF NOT EXISTS created_by_operation_id UUID,
-    ADD COLUMN IF NOT EXISTS node_model TEXT;
-
--- Remove obsolete pre-cutover index surfaces.
-DROP INDEX IF EXISTS core.ix_events_source_type_ts;
-DROP INDEX IF EXISTS audit.ix_archived_events_source;
-
--- Rebuild archive indexes whose definitions changed (ASC -> DESC and partial strategy).
-DROP INDEX IF EXISTS audit.ix_archived_events_ts_orig;
-DROP INDEX IF EXISTS audit.ix_archived_events_archived_at;
-DROP INDEX IF EXISTS audit.ix_archived_events_superseded_by_event_id;
-DROP INDEX IF EXISTS audit.ix_archived_events_source_event_ids;
-";
-
-const NODE_MANIFESTS_ENFORCEMENT_SQL: &str = r"
-ALTER TABLE core.node_manifests
-    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
-
-ALTER TABLE core.node_manifests
-    ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
-
-CREATE INDEX IF NOT EXISTS idx_processors_status
-    ON core.node_manifests(status);
-
-CREATE INDEX IF NOT EXISTS idx_processors_heartbeat
-    ON core.node_manifests(last_heartbeat_at);
 ";
 
 const OPERATIONS_AND_CASCADE_SQL: &str = r"
