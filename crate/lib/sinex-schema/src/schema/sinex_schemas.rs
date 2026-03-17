@@ -228,7 +228,7 @@ impl NodeManifests {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "node_type IN ('ingestor', 'automaton', 'agent', 'system')",
+                        "node_type IN ('ingestor', 'automaton', 'service')",
                     )),
             )
             .col(ColumnDef::new(NodeManifests::Version).text().not_null())
@@ -253,7 +253,8 @@ impl NodeManifests {
                 ColumnDef::new(NodeManifests::Status)
                     .text()
                     .not_null()
-                    .default("active"),
+                    .default("active")
+                    .check(Expr::cust("status IN ('active', 'inactive')")),
             )
             .col(ColumnDef::new(NodeManifests::LastHeartbeatAt).timestamp_with_time_zone())
             .to_owned()

@@ -57,7 +57,8 @@ impl OperationsLog {
             .col(
                 ColumnDef::new(OperationsLog::OperationType)
                     .text()
-                    .not_null(),
+                    .not_null()
+                    .check(Expr::cust("operation_type IN ('replay', 'archive', 'purge')")),
             )
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())
             .col(ColumnDef::new(OperationsLog::Scope).json_binary()) // Parameters of the operation
