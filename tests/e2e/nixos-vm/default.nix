@@ -6,12 +6,13 @@
 , sinex ? null
 , sinexCli ? null
 , xtask ? null
+, sinexVmTestSuite ? null
 }:
 
 {
   # Basic operational test
   basic = import ./test-scenarios/basic-flow.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
   preflight = import ./preflight_deployment_test.nix {

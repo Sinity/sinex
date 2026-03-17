@@ -33,6 +33,9 @@ members = [
   # CLI tools
   "crate/cli",
 
+  # NixOS VM test suite binary (runs inside VMs to assert behavioral invariants)
+  "crate/tests/vm-suite",
+
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members
 

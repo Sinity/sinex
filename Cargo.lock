@@ -5994,6 +5994,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-vm-test-suite"
+version = "0.4.2"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "sinex-workspace"
 version = "0.4.2"
 dependencies = [

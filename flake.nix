@@ -202,6 +202,9 @@
             # Developer tooling (used by VM concurrency tests)
             xtask = mkPackage "xtask";
 
+            # NixOS VM test suite (Rust binary replacing Python testScript assertions)
+            sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
+
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
               name = "sinex";
@@ -237,6 +240,7 @@
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
             xtask = sinexPackages.xtask;
+            sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
