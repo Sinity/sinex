@@ -14,11 +14,13 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::config::workspace_root;
 
 pub mod builders;
 pub mod catalog;
@@ -38,7 +40,7 @@ pub use runner::{
 };
 pub use types::{
     ExerciseDef, ExerciseKind, ExerciseOutcome, ExerciseReport, ExpectedExit, InfraReq,
-    ReportEntry, StepEntry, StepOutcome, StepOutput, Tier, Validation,
+    QaManifest, QaManifestEntry, ReportEntry, StepEntry, StepOutcome, StepOutput, Tier, Validation,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -103,11 +105,49 @@ pub struct ExerciseCommand {
     /// After seeding, print the DB path as an export statement for shell activation (T4)
     #[arg(long, requires = "seed")]
     pub activate: bool,
+
+    /// Write a deterministic QA manifest (exercise IDs + pass/fail) to this path.
+    ///
+    /// The manifest is small and stable — no timings, no paths, just behavioral
+    /// outcomes. Commit it as `config/verify/exercise-baseline.json` to create a
+    /// regression gate. Use `--ci-check` to enforce it in CI.
+    #[arg(long, value_name = "PATH")]
+    pub audit_file: Option<std::path::PathBuf>,
+
+    /// Diff results against the committed baseline, fail on regressions.
+    ///
+    /// Reads `config/verify/exercise-baseline.json` (or the path given by
+    /// `--baseline`). Any exercise that was passing in the baseline and is now
+    /// failing is a regression — exits non-zero with a clear report.
+    ///
+    /// CI integration: `xtask exercise --tier 1 --seed --ci-check`
+    #[arg(long)]
+    pub ci_check: bool,
+
+    /// Override the baseline path used by `--ci-check`.
+    #[arg(long, value_name = "PATH", requires = "ci_check")]
+    pub baseline: Option<std::path::PathBuf>,
+
+    /// Update the committed baseline with the current run results.
+    ///
+    /// Writes to `config/verify/exercise-baseline.json` (or `--baseline` path).
+    /// Requires `--ci-check` so the update is intentional.
+    #[arg(long, requires = "ci_check")]
+    pub update_baseline: bool,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // XtaskCommand implementation
 // ═══════════════════════════════════════════════════════════════════════════════
+
+impl ExerciseCommand {
+    /// Resolve the baseline path: explicit `--baseline`, else workspace default.
+    fn baseline_path(&self) -> PathBuf {
+        self.baseline.clone().unwrap_or_else(|| {
+            workspace_root().join("config/verify/exercise-baseline.json")
+        })
+    }
+}
 
 impl XtaskCommand for ExerciseCommand {
     fn name(&self) -> &'static str {
@@ -137,6 +177,20 @@ impl XtaskCommand for ExerciseCommand {
             }
             if self.fail_fast {
                 args.push("--fail-fast".to_string());
+            }
+            if let Some(audit_path) = &self.audit_file {
+                args.push("--audit-file".to_string());
+                args.push(audit_path.display().to_string());
+            }
+            if self.ci_check {
+                args.push("--ci-check".to_string());
+            }
+            if let Some(baseline) = &self.baseline {
+                args.push("--baseline".to_string());
+                args.push(baseline.display().to_string());
+            }
+            if self.update_baseline {
+                args.push("--update-baseline".to_string());
             }
             return ctx.spawn_background("exercise", &args);
         }
@@ -338,6 +392,76 @@ impl XtaskCommand for ExerciseCommand {
             ctx.with_history_db(|db| db.record_exercise_run(inv_id, &report));
         }
 
+        // Build QA manifest (used by --audit-file and --ci-check).
+        let manifest = QaManifest::from_report(&report);
+
+        // --audit-file: write deterministic manifest to the specified path.
+        if let Some(audit_path) = &self.audit_file {
+            let json = serde_json::to_string_pretty(&manifest)?;
+            if let Some(parent) = audit_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(audit_path, &json)?;
+            if ctx.is_human() {
+                println!("  Manifest: {}", audit_path.display());
+            }
+        }
+
+        // --ci-check: diff against committed baseline, fail on regressions.
+        let mut ci_regressions: Vec<String> = vec![];
+        let mut ci_new_passes: Vec<String> = vec![];
+        if self.ci_check {
+            let baseline_path = self.baseline_path();
+            if self.update_baseline {
+                // Write current results as the new baseline.
+                let json = serde_json::to_string_pretty(&manifest)?;
+                if let Some(parent) = baseline_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&baseline_path, &json)?;
+                if ctx.is_human() {
+                    println!("  Baseline updated: {}", baseline_path.display());
+                }
+            } else if baseline_path.exists() {
+                let baseline_raw = fs::read_to_string(&baseline_path)?;
+                let baseline: QaManifest = serde_json::from_str(&baseline_raw)
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to parse baseline {}: {e}", baseline_path.display()))?;
+                ci_regressions = manifest.regressions(&baseline);
+                ci_new_passes = manifest.new_passes(&baseline);
+
+                if ctx.is_human() {
+                    if !ci_regressions.is_empty() {
+                        println!("\n  ⚡ CI regressions ({}):", ci_regressions.len());
+                        for id in &ci_regressions {
+                            println!("       ✗  {id}  (was passing in baseline)");
+                        }
+                    }
+                    if !ci_new_passes.is_empty() {
+                        println!("  🎉 Newly passing ({}):", ci_new_passes.len());
+                        for id in &ci_new_passes {
+                            println!("       ✓  {id}");
+                        }
+                    }
+                    if ci_regressions.is_empty() {
+                        println!("  ✓ No regressions vs baseline ({})", baseline_path.display());
+                    }
+                }
+            } else {
+                // No baseline exists yet — treat this as the first run, write it.
+                let json = serde_json::to_string_pretty(&manifest)?;
+                if let Some(parent) = baseline_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&baseline_path, &json)?;
+                if ctx.is_human() {
+                    println!(
+                        "  Baseline created: {} (no prior baseline found)",
+                        baseline_path.display()
+                    );
+                }
+            }
+        }
+
         // Print human summary
         if ctx.is_human() {
             print_human_summary(&outcomes, skipped_count, total_duration);
@@ -349,7 +473,17 @@ impl XtaskCommand for ExerciseCommand {
         let passed = outcomes.iter().filter(|o| o.passed).count();
         let failed = outcomes.iter().filter(|o| !o.passed).count();
 
-        let mut result = if failed == 0 {
+        // CI regressions override a clean run to a failure.
+        let mut result = if !ci_regressions.is_empty() {
+            CommandResult::failure(crate::output::StructuredError::new(
+                "CI_REGRESSION",
+                format!(
+                    "{} exercise(s) regressed vs baseline: {}",
+                    ci_regressions.len(),
+                    ci_regressions.join(", ")
+                ),
+            ))
+        } else if failed == 0 {
             CommandResult::success()
         } else if passed == 0 {
             CommandResult::failure(crate::output::StructuredError::new(
@@ -372,6 +506,10 @@ impl XtaskCommand for ExerciseCommand {
                 .map(|o| o.id.clone())
                 .collect();
             result = result.with_details(failed_ids);
+        }
+
+        if !ci_regressions.is_empty() {
+            result = result.with_details(ci_regressions.clone());
         }
 
         // T1/T4: --activate prints the DB path as a shell export so users can

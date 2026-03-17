@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use clap::ValueEnum;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Framework types
@@ -162,6 +162,202 @@ pub struct StepEntry {
     pub exit_code: i32,
     pub duration_secs: f64,
     pub validation_errors: Vec<String>,
+}
+
+/// Compact, deterministic manifest of exercise outcomes.
+///
+/// Written by `--audit-file` and used as the committed baseline for `--ci-check`.
+/// Deliberately omits timings, output paths, and all volatile data so that the
+/// manifest is a stable assertion about behavioral correctness only.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QaManifest {
+    pub schema_version: u32,
+    pub exercises: Vec<QaManifestEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaManifestEntry {
+    pub id: String,
+    pub tier: String,
+    pub passed: bool,
+}
+
+impl QaManifest {
+    pub const SCHEMA_VERSION: u32 = 1;
+
+    /// Build a manifest from a completed exercise run.
+    pub fn from_report(report: &ExerciseReport) -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION,
+            exercises: report
+                .results
+                .iter()
+                .map(|r| QaManifestEntry {
+                    id: r.id.clone(),
+                    tier: r.tier.clone(),
+                    passed: r.passed,
+                })
+                .collect(),
+        }
+    }
+
+    /// Detect regressions: exercises passing in `baseline` but failing in `self`.
+    pub fn regressions(&self, baseline: &QaManifest) -> Vec<String> {
+        let current: std::collections::HashMap<&str, bool> =
+            self.exercises.iter().map(|e| (e.id.as_str(), e.passed)).collect();
+        baseline
+            .exercises
+            .iter()
+            .filter_map(|b| {
+                if b.passed {
+                    // Was passing in baseline — now failing or missing?
+                    match current.get(b.id.as_str()) {
+                        Some(false) | None => Some(b.id.clone()),
+                        Some(true) => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Newly-passing exercises: failing in baseline, passing now.
+    pub fn new_passes(&self, baseline: &QaManifest) -> Vec<String> {
+        let baseline_map: std::collections::HashMap<&str, bool> =
+            baseline.exercises.iter().map(|e| (e.id.as_str(), e.passed)).collect();
+        self.exercises
+            .iter()
+            .filter_map(|e| {
+                if e.passed {
+                    match baseline_map.get(e.id.as_str()) {
+                        Some(false) | None => Some(e.id.clone()),
+                        Some(true) => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QaManifest unit tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    fn make_manifest(entries: &[(&str, &str, bool)]) -> QaManifest {
+        QaManifest {
+            schema_version: QaManifest::SCHEMA_VERSION,
+            exercises: entries
+                .iter()
+                .map(|(id, tier, passed)| QaManifestEntry {
+                    id: id.to_string(),
+                    tier: tier.to_string(),
+                    passed: *passed,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn no_regressions_when_identical() {
+        let baseline = make_manifest(&[("t1.a", "T1", true), ("t1.b", "T1", true)]);
+        let current = make_manifest(&[("t1.a", "T1", true), ("t1.b", "T1", true)]);
+        assert!(current.regressions(&baseline).is_empty());
+    }
+
+    #[test]
+    fn regression_detected_when_passing_becomes_failing() {
+        let baseline = make_manifest(&[("t1.a", "T1", true), ("t1.b", "T1", true)]);
+        let current = make_manifest(&[("t1.a", "T1", false), ("t1.b", "T1", true)]);
+        let regressions = current.regressions(&baseline);
+        assert_eq!(regressions, vec!["t1.a"]);
+    }
+
+    #[test]
+    fn no_regression_when_failing_stays_failing() {
+        // Exercise was already failing in baseline — not a new regression.
+        let baseline = make_manifest(&[("t1.a", "T1", false)]);
+        let current = make_manifest(&[("t1.a", "T1", false)]);
+        assert!(current.regressions(&baseline).is_empty());
+    }
+
+    #[test]
+    fn regression_when_exercise_disappears_from_run() {
+        // Exercise was passing in baseline but is absent from current run.
+        let baseline = make_manifest(&[("t1.a", "T1", true), ("t1.b", "T1", true)]);
+        let current = make_manifest(&[("t1.a", "T1", true)]); // t1.b missing
+        let regressions = current.regressions(&baseline);
+        assert_eq!(regressions, vec!["t1.b"]);
+    }
+
+    #[test]
+    fn new_pass_detected() {
+        let baseline = make_manifest(&[("t1.a", "T1", false)]);
+        let current = make_manifest(&[("t1.a", "T1", true)]);
+        let passes = current.new_passes(&baseline);
+        assert_eq!(passes, vec!["t1.a"]);
+    }
+
+    #[test]
+    fn no_new_pass_when_already_passing_in_baseline() {
+        let baseline = make_manifest(&[("t1.a", "T1", true)]);
+        let current = make_manifest(&[("t1.a", "T1", true)]);
+        assert!(current.new_passes(&baseline).is_empty());
+    }
+
+    #[test]
+    fn from_report_produces_correct_manifest() {
+        let report = ExerciseReport {
+            status: "partial".to_string(),
+            total: 2,
+            passed: 1,
+            failed: 1,
+            skipped: 0,
+            duration_secs: 2.0,
+            output_dir: "/tmp".to_string(),
+            results: vec![
+                ReportEntry {
+                    id: "t1.foo".to_string(),
+                    tier: "T1".to_string(),
+                    passed: true,
+                    duration_secs: 1.0,
+                    error: None,
+                    steps: vec![],
+                },
+                ReportEntry {
+                    id: "t1.bar".to_string(),
+                    tier: "T1".to_string(),
+                    passed: false,
+                    duration_secs: 1.0,
+                    error: Some("broke".to_string()),
+                    steps: vec![],
+                },
+            ],
+        };
+        let manifest = QaManifest::from_report(&report);
+        assert_eq!(manifest.schema_version, QaManifest::SCHEMA_VERSION);
+        assert_eq!(manifest.exercises.len(), 2);
+        assert!(manifest.exercises[0].passed);
+        assert!(!manifest.exercises[1].passed);
+    }
+
+    #[test]
+    fn manifest_roundtrips_json() {
+        let manifest = make_manifest(&[("t1.x", "T1", true), ("t2.y", "T2", false)]);
+        let json = serde_json::to_string(&manifest).unwrap();
+        let roundtripped: QaManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtripped.exercises.len(), 2);
+        assert_eq!(roundtripped.exercises[0].id, "t1.x");
+        assert!(roundtripped.exercises[0].passed);
+        assert_eq!(roundtripped.exercises[1].id, "t2.y");
+        assert!(!roundtripped.exercises[1].passed);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

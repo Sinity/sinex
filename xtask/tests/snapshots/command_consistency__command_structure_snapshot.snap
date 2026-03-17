@@ -3514,6 +3514,52 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Write a deterministic QA manifest (exercise IDs + pass/fail) to this path",
+          "long": "audit-file",
+          "name": "audit_file",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Diff results against the committed baseline, fail on regressions",
+          "long": "ci-check",
+          "name": "ci_check",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Override the baseline path used by `--ci-check`",
+          "long": "baseline",
+          "name": "baseline",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Update the committed baseline with the current run results",
+          "long": "update-baseline",
+          "name": "update_baseline",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "exercise",
