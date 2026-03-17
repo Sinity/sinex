@@ -199,6 +199,9 @@
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
 
+            # Developer tooling (used by VM concurrency tests)
+            xtask = mkPackage "xtask";
+
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
               name = "sinex";
@@ -233,6 +236,7 @@
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
+            xtask = sinexPackages.xtask;
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 

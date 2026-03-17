@@ -30,17 +30,25 @@ use crate::history::InvocationStatus;
 // Test Catalogue
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SMOKE_TESTS: &[&str] = &["basic"];
+const SMOKE_TESTS: &[&str] = &["basic", "basic-flow-unified", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
     "satellite-matrix",
     "multi-source",
     "failure-recovery",
+    "node-matrix",
+    "kitty-eventsource",
+    "mtls-enforcement",
+    "sinexctl-e2e",
 ];
 const PERFORMANCE_TESTS: &[&str] = &["performance"];
-/// Chaos tests are intentionally empty — pending the new failure-injection harness.
-const CHAOS_TESTS: &[&str] = &[];
+const CHAOS_TESTS: &[&str] = &[
+    "chaos-network-partition",
+    "chaos-process-restart",
+    "chaos-clock-skew",
+    "xtask-concurrency",
+];
 
 /// Default timeout per test in seconds (15 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
@@ -48,7 +56,14 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 const EXTENDED_TIMEOUT_SECS: u64 = 1800;
 
 /// Tests that require the extended timeout.
-const EXTENDED_TIMEOUT_TESTS: &[&str] = &["maintenance", "performance"];
+const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
+    "maintenance",
+    "performance",
+    "chaos-network-partition",
+    "chaos-process-restart",
+    "chaos-clock-skew",
+    "xtask-concurrency",
+];
 
 fn all_tests() -> Vec<&'static str> {
     let mut tests: Vec<&'static str> = Vec::new();
@@ -551,14 +566,21 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace_root = config::workspace_root();
     let scenarios_dir = workspace_root.join("tests/e2e/nixos-vm/test-scenarios");
 
-    let test_files = [
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/basic-flow.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/maintenance.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/satellite-matrix.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/multi-source.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/performance.nix"),
-    ];
+    // Discover all .nix files in the scenarios directory dynamically, plus
+    // the preflight deployment test which lives one level up.
+    let mut test_files: Vec<std::path::PathBuf> = Vec::new();
+    test_files.push(workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix"));
+    if let Ok(entries) = std::fs::read_dir(&scenarios_dir) {
+        let mut discovered: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension().and_then(|s| s.to_str()) == Some("nix")
+            })
+            .map(|e| e.path())
+            .collect();
+        discovered.sort();
+        test_files.extend(discovered);
+    }
 
     let dummy_pkg = r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
 
@@ -598,6 +620,9 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
                 dummy_pkg,
                 "--arg",
                 "pg_jsonschema",
+                dummy_pkg,
+                "--arg",
+                "xtask",
                 dummy_pkg,
             ])
             .current_dir(&workspace_root)
