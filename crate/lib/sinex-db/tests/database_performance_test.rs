@@ -1,16 +1,10 @@
 //! Database Performance Tests
 //!
-//! These tests measure performance characteristics of database operations.
-//! They are intentionally marked with #[ignore] by default to avoid slowing down
-//! regular test runs.
+//! Placeholder for criterion-backed database benchmarks.
+//! Real throughput tests belong in `xtask test bench` (cargo-criterion); the
+//! sandbox `TestContext` is not designed for latency measurement.
+//!
+//! To implement: add a `benches/db_throughput.rs` to sinex-db and register it
+//! in Cargo.toml under `[[bench]]`.
 
-use xtask::sandbox::prelude::*;
-
-/// Placeholder for future performance testing
-#[sinex_test]
-#[ignore = "performance tests should use xtask bench"]
-async fn database_performance_placeholder(_ctx: TestContext) -> TestResult<()> {
-    // Performance tests should be implemented using xtask bench
-    // rather than in the standard test suite
-    Ok(())
-}
+// No active test cases — this file exists as a navigation anchor.
