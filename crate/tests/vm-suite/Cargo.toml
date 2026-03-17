@@ -1,0 +1,28 @@
+[package]
+name = "sinex-vm-test-suite"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.license]
+workspace = true
+
+[[bin]]
+name = "run-suite"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+color-eyre = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

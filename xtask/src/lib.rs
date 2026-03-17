@@ -306,8 +306,31 @@ enum Commands {
 }
 
 pub async fn run_cli() -> Result<()> {
-    let cli = Cli::from_arg_matches(&Cli::command_with_help().get_matches())
-        .map_err(|e| eyre!(e.to_string()))?;
+    // Use try_get_matches so we can intercept parse errors and route them
+    // through the JSON formatter when --json is present, instead of letting
+    // clap print human text to stderr and exit. This prevents JSON consumers
+    // from receiving clap's error prose on invalid args.
+    let clap_cmd = Cli::command_with_help();
+    let matches = match clap_cmd.try_get_matches() {
+        Ok(m) => m,
+        Err(e) => {
+            // If --json appears anywhere in raw args, emit a structured error.
+            let want_json = std::env::args()
+                .any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
+            if want_json {
+                let json = serde_json::json!({
+                    "command": "xtask",
+                    "status": "error",
+                    "errors": [{"code": "INVALID_ARGUMENTS", "message": e.to_string().lines().next().unwrap_or("invalid arguments")}]
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
+                std::process::exit(2);
+            }
+            // Otherwise let clap print its formatted error and exit normally.
+            e.exit();
+        }
+    };
+    let cli = Cli::from_arg_matches(&matches).map_err(|e| eyre!(e.to_string()))?;
 
     // Initialize tracing subscriber with verbosity flags and history persistence layer.
     // Done here (after arg parse) so -v flags influence the log level.
@@ -352,7 +375,22 @@ pub async fn run_cli() -> Result<()> {
     // Require a command if not using --list-commands
     let command = cli.command.ok_or_else(|| {
         eyre!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
-    })?;
+    });
+    let command = match command {
+        Ok(c) => c,
+        Err(e) => {
+            if matches!(cli.global.output_format(), OutputFormat::Json) {
+                let json = serde_json::json!({
+                    "command": "xtask",
+                    "status": "error",
+                    "errors": [{"code": "NO_COMMAND", "message": e.to_string()}]
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
+                std::process::exit(1);
+            }
+            return Err(e);
+        }
+    };
 
     // Dispatch — extract metadata (including timeout) before consuming the command
     let (command_name, subcommand, profile, command_timeout) = match &command {

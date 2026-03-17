@@ -7,15 +7,21 @@ use sinex_primitives::{
     environment::{SinexEnvironment, environment},
     events::{Event, OffsetKind, Provenance},
 };
-use std::{future::IntoFuture, time::Duration};
+use std::{future::IntoFuture, sync::Arc, time::Duration};
+use tokio::sync::Semaphore;
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_PUBLISH_CONCURRENCY: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct NatsPublisher {
     nats_client: async_nats::Client,
     env: SinexEnvironment,
     namespace: Option<String>,
+    /// Per-publisher backpressure semaphore. Bounds how many in-flight publishes
+    /// this publisher instance can have simultaneously. Override via
+    /// `SINEX_PUBLISH_CONCURRENCY` env var (falls back to 100).
+    publish_semaphore: Arc<Semaphore>,
 }
 
 #[derive(Serialize)]
@@ -46,10 +52,15 @@ impl NatsPublisher {
     #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
+        let concurrency = std::env::var("SINEX_PUBLISH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_PUBLISH_CONCURRENCY);
         Self {
             nats_client,
             env,
             namespace,
+            publish_semaphore: Arc::new(Semaphore::new(concurrency)),
         }
     }
 
@@ -134,12 +145,7 @@ impl NatsPublisher {
     }
 
     pub async fn publish(&self, event: &Event) -> NodeResult<()> {
-        // Bound the publish queue to prevent unbounded memory growth.
-        static PUBLISH_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
-            std::sync::OnceLock::new();
-        let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
-
-        let _permit = sem.acquire().await.map_err(|e| {
+        let _permit = self.publish_semaphore.acquire().await.map_err(|e| {
             std::io::Error::other(format!("Failed to acquire publish semaphore: {e}"))
         })?;
 

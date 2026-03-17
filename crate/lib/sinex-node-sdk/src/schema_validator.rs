@@ -325,7 +325,7 @@ impl NodeSchemaValidator {
 ///
 /// Returns `None` (with warnings) if any step fails — fetch, deserialize, or compile.
 async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<Validator>> {
-    let key = format!("schema:{schema_id_str}");
+    let key = format!("schema-{schema_id_str}");
     let schema_json = match kv.get(&key).await {
         Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
             Ok(json) => json,

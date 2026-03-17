@@ -543,7 +543,7 @@ impl Default for ScanEstimate {
             estimated_data_size: 0,
             estimated_targets: 0,
             warnings: Vec::new(),
-            confidence: 0.5,
+            confidence: 0.0,
         }
     }
 }

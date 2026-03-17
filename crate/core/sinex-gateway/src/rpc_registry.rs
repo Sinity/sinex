@@ -352,7 +352,8 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,
         handle_coordination_list_instances, handle_create_entities, handle_create_note,
         handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
-        handle_events_lineage, handle_events_query, handle_gitops_create_source,
+        handle_events_ingest, handle_events_lineage, handle_events_query,
+        handle_gitops_create_source,
         handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
         handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_heartbeat,
@@ -363,7 +364,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_replay_execute_operation, handle_replay_list_operations,
         handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
-        handle_system_health, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_system_health, handle_telemetry_command_frequency, handle_telemetry_file_activity,
+        handle_telemetry_recent_activity, handle_telemetry_system_state,
+        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
         handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
         handle_tombstone_status,
     };
@@ -446,9 +449,41 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_gitops_list_sources),
         )
+        // Telemetry continuous-aggregate views (ReadOnly)
+        .pool_rpc(
+            "telemetry.window_focus",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_window_focus),
+        )
+        .pool_rpc(
+            "telemetry.command_frequency",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_command_frequency),
+        )
+        .pool_rpc(
+            "telemetry.file_activity",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_file_activity),
+        )
+        .pool_rpc(
+            "telemetry.recent_activity",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_recent_activity),
+        )
+        .pool_rpc(
+            "telemetry.system_state",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_system_state),
+        )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
+        // Event ingest (Write - publishes to JetStream)
+        .nats_rpc(
+            "events.ingest",
+            Role::Write,
+            boxed!(handle_events_ingest, 3),
+        )
         // PKM methods (Write)
         .register("pkm.create_note", Role::Write, |params, services, _auth| {
             Box::pin(async move { handle_create_note(services.pkm.as_ref(), params).await })

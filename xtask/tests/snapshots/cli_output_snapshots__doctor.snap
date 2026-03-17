@@ -1,0 +1,19 @@
+---
+source: xtask/tests/cli_output_snapshots.rs
+expression: json
+---
+{
+  "command": "doctor",
+  "data": {
+    "environment": "[volatile]",
+    "nats": "[volatile]",
+    "overall": "[volatile]",
+    "postgres": "[volatile]",
+    "postgres_extensions": "[volatile]",
+    "tls": "[volatile]",
+    "tools": "[volatile]"
+  },
+  "duration_secs": "[duration]",
+  "status": "success",
+  "timestamp": "[timestamp]"
+}

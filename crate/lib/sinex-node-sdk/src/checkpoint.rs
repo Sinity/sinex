@@ -599,7 +599,7 @@ pub struct CheckpointCleanupConfig {
     pub max_age: std::time::Duration,
     /// How often to run cleanup (default: 24 hours)
     pub interval: std::time::Duration,
-    /// Whether cleanup is enabled (default: false, opt-in)
+    /// Whether cleanup is enabled (default: true)
     pub enabled: bool,
 }
 
@@ -608,7 +608,7 @@ impl Default for CheckpointCleanupConfig {
         Self {
             max_age: std::time::Duration::from_hours(720), // 30 days
             interval: std::time::Duration::from_hours(24),
-            enabled: false,
+            enabled: true,
         }
     }
 }

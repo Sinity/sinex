@@ -160,15 +160,24 @@ mod table_creation_tests {
             &[event_id][..]
         ).execute(pool).await.unwrap();
 
-        // Basic roundtrip query validates table compatibility
+        // Query and verify the stored fields — proves the schema stores data without corruption,
+        // not just that an ID round-trips (which is trivially true after a successful INSERT).
         let row = sqlx::query!(
-            r#"SELECT id as "id!: sqlx::types::Uuid" FROM core.events WHERE id = $1::uuid"#,
+            r#"SELECT
+                source,
+                event_type,
+                host,
+                payload
+               FROM core.events WHERE id = $1::uuid"#,
             event_id
         )
         .fetch_one(pool)
         .await
         .unwrap();
-        assert_eq!(row.id, event_id);
+        assert_eq!(row.source, "test-source");
+        assert_eq!(row.event_type, "test-event");
+        assert_eq!(row.host, "test-host");
+        assert_eq!(row.payload, serde_json::json!({"test": "data"}));
         Ok(())
     }
 }

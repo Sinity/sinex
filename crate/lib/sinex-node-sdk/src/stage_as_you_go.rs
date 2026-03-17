@@ -364,12 +364,24 @@ impl StageAsYouGoContext {
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> NodeResult<Uuid> {
+        // Compute anchor_byte first so we can derive a deterministic event ID.
+        let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
+
         if event.id.is_none() {
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+            // Derive a deterministic UUIDv5 from (source_material_id, anchor_byte).
+            //
+            // This means re-ingesting the same source material at the same offset
+            // always produces the same event ID, so `ON CONFLICT (id) DO NOTHING`
+            // in the persistence layer handles deduplication automatically — no
+            // separate existence check is needed.
+            let anchor_bytes = anchor_byte.to_le_bytes();
+            event.id = Some(Id::from_uuid(Uuid::new_v5(
+                &source_material_id,
+                &anchor_bytes,
+            )));
         }
 
         // Attach source material provenance to the event
-        let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
         event.provenance = sinex_primitives::events::builder::Provenance::Material {
             id: source_material_id.into(),
             anchor_byte,

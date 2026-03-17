@@ -557,6 +557,16 @@ impl CommandContext {
         self.finished.store(true, Ordering::Relaxed);
     }
 
+    /// Return the path to the history database file this context was configured with.
+    ///
+    /// Use this instead of `config().history_db_path()` inside command handlers
+    /// that already receive a `ctx: &CommandContext` — the path is injected via
+    /// DI and honours test overrides from `CommandContext::new_with_db_override`.
+    #[must_use]
+    pub fn history_db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
     #[must_use]
     pub fn is_verbose(&self) -> bool {
         // Non-JSON human output implies some verbosity; used for optional extra detail printing.

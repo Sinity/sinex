@@ -876,6 +876,7 @@ impl ReplayStateMachine {
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state.is_terminal() {
             tx.commit().await?;
+            tracing::warn!(operation_id = %operation_id, current_status = ?meta.state, "Cannot mark already-terminal operation as failed — failure report not persisted");
             return Ok(());
         }
         if !meta.state.can_transition_to(ReplayState::Failed) {
@@ -981,6 +982,13 @@ impl ReplayStateMachine {
         // Use PostgreSQL advisory lock based on operation_id hash
         let lock_id = uuid_to_lock_id(operation_id);
 
+        // KNOWN LIMITATION: pg_try_advisory_lock is session-scoped and acquired here on a
+        // pooled connection. The lock is held for the lifetime of the connection session, not
+        // the transaction, meaning it survives transaction rollbacks and is not automatically
+        // released when the transaction ends. Using pg_try_advisory_xact_lock (transaction-scoped)
+        // would require acquiring the lock inside the transaction below, but the lock check and
+        // executor_node update are separate concerns. Callers must ensure release_execution_lock
+        // is called explicitly (not relying on transaction end for cleanup).
         let acquired = sqlx::query!(
             r#"
             SELECT pg_try_advisory_lock($1) as acquired

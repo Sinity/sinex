@@ -162,11 +162,15 @@
             fi
           '';
 
-          # Build a specific package from the workspace
+          # Build a specific package from the workspace.
+          # SQLX_OFFLINE=false: preBuild starts an ephemeral Postgres and sets DATABASE_URL,
+          # so sqlx::query! macros validate against a live schema (overrides the "true" in
+          # cargoArtifacts/buildDepsOnly which only compiled external deps without project macros).
           mkPackage = pname: craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts pname;
             cargoExtraArgs = "-p ${pname}";
             doCheck = false;
+            SQLX_OFFLINE = "false";
 
             preBuild = postgresPreBuild;
             postBuild = postgresPostBuild;
@@ -201,6 +205,9 @@
 
             # Developer tooling (used by VM concurrency tests)
             xtask = mkPackage "xtask";
+
+            # NixOS VM test suite (Rust binary replacing Python testScript assertions)
+            sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
 
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
@@ -237,6 +244,7 @@
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
             xtask = sinexPackages.xtask;
+            sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 

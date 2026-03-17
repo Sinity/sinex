@@ -46,12 +46,80 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
     }
 }
 
-/// P2: Spawn async tasks that prefix each process's stdout/stderr lines with its name.
+/// Developer observability shim — writes pseudo-journald NDJSON to a log file.
 ///
-/// Colors cycle through a fixed palette so each process has a distinct color.
-/// Uses `tokio::task::spawn` (detached) — tasks terminate when their streams close
-/// (i.e. when the child exits), keeping the parent loop unblocked.
-fn spawn_log_prefixers(streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)>) {
+/// `sinex-system-ingestor` consumes `journalctl --output=json` (one JSON object per
+/// line, each with `_SYSTEMD_UNIT`, `MESSAGE`, `_PID`, `_BOOT_ID`,
+/// `__REALTIME_TIMESTAMP`, `SYSLOG_IDENTIFIER`). This struct writes equivalent entries
+/// so the ingestor's journald-monitoring loop works end-to-end in dev environments
+/// without systemd.
+///
+/// Clones share the same underlying sender — safe to distribute across stream tasks.
+#[derive(Clone)]
+struct DevJournal {
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    boot_id: String,
+}
+
+impl DevJournal {
+    fn new(path: &std::path::Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("open dev journal at {}", path.display()))?;
+        let boot_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let boot_id = format!("dev-{boot_ts}");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        // Single writer task serializes journal entries from all stream-reader tasks.
+        tokio::spawn(async move {
+            use std::io::Write;
+            let mut writer = std::io::BufWriter::new(file);
+            while let Some(line) = rx.recv().await {
+                let _ = writer.write_all(line.as_bytes());
+                let _ = writer.write_all(b"\n");
+            }
+            let _ = writer.flush();
+        });
+
+        Ok(Self { tx, boot_id })
+    }
+
+    fn write_entry(&self, unit: &str, pid: u32, message: &str) {
+        let ts_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros();
+        // journald --output=json format consumed by unified_journal_watcher.rs
+        let entry = serde_json::json!({
+            "_SYSTEMD_UNIT": format!("{unit}.service"),
+            "MESSAGE": message,
+            "_PID": pid.to_string(),
+            "_BOOT_ID": &self.boot_id,
+            "__REALTIME_TIMESTAMP": ts_us.to_string(),
+            "SYSLOG_IDENTIFIER": unit,
+        });
+        let _ = self.tx.send(entry.to_string());
+    }
+}
+
+/// Spawn async tasks to stream process output to the terminal (optionally with
+/// colored name prefix) and/or write journald-format entries to a `DevJournal`.
+///
+/// Each `(name, stdout, stderr, pid)` entry gets up to two detached tasks.
+/// Tasks terminate naturally when child streams close (process exit).
+fn spawn_output_handlers(
+    streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>, u32)>,
+    show_prefix: bool,
+    journal: Option<DevJournal>,
+) {
     // Color cycle: cyan, yellow, magenta, blue, green (wraps for >5 processes)
     let colors: &[fn(&str) -> console::StyledObject<String>] = &[
         |s| style(s.to_string()).cyan(),
@@ -61,26 +129,44 @@ fn spawn_log_prefixers(streams: Vec<(String, Option<ChildStdout>, Option<ChildSt
         |s| style(s.to_string()).green(),
     ];
 
-    for (idx, (name, stdout, stderr)) in streams.into_iter().enumerate() {
+    for (idx, (name, stdout, stderr, pid)) in streams.into_iter().enumerate() {
         let color = colors[idx % colors.len()];
         let prefix_colored = color(&format!("[{name}]")).to_string();
 
         if let Some(stdout) = stdout {
             let prefix = prefix_colored.clone();
+            let name_clone = name.clone();
+            let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    println!("{prefix} {line}");
+                    if show_prefix {
+                        println!("{prefix} {line}");
+                    } else {
+                        println!("{line}");
+                    }
+                    if let Some(ref j) = journal_clone {
+                        j.write_entry(&name_clone, pid, &line);
+                    }
                 }
             });
         }
 
         if let Some(stderr) = stderr {
             let prefix = prefix_colored.clone();
+            let name_clone = name.clone();
+            let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("{prefix} {line}");
+                    if show_prefix {
+                        eprintln!("{prefix} {line}");
+                    } else {
+                        eprintln!("{line}");
+                    }
+                    if let Some(ref j) = journal_clone {
+                        j.write_entry(&name_clone, pid, &line);
+                    }
                 }
             });
         }
@@ -292,6 +378,14 @@ pub struct RunCommand {
     /// Show periodic runtime metrics overlay (heartbeat, lag, batch latency)
     #[arg(long, global = true)]
     pub metrics: bool,
+
+    /// Write pseudo-journald NDJSON to .sinex/state/dev-journal.log
+    ///
+    /// Wraps each log line in a journald JSON envelope (`_SYSTEMD_UNIT`, `MESSAGE`,
+    /// `_PID`, `__REALTIME_TIMESTAMP`) so `sinex-system-ingestor` can monitor locally-
+    /// running sinex processes without systemd. Implies stdout/stderr capture.
+    #[arg(long, global = true)]
+    pub dev_journal: bool,
 }
 
 /// Result of running a binary
@@ -507,8 +601,11 @@ impl RunCommand {
 
         // Start all
         let mut children: HashMap<String, Child> = HashMap::new();
-        // Collected (stdout, stderr) for log-mode prefixed streaming
-        let mut log_streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)> = Vec::new();
+        // Collected (name, stdout, stderr, pid) for output handling
+        let mut log_streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>, u32)> =
+            Vec::new();
+        // Pipe stdout/stderr when --logs (prefix display) or --dev-journal (journal write)
+        let pipe_output = self.logs || self.dev_journal;
 
         for name in binaries {
             let (_, _package, binary) = BINARIES
@@ -531,7 +628,7 @@ impl RunCommand {
                 cmd.arg("rpc-server");
             }
 
-            let (stdout_io, stderr_io) = if self.logs {
+            let (stdout_io, stderr_io) = if pipe_output {
                 (Stdio::piped(), Stdio::piped())
             } else {
                 (Stdio::inherit(), Stdio::inherit())
@@ -544,8 +641,14 @@ impl RunCommand {
                 .spawn()
                 .with_context(|| format!("Failed to spawn {name}"))?;
 
-            if self.logs {
-                log_streams.push((name.to_string(), child.stdout.take(), child.stderr.take()));
+            if pipe_output {
+                let pid = child.id().unwrap_or(0);
+                log_streams.push((
+                    name.to_string(),
+                    child.stdout.take(),
+                    child.stderr.take(),
+                    pid,
+                ));
             }
 
             children.insert(name.to_string(), child);
@@ -558,9 +661,21 @@ impl RunCommand {
             );
         }
 
-        // Spawn prefixed log-streaming tasks (P2)
-        if self.logs && !log_streams.is_empty() {
-            spawn_log_prefixers(log_streams);
+        // Spawn output handler tasks: prefix display (--logs) and/or journal writes (--dev-journal)
+        if pipe_output && !log_streams.is_empty() {
+            let journal = if self.dev_journal {
+                let journal_path = config().state_dir.join("dev-journal.log");
+                if ctx.is_human() {
+                    println!(
+                        "Dev journal: {} (sinex-system-ingestor will pick this up)",
+                        journal_path.display()
+                    );
+                }
+                Some(DevJournal::new(&journal_path)?)
+            } else {
+                None
+            };
+            spawn_output_handlers(log_streams, self.logs, journal);
         }
 
         // Spawn metrics overlay task (B5)
@@ -606,12 +721,20 @@ impl RunCommand {
     async fn run_direct(
         &self,
         package: &str,
-        _binary: &str,
+        binary: &str,
         instance_id: &str,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
             println!("Building {package}...");
+        }
+
+        // When --dev-journal is active, build first then spawn the binary directly
+        // so we can pipe stdout/stderr through the journal shim.
+        if self.dev_journal || self.logs {
+            return self
+                .run_direct_piped(package, binary, instance_id, ctx)
+                .await;
         }
 
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
@@ -647,6 +770,118 @@ impl RunCommand {
         };
 
         if status.success() {
+            Ok(CommandResult::success()
+                .with_message(format!("{package} exited successfully"))
+                .with_data(serde_json::to_value(&run_result)?)
+                .with_duration(ctx.elapsed()))
+        } else {
+            Ok(CommandResult::failure(crate::output::StructuredError {
+                code: "RUN_FAILED".to_string(),
+                message: format!("{package} exited with error"),
+                location: Some("run".to_string()),
+                suggestion: Some("Check logs with: xtask infra logs".to_string()),
+            })
+            .with_data(serde_json::to_value(&run_result)?)
+            .with_duration(ctx.elapsed()))
+        }
+    }
+
+    /// Build then spawn a single binary with piped I/O for `--logs` / `--dev-journal`.
+    async fn run_direct_piped(
+        &self,
+        package: &str,
+        binary: &str,
+        instance_id: &str,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        // Step 1: build
+        let mut build_args = vec!["build".to_string(), "-p".to_string(), package.to_string()];
+        if self.release {
+            build_args.push("--release".to_string());
+        }
+        let build_status = Command::new("cargo")
+            .args(&build_args)
+            .status()
+            .await
+            .with_context(|| format!("Failed to build {package}"))?;
+        if !build_status.success() {
+            return Ok(CommandResult::failure(crate::output::StructuredError {
+                code: "BUILD_FAILED".to_string(),
+                message: format!("{package} failed to build"),
+                location: Some("run".to_string()),
+                suggestion: None,
+            }));
+        }
+
+        // Step 2: spawn binary directly
+        let target_dir = if self.release { "release" } else { "debug" };
+        let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
+
+        let mut cmd = Command::new(&binary_path);
+        if is_node_package(package) {
+            cmd.arg(format!("--instance-id={instance_id}"));
+        } else if package == "sinex-gateway" {
+            cmd.arg("rpc-server");
+        }
+
+        let mut child = cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("Failed to spawn {binary}"))?;
+
+        let pid = child.id().unwrap_or(0);
+
+        // Derive a short name for display/journal from the binary name
+        let short_name = BINARIES
+            .iter()
+            .find(|(_, pkg, _)| *pkg == package)
+            .map(|(n, _, _)| *n)
+            .unwrap_or(binary);
+
+        let journal = if self.dev_journal {
+            let journal_path = config().state_dir.join("dev-journal.log");
+            if ctx.is_human() {
+                println!(
+                    "Dev journal: {} (sinex-system-ingestor will pick this up)",
+                    journal_path.display()
+                );
+            }
+            Some(DevJournal::new(&journal_path)?)
+        } else {
+            None
+        };
+
+        spawn_output_handlers(
+            vec![(
+                short_name.to_string(),
+                child.stdout.take(),
+                child.stderr.take(),
+                pid,
+            )],
+            self.logs,
+            journal,
+        );
+
+        if ctx.is_human() {
+            println!("{short_name} running (pid {pid}). Press Ctrl+C to stop.");
+        }
+
+        let exit_status = child.wait().await?;
+
+        let run_result = RunResult {
+            binary: package.to_string(),
+            pid: Some(pid),
+            instance_id: Some(instance_id.to_string()),
+            status: if exit_status.success() {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            },
+        };
+
+        if exit_status.success() {
             Ok(CommandResult::success()
                 .with_message(format!("{package} exited successfully"))
                 .with_data(serde_json::to_value(&run_result)?)

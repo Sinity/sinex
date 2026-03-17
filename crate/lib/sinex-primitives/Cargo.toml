@@ -70,6 +70,7 @@ proptest = { workspace = true }
 sinex-db = { path = "../sinex-db" }
 tempfile = { workspace = true }
 xtask = { path = "../../../xtask" }
+trybuild = { workspace = true }
 
 [lints]
 workspace = true

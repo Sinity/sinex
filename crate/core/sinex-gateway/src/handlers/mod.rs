@@ -10,6 +10,7 @@ pub mod content;
 pub mod coordination;
 pub mod dlq;
 pub mod gitops;
+pub mod ingest;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
@@ -19,7 +20,9 @@ pub mod query;
 pub mod rpc_handlers;
 pub mod shadow;
 pub mod system;
+pub mod telemetry;
 
+pub use ingest::handle_events_ingest;
 pub use query::{handle_events_lineage, handle_events_query};
 pub use rpc_handlers::*;
 
@@ -60,6 +63,11 @@ pub use node_registry::{
 };
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use system::handle_system_health;
+pub use telemetry::{
+    handle_telemetry_command_frequency, handle_telemetry_file_activity,
+    handle_telemetry_recent_activity, handle_telemetry_system_state,
+    handle_telemetry_window_focus,
+};
 
 fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>
 where

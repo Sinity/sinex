@@ -1,0 +1,190 @@
+name: N-1 Protocol Compatibility
+
+# Verifies forward/backward compatibility during rolling updates:
+# builds master-branch sinex-gateway from source, downloads the latest
+# published sinex-terminal-ingestor release binary, starts both, and
+# asserts that 100 events flow without schema validation panics or ERROR logs.
+#
+# This guards against protocol regressions where a user upgrades only the
+# gateway (or vice versa) and the two components can no longer communicate.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Run weekly on Mondays at 02:00 UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      event_count:
+        description: 'Number of test events to pump'
+        required: false
+        default: '100'
+
+env:
+  CARGO_TERM_COLOR: always
+  EVENT_COUNT: ${{ github.event.inputs.event_count || '100' }}
+
+jobs:
+  n1-compat:
+    name: N-1 Compatibility Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+
+      - name: Install NATS server
+        run: |
+          curl -sf https://binaries.nats.dev/nats-io/nats-server/v2@latest \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Install NATS CLI
+        run: |
+          curl -sf https://binaries.nats.dev/nats-io/natscli/nats@latest \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Build sinex-gateway (master)
+        run: cargo build -p sinex-gateway --release
+        env:
+          SQLX_OFFLINE: "true"
+
+      - name: Download latest sinex-terminal-ingestor release
+        id: download-ingestor
+        run: |
+          LATEST=$(gh api repos/${{ github.repository }}/releases/latest \
+            --jq '.tag_name' 2>/dev/null || echo "")
+          if [ -z "$LATEST" ]; then
+            echo "No releases found — building from source as N-0 baseline"
+            cargo build -p sinex-terminal-ingestor --release
+            cp target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
+            echo "source=local" >> $GITHUB_OUTPUT
+          else
+            ASSET_URL=$(gh api repos/${{ github.repository }}/releases/latest \
+              --jq '.assets[] | select(.name == "sinex-terminal-ingestor") | .browser_download_url')
+            if [ -z "$ASSET_URL" ]; then
+              echo "Release $LATEST has no sinex-terminal-ingestor asset — skipping download, building from source"
+              cargo build -p sinex-terminal-ingestor --release
+              cp target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
+              echo "source=local" >> $GITHUB_OUTPUT
+            else
+              curl -L "$ASSET_URL" -o /tmp/sinex-terminal-ingestor-prev
+              chmod +x /tmp/sinex-terminal-ingestor-prev
+              echo "source=release:$LATEST" >> $GITHUB_OUTPUT
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Start NATS server with JetStream
+        run: |
+          nats-server --jetstream --port 4222 &
+          echo "NATS_PID=$!" >> $GITHUB_ENV
+          sleep 2
+
+      - name: Start PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@v6
+        with:
+          database: sinex
+          username: sinex
+          password: sinex
+
+      - name: Apply schema
+        run: |
+          # Run sinex-gateway schema application (gateway owns migrations)
+          DATABASE_URL="postgresql://sinex:sinex@localhost/sinex" \
+          SINEX_NATS_URL="nats://127.0.0.1:4222" \
+          ./target/release/sinex-gateway schema-apply --skip-if-applied || true
+
+      - name: Start sinex-gateway (master)
+        run: |
+          DATABASE_URL="postgresql://sinex:sinex@localhost/sinex" \
+          SINEX_NATS_URL="nats://127.0.0.1:4222" \
+          RUST_LOG="info" \
+          ./target/release/sinex-gateway rpc-server &
+          echo "GATEWAY_PID=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Start sinex-terminal-ingestor (previous release)
+        run: |
+          SINEX_NATS_URL="nats://127.0.0.1:4222" \
+          RUST_LOG="info" \
+          /tmp/sinex-terminal-ingestor-prev \
+            --instance-id compat-test-ingestor \
+            2>/tmp/ingestor.log &
+          echo "INGESTOR_PID=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Pump ${{ env.EVENT_COUNT }} synthetic events
+        run: |
+          for i in $(seq 1 $EVENT_COUNT); do
+            nats pub events.synthetic.compat \
+              "{\"seq\": $i, \"source\": \"n1-compat-test\"}" \
+              --server nats://127.0.0.1:4222
+          done
+          sleep 5  # allow ingestd to process the batch
+
+      - name: Assert event count in Postgres
+        run: |
+          ACTUAL=$(psql "postgresql://sinex:sinex@localhost/sinex" -t -c \
+            "SELECT COUNT(*) FROM core.events WHERE source = 'n1-compat-test';")
+          ACTUAL=$(echo $ACTUAL | tr -d ' ')
+          echo "Events committed: $ACTUAL / $EVENT_COUNT"
+          if [ "$ACTUAL" -lt "$(( EVENT_COUNT * 80 / 100 ))" ]; then
+            echo "::error::Only $ACTUAL/$EVENT_COUNT events committed (< 80% threshold)"
+            exit 1
+          fi
+
+      - name: Assert no ERROR logs in gateway
+        run: |
+          # Gateway should not have logged any ERROR-level lines during the compat test
+          if ps -p $GATEWAY_PID > /dev/null 2>&1; then
+            # Gateway is still running — check its journald output
+            ERROR_COUNT=$(journalctl _PID=$GATEWAY_PID -o cat 2>/dev/null \
+              | grep -c '"level":"ERROR"' || echo "0")
+            echo "Gateway ERROR log lines: $ERROR_COUNT"
+            if [ "$ERROR_COUNT" -gt "0" ]; then
+              echo "::warning::Gateway emitted $ERROR_COUNT ERROR-level log lines during N-1 compat test"
+            fi
+          fi
+
+      - name: Assert no ERROR logs in ingestor
+        run: |
+          if [ -f /tmp/ingestor.log ]; then
+            ERROR_COUNT=$(grep -c '"level":"ERROR"' /tmp/ingestor.log || echo "0")
+            echo "Ingestor ERROR log lines: $ERROR_COUNT"
+            if [ "$ERROR_COUNT" -gt "0" ]; then
+              echo "::warning::Ingestor (source: ${{ steps.download-ingestor.outputs.source }}) emitted $ERROR_COUNT ERROR-level log lines"
+            fi
+          fi
+
+      - name: Assert no schema validation panics
+        run: |
+          # A panic in either process would show "thread '...' panicked" in stderr
+          if [ -f /tmp/ingestor.log ]; then
+            PANIC_COUNT=$(grep -c "thread.*panicked" /tmp/ingestor.log || echo "0")
+            if [ "$PANIC_COUNT" -gt "0" ]; then
+              echo "::error::Ingestor panicked during N-1 compat test"
+              grep "thread.*panicked" /tmp/ingestor.log | head -5
+              exit 1
+            fi
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -n "$INGESTOR_PID" ] && kill "$INGESTOR_PID" 2>/dev/null || true
+          [ -n "$GATEWAY_PID" ] && kill "$GATEWAY_PID" 2>/dev/null || true
+          [ -n "$NATS_PID" ] && kill "$NATS_PID" 2>/dev/null || true

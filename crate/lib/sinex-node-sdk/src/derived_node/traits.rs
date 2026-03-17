@@ -18,7 +18,7 @@ use sinex_primitives::domain::DerivedNodeModel;
 use std::collections::HashMap;
 
 /// Configuration for the derived node adapter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct DerivedNodeConfig {
     /// How often to checkpoint (in events processed).
     pub checkpoint_interval: u64,
@@ -44,16 +44,6 @@ impl Default for DerivedNodeConfig {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for DerivedNodeConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // Deserialize as default — config comes from env/CLI, not JSON
-        let _ = deserializer.deserialize_any(serde::de::IgnoredAny)?;
-        Ok(Self::default())
-    }
-}
 
 // ── TransducerNode ─────────────────────────────────────────────────────
 

@@ -1220,7 +1220,7 @@ where
     }
 
     async fn health_check(&self) -> NodeResult<bool> {
-        Ok(true)
+        Ok(self.runtime.is_some())
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
