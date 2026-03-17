@@ -51,15 +51,15 @@
   # ─── Chaos scenarios ─────────────────────────────────────────────────────────
 
   "chaos-network-partition" = import ./test-scenarios/chaos-network-partition.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
   "chaos-process-restart" = import ./test-scenarios/chaos-process-restart.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
   "chaos-clock-skew" = import ./test-scenarios/chaos-clock-skew.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
   # ─── xtask concurrency (requires pre-built xtask binary) ─────────────────────

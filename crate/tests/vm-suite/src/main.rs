@@ -43,7 +43,19 @@ async fn main() -> Result<()> {
             categories::integration::run(&mut runner, &args.database_url).await?;
         }
         "concurrency" => categories::concurrency::run(&mut runner)?,
-        other => bail!("Unknown category: {other}. Valid: smoke, integration, all, concurrency"),
+        "chaos-network-partition" => {
+            categories::chaos_network_partition::run(&mut runner, &args.database_url).await?
+        }
+        "chaos-process-restart" => {
+            categories::chaos_process_restart::run(&mut runner, &args.database_url).await?
+        }
+        "chaos-clock-skew" => {
+            categories::chaos_clock_skew::run(&mut runner, &args.database_url).await?
+        }
+        other => bail!(
+            "Unknown category: {other}. Valid: smoke, integration, all, concurrency, \
+             chaos-network-partition, chaos-process-restart, chaos-clock-skew"
+        ),
     }
 
     runner.finish()
