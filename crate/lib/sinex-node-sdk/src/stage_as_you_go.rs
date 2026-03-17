@@ -335,6 +335,24 @@ impl StageAsYouGoContext {
         Ok(material_id)
     }
 
+    /// Get the `started_at` timestamp for an in-flight material.
+    ///
+    /// This is the wall-clock time recorded when the material capture began,
+    /// and is the same value persisted as the `staged_at` ledger entry by ingestd.
+    /// Use it as the fallback `ts_orig` for events that lack an intrinsic
+    /// timestamp — it is reproducible on replay because it traces to a persisted
+    /// ledger row.
+    pub async fn material_started_at(
+        &self,
+        material_id: Uuid,
+    ) -> Option<sinex_primitives::temporal::Timestamp> {
+        self.acquisition_handles
+            .lock()
+            .await
+            .get(&material_id)
+            .map(super::acquisition_manager::SourceMaterialHandle::started_at)
+    }
+
     /// Create and send an event with attached source material reference
     ///
     /// This is the core of Stage-as-You-Go: events are created with immediate
@@ -805,9 +823,16 @@ impl StageAsYouGoNode for LogFileStageNode {
             // Convert to JsonValue event for emission
             let mut event = typed_event.to_json_event()?;
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
-            let now = sinex_primitives::temporal::Timestamp::now();
+            // Use the material's started_at as fallback ts_orig — this value is
+            // persisted in the temporal ledger by ingestd, making it reproducible
+            // on replay (unlike an ephemeral Timestamp::now()).
             if event.ts_orig.is_none() {
-                event.ts_orig = Some(now);
+                let fallback_ts = self
+                    .context
+                    .material_started_at(source_material_id)
+                    .await
+                    .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
+                event.ts_orig = Some(fallback_ts);
             }
 
             // Emit with provenance

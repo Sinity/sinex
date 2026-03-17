@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 /// Send a large burst of events simultaneously to test backpressure handling.
 /// Verifies no events are dropped during overwhelming bursts.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_thundering_herd_extreme_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -73,7 +73,7 @@ async fn test_thundering_herd_extreme_load(ctx: TestContext) -> TestResult<()> {
 /// Send events with varied sources and types concurrently, then verify ordering
 /// consistency: events with later UUIDv7 IDs should have later (or equal) timestamps.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_temporal_chaos_ordering_and_consistency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;

@@ -1,4 +1,4 @@
-//! Modernized Main for Health Aggregator
+//! Main for Health Aggregator
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -7,7 +7,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_health_automaton::HealthAggregator;
-use sinex_node_sdk::{AutomatonNodeAdapter, node_entrypoint};
+use sinex_health_automaton::HealthAggregatorNode;
+use sinex_node_sdk::node_entrypoint;
 
-node_entrypoint!(AutomatonNodeAdapter<HealthAggregator>);
+node_entrypoint!(HealthAggregatorNode);

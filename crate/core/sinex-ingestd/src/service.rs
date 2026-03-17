@@ -475,7 +475,6 @@ impl IngestService {
         let max_ack_pending = self.config.consumer_max_ack_pending;
         let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
 
-        let database_url = self.config.database_url.clone();
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
@@ -485,7 +484,6 @@ impl IngestService {
                 validator.clone(),
                 topology,
             )
-            .with_database_url(database_url)
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
             .with_stats_log_interval(stats_log_interval)

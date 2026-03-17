@@ -12,7 +12,6 @@ use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
-use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,7 +46,6 @@ struct DlqEntry {
 pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
-    database_url: String,
     validator: Arc<RwLock<EventValidator>>,
     topology: JetStreamTopology,
     ack_wait: Duration,
@@ -121,22 +119,6 @@ const SQLSTATE_FOREIGN_KEY_VIOLATION: &str = "23503";
 
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
-
-/// Classify a `SQLx` insert error into typed `SinexError` variants with context.
-fn classify_insert_error(err: sqlx::Error, context: &str) -> SinexError {
-    if let sqlx::Error::Database(ref db_err) = err
-        && db_err.code().as_deref() == Some(SQLSTATE_FOREIGN_KEY_VIOLATION)
-    {
-        let mut typed = SinexError::database(context)
-            .with_context("sqlstate", SQLSTATE_FOREIGN_KEY_VIOLATION)
-            .with_context("error_class", ERROR_CLASS_SOURCE_MATERIAL_FK);
-        if let Some(constraint) = db_err.constraint() {
-            typed = typed.with_context("constraint", constraint);
-        }
-        return typed.with_std_error(&err);
-    }
-    SinexError::database(context).with_std_error(&err)
-}
 
 fn is_source_material_fk_violation(err: &SinexError) -> bool {
     err.context_map()
@@ -258,7 +240,6 @@ impl JetStreamConsumer {
         Self {
             js,
             pool,
-            database_url: String::new(),
             validator,
             topology,
             ack_wait: Duration::from_secs(30),
@@ -284,14 +265,6 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_stats_log_interval(mut self, interval: Duration) -> Self {
         self.stats_log_interval = interval;
-        self
-    }
-
-    /// Set the database URL for non-pooled direct connections (used in batch inserts).
-    /// Should match `IngestdConfig.database_url` to avoid bypassing config.
-    #[must_use]
-    pub fn with_database_url(mut self, url: impl Into<String>) -> Self {
-        self.database_url = url.into();
         self
     }
 
@@ -946,7 +919,11 @@ impl JetStreamConsumer {
         }
     }
 
-    /// Persist batch using COPY with an ON CONFLICT fallback for duplicates.
+    /// Persist batch through `EventRepository::insert_stream_batch()`.
+    ///
+    /// The repository owns all routing decisions (`QueryBuilder` for small batches,
+    /// COPY for large material-only batches, REPEATABLE READ for synthesis batches).
+    /// The recent-ID cache acts as a prefilter only.
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
     async fn persist_batch_optimized(
         &self,
@@ -967,40 +944,79 @@ impl JetStreamConsumer {
             return Ok(PersistBatchResult { inserted_ids: None });
         }
 
-        // Use COPY with non-pooled connection (avoids sqlx 0.8.x pool corruption bug).
-        // Falls back to INSERT ON CONFLICT if COPY fails.
-        let insert_result = timeout(
-            DB_WRITE_TIMEOUT,
-            self.persist_batch_with_nonpooled_primary(&to_persist),
-        )
-        .await;
-        match insert_result {
-            Ok(Ok(inserted_ids)) => {
-                self.remember_batch(batch);
-                Ok(PersistBatchResult {
-                    inserted_ids: Some(inserted_ids),
+        let rows: Vec<StreamBatchRow> = to_persist
+            .iter()
+            .map(|prepared| {
+                let event = &prepared.event;
+                let (
+                    source_event_ids,
+                    source_material_id,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    anchor_byte,
+                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
+
+                Ok(StreamBatchRow {
+                    id: prepared.parsed_id,
+                    source: event.source.clone(),
+                    event_type: event.event_type.clone(),
+                    ts_orig: event
+                        .ts_orig
+                        .unwrap_or_else(sinex_primitives::Timestamp::now),
+                    host: event.host.clone(),
+                    payload: event.payload.clone(),
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    source_event_ids,
+                    payload_schema_id: event.payload_schema_id,
+                    node_run_id: event.node_run_id,
+                    associated_blob_ids: event.associated_blob_ids.clone(),
+                    temporal_policy: event.temporal_policy.map(|p| p.to_string()),
+                    semantics_version: event.semantics_version.clone(),
+                    scope_key: event.scope_key.clone(),
+                    equivalence_key: event.equivalence_key.clone(),
+                    created_by_operation_id: event.created_by_operation_id,
+                    node_model: event.node_model.map(|m| m.to_string()),
                 })
-            }
-            Ok(Err(err)) => {
-                if is_source_material_fk_violation(&err) {
-                    warn!(
-                        batch_size = to_persist.len(),
-                        "INSERT hit FK violation (source_material not yet registered); will retry"
-                    );
-                }
-                Err(err)
-            }
-            Err(_) => {
-                error!(
+            })
+            .collect::<IngestdResult<Vec<_>>>()?;
+
+        let result = timeout(
+            DB_WRITE_TIMEOUT,
+            self.pool.events().insert_stream_batch(&rows),
+        )
+        .await
+        .map_err(|_| {
+            error!(
+                batch_size = to_persist.len(),
+                timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
+                "Timed out waiting for batch insert to complete"
+            );
+            SinexError::database(format!(
+                "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
+            ))
+        })?
+        .map_err(|err| {
+            if is_source_material_fk_violation(&err) {
+                warn!(
                     batch_size = to_persist.len(),
-                    timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
-                    "Timed out waiting for batch insert to complete"
+                    "INSERT hit FK violation (source_material not yet registered); will retry"
                 );
-                Err(SinexError::database(format!(
-                    "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
-                )))
+            } else {
+                error!("Failed to persist events batch: {}", err);
             }
-        }
+            err
+        })?;
+
+        let inserted_ids = result.inserted_ids.unwrap_or_default();
+        self.remember_batch(batch);
+        Ok(PersistBatchResult {
+            inserted_ids: Some(inserted_ids),
+        })
     }
 
     fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
@@ -1038,205 +1054,6 @@ impl JetStreamConsumer {
         for event in batch {
             cache.insert(event.parsed_id);
         }
-    }
-
-    /// Persist batch using a non-pooled connection with pooled fallback.
-    ///
-    /// For larger batches (≥ 10 events), uses a dedicated non-pooled connection to avoid
-    /// the sqlx 0.8.x pool corruption bug. Falls back to the pooled INSERT path on failure.
-    /// Small batches skip the non-pooled path (overhead not worth it).
-    async fn persist_batch_with_nonpooled_primary(
-        &self,
-        batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Uuid>> {
-        if batch.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        if batch.len() < 10 {
-            return self.persist_batch_insert_on_conflict(batch).await;
-        }
-
-        match self.try_persist_batch_insert_nonpooled(batch).await {
-            Ok(ids) => Ok(ids),
-            Err(e) => {
-                warn!(
-                    batch_size = batch.len(),
-                    error = %e,
-                    "Non-pooled INSERT failed, falling back to pooled INSERT ON CONFLICT"
-                );
-                self.persist_batch_insert_on_conflict(batch).await
-            }
-        }
-    }
-
-    /// INSERT using a non-pooled connection to avoid the sqlx 0.8.x pool corruption bug.
-    ///
-    /// Uses `QueryBuilder` with `ON CONFLICT DO NOTHING` for idempotency.
-    async fn try_persist_batch_insert_nonpooled(
-        &self,
-        batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Uuid>> {
-        // Create non-pooled connection (bypasses pool entirely)
-        let mut conn = PgConnection::connect(&self.database_url)
-            .await
-            .map_err(|e| {
-                SinexError::database(format!("Failed to create non-pooled connection: {e}"))
-            })?;
-
-        // Prepare data rows
-        let rows: Vec<StreamBatchRow> = batch
-            .iter()
-            .map(|prepared| {
-                let event = &prepared.event;
-                let (
-                    source_event_ids,
-                    source_material_id,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    anchor_byte,
-                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
-
-                Ok(StreamBatchRow {
-                    id: prepared.parsed_id,
-                    source: event.source.clone(),
-                    event_type: event.event_type.clone(),
-                    ts_orig: event
-                        .ts_orig
-                        .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.clone(),
-                    payload: event.payload.clone(),
-                    source_material_id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    source_event_ids,
-                    payload_schema_id: event.payload_schema_id,
-                    node_version: event.node_version.clone(),
-                    associated_blob_ids: event.associated_blob_ids.clone(),
-                })
-            })
-            .collect::<IngestdResult<Vec<_>>>()?;
-
-        // INSERT via non-pooled connection using QueryBuilder (same pattern as
-        // EventRepository::execute_batch_insert). This avoids the sqlx 0.8.x pool
-        // corruption bug by never returning this connection to a pool.
-        use sqlx::QueryBuilder;
-
-        let mut builder = QueryBuilder::new(
-            "INSERT INTO core.events (
-                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, node_version, associated_blob_ids
-            ) ",
-        );
-
-        builder.push_values(rows.iter().enumerate(), |mut b, (_idx, row)| {
-            let (ts_truncated, ts_subnano) = row.ts_orig.to_postgres_parts();
-            b.push_bind(row.id).push_unseparated("::uuid");
-            b.push_bind(row.source.clone());
-            b.push_bind(row.event_type.clone());
-            b.push_bind(ts_truncated);
-            b.push_bind(ts_subnano);
-            b.push_bind(row.host.clone());
-            b.push_bind(row.payload.clone());
-            b.push_bind(row.source_material_id.map(|id| id.to_uuid()));
-            b.push_bind(row.anchor_byte);
-            b.push_bind(row.offset_start);
-            b.push_bind(row.offset_end);
-            b.push_bind(row.offset_kind.clone());
-            b.push_bind(row.source_event_ids.as_ref().map(|ids| {
-                ids.iter()
-                    .map(sinex_primitives::Id::to_uuid)
-                    .collect::<Vec<_>>()
-            }));
-            b.push_bind(row.payload_schema_id);
-            b.push_bind(row.node_version.clone());
-            b.push_bind(row.associated_blob_ids.clone());
-        });
-
-        builder.push(" ON CONFLICT (id) DO NOTHING");
-
-        builder
-            .build()
-            .execute(&mut conn)
-            .await
-            .map_err(|e| classify_insert_error(e, "Non-pooled INSERT failed"))?;
-
-        let inserted_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-
-        // Connection is dropped here, not returned to any pool
-        Ok(inserted_ids)
-    }
-
-    async fn persist_batch_insert_on_conflict(
-        &self,
-        batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Uuid>> {
-        // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
-        // While efficient, it risks introducing circular synthesis dependencies.
-        // Consider implementing a batched cycle check or ensuring upstream validation.
-
-        if batch.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let rows: Vec<StreamBatchRow> = batch
-            .iter()
-            .map(|prepared| {
-                let event = &prepared.event;
-                let (
-                    source_event_ids,
-                    source_material_id,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    anchor_byte,
-                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
-
-                Ok(StreamBatchRow {
-                    id: prepared.parsed_id,
-                    source: event.source.clone(),
-                    event_type: event.event_type.clone(),
-                    ts_orig: event
-                        .ts_orig
-                        .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.clone(),
-                    payload: event.payload.clone(),
-                    source_material_id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    source_event_ids,
-                    payload_schema_id: event.payload_schema_id,
-                    node_version: event.node_version.clone(),
-                    associated_blob_ids: event.associated_blob_ids.clone(),
-                })
-            })
-            .collect::<IngestdResult<Vec<_>>>()?;
-
-        let result = timeout(
-            DB_WRITE_TIMEOUT,
-            self.pool.events().insert_stream_batch(&rows),
-        )
-        .await
-        .map_err(|_| {
-            SinexError::database(format!(
-                "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
-            ))
-        })?
-        .map_err(|err| {
-            // err is already SinexError from the repository layer (not sqlx::Error).
-            if !is_source_material_fk_violation(&err) {
-                error!("Failed to persist events batch: {}", err);
-            }
-            err
-        })?;
-
-        Ok(result.inserted_ids.unwrap_or_default())
     }
 
     /// Publish confirmation to NATS

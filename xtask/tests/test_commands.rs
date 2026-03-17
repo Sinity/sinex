@@ -2,15 +2,63 @@
 //!
 //! Tests command execution, output formatting, and error handling
 //! for commands extracted during Phase 2 refactoring.
+//!
+//! Tests assert behavioral invariants visible to users, not implementation details.
+//! "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.
 
 use std::process::Command;
-use xtask::command::{CommandContext, CommandResult, XtaskCommand};
+use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
 
+/// Invariant: `jobs list` on empty state returns an empty jobs array, not an error.
+///
+/// This guards against regressions where missing tables, missing files, or
+/// uninitialized state causes a crash instead of a graceful empty response.
 #[sinex_test]
-async fn test_jobs_list_command() -> ::xtask::sandbox::TestResult<()> {
+async fn test_jobs_list_empty_state_returns_empty_array() -> ::xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
+
+    let output = Command::new("xtask")
+        .env("SINEX_STATE_DIR", dir.path())
+        .env("NO_COLOR", "1")
+        .args(["jobs", "list", "--json"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "jobs list on empty state must exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+        color_eyre::eyre::eyre!("jobs list --json did not emit valid JSON: {e}\nstdout: {stdout}")
+    })?;
+
+    // Invariant: status field is "success", not "error"
+    assert_eq!(
+        json["status"], "success",
+        "jobs list must report success on empty state, got: {json}"
+    );
+
+    // Invariant: jobs array is present and empty (not missing, not an error)
+    let jobs = json["data"]["jobs"]
+        .as_array()
+        .expect("data.jobs must be an array");
+    assert!(
+        jobs.is_empty(),
+        "jobs list on empty state must return empty array, got {} jobs",
+        jobs.len()
+    );
+
+    Ok(())
+}
+
+/// Invariant: `jobs list` name returns "jobs".
+#[sinex_test]
+async fn test_jobs_command_name() -> ::xtask::sandbox::TestResult<()> {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::List {
             limit: 10,
@@ -18,39 +66,39 @@ async fn test_jobs_list_command() -> ::xtask::sandbox::TestResult<()> {
         },
     };
     assert_eq!(cmd.name(), "jobs");
-
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
-    let result = cmd.execute(&ctx).await;
-
-    // List should not fail (even if no jobs exist)
-    assert!(result.is_ok());
     Ok(())
 }
 
+/// Invariant: `jobs prune` on empty state removes 0 jobs and reports success.
+///
+/// Pruning an already-empty history must not error out on missing tables
+/// or return a spurious failure count.
 #[sinex_test]
-async fn test_jobs_prune_command() -> ::xtask::sandbox::TestResult<()> {
-    let cmd = JobsCommand {
-        subcommand: JobsSubcommand::Prune { older_than: 30 },
-    };
+async fn test_jobs_prune_empty_state_removes_zero() -> ::xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
-    let result = cmd.execute(&ctx).await;
+    let output = Command::new("xtask")
+        .env("SINEX_STATE_DIR", dir.path())
+        .env("NO_COLOR", "1")
+        .args(["jobs", "prune", "--json"])
+        .output()?;
 
-    // Prune should succeed (even if no jobs to prune)
-    assert!(result.is_ok());
-    Ok(())
-}
+    assert!(
+        output.status.success(),
+        "jobs prune on empty state must exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-#[sinex_test]
-async fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
-    // Test that CommandResult can be created and used
-    let result = CommandResult::success()
-        .with_message("Test completed")
-        .with_details(vec!["Step 1 done", "Step 2 done"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+        color_eyre::eyre::eyre!("jobs prune --json did not emit valid JSON: {e}\nstdout: {stdout}")
+    })?;
 
-    assert!(result.is_success());
-    assert_eq!(result.message, Some("Test completed".to_string()));
-    assert_eq!(result.details.len(), 2);
+    assert_eq!(
+        json["status"], "success",
+        "jobs prune on empty state must report success, got: {json}"
+    );
+
     Ok(())
 }
 

@@ -5,7 +5,6 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use crate::config::ReplayConfig;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
@@ -22,9 +21,8 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::{info, warn};
-
-use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayService};
 
 #[must_use]
 pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
@@ -101,7 +99,7 @@ pub struct NatsArgs {
 
     /// `NKey` seed file path.
     ///
-    /// Use this only when the deployment expects direct NKey auth.
+    /// Use this only when the deployment expects direct `NKey` auth.
     #[arg(long, env = "SINEX_NATS_NKEY_SEED_FILE")]
     pub nkey_seed_file: Option<PathBuf>,
 
@@ -338,14 +336,24 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
 ///
 /// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.
-pub struct NodeCliRunner<T: crate::runtime::stream::Node + ExplorationProvider + 'static> {
+pub struct NodeCliRunner<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static>
+{
     node: Option<T>,
+    node_factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
-impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRunner<T> {
+impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
-        Self { node: Some(node) }
+        Self::new_with_factory(node, Arc::new(T::default))
+    }
+
+    /// Create a new CLI runner with an explicit factory for fresh worker instances.
+    pub fn new_with_factory(node: T, node_factory: Arc<dyn Fn() -> T + Send + Sync>) -> Self {
+        Self {
+            node: Some(node),
+            node_factory,
+        }
     }
 
     /// Run the CLI with parsed arguments
@@ -385,8 +393,6 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
                 .or_insert_with(|| serde_json::json!(group));
         }
 
-        let replay_config = Self::extract_replay_config(&mut node_config)?;
-
         // Take ownership of the node
         let node = self
             .node
@@ -395,7 +401,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
 
         match args.command {
             NodeCommand::Service { dry_run, .. } => {
-                self.handle_service_command(node, node_config, replay_config, args, dry_run)
+                self.handle_service_command(node, node_config, args, dry_run)
                     .await
             }
             NodeCommand::Scan {
@@ -443,19 +449,17 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn handle_service_command(
         &self,
         node: T,
         node_config: HashMap<String, serde_json::Value>,
-        replay_config: Option<ReplayConfig>,
         args: NodeCli,
         dry_run: bool,
     ) -> NodeResult<()> {
         info!("Starting node service mode");
 
         // Create node runner
-        let mut runner = NodeRunner::new(node);
+        let mut runner = NodeRunner::new_with_factory(node, self.node_factory.clone());
 
         // Set up dependencies
         let service_name = Self::resolve_service_name(&args);
@@ -492,16 +496,6 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
                 dry_run,
             )
             .await?;
-
-        if !dry_run {
-            if let Some(cfg) = replay_config.clone()
-                && let Err(err) = Self::execute_replay(&mut runner, cfg).await
-            {
-                warn!(error = %err, "Replay execution failed to complete");
-            }
-        } else if replay_config.is_some() {
-            warn!("Replay configuration ignored in dry-run mode");
-        }
 
         let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
             .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
@@ -618,6 +612,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
             max_events,
             skip_duplicates: !no_skip_duplicates,
             config: HashMap::new(),
+            replay: None,
         };
 
         // Run estimation if requested
@@ -942,112 +937,6 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         );
 
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
-    }
-
-    fn extract_replay_config(
-        config: &mut HashMap<String, serde_json::Value>,
-    ) -> NodeResult<Option<ReplayConfig>> {
-        if let Some(raw) = config.remove("replay") {
-            if raw.is_null() {
-                return Ok(None);
-            }
-
-            let cfg: ReplayConfig =
-                serde_json::from_value(raw).map_err(SinexError::serialization)?;
-
-            if cfg.enabled { Ok(Some(cfg)) } else { Ok(None) }
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn execute_replay(runner: &mut NodeRunner<T>, config: ReplayConfig) -> NodeResult<()> {
-        let runtime = runner
-            .runtime_state()
-            .ok_or_else(|| SinexError::lifecycle("Runtime state not initialized before replay"))?;
-
-        let Some(mode) = Self::derive_replay_mode(&config)? else {
-            return Ok(());
-        };
-
-        let mut service =
-            ReplayService::from_runtime(&runtime, mode).with_batch_size(config.replay_batch_size);
-
-        let progress_logger = |progress: &ReplayProgress| {
-            info!(
-                phase = ?progress.phase,
-                processed = progress.processed_events,
-                total = progress.total_events,
-                "Replay progress"
-            );
-        };
-
-        let replay_result: ReplayResult = service
-            .replay_into_emitter(runtime.event_emitter(), Some(progress_logger))
-            .await
-            .map_err(|err| SinexError::unknown(format!("Replay execution failed: {err}")))?;
-
-        info!(
-            processed = replay_result.total_processed,
-            batches = replay_result.total_batches,
-            "Replay completed"
-        );
-
-        for error in replay_result.errors {
-            warn!(error = %error, "Replay reported error");
-        }
-
-        Ok(())
-    }
-
-    fn derive_replay_mode(config: &ReplayConfig) -> NodeResult<Option<ReplayMode>> {
-        if !config.enabled {
-            return Ok(None);
-        }
-
-        let start_time = Self::parse_timestamp(config.start_time.as_deref())?;
-        let end_time = Self::parse_timestamp(config.end_time.as_deref())?;
-
-        if !config.sources.is_empty() || !config.event_types.is_empty() {
-            let filters = ReplayFilters {
-                sources: if config.sources.is_empty() {
-                    None
-                } else {
-                    Some(config.sources.clone())
-                },
-                event_types: if config.event_types.is_empty() {
-                    None
-                } else {
-                    Some(config.event_types.clone())
-                },
-                hosts: None,
-                start_time,
-                end_time,
-                limit: None,
-                payload_filters: None,
-            };
-
-            Ok(Some(ReplayMode::Custom { filters }))
-        } else {
-            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
-            Ok(Some(ReplayMode::TimeRange {
-                start_time: start,
-                end_time,
-            }))
-        }
-    }
-
-    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
-        if let Some(raw) = value {
-            let parsed = Timestamp::parse_rfc3339(raw).map_err(|e| {
-                SinexError::unknown(format!(
-                    "Invalid RFC3339 timestamp in replay configuration: {e}"
-                ))
-            })?;
-            Ok(Some(parsed))
-        } else {
-            Ok(None)
-        }
     }
 }
 

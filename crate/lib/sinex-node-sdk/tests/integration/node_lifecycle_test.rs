@@ -541,7 +541,6 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 5,
             work_dir: Utf8PathBuf::from("/tmp/sinex-minimal"),
             dry_run: true,
-            replay: None,
         },
         batch_size: 10,
         batch_timeout_secs: Seconds::from_secs(30),
@@ -566,7 +565,6 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 10,
             work_dir: Utf8PathBuf::from("/tmp/sinex-standard"),
             dry_run: false,
-            replay: None,
         },
         batch_size: 50,
         batch_timeout_secs: Seconds::from_secs(10),
@@ -575,8 +573,6 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
 }
 
 fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
-    use sinex_node_sdk::config::ReplayConfig;
-
     let mut source_config = HashMap::new();
     source_config.insert("max_retries".to_string(), serde_json::json!(5));
     source_config.insert("retry_delay_ms".to_string(), serde_json::json!(500));
@@ -595,14 +591,6 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 20,
             work_dir: Utf8PathBuf::from("/tmp/sinex-enhanced"),
             dry_run: false,
-            replay: Some(ReplayConfig {
-                enabled: true,
-                start_time: Some("2024-01-01T00:00:00Z".to_string()),
-                end_time: None,
-                sources: vec![],
-                event_types: vec![],
-                replay_batch_size: 100,
-            }),
         },
         batch_size: 100,
         batch_timeout_secs: Seconds::from_secs(5),

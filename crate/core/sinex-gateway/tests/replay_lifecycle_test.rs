@@ -2,14 +2,82 @@ use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as 
 use futures::StreamExt;
 use sinex_db::repositories::DbPoolExt;
 use sinex_gateway::ServiceContainer;
-use sinex_primitives::events::{Event, Provenance};
+use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::{DynamicPayload, Uuid, temporal::Timestamp};
 use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::prelude::*;
 
+async fn spawn_fake_scan_node(
+    nats: async_nats::Client,
+    env: sinex_primitives::environment::SinexEnvironment,
+    node_name: &str,
+    events_processed: u64,
+) -> TestResult<(
+    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::task::JoinHandle<()>,
+)> {
+    let node_name = node_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let mut sub = nats.subscribe(subject).await?;
+    let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+    let handle = tokio::spawn(async move {
+        let Some(msg) = sub.next().await else { return };
+
+        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
+            eprintln!("fake scan node: invalid scan command payload");
+            return;
+        };
+        let operation_id = command.operation_id;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+        let _ = command_tx.send(command.clone());
+
+        if let Some(reply) = msg.reply {
+            let ack = NodeScanAck {
+                operation_id,
+                node_name: node_name.clone(),
+                accepted: true,
+                error: None,
+            };
+            if let Ok(bytes) = serde_json::to_vec(&ack) {
+                let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        let report = ScanReport {
+            events_processed,
+            duration: Duration::from_millis(5),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            node_stats: std::collections::HashMap::from([(
+                "events_emitted".to_string(),
+                events_processed,
+            )]),
+            successful_targets: vec![node_name.clone()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let progress = NodeScanProgress {
+            operation_id,
+            node_name,
+            events_processed,
+            events_emitted: events_processed,
+            final_report: Some(report),
+            error: None,
+        };
+        if let Ok(bytes) = serde_json::to_vec(&progress) {
+            let _ = nats.publish(progress_subject, bytes.into()).await;
+        }
+    });
+
+    Ok((command_rx, handle))
+}
+
 #[sinex_test]
-async fn replay_lifecycle_enforces_rescan_invariants(ctx: TestContext) -> TestResult<()> {
+async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
@@ -33,6 +101,8 @@ async fn replay_lifecycle_enforces_rescan_invariants(ctx: TestContext) -> TestRe
         ..Default::default()
     })
     .await?;
+    let (scan_command_rx, scan_handle) =
+        spawn_fake_scan_node(nats.clone(), env.clone(), "test-node", 1).await?;
 
     let replay_material = ctx
         .create_source_material(Some("replay-lifecycle-match"))
@@ -131,7 +201,7 @@ async fn replay_lifecycle_enforces_rescan_invariants(ctx: TestContext) -> TestRe
     assert_eq!(preview_resp["preview"]["total_events"].as_i64(), Some(1));
     assert_eq!(
         preview_resp["preview"]["replay_semantics"].as_str(),
-        Some("rescan_material_roots_only")
+        Some("reexecute_material_roots_via_node_scan")
     );
 
     let approve_req = serde_json::json!({
@@ -235,28 +305,7 @@ async fn replay_lifecycle_enforces_rescan_invariants(ctx: TestContext) -> TestRe
             .await
             .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
     }
-    assert_eq!(replay_payloads.len(), 1);
-    let replay_payload = replay_payloads.remove(0);
-    let replay_event: Event<serde_json::Value> = serde_json::from_value(replay_payload.clone())?;
-    let replayed_id = replay_event
-        .id
-        .expect("replay payload should include id")
-        .to_uuid();
-    assert_ne!(replayed_id, replay_target_id);
-    assert!(
-        replay_payload
-            .get("source_event_ids")
-            .is_none_or(serde_json::Value::is_null),
-        "rescan replay payload should not contain source_event_ids"
-    );
-    match replay_event.provenance {
-        Provenance::Material { id, .. } => {
-            assert_eq!(*id.as_uuid(), *replay_material.as_uuid());
-        }
-        other => {
-            bail!("expected material provenance in replay payload, got {other:?}");
-        }
-    }
+    assert_eq!(replay_payloads.len(), 0);
 
     let replay_target_live: i64 =
         sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
@@ -316,6 +365,31 @@ async fn replay_lifecycle_enforces_rescan_invariants(ctx: TestContext) -> TestRe
     )?;
     assert!(created_at <= approved_at);
     assert!(approved_at <= finished_at);
+
+    let dispatched_command = scan_command_rx
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("fake test-node did not receive scan command"))?;
+    let replay_context = dispatched_command
+        .args
+        .replay
+        .expect("gateway must populate typed replay context");
+    assert_eq!(replay_context.materials.len(), 1);
+    assert_eq!(
+        replay_context.materials[0].source_material_id,
+        *replay_material.as_uuid()
+    );
+    assert_eq!(
+        replay_context.replay_scope.material_ids,
+        Some(vec![*replay_material.as_uuid()])
+    );
+    assert_eq!(
+        replay_context.replay_scope.event_types,
+        Some(vec!["file.created".to_string()])
+    );
+
+    scan_handle
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("fake scan node task failed: {e}"))?;
 
     Ok(())
 }

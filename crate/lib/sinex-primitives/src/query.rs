@@ -199,6 +199,19 @@ pub struct EventQuery {
     /// When `None`, no lineage filter is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_lineage: Option<bool>,
+
+    /// Filter to events with a specific `scope_key`.
+    ///
+    /// Used by scope reconciler nodes to load the working set for a scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_key: Option<String>,
+
+    /// Filter to events produced by a specific source (for working set queries).
+    ///
+    /// Combined with `scope_key`, allows loading the current working set for
+    /// a scope reconciler node: all live events in that scope from that source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equivalence_key: Option<String>,
 }
 
 impl EventQuery {
@@ -228,6 +241,8 @@ impl Default for EventQuery {
             aggregation: None,
             include_total_estimate: false,
             has_lineage: None,
+            scope_key: None,
+            equivalence_key: None,
         }
     }
 }

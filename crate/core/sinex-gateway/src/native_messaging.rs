@@ -133,6 +133,7 @@ fn secrets_match(expected: &str, provided: &str) -> bool {
 
 impl NativeMessagingConfig {
     /// Load configuration from environment variables.
+    #[must_use]
     pub fn from_env() -> Self {
         Self::from_raw(
             std::env::var(TRUSTED_EXTENSION_ENV).ok(),
@@ -178,9 +179,7 @@ impl NativeMessagingConfig {
         let trusted_extensions = trusted_extensions_raw
             .map(parse_trusted_entries)
             .unwrap_or_default();
-        let trusted_hosts = trusted_hosts_raw
-            .map(parse_csv_entries)
-            .unwrap_or_default();
+        let trusted_hosts = trusted_hosts_raw.map(parse_csv_entries).unwrap_or_default();
         let expected_protocol_version =
             expected_protocol_version_raw.and_then(|raw| normalize_optional_string(&raw));
         let capabilities = parse_capabilities(capabilities_raw.as_deref());
@@ -470,7 +469,10 @@ fn parse_capabilities(
         match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(raw)
         {
             Ok(caps) => {
-                info!(extensions = caps.len(), "Loaded native messaging capabilities");
+                info!(
+                    extensions = caps.len(),
+                    "Loaded native messaging capabilities"
+                );
                 Some(caps)
             }
             Err(e) => {
@@ -485,7 +487,9 @@ fn parse_capabilities(
     .unwrap_or_default()
 }
 
-fn parse_extension_roles(raw: Option<&str>) -> std::collections::HashMap<String, crate::auth::Role> {
+fn parse_extension_roles(
+    raw: Option<&str>,
+) -> std::collections::HashMap<String, crate::auth::Role> {
     raw.and_then(|raw| {
         match serde_json::from_str::<std::collections::HashMap<String, crate::auth::Role>>(raw) {
             Ok(roles) => {

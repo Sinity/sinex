@@ -17,6 +17,7 @@ shadow_rs::shadow!(build_info);
 mod affected;
 pub mod bench;
 pub mod cargo_diagnostics;
+pub mod cargo_runner;
 pub mod command;
 pub mod commands;
 mod config;

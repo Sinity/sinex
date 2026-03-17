@@ -1,12 +1,12 @@
 # sinex-analytics-automaton
 
 The analytics automaton consumes event streams and emits synthesized insights.
-It implements the shared `AutomatonNode` interface from
-`sinex-node-sdk` and is responsible for turning raw events into aggregated
-analytics.
+It implements the `WindowedNode` interface from `sinex-node-sdk` via
+`WindowedNodeAdapter` and is responsible for turning raw events into aggregated
+analytics over time windows.
 
 - Listens for events from filesystem, desktop, and other nodes.
-- Produces derived events and metrics requested by gateways.
+- Aggregates events within time windows and produces summary metrics.
 - Maintains checkpoint state for reliable replay.
 
 Reference `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for

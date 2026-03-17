@@ -23,7 +23,7 @@ use xtask::sandbox::prelude::*;
 /// Measure sequential event insertion performance. Publishes 100 events and
 /// reports throughput and per-event latency.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_database_insertion_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -57,7 +57,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult<()>
 
 /// Measure concurrent event insertion performance with multiple workers.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -111,7 +111,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult<(
 /// Measure query latency after seeding a dataset. Runs count and select queries
 /// and reports average response times.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_query_latency_under_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -159,7 +159,7 @@ async fn test_query_latency_under_load(ctx: TestContext) -> TestResult<()> {
 /// Publish a moderate number of events and verify the process doesn't show
 /// runaway memory growth. This is a basic sanity check, not a profiler.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -186,7 +186,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult<()> {
 
 /// Test how throughput scales as we increase concurrent workers.
 #[sinex_test(timeout = 120)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_scaling_behavior(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -246,7 +246,7 @@ async fn test_scaling_behavior(ctx: TestContext) -> TestResult<()> {
 
 /// Measure overhead of coordinating multiple workers on a shared pipeline.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_worker_coordination_overhead(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -288,7 +288,7 @@ async fn test_worker_coordination_overhead(ctx: TestContext) -> TestResult<()> {
 
 /// Measure sustained throughput by publishing events in multiple rounds.
 #[sinex_test(timeout = 120)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_sustained_throughput(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -330,7 +330,7 @@ async fn test_sustained_throughput(ctx: TestContext) -> TestResult<()> {
 
 /// Compare batch publishing performance vs sequential publishing.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_batch_processing_efficiency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -369,7 +369,7 @@ async fn test_batch_processing_efficiency(ctx: TestContext) -> TestResult<()> {
 /// Verify that the system handles resource contention (pool + concurrent queries)
 /// without deadlocking.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_resource_contention_handling(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -417,7 +417,7 @@ async fn test_resource_contention_handling(ctx: TestContext) -> TestResult<()> {
 
 /// Measure end-to-end pipeline throughput using publish_many.
 #[sinex_test(timeout = 120)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_pipeline_event_throughput(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -451,7 +451,7 @@ async fn test_pipeline_event_throughput(ctx: TestContext) -> TestResult<()> {
 
 /// Measure per-event latency through the full pipeline.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_pipeline_latency_measurement(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

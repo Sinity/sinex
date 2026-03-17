@@ -1,12 +1,26 @@
 # Stream Processing Runtime (Gen2)
 
-The Sinex SDK provides high-level abstractions—`AutomatonNode` and `IngestorNode`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
+The Sinex SDK provides high-level abstractions—**Derived Node Traits** (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) and `IngestorNode`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
 
 ## 🧱 The Abstractions
 
-### 1. `AutomatonNode` (Automata)
-Designed for processing event streams and synthesizing new events.
-- **Auto-State**: State is automatically persisted to NATS KV.
+### 1. Derived Node Traits (Automata)
+Designed for processing event streams and synthesizing new events. The unified `DerivedNodeAdapter` handles all three variants:
+
+- **`TransducerNode`**: 1:1 stateless event transformation
+  - Simple filtering/enrichment without complex state
+  - Example: command canonicalizer
+
+- **`WindowedNode`**: Time-window aggregation
+  - Accumulate events over time buckets, emit summaries
+  - Example: analytics aggregator, metrics summarizer
+
+- **`ScopeReconcilerNode`**: Per-scope state tracking
+  - Maintain distinct state per scope (source, device, etc.)
+  - Example: health monitor, scope-aware reconciler
+
+**Common Traits:**
+- **Auto-State**: State is automatically persisted to NATS KV via `DerivedNodeAdapter`.
 - **Runtime-Integrated**: Composes with `NodeRunner` and node-specific processing bridges.
 - **Health**: Integrates with `HealthReporter` for automatic error rate monitoring.
 

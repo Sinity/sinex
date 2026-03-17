@@ -17,7 +17,7 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         host: HostName::new(host),
         payload,
         ts_orig: Some(Timestamp::now()),
-        node_version: None,
+        node_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::new(),
@@ -27,6 +27,12 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
             offset_kind: OffsetKind::default(),
         },
         associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
     }
 }
 

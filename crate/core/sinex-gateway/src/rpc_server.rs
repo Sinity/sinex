@@ -1122,7 +1122,8 @@ pub async fn spawn(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let auth = GatewayAuth::from_config(config)?.start_file_watcher(shutdown_rx.clone())?;
-    let limits = RpcServerLimits::from_config(config).apply_pool_limit(services.pool_max_connections());
+    let limits =
+        RpcServerLimits::from_config(config).apply_pool_limit(services.pool_max_connections());
 
     // Read TLS config synchronously before any await points.
     // This prevents a race where concurrent tests overwrite the env vars during an async yield.
@@ -1296,7 +1297,11 @@ impl RpcServer {
         bind_address: &BindAddress,
     ) -> color_eyre::eyre::Result<(String, TlsAcceptor)> {
         let (cert_path, key_path, client_ca) = tls_paths_from_config(config)?;
-        require_mtls_for_remote(bind_address, config.require_client_tls, client_ca.as_deref())?;
+        require_mtls_for_remote(
+            bind_address,
+            config.require_client_tls,
+            client_ca.as_deref(),
+        )?;
         warn_if_remote_bind(bind_address);
 
         let BindAddress::Tcp { host, port } = bind_address;
@@ -1796,7 +1801,8 @@ mod tests {
         }
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let auth = GatewayAuth::from_config(&gateway_config_from_env())?.start_file_watcher(shutdown_rx)?;
+        let auth = GatewayAuth::from_config(&gateway_config_from_env())?
+            .start_file_watcher(shutdown_rx)?;
 
         assert!(auth.verify(&bearer_headers("initial-token")).await.is_ok());
         assert!(matches!(

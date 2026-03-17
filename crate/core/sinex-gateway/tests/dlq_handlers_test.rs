@@ -168,13 +168,9 @@ async fn dlq_purge_requires_confirm_parameter(ctx: TestContext) -> TestResult<()
     .await?;
 
     // Try purge without confirm
-    let err = handle_dlq_purge(
-        &harness.services,
-        json!({"confirm": false}),
-        &admin_auth(),
-    )
-    .await
-    .unwrap_err();
+    let err = handle_dlq_purge(&harness.services, json!({"confirm": false}), &admin_auth())
+        .await
+        .unwrap_err();
 
     assert!(err.to_string().contains("confirm: true"));
 
@@ -213,12 +209,8 @@ async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
     assert_eq!(before.total_messages, 5);
 
     // Purge with confirmation
-    let result = handle_dlq_purge(
-        &harness.services,
-        json!({"confirm": true}),
-        &admin_auth(),
-    )
-    .await?;
+    let result =
+        handle_dlq_purge(&harness.services, json!({"confirm": true}), &admin_auth()).await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 5);
@@ -244,12 +236,8 @@ async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Purge empty stream should succeed
-    let result = handle_dlq_purge(
-        &harness.services,
-        json!({"confirm": true}),
-        &admin_auth(),
-    )
-    .await?;
+    let result =
+        handle_dlq_purge(&harness.services, json!({"confirm": true}), &admin_auth()).await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 0);
@@ -310,12 +298,7 @@ async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<
     assert_eq!(mid1.total_messages, 3);
 
     // Purge
-    handle_dlq_purge(
-        &harness.services,
-        json!({"confirm": true}),
-        &admin_auth(),
-    )
-    .await?;
+    handle_dlq_purge(&harness.services, json!({"confirm": true}), &admin_auth()).await?;
 
     // Second cycle — after purge, stream was emptied, so wait for 2 new messages.
     for i in 0..2 {

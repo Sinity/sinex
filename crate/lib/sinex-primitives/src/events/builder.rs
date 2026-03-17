@@ -22,7 +22,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) payload: T,
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) hostname: Option<crate::domain::HostName>,
-    pub(crate) node_version: Option<String>,
+    pub(crate) node_run_id: Option<Uuid>,
     pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
@@ -44,7 +44,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload,
             timestamp: None,
             hostname: None,
-            node_version: None,
+            node_run_id: None,
             payload_schema_id: None,
             provenance_data: None,
             associated_blob_ids: None,
@@ -60,9 +60,9 @@ impl<T> EventBuilder<T, NoProvenance> {
         self
     }
 
-    /// Set node version
-    pub fn node_version(mut self, version: impl Into<String>) -> Self {
-        self.node_version = Some(version.into());
+    /// Set the node run ID (references `core.node_runs`)
+    pub fn node_run_id(mut self, run_id: Uuid) -> Self {
+        self.node_run_id = Some(run_id);
         self
     }
 
@@ -89,7 +89,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload: self.payload,
             timestamp: self.timestamp,
             hostname: self.hostname,
-            node_version: self.node_version,
+            node_run_id: self.node_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
@@ -167,10 +167,33 @@ impl<T> EventBuilder<T, HasProvenance> {
         self
     }
 
+    /// Set operation ID on both the provenance (if Synthesis) and the event-level
+    /// `created_by_operation_id` field.
+    pub fn with_operation(mut self, operation_id: Id<Operation>) -> Self {
+        if let Some(Provenance::Synthesis {
+            operation_id: ref mut op_id,
+            ..
+        }) = self.provenance_data
+        {
+            *op_id = Some(operation_id);
+        }
+        self
+    }
+
     pub fn build(self) -> Result<Event<T>> {
         let provenance = self.provenance_data.ok_or_else(|| {
             SinexError::invalid_state("EventBuilder missing provenance when building")
         })?;
+
+        // Auto-sync: if provenance carries an operation_id, populate the
+        // event-level `created_by_operation_id` so it persists to the DB column.
+        let created_by_operation_id = match &provenance {
+            Provenance::Synthesis {
+                operation_id: Some(op_id),
+                ..
+            } => Some(*op_id.as_uuid()),
+            _ => None,
+        };
 
         Ok(Event {
             id: self.id,
@@ -179,10 +202,16 @@ impl<T> EventBuilder<T, HasProvenance> {
             payload: self.payload,
             ts_orig: self.timestamp.or_else(|| Some(Timestamp::now())),
             host: self.hostname.unwrap_or_else(get_hostname),
-            node_version: self.node_version.or_else(get_node_version),
+            node_run_id: self.node_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self.associated_blob_ids,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id,
+            node_model: None,
         })
     }
 }
@@ -280,6 +309,8 @@ struct ProvenanceWire {
     offset_kind: Option<OffsetKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_event_ids: Option<Vec<EventId>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation_id: Option<Id<Operation>>,
 }
 
 impl Serialize for Provenance {
@@ -305,9 +336,11 @@ impl Serialize for Provenance {
                     None
                 },
                 source_event_ids: None,
+                operation_id: None,
             },
             Provenance::Synthesis {
-                source_event_ids, ..
+                source_event_ids,
+                operation_id,
             } => ProvenanceWire {
                 source_material_id: None,
                 anchor_byte: None,
@@ -315,6 +348,7 @@ impl Serialize for Provenance {
                 offset_end: None,
                 offset_kind: None,
                 source_event_ids: Some(source_event_ids.clone().into_vec()),
+                operation_id: *operation_id,
             },
         };
         wire.serialize(serializer)
@@ -375,7 +409,7 @@ impl<'de> Deserialize<'de> for Provenance {
                 })?;
                 Ok(Provenance::Synthesis {
                     source_event_ids,
-                    operation_id: None,
+                    operation_id: wire.operation_id,
                 })
             }
             (Some(_), Some(_)) => Err(serde::de::Error::custom(
@@ -423,23 +457,33 @@ impl Provenance {
             operation_id: None,
         }
     }
+
+    /// Set the operation ID on Synthesis provenance.
+    /// No-op on Material provenance.
+    #[must_use]
+    pub fn with_operation(mut self, op_id: Id<Operation>) -> Self {
+        if let Provenance::Synthesis {
+            ref mut operation_id,
+            ..
+        } = self
+        {
+            *operation_id = Some(op_id);
+        }
+        self
+    }
+
+    /// Get the operation ID if this is Synthesis provenance.
+    #[must_use]
+    pub fn operation_id(&self) -> Option<Id<Operation>> {
+        match self {
+            Provenance::Synthesis { operation_id, .. } => *operation_id,
+            Provenance::Material { .. } => None,
+        }
+    }
 }
 
 // Helper function to get hostname (needed by builder)
 #[must_use]
 pub fn get_hostname() -> crate::domain::HostName {
     crate::domain::HostName::new(gethostname::gethostname().to_string_lossy().to_string())
-}
-
-// Helper function to get node version
-#[must_use]
-pub fn get_node_version() -> Option<String> {
-    // Priority: compile-time git revision > None
-    match option_env!("SINEX_GIT_REV") {
-        Some(git_rev) if !git_rev.is_empty() && git_rev != "unknown" => {
-            // Format: git-<short-rev> (e.g., "git-a1b2c3d")
-            Some(format!("git-{git_rev}"))
-        }
-        _ => None,
-    }
 }

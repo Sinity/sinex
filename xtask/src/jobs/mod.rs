@@ -399,18 +399,14 @@ impl JobManager {
             if bg.pid == 0 {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
-                return Ok(updated.map(|b| {
-                    Job::from_background_job(b, &self.jobs_dir)
-                }));
+                return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
             }
 
             let pid = nix::unistd::Pid::from_raw(bg.pid as i32);
             if nix::sys::signal::kill(pid, None).is_err() {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
-                return Ok(updated.map(|b| {
-                    Job::from_background_job(b, &self.jobs_dir)
-                }));
+                return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
             }
         }
 
@@ -423,9 +419,7 @@ impl JobManager {
         let jobs = db.get_recent_background_jobs(1000)?;
         Ok(jobs
             .into_iter()
-            .map(|bg| {
-                Job::from_background_job(bg, &self.jobs_dir)
-            })
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
             .collect())
     }
 
@@ -437,9 +431,7 @@ impl JobManager {
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
             .into_iter()
-            .map(|bg| {
-                Job::from_background_job(bg, &self.jobs_dir)
-            })
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
             .collect())
     }
 
@@ -478,9 +470,7 @@ impl JobManager {
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs
             .into_iter()
-            .map(|bg| {
-                Job::from_background_job(bg, &self.jobs_dir)
-            })
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
             .collect())
     }
 

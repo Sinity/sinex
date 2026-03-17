@@ -96,7 +96,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U1: Include files from most recent build_diagnostics invocation
         if self.diagnostics {
-            let diag_files = collect_diagnostic_files();
+            let diag_files = collect_diagnostic_files(ctx);
             if ctx.is_human() && !diag_files.is_empty() {
                 println!(
                     "  Diagnostics: including {} files from recent check run",
@@ -192,7 +192,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U3: Inject xtask context block into the output file
         let context_injected = if self.context {
-            let context_block = build_context_block();
+            let context_block = build_context_block(ctx);
             if let Err(e) = append_context_block(&output_path, &context_block) {
                 if ctx.is_human() {
                     eprintln!("  Warning: could not inject xtask context: {e}");
@@ -255,29 +255,20 @@ impl XtaskCommand for SnapshotCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Return distinct file paths from the most recent build_diagnostics invocation.
-fn collect_diagnostic_files() -> Vec<String> {
-    use crate::config::config;
-    use crate::history::HistoryDb;
-
-    let db = match HistoryDb::open(&config().history_db_path()) {
-        Ok(db) => db,
-        Err(_) => return vec![],
-    };
-
-    // Get current (package-scoped) diagnostics filtered to check command.
-    match db.get_current_diagnostics(None, None, None, Some("check"), false) {
-        Ok(diags) => {
-            let mut paths: Vec<String> = diags
-                .into_iter()
-                .filter_map(|d| d.file_path)
-                .filter(|p| !p.is_empty())
-                .collect();
-            paths.sort();
-            paths.dedup();
-            paths
-        }
-        Err(_) => vec![],
-    }
+fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
+    ctx.with_history_db(|db| {
+        // Get current (package-scoped) diagnostics filtered to check command.
+        let diags = db.get_current_diagnostics(None, None, None, Some("check"), false)?;
+        let mut paths: Vec<String> = diags
+            .into_iter()
+            .filter_map(|d| d.file_path)
+            .filter(|p| !p.is_empty())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    })
+    .unwrap_or_default()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,16 +311,16 @@ fn collect_changed_files() -> Vec<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Build the [xtask-context] block as a string.
-fn build_context_block() -> String {
+fn build_context_block(ctx: &CommandContext) -> String {
     let mut lines: Vec<String> = vec!["[xtask-context]".to_string()];
 
     // Recent check/test invocations
-    lines.push(format!("recent_runs: {}", format_recent_runs()));
+    lines.push(format!("recent_runs: {}", format_recent_runs(ctx)));
 
     // Active diagnostics
     lines.push(format!(
         "active_diagnostics: {}",
-        format_active_diagnostics()
+        format_active_diagnostics(ctx)
     ));
 
     // Coordinator state
@@ -341,63 +332,47 @@ fn build_context_block() -> String {
     lines.join("\n")
 }
 
-fn format_recent_runs() -> String {
-    use crate::config::config;
-    use crate::history::HistoryDb;
+fn format_recent_runs(ctx: &CommandContext) -> String {
+    ctx.with_history_db(|db| {
+        // get_recent(limit, command_filter)
+        let invocations = db.get_recent(5, Some("check"))?;
 
-    let db = match HistoryDb::open(&config().history_db_path()) {
-        Ok(db) => db,
-        Err(_) => return "[]".to_string(),
-    };
-
-    // get_recent(limit, command_filter)
-    let invocations = match db.get_recent(5, Some("check")) {
-        Ok(v) => v,
-        Err(_) => return "[]".to_string(),
-    };
-
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let items: Vec<String> = invocations
-        .iter()
-        .map(|inv| {
-            let age_secs = now - inv.started_at.unix_timestamp();
-            let when = format_age(age_secs);
-            let status = inv.status.as_str();
-            format!("{{id:{}, status:{}, when:\"{}\"}}", inv.id, status, when)
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let items: Vec<String> = invocations
+            .iter()
+            .map(|inv| {
+                let age_secs = now - inv.started_at.unix_timestamp();
+                let when = format_age(age_secs);
+                let status = inv.status.as_str();
+                format!("{{id:{}, status:{}, when:\"{}\"}}", inv.id, status, when)
+            })
+            .collect();
+        Ok(format!("[{}]", items.join(", ")))
+    })
+    .unwrap_or_else(|| "[]".to_string())
 }
 
-fn format_active_diagnostics() -> String {
-    use crate::config::config;
-    use crate::history::HistoryDb;
+fn format_active_diagnostics(ctx: &CommandContext) -> String {
+    ctx.with_history_db(|db| {
+        // get_current_diagnostics(level, file_pattern, package, command, fixable_only)
+        let diags = db.get_current_diagnostics(Some("error"), None, None, None, false)?;
 
-    let db = match HistoryDb::open(&config().history_db_path()) {
-        Ok(db) => db,
-        Err(_) => return "[]".to_string(),
-    };
-
-    // get_current_diagnostics(level, file_pattern, package, command, fixable_only)
-    let diags = match db.get_current_diagnostics(Some("error"), None, None, None, false) {
-        Ok(d) => d,
-        Err(_) => return "[]".to_string(),
-    };
-
-    let items: Vec<String> = diags
-        .iter()
-        .take(10)
-        .map(|d| {
-            let file = d.file_path.as_deref().unwrap_or("?");
-            let line = d
-                .line
-                .map(|l| l.to_string())
-                .unwrap_or_else(|| "?".to_string());
-            let msg = d.message.chars().take(60).collect::<String>();
-            format!("{{file:\"{file}\", line:{line}, msg:\"{msg}\"}}")
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
+        let items: Vec<String> = diags
+            .iter()
+            .take(10)
+            .map(|d| {
+                let file = d.file_path.as_deref().unwrap_or("?");
+                let line = d
+                    .line
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let msg = d.message.chars().take(60).collect::<String>();
+                format!("{{file:\"{file}\", line:{line}, msg:\"{msg}\"}}")
+            })
+            .collect();
+        Ok(format!("[{}]", items.join(", ")))
+    })
+    .unwrap_or_else(|| "[]".to_string())
 }
 
 fn format_coordinator_state() -> String {

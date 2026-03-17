@@ -23,24 +23,32 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
-use crate::history::{HistoryDb, InvocationStatus};
 use crate::history::TestStatus;
+use crate::history::InvocationStatus;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SMOKE_TESTS: &[&str] = &["basic"];
+const SMOKE_TESTS: &[&str] = &["basic", "basic-flow-unified", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
     "satellite-matrix",
     "multi-source",
     "failure-recovery",
+    "node-matrix",
+    "kitty-eventsource",
+    "mtls-enforcement",
+    "sinexctl-e2e",
 ];
 const PERFORMANCE_TESTS: &[&str] = &["performance"];
-/// Chaos tests are intentionally empty — pending the new failure-injection harness.
-const CHAOS_TESTS: &[&str] = &[];
+const CHAOS_TESTS: &[&str] = &[
+    "chaos-network-partition",
+    "chaos-process-restart",
+    "chaos-clock-skew",
+    "xtask-concurrency",
+];
 
 /// Default timeout per test in seconds (15 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
@@ -48,7 +56,14 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 const EXTENDED_TIMEOUT_SECS: u64 = 1800;
 
 /// Tests that require the extended timeout.
-const EXTENDED_TIMEOUT_TESTS: &[&str] = &["maintenance", "performance"];
+const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
+    "maintenance",
+    "performance",
+    "chaos-network-partition",
+    "chaos-process-restart",
+    "chaos-clock-skew",
+    "xtask-concurrency",
+];
 
 fn all_tests() -> Vec<&'static str> {
     let mut tests: Vec<&'static str> = Vec::new();
@@ -396,15 +411,13 @@ async fn execute_test(
     }
 
     // Open history DB for recording (Q3)
-    let maybe_db = open_history_db_for_vm();
-    let invocation_id = maybe_db.as_ref().ok().and_then(|db| {
+    let invocation_id = ctx.with_history_db(|db| {
         let args = serde_json::json!({
             "category": category,
             "parallel": parallel,
             "tests": tests_to_run,
         });
         db.start_invocation("test", Some("vm"), None, Some(&args.to_string()))
-            .ok()
     });
 
     let suite_start = Instant::now();
@@ -441,7 +454,7 @@ async fn execute_test(
     println!();
 
     // Record results to history DB (Q3)
-    if let (Some(db), Some(inv_id)) = (maybe_db.as_ref().ok(), invocation_id) {
+    if let Some(inv_id) = invocation_id {
         for r in &results {
             let status = if r.timed_out {
                 "timeout"
@@ -455,8 +468,9 @@ async fn execute_test(
             } else {
                 Some(r.output.as_str())
             };
-            let _ =
-                db.record_test_result(inv_id, &r.name, "vm", status, r.duration_secs, output, "vm");
+            ctx.with_history_db(|db| {
+                db.record_test_result(inv_id, &r.name, "vm", status, r.duration_secs, output, "vm")
+            });
         }
         let final_status = if failed.is_empty() {
             InvocationStatus::Success
@@ -464,7 +478,7 @@ async fn execute_test(
             InvocationStatus::Failed
         };
         let exit_code = if failed.is_empty() { 0 } else { 1 };
-        let _ = db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration);
+        ctx.with_history_db(|db| db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration));
     }
 
     if failed.is_empty() {
@@ -552,14 +566,21 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace_root = config::workspace_root();
     let scenarios_dir = workspace_root.join("tests/e2e/nixos-vm/test-scenarios");
 
-    let test_files = [
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/basic-flow.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/maintenance.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/satellite-matrix.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/multi-source.nix"),
-        workspace_root.join("tests/e2e/nixos-vm/test-scenarios/performance.nix"),
-    ];
+    // Discover all .nix files in the scenarios directory dynamically, plus
+    // the preflight deployment test which lives one level up.
+    let mut test_files: Vec<std::path::PathBuf> = Vec::new();
+    test_files.push(workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix"));
+    if let Ok(entries) = std::fs::read_dir(&scenarios_dir) {
+        let mut discovered: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension().and_then(|s| s.to_str()) == Some("nix")
+            })
+            .map(|e| e.path())
+            .collect();
+        discovered.sort();
+        test_files.extend(discovered);
+    }
 
     let dummy_pkg = r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
 
@@ -599,6 +620,9 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
                 dummy_pkg,
                 "--arg",
                 "pg_jsonschema",
+                dummy_pkg,
+                "--arg",
+                "xtask",
                 dummy_pkg,
             ])
             .current_dir(&workspace_root)
@@ -642,12 +666,6 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
 
     Ok(CommandResult::success()
         .with_message(format!("validated {valid} files ({missing} missing)")))
-}
-
-/// Open history DB for VM test recording. Returns Ok only if available.
-fn open_history_db_for_vm() -> Result<HistoryDb> {
-    let path = crate::config::config().history_db_path();
-    HistoryDb::open(&path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

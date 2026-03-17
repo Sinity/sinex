@@ -7,8 +7,7 @@ use sinex_primitives::{Bytes, Seconds};
 
 use crate::config::GatewayConfig;
 use crate::rpc_server::{
-    JsonRpcRequest, RpcServerLimits,
-    constant_time_eq as constant_time_eq_inner,
+    JsonRpcRequest, RpcServerLimits, constant_time_eq as constant_time_eq_inner,
     extract_token as extract_token_inner, read_token_from_env as read_token_from_env_inner,
     validate_jsonrpc_request,
 };

@@ -57,10 +57,24 @@ pub struct StreamBatchRow {
     pub source_event_ids: Option<Vec<EventId>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
-    /// Version of the node that produced this event
-    pub node_version: Option<String>,
+    /// UUID of the node run session that produced this event
+    pub node_run_id: Option<Uuid>,
     /// Associated blob IDs
     pub associated_blob_ids: Option<Vec<Uuid>>,
+
+    // Synthetic event metadata (nullable — only set for derived/synthesized events)
+    /// Temporal policy used for `ts_orig` derivation
+    pub temporal_policy: Option<String>,
+    /// Version of the node logic that produced this event
+    pub semantics_version: Option<String>,
+    /// Scope identifier for scope-reconciler replacement
+    pub scope_key: Option<String>,
+    /// Output slot identifier for targeted replacement
+    pub equivalence_key: Option<String>,
+    /// Which replay/operation created this event
+    pub created_by_operation_id: Option<Uuid>,
+    /// Which derived node model produced this event
+    pub node_model: Option<String>,
 }
 
 /// Result of a stream batch insert operation.
@@ -524,8 +538,16 @@ impl<'a> EventRepository<'a> {
         let event_type = event.event_type.clone();
         let host = event.host.clone();
         let payload = event.payload.clone();
-        let node_version = event.node_version.clone();
+        let node_run_id = event.node_run_id;
         let payload_schema_id = event.payload_schema_id;
+
+        // Synthetic event metadata
+        let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
+        let semantics_version = event.semantics_version.clone();
+        let scope_key = event.scope_key.clone();
+        let equivalence_key = event.equivalence_key.clone();
+        let created_by_operation_id = event.created_by_operation_id;
+        let node_model_str = event.node_model.map(|m| m.to_string());
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -542,8 +564,13 @@ impl<'a> EventRepository<'a> {
                 let event_type = event_type.clone();
                 let host = host.clone();
                 let payload = payload.clone();
-                let node_version = node_version.clone();
+                let node_run_id = node_run_id;
                 let offset_kind = offset_kind.clone();
+                let temporal_policy_str = temporal_policy_str.clone();
+                let semantics_version = semantics_version.clone();
+                let scope_key = scope_key.clone();
+                let equivalence_key = equivalence_key.clone();
+                let node_model_str = node_model_str.clone();
 
                 Box::pin(async move {
                     // Enforce REPEATABLE READ for consistent view during cycle check
@@ -558,14 +585,18 @@ impl<'a> EventRepository<'a> {
                         r#"
                         INSERT INTO core.events (
                             id, source, event_type, host, payload,
-                            ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
+                            ts_orig, ts_orig_subnano, node_run_id, payload_schema_id, source_event_ids,
                             source_material_id, offset_start, offset_end, offset_kind,
-                            anchor_byte, associated_blob_ids
+                            anchor_byte, associated_blob_ids,
+                            temporal_policy, semantics_version, scope_key, equivalence_key,
+                            created_by_operation_id, node_model
                         ) VALUES (
                             $1::uuid, $2, $3, $4, $5,
                             $6, $7, $8, $9::uuid, $10::uuid[],
                             $11::uuid, $12, $13, $14,
-                            $15, $16::uuid[]
+                            $15, $16::uuid[],
+                            $17, $18, $19, $20,
+                            $21::uuid, $22
                         )
                         RETURNING
                             id as "id!: uuid::Uuid",
@@ -576,7 +607,7 @@ impl<'a> EventRepository<'a> {
                             ts_orig as "ts_orig!: Timestamp",
                             ts_orig_subnano,
                             host as "host!",
-                            node_version,
+                            node_run_id::uuid as "node_run_id: uuid::Uuid",
                             payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
                             payload as "payload!",
                             source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
@@ -585,7 +616,13 @@ impl<'a> EventRepository<'a> {
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                            temporal_policy,
+                            semantics_version,
+                            scope_key,
+                            equivalence_key,
+                            created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                            node_model
                         "#,
                         id.to_uuid(),
                         event_source.as_str(),
@@ -594,7 +631,7 @@ impl<'a> EventRepository<'a> {
                         payload,
                         ts_orig,
                         ts_orig_subnano,
-                        node_version,
+                        node_run_id,
                         payload_schema_id,
                         source_event_uuids.as_deref(),
                         source_material_id.map(|id| id.to_uuid()),
@@ -602,7 +639,13 @@ impl<'a> EventRepository<'a> {
                         offset_end,
                         offset_kind.as_deref(),
                         anchor_byte,
-                        associated_blob_uuids.as_deref()
+                        associated_blob_uuids.as_deref(),
+                        temporal_policy_str,
+                        semantics_version,
+                        scope_key,
+                        equivalence_key,
+                        created_by_operation_id,
+                        node_model_str
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -671,19 +714,27 @@ impl<'a> EventRepository<'a> {
             None => (None, None),
         };
 
+        // Synthetic event metadata
+        let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
+        let node_model_str = event.node_model.map(|m| m.to_string());
+
         let record = sqlx::query_as!(
             EventRecord,
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_run_id, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
-                anchor_byte, associated_blob_ids
+                anchor_byte, associated_blob_ids,
+                temporal_policy, semantics_version, scope_key, equivalence_key,
+                created_by_operation_id, node_model
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8, $9::uuid, $10::uuid[],
                 $11::uuid, $12, $13, $14,
-                $15, $16::uuid[]
+                $15, $16::uuid[],
+                $17, $18, $19, $20,
+                $21::uuid, $22
             )
             RETURNING
                 id as "id!: uuid::Uuid",
@@ -694,7 +745,7 @@ impl<'a> EventRepository<'a> {
                 ts_orig as "ts_orig!: Timestamp",
                 ts_orig_subnano,
                 host as "host!",
-                node_version,
+                node_run_id::uuid as "node_run_id: uuid::Uuid",
                 payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
                 payload as "payload!",
                 source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
@@ -703,7 +754,13 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                temporal_policy,
+                semantics_version,
+                scope_key,
+                equivalence_key,
+                created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                node_model
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -712,7 +769,7 @@ impl<'a> EventRepository<'a> {
             event.payload,
             ts_orig,
             ts_orig_subnano,
-            event.node_version,
+            event.node_run_id,
             event.payload_schema_id,
             source_event_uuids.as_deref(),
             source_material_id.map(|id| id.to_uuid()),
@@ -720,7 +777,13 @@ impl<'a> EventRepository<'a> {
             offset_end,
             offset_kind.as_deref(),
             anchor_byte,
-            associated_blob_uuids.as_deref()
+            associated_blob_uuids.as_deref(),
+            temporal_policy_str,
+            event.semantics_version,
+            event.scope_key,
+            event.equivalence_key,
+            event.created_by_operation_id,
+            node_model_str
         )
         .fetch_one(&mut **tx)
         .await
@@ -840,7 +903,7 @@ impl<'a> EventRepository<'a> {
         let mut payloads = Vec::with_capacity(events.len());
         let mut ts_orig_values = Vec::with_capacity(events.len());
         let mut ts_orig_subnanos = Vec::with_capacity(events.len());
-        let mut node_versions = Vec::with_capacity(events.len());
+        let mut node_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
         let mut payload_schema_ids = Vec::with_capacity(events.len());
         let mut source_event_ids = Vec::with_capacity(events.len());
         let mut source_material_ids = Vec::with_capacity(events.len());
@@ -849,6 +912,12 @@ impl<'a> EventRepository<'a> {
         let mut offset_kinds = Vec::with_capacity(events.len());
         let mut anchor_bytes = Vec::with_capacity(events.len());
         let mut associated_blob_ids = Vec::with_capacity(events.len());
+        let mut temporal_policies: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut semantics_versions: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut scope_keys: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut equivalence_keys: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut created_by_operation_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
+        let mut node_models: Vec<Option<String>> = Vec::with_capacity(events.len());
 
         for event in &events {
             let event_id = event
@@ -905,7 +974,7 @@ impl<'a> EventRepository<'a> {
             payloads.push(event.payload.clone());
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
-            node_versions.push(event.node_version.clone());
+            node_run_ids.push(event.node_run_id);
             payload_schema_ids.push(event.payload_schema_id);
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
@@ -914,6 +983,12 @@ impl<'a> EventRepository<'a> {
             offset_kinds.push(offset_kind);
             anchor_bytes.push(anchor_byte);
             associated_blob_ids.push(associated_blob_uuids);
+            temporal_policies.push(event.temporal_policy.map(|p| p.to_string()));
+            semantics_versions.push(event.semantics_version.clone());
+            scope_keys.push(event.scope_key.clone());
+            equivalence_keys.push(event.equivalence_key.clone());
+            created_by_operation_ids.push(event.created_by_operation_id);
+            node_models.push(event.node_model.map(|m| m.to_string()));
         }
 
         // Begin transaction for atomicity
@@ -939,9 +1014,11 @@ impl<'a> EventRepository<'a> {
         let mut builder = QueryBuilder::new(
             "INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_run_id, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
-                anchor_byte, associated_blob_ids
+                anchor_byte, associated_blob_ids,
+                temporal_policy, semantics_version, scope_key, equivalence_key,
+                created_by_operation_id, node_model
             ) ",
         );
         builder.push_values(0..ids.len(), |mut b, idx| {
@@ -952,7 +1029,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(&payloads[idx]);
             b.push_bind(ts_orig_values[idx]);
             b.push_bind(ts_orig_subnanos[idx]);
-            b.push_bind(&node_versions[idx]);
+            b.push_bind(node_run_ids[idx]).push_unseparated("::uuid");
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&source_event_ids[idx])
@@ -965,6 +1042,13 @@ impl<'a> EventRepository<'a> {
             b.push_bind(anchor_bytes[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]");
+            b.push_bind(&temporal_policies[idx]);
+            b.push_bind(&semantics_versions[idx]);
+            b.push_bind(&scope_keys[idx]);
+            b.push_bind(&equivalence_keys[idx]);
+            b.push_bind(created_by_operation_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(&node_models[idx]);
         });
 
         builder.build().execute(&mut *tx).await.map_err(|e| {
@@ -1086,7 +1170,7 @@ impl<'a> EventRepository<'a> {
         let mut offset_kinds = Vec::with_capacity(batch.len());
         let mut source_event_ids = Vec::with_capacity(batch.len());
         let mut payload_schema_ids = Vec::with_capacity(batch.len());
-        let mut node_versions = Vec::with_capacity(batch.len());
+        let mut node_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(batch.len());
         let mut associated_blob_ids = Vec::with_capacity(batch.len());
 
         for row in batch {
@@ -1112,16 +1196,27 @@ impl<'a> EventRepository<'a> {
                     .collect::<Vec<_>>()
             }));
             payload_schema_ids.push(row.payload_schema_id);
-            node_versions.push(row.node_version.clone());
+            node_run_ids.push(row.node_run_id);
             associated_blob_ids.push(row.associated_blob_ids.clone());
         }
+
+        // Synthetic event metadata vectors
+        let temporal_policies: Vec<_> = batch.iter().map(|r| r.temporal_policy.clone()).collect();
+        let semantics_versions: Vec<_> =
+            batch.iter().map(|r| r.semantics_version.clone()).collect();
+        let scope_keys: Vec<_> = batch.iter().map(|r| r.scope_key.clone()).collect();
+        let equivalence_keys: Vec<_> = batch.iter().map(|r| r.equivalence_key.clone()).collect();
+        let created_by_op_ids: Vec<_> = batch.iter().map(|r| r.created_by_operation_id).collect();
+        let node_models: Vec<_> = batch.iter().map(|r| r.node_model.clone()).collect();
 
         // Build INSERT with VALUES using QueryBuilder (required for ragged arrays)
         let mut builder = QueryBuilder::new(
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, node_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
+                temporal_policy, semantics_version, scope_key, equivalence_key,
+                created_by_operation_id, node_model
             ) ",
         );
 
@@ -1143,9 +1238,16 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid[]");
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid");
-            b.push_bind(&node_versions[idx]);
+            b.push_bind(node_run_ids[idx]).push_unseparated("::uuid");
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]");
+            b.push_bind(&temporal_policies[idx]);
+            b.push_bind(&semantics_versions[idx]);
+            b.push_bind(&scope_keys[idx]);
+            b.push_bind(&equivalence_keys[idx]);
+            b.push_bind(created_by_op_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(&node_models[idx]);
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
@@ -1218,22 +1320,28 @@ impl<'a> EventRepository<'a> {
         // applies `::uuid` casts when copying into `core.events`.
         sqlx::query(
             "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
-                id                  UUID        NOT NULL,
-                source              TEXT        NOT NULL,
-                event_type          TEXT        NOT NULL,
-                ts_orig             TIMESTAMPTZ,
-                ts_orig_subnano     INTEGER,
-                host                TEXT        NOT NULL,
-                payload             JSONB       NOT NULL,
-                source_material_id  UUID,
-                anchor_byte         BIGINT,
-                offset_start        BIGINT,
-                offset_end          BIGINT,
-                offset_kind         TEXT,
-                source_event_ids    UUID[],
-                payload_schema_id   UUID,
-                node_version        TEXT,
-                associated_blob_ids UUID[]
+                id                      UUID        NOT NULL,
+                source                  TEXT        NOT NULL,
+                event_type              TEXT        NOT NULL,
+                ts_orig                 TIMESTAMPTZ,
+                ts_orig_subnano         INTEGER,
+                host                    TEXT        NOT NULL,
+                payload                 JSONB       NOT NULL,
+                source_material_id      UUID,
+                anchor_byte             BIGINT,
+                offset_start            BIGINT,
+                offset_end              BIGINT,
+                offset_kind             TEXT,
+                source_event_ids        UUID[],
+                payload_schema_id       UUID,
+                node_run_id             UUID,
+                associated_blob_ids     UUID[],
+                temporal_policy         TEXT,
+                semantics_version       TEXT,
+                scope_key               TEXT,
+                equivalence_key         TEXT,
+                created_by_operation_id UUID,
+                node_model              TEXT
             )",
         )
         .execute(&mut *tx)
@@ -1254,7 +1362,9 @@ impl<'a> EventRepository<'a> {
                     "COPY sinex_batch_staging (
                         id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                         source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                        source_event_ids, payload_schema_id, node_version, associated_blob_ids
+                        source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
+                        temporal_policy, semantics_version, scope_key, equivalence_key,
+                        created_by_operation_id, node_model
                     ) FROM STDIN",
                 )
                 .await
@@ -1277,7 +1387,9 @@ impl<'a> EventRepository<'a> {
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, node_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
+                temporal_policy, semantics_version, scope_key, equivalence_key,
+                created_by_operation_id, node_model
             )
             SELECT
                 id::uuid,
@@ -1286,8 +1398,11 @@ impl<'a> EventRepository<'a> {
                 anchor_byte, offset_start, offset_end, offset_kind,
                 source_event_ids::uuid[],
                 payload_schema_id::uuid,
-                node_version,
-                associated_blob_ids::uuid[]
+                node_run_id::uuid,
+                associated_blob_ids::uuid[],
+                temporal_policy, semantics_version, scope_key, equivalence_key,
+                created_by_operation_id::uuid,
+                node_model
             FROM sinex_batch_staging
             ON CONFLICT (id) DO NOTHING
             RETURNING id::uuid",
@@ -1984,6 +2099,112 @@ impl<'a> EventRepository<'a> {
     }
 }
 
+/// Relation kind for event replacements.
+///
+/// Describes how old events relate to their replacement events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplacementKind {
+    /// 1:1 — one old event directly replaced by one new event
+    Superseded,
+    /// many:1 — multiple old events collapsed into one new event
+    Collapsed,
+    /// 1:many — one old event split into multiple new events
+    Split,
+    /// No confident equivalence match; linked by operation only
+    Recomputed,
+}
+
+impl ReplacementKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ReplacementKind::Superseded => "superseded",
+            ReplacementKind::Collapsed => "collapsed",
+            ReplacementKind::Split => "split",
+            ReplacementKind::Recomputed => "recomputed",
+        }
+    }
+}
+
+/// A single replacement relation to be recorded.
+#[derive(Debug, Clone)]
+pub struct ReplacementRecord {
+    pub old_event_id: Uuid,
+    pub new_event_id: Uuid,
+    pub relation_kind: ReplacementKind,
+    pub scope_key: Option<String>,
+    pub equivalence_key: Option<String>,
+}
+
+impl EventRepository<'_> {
+    /// Record event replacement relations for a replay operation.
+    ///
+    /// Inserts rows into `audit.event_replacements` linking archived (old) events
+    /// to their replacement (new) events under a given operation.
+    pub async fn record_replacements(
+        &self,
+        operation_id: Uuid,
+        replacements: &[ReplacementRecord],
+    ) -> DbResult<u64> {
+        if replacements.is_empty() {
+            return Ok(0);
+        }
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO audit.event_replacements \
+             (old_event_id, new_event_id, operation_id, relation_kind, scope_key, equivalence_key) ",
+        );
+
+        builder.push_values(replacements, |mut b, r| {
+            b.push_bind(r.old_event_id)
+                .push_bind(r.new_event_id)
+                .push_bind(operation_id)
+                .push_bind(r.relation_kind.as_str())
+                .push_bind(r.scope_key.as_deref())
+                .push_bind(r.equivalence_key.as_deref());
+        });
+
+        let result = builder
+            .build()
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "record event replacements"))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Query replacement relations for a specific operation.
+    pub async fn get_replacements_by_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> DbResult<Vec<(Uuid, Uuid, String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>, Option<String>)>(
+            "SELECT old_event_id, new_event_id, relation_kind, scope_key, equivalence_key \
+             FROM audit.event_replacements WHERE operation_id = $1 ORDER BY replaced_at",
+        )
+        .bind(operation_id)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get replacements by operation"))?;
+        Ok(rows)
+    }
+
+    /// Query what replaced a specific archived event.
+    pub async fn get_replacements_for_event(
+        &self,
+        old_event_id: Uuid,
+    ) -> DbResult<Vec<(Uuid, String, Uuid)>> {
+        let rows = sqlx::query_as::<_, (Uuid, String, Uuid)>(
+            "SELECT new_event_id, relation_kind, operation_id \
+             FROM audit.event_replacements WHERE old_event_id = $1 ORDER BY replaced_at",
+        )
+        .bind(old_event_id)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get replacements for event"))?;
+        Ok(rows)
+    }
+}
+
 /// Lifecycle tier status record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct LifecycleTierStatus {
@@ -2200,7 +2421,13 @@ mod tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         }
     }
 

@@ -65,7 +65,7 @@ async fn setup_ephemeral_jetstream() -> TestResult<(EphemeralNats, JetStream)> {
 }
 
 #[sinex_bench]
-#[ignore = "stress test requiring resource monitoring"]
+#[ignore = "heavy: run with xtask test --heavy"]
 #[allow(dead_code)]
 async fn jetstream_backpressure_limits() -> TestResult<()> {
     let (_nats, js) = setup_ephemeral_jetstream().await?;
@@ -97,7 +97,7 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
 }
 
 #[sinex_bench]
-#[ignore = "stress test requiring resource monitoring"]
+#[ignore = "heavy: run with xtask test --heavy"]
 #[allow(dead_code)]
 async fn jetstream_consumer_recovery() -> TestResult<()> {
     let (_nats, js) = setup_ephemeral_jetstream().await?;
@@ -183,7 +183,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
 }
 
 #[sinex_bench]
-#[ignore = "stress test requiring resource monitoring"]
+#[ignore = "heavy: run with xtask test --heavy"]
 #[allow(dead_code)]
 async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     let (_nats, js) = setup_ephemeral_jetstream().await?;

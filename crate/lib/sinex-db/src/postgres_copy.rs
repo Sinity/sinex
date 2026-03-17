@@ -80,9 +80,40 @@ impl ToPostgresCopy for Event<JsonValue> {
         buf.push(b'\t');
         write_field(buf, payload_schema_id.as_deref());
         buf.push(b'\t');
-        write_field(buf, self.node_version.as_deref());
+        {
+            let node_run_id_str = self.node_run_id.map(|id| id.to_string());
+            write_field(buf, node_run_id_str.as_deref());
+        }
         buf.push(b'\t');
         write_field(buf, associated_blob_ids_str.as_deref());
+        // Synthetic event metadata
+        buf.push(b'\t');
+        write_field(
+            buf,
+            self.temporal_policy
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+        );
+        buf.push(b'\t');
+        write_field(buf, self.semantics_version.as_deref());
+        buf.push(b'\t');
+        write_field(buf, self.scope_key.as_deref());
+        buf.push(b'\t');
+        write_field(buf, self.equivalence_key.as_deref());
+        buf.push(b'\t');
+        {
+            let created_by_str = self.created_by_operation_id.map(|id| id.to_string());
+            write_field(buf, created_by_str.as_deref());
+        }
+        buf.push(b'\t');
+        write_field(
+            buf,
+            self.node_model
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+        );
 
         buf.push(b'\n');
 
@@ -125,7 +156,9 @@ impl ToPostgresCopy for StreamBatchRow {
 
         // Column order: id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
         //   source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-        //   source_event_ids, payload_schema_id, node_version, associated_blob_ids
+        //   source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
+        //   temporal_policy, semantics_version, scope_key, equivalence_key,
+        //   created_by_operation_id, node_model
         write_field(buf, Some(&id));
         buf.push(b'\t');
         write_field(buf, Some(self.source.as_str()));
@@ -154,9 +187,28 @@ impl ToPostgresCopy for StreamBatchRow {
         buf.push(b'\t');
         write_field(buf, payload_schema_id_str.as_deref());
         buf.push(b'\t');
-        write_field(buf, self.node_version.as_deref());
+        {
+            let node_run_id_str = self.node_run_id.map(|id| id.to_string());
+            write_field(buf, node_run_id_str.as_deref());
+        }
         buf.push(b'\t');
         write_field(buf, associated_blob_ids_str.as_deref());
+        // Synthetic event metadata
+        buf.push(b'\t');
+        write_field(buf, self.temporal_policy.as_deref());
+        buf.push(b'\t');
+        write_field(buf, self.semantics_version.as_deref());
+        buf.push(b'\t');
+        write_field(buf, self.scope_key.as_deref());
+        buf.push(b'\t');
+        write_field(buf, self.equivalence_key.as_deref());
+        buf.push(b'\t');
+        {
+            let created_by_str = self.created_by_operation_id.map(|id| id.to_string());
+            write_field(buf, created_by_str.as_deref());
+        }
+        buf.push(b'\t');
+        write_field(buf, self.node_model.as_deref());
 
         buf.push(b'\n');
 
@@ -243,8 +295,14 @@ mod tests {
             offset_kind: None,
             source_event_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         }
     }
 
@@ -257,14 +315,14 @@ mod tests {
         trimmed.split('\t').map(str::to_string).collect()
     }
 
-    /// The COPY format must have exactly 16 fields (one per column) separated by tabs.
+    /// The COPY format must have exactly 22 fields (one per column) separated by tabs.
     #[sinex_test]
-    async fn produces_exactly_16_fields() -> ::xtask::sandbox::TestResult<()> {
+    async fn produces_exactly_22_fields() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
         assert_eq!(
             fields.len(),
-            16,
-            "Expected 16 tab-separated fields, got {}:\n{fields:?}",
+            22,
+            "Expected 22 tab-separated fields, got {}:\n{fields:?}",
             fields.len()
         );
         Ok(())
@@ -285,8 +343,10 @@ mod tests {
         let fields = row_fields(&minimal_row());
         // source_material_id = fields[7], anchor_byte = [8], offset_start = [9],
         // offset_end = [10], offset_kind = [11], source_event_ids = [12],
-        // payload_schema_id = [13], node_version = [14], associated_blob_ids = [15]
-        for idx in [7usize, 8, 9, 10, 11, 12, 13, 14, 15] {
+        // payload_schema_id = [13], node_run_id = [14], associated_blob_ids = [15],
+        // temporal_policy = [16], semantics_version = [17], scope_key = [18],
+        // equivalence_key = [19], created_by_operation_id = [20], node_model = [21]
+        for idx in [7usize, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] {
             assert_eq!(
                 fields[idx], "\\N",
                 "Field {idx} should be \\N for None, got {:?}",

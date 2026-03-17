@@ -32,9 +32,10 @@ use sinex_primitives::rpc::{
     methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     replay::{
-        ReplayApproveRequest, ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest,
-        ReplayExecuteResponse, ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayScope,
-        ReplayStatusRequest, ReplayStatusResponse,
+        ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
+        ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
+        ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
+        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
     },
     system::{SystemHealthRequest, SystemHealthResponse},
 };
@@ -479,6 +480,8 @@ impl GatewayClient {
         node_id: &str,
         since: Option<&str>,
         until: Option<&str>,
+        materials: &[String],
+        event_types: &[String],
     ) -> Result<ReplayOperation> {
         // Build time window from relative or absolute times
         let time_window = if since.is_some() || until.is_some() {
@@ -496,12 +499,31 @@ impl GatewayClient {
             None
         };
 
+        let material_filter = if materials.is_empty() {
+            None
+        } else {
+            Some(materials.to_vec())
+        };
+
+        let mut filters = std::collections::HashMap::new();
+        if !event_types.is_empty() {
+            filters.insert(
+                "event_types".to_string(),
+                serde_json::Value::Array(
+                    event_types
+                        .iter()
+                        .map(|t| serde_json::Value::String(t.clone()))
+                        .collect(),
+                ),
+            );
+        }
+
         let req = ReplayCreateRequest {
             scope: ReplayScope {
                 node_id: node_id.to_string(),
                 time_window,
-                material_filter: None,
-                filters: std::collections::HashMap::new(),
+                material_filter,
+                filters,
             },
             actor: Some("service:sinexctl".to_string()),
         };
@@ -565,6 +587,7 @@ impl GatewayClient {
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
             executor: Some("service:sinexctl".to_string()),
+            dry_run: false,
         };
         let result = self
             .call_rpc(
@@ -595,13 +618,104 @@ impl GatewayClient {
 
     /// List all replay operations
     pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
-        let req = ReplayListRequest::default();
+        self.replay_list_filtered(None, None, None).await
+    }
+
+    /// List replay operations with optional filters
+    pub async fn replay_list_filtered(
+        &self,
+        state: Option<ReplayState>,
+        node: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<ReplayOperation>> {
+        let req = ReplayListRequest {
+            state,
+            node: node.map(String::from),
+            limit,
+        };
         let result = self
             .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
             .await?;
 
         let response: ReplayListResponse = serde_json::from_value(result)?;
         Ok(response.operations)
+    }
+
+    /// Preview a replay operation
+    pub async fn replay_preview(
+        &self,
+        operation_id: &str,
+    ) -> Result<(ReplayOperation, serde_json::Value)> {
+        let req = ReplayPreviewRequest {
+            operation_id: operation_id.to_string(),
+        };
+        let result = self
+            .call_rpc(
+                methods::REPLAY_PREVIEW_OPERATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ReplayPreviewResponse = serde_json::from_value(result)?;
+        Ok((response.operation, response.preview))
+    }
+
+    /// Approve a replay operation for execution
+    pub async fn replay_approve(&self, operation_id: &str) -> Result<ReplayOperation> {
+        let req = ReplayApproveRequest {
+            operation_id: operation_id.to_string(),
+            approver: Some("service:sinexctl".to_string()),
+        };
+        let result = self
+            .call_rpc(
+                methods::REPLAY_APPROVE_OPERATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ReplayApproveResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
+    }
+
+    /// Execute an approved replay operation.
+    /// When `dry_run` is true, computes cascade impact without persisting changes.
+    pub async fn replay_execute(
+        &self,
+        operation_id: &str,
+        dry_run: bool,
+    ) -> Result<ReplayOperation> {
+        let req = ReplayExecuteRequest {
+            operation_id: operation_id.to_string(),
+            executor: Some("service:sinexctl".to_string()),
+            dry_run,
+        };
+        let result = self
+            .call_rpc(
+                methods::REPLAY_EXECUTE_OPERATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ReplayExecuteResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
+    }
+
+    /// Cancel a replay operation
+    pub async fn replay_cancel(
+        &self,
+        operation_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ReplayOperation> {
+        let req = ReplayCancelRequest {
+            operation_id: operation_id.to_string(),
+            canceller: Some("service:sinexctl".to_string()),
+            reason: reason.map(String::from),
+        };
+        let result = self
+            .call_rpc(
+                methods::REPLAY_CANCEL_OPERATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ReplayCancelResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     // ==================== DLQ Commands ====================

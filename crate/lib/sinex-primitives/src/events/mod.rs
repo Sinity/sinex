@@ -17,7 +17,7 @@ pub use builder::*;
 pub use payload::*;
 pub use payloads::*;
 
-use crate::domain::{EventSource, EventType, HostName};
+use crate::domain::{DerivedNodeModel, EventSource, EventType, HostName, SyntheticTemporalPolicy};
 use crate::ids::Id;
 use crate::primitives::Uuid;
 use serde::{Deserialize, Serialize};
@@ -54,8 +54,10 @@ pub struct Event<T = JsonValue> {
     #[serde(default = "get_hostname_default")]
     pub host: HostName,
 
-    /// Version of the node that created this event
-    pub node_version: Option<String>,
+    /// UUID of the node run (session) that created this event.
+    /// References `core.node_runs.id` — replaces the old `node_version` string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_run_id: Option<Uuid>,
 
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
@@ -67,6 +69,31 @@ pub struct Event<T = JsonValue> {
 
     /// Array of associated blob IDs (screenshots, recordings, etc.)
     pub associated_blob_ids: Option<Vec<Uuid>>,
+
+    // Synthetic event metadata (nullable — only populated for derived/synthesized events)
+    /// Which temporal policy governed `ts_orig` derivation for this synthesized event
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporal_policy: Option<SyntheticTemporalPolicy>,
+
+    /// Version of the node logic that produced this event (for deterministic replay)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantics_version: Option<String>,
+
+    /// Scope identifier for scope-reconciler replacement patterns
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_key: Option<String>,
+
+    /// Identifies which output "slot" this event occupies (for targeted replacement)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub equivalence_key: Option<String>,
+
+    /// Which replay/operation created this event, if any
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by_operation_id: Option<Uuid>,
+
+    /// Which derived node model produced this event
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_model: Option<DerivedNodeModel>,
 }
 
 /// Marker type for source material IDs
@@ -87,10 +114,16 @@ where
             payload,
             ts_orig: Some(Timestamp::now()),
             host: builder::get_hostname(),
-            node_version: builder::get_node_version(),
+            node_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         }
     }
 
@@ -113,9 +146,9 @@ impl<T> Event<T> {
         self
     }
 
-    /// Set the node version
-    pub fn with_node_version(mut self, version: impl Into<String>) -> Self {
-        self.node_version = Some(version.into());
+    /// Set the node run ID (references `core.node_runs`)
+    pub fn with_node_run_id(mut self, run_id: Uuid) -> Self {
+        self.node_run_id = Some(run_id);
         self
     }
 
@@ -181,10 +214,16 @@ impl<T: Serialize> Event<T> {
             payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
             host: self.host,
-            node_version: self.node_version,
+            node_run_id: self.node_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             associated_blob_ids: self.associated_blob_ids,
+            temporal_policy: self.temporal_policy,
+            semantics_version: self.semantics_version,
+            scope_key: self.scope_key,
+            equivalence_key: self.equivalence_key,
+            created_by_operation_id: self.created_by_operation_id,
+            node_model: self.node_model,
         })
     }
 }
@@ -203,10 +242,16 @@ impl Event<JsonValue> {
             payload: serde_json::from_value(self.payload.clone())?,
             ts_orig: self.ts_orig,
             host: self.host.clone(),
-            node_version: self.node_version.clone(),
+            node_run_id: self.node_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
+            temporal_policy: self.temporal_policy,
+            semantics_version: self.semantics_version.clone(),
+            scope_key: self.scope_key.clone(),
+            equivalence_key: self.equivalence_key.clone(),
+            created_by_operation_id: self.created_by_operation_id,
+            node_model: self.node_model,
         })
     }
 
@@ -224,10 +269,16 @@ impl Event<JsonValue> {
             payload,
             ts_orig: Some(Timestamp::now()),
             host: builder::get_hostname(),
-            node_version: builder::get_node_version(),
+            node_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         }
     }
 }

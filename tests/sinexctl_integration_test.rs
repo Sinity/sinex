@@ -78,20 +78,19 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     }
 
+    let port = reserve_port()?;
+    let tcp_listen = format!("127.0.0.1:{port}");
     let config = sinex_gateway::config::GatewayConfig {
         database_url: ctx.database_url().to_string(),
+        tcp_listen: tcp_listen.clone(),
         ..Default::default()
     };
     let services = ServiceContainer::new(&config).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let port = reserve_port()?;
-    let tcp_listen = format!("127.0.0.1:{port}");
     let mut server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            if let Err(e) =
-                rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await
-            {
+            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
                 eprintln!("Gateway startup failed: {e:#}");
             }
         }

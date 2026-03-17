@@ -118,7 +118,13 @@ fn execute_list(
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
                     status_str.to_string(),
-                    progress_brief(job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref()),
+                    progress_brief(
+                        job.invocation_id
+                            .and_then(|iid| {
+                                ctx.with_history_db(|db| db.get_progress(iid)).flatten()
+                            })
+                            .as_ref(),
+                    ),
                     job.pid.to_string(),
                     super::format_display_time(&job.started_at),
                 ]);
@@ -172,7 +178,13 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
-                    progress_brief(job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref()),
+                    progress_brief(
+                        job.invocation_id
+                            .and_then(|iid| {
+                                ctx.with_history_db(|db| db.get_progress(iid)).flatten()
+                            })
+                            .as_ref(),
+                    ),
                     job.pid.to_string(),
                     running_time,
                     super::format_display_time(&job.started_at),

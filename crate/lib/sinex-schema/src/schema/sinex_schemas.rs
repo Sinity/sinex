@@ -298,6 +298,151 @@ impl NodeManifests {
 }
 
 // =============================================================================
+// II-B. NODE RUNS (Session/Run Identity)
+// =============================================================================
+
+/// **Table: `core.node_runs`**
+///
+/// Each row represents a single execution session of a node process. A run is
+/// created when a node starts, updated with heartbeats during operation, and
+/// marked with an `ended_at` timestamp on graceful shutdown.
+///
+/// Events reference their producing run via `node_run_id`, replacing the old
+/// `node_version` string. This gives every event a durable link to:
+/// - The exact manifest (code version + config schema) via `node_manifest_id`
+/// - The runtime context (host, instance, config hash) via the run row itself
+///
+/// ### Design decisions
+///
+/// - UUID primary key (`UUIDv7`) for global uniqueness and temporal ordering.
+/// - `node_manifest_id` is a required FK to `core.node_manifests` — every run
+///   must be associated with a registered manifest.
+/// - `effective_config_hash` enables detecting config drift across runs of the
+///   same manifest version.
+/// - `status` uses `NodeState` enum values from sinex-primitives domain types.
+#[derive(Iden, Copy, Clone)]
+pub enum NodeRuns {
+    Table,
+    Id,
+    NodeManifestId,
+    ServiceName,
+    InstanceId,
+    Host,
+    StartedAt,
+    EndedAt,
+    Status,
+    LastHeartbeatAt,
+    EffectiveConfigHash,
+    EffectiveConfig,
+}
+
+impl TableDef for NodeRuns {
+    fn table_name() -> &'static str {
+        "node_runs"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+#[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NodeRunRecord {
+    pub id: Uuid,
+    pub node_manifest_id: i32,
+    pub service_name: String,
+    pub instance_id: String,
+    pub host: String,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub effective_config_hash: Option<String>,
+    pub effective_config: Option<JsonValue>,
+}
+
+impl NodeRuns {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(NodeRuns::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
+            .col(
+                ColumnDef::new(NodeRuns::NodeManifestId)
+                    .integer()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(NodeRuns::ServiceName).text().not_null())
+            .col(ColumnDef::new(NodeRuns::InstanceId).text().not_null())
+            .col(ColumnDef::new(NodeRuns::Host).text().not_null())
+            .col(
+                ColumnDef::new(NodeRuns::StartedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(ColumnDef::new(NodeRuns::EndedAt).timestamp_with_time_zone())
+            .col(
+                ColumnDef::new(NodeRuns::Status)
+                    .text()
+                    .not_null()
+                    .default("running")
+                    .check(Expr::cust(
+                        "status IN ('running', 'draining', 'paused', 'failed', 'stopped')",
+                    )),
+            )
+            .col(ColumnDef::new(NodeRuns::LastHeartbeatAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(NodeRuns::EffectiveConfigHash).text())
+            .col(ColumnDef::new(NodeRuns::EffectiveConfig).json_binary())
+            .foreign_key(
+                ForeignKey::create()
+                    .from(Self::table_iden(), NodeRuns::NodeManifestId)
+                    .to(NodeManifests::table_iden(), Alias::new("id"))
+                    .on_delete(ForeignKeyAction::Restrict),
+            )
+            .to_owned()
+    }
+
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            // Find active runs for a given service
+            Index::create()
+                .if_not_exists()
+                .name("ix_node_runs_service_status")
+                .table(Self::table_iden())
+                .col(NodeRuns::ServiceName)
+                .col(NodeRuns::Status)
+                .to_owned(),
+            // Find runs by manifest
+            Index::create()
+                .if_not_exists()
+                .name("ix_node_runs_manifest")
+                .table(Self::table_iden())
+                .col(NodeRuns::NodeManifestId)
+                .to_owned(),
+            // Heartbeat staleness queries
+            Index::create()
+                .if_not_exists()
+                .name("ix_node_runs_heartbeat")
+                .table(Self::table_iden())
+                .col(NodeRuns::LastHeartbeatAt)
+                .cond_where(Expr::cust("status = 'running'"))
+                .to_owned(),
+        ]
+    }
+}
+
+// =============================================================================
 // III. SCHEMA DISCOVERY & VALIDATION CACHING
 // =============================================================================
 

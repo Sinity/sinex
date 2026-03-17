@@ -2,23 +2,23 @@
 
 ## Overview
 
-The health monitoring system provides **automatic health tracking for all nodes** via `HealthReporter`. Health monitoring is now enabled by default for all `AutomatonNode` implementations.
+The health monitoring system provides **automatic health tracking for all nodes** via `HealthReporter`. Health monitoring is now enabled by default for all derived-node implementations.
 
 ## Automatic Integration (Preferred)
 
-### AutomatonNode - Auto-Enabled
+### Derived Nodes - Auto-Enabled
 
-**All `AutomatonNode` implementations automatically get health monitoring** with zero configuration required!
+**All derived-node implementations (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) automatically get health monitoring** with zero configuration required!
 
-When an `AutomatonNodeAdapter` initializes in service mode with NATS available:
+When a `DerivedNodeAdapter` initializes in service mode with NATS available:
 1. ✅ HealthReporter is automatically created
 2. ✅ Success/error tracking happens on every event
 3. ✅ Status checks occur every 100 events
 4. ✅ health.status events emit automatically on status changes
 
 **No code changes needed** - health monitoring "just works" for:
-- All automata (e.g., `sinex-health-automaton`, `sinex-analytics-automaton`)
-- All nodes using the `AutomatonNode` pattern
+- All derived nodes (e.g., `sinex-health-automaton`, `sinex-analytics-automaton`, `sinex-terminal-command-canonicalizer`)
+- All nodes using the derived-node pattern
 
 ### Configuration (Optional)
 
@@ -38,7 +38,7 @@ SINEX_HEALTH_WINDOW_SECONDS=300        # 5 minutes (default)
 
 ## Manual Integration
 
-### For Non-AutomatonNode or Custom Use Cases
+### For Non-Derived-Node or Custom Use Cases
 
 ```rust
 use sinex_node_sdk::{HealthReporter, HealthThresholds, self_observation::SelfObserver};

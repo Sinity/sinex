@@ -58,7 +58,7 @@ async fn publish_raw_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": gethostname::gethostname().to_string_lossy(),
-        "node_version": "test",
+        "node_run_id": Uuid::now_v7().to_string(),
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -273,8 +273,9 @@ impl TestNodePublisher {
             "payload": payload,
             "ts_orig": ts_orig,
             "host": "test-host",
-            "node_version": "test",
+            "node_run_id": Uuid::now_v7().to_string(),
             "source_material_id": "00000000-0000-7000-8000-000000000000",
+            "anchor_byte": 0,
         });
 
         let subject = env.nats_subject_with_namespace(
@@ -400,7 +401,7 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         "payload": json!({"data": "fk-violation-test"}),
         "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
         "host": "test-host",
-        "node_version": "test",
+        "node_run_id": Uuid::now_v7().to_string(),
         "source_material_id": bogus_material_id.to_string(),
     });
 

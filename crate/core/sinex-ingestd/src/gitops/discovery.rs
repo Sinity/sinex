@@ -178,14 +178,16 @@ fn try_extract_from_path(
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_primitives::events::EventPayload;
+    use sinex_primitives::events::payloads::FileCreatedPayload;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
     async fn extract_from_metadata_fields() -> TestResult<()> {
         let json = json!({
             "type": "object",
-            "x-sinex-source": "fs-watcher",
-            "x-sinex-event-type": "file.created",
+            "x-sinex-source": FileCreatedPayload::SOURCE.as_str(),
+            "x-sinex-event-type": FileCreatedPayload::EVENT_TYPE.as_str(),
             "x-sinex-version": "1.0.0",
             "properties": {}
         });
@@ -193,8 +195,8 @@ mod tests {
         let schema = try_extract_from_metadata(&json, "schemas/test.json");
         assert!(schema.is_some());
         let schema = schema.expect("should extract");
-        assert_eq!(schema.source, "fs-watcher");
-        assert_eq!(schema.event_type, "file.created");
+        assert_eq!(schema.source, FileCreatedPayload::SOURCE.as_str());
+        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE.as_str());
         assert_eq!(schema.version, "1.0.0");
         Ok(())
     }
@@ -203,11 +205,16 @@ mod tests {
     async fn extract_from_path_convention() -> TestResult<()> {
         let json = json!({"type": "object"});
 
-        let schema = try_extract_from_path(&json, "schemas/fs-watcher/file.created/1.0.0.json");
+        let path = format!(
+            "schemas/{}/{}/1.0.0.json",
+            FileCreatedPayload::SOURCE.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_str()
+        );
+        let schema = try_extract_from_path(&json, &path);
         assert!(schema.is_some());
         let schema = schema.expect("should extract");
-        assert_eq!(schema.source, "fs-watcher");
-        assert_eq!(schema.event_type, "file.created");
+        assert_eq!(schema.source, FileCreatedPayload::SOURCE.as_str());
+        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE.as_str());
         assert_eq!(schema.version, "1.0.0");
         Ok(())
     }

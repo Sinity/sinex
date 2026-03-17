@@ -388,7 +388,8 @@ async fn test_command_context_elapsed() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_is_human() -> TestResult<()> {
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
+    let ctx_human =
+        CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
     assert!(ctx_human.is_human());
 
     let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
@@ -401,7 +402,8 @@ async fn test_command_context_is_json() -> TestResult<()> {
     let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     assert!(ctx_json.is_json());
 
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
+    let ctx_human =
+        CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
     assert!(!ctx_human.is_json());
     Ok(())
 }
@@ -959,9 +961,6 @@ async fn test_test_subcommands_are_recognized() -> TestResult<()> {
         .arg("test")
         .arg("nonexistent-lane")
         .output()?;
-    assert!(
-        !bad.status.success(),
-        "unknown test subcommand should fail"
-    );
+    assert!(!bad.status.success(), "unknown test subcommand should fail");
     Ok(())
 }

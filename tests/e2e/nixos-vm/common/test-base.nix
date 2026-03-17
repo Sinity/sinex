@@ -217,22 +217,22 @@ host    all             all             ::1/128                 trust
   };
 
   # Ensure ingestd has its expected working directories before startup.
-  systemd.services.sinex-ingestd.serviceConfig = lib.mkMerge [
-    (config.systemd.services.sinex-ingestd.serviceConfig or {})
-    {
-      PermissionsStartOnly = true;
-      ExecStartPre = lib.mkForce [
-        "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
-        "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
-        "${pkgs.git}/bin/git -C ${workDir}/annex init || true"
-        "${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd || true"
-      ];
-      Environment = [
-        "XDG_CACHE_HOME=${stateDir}/.cache"
-        "SINEX_ANNEX_PATH=${workDir}/annex"
-      ];
-    }
-  ];
+  # NB: do NOT self-reference config.systemd.services here — it causes infinite
+  # recursion because node-services.nix defines systemd.services based on
+  # config.services.sinex.core.  The module system auto-merges definitions.
+  systemd.services.sinex-ingestd.serviceConfig = {
+    PermissionsStartOnly = true;
+    ExecStartPre = lib.mkForce [
+      "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
+      "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
+      "${pkgs.git}/bin/git -C ${workDir}/annex init || true"
+      "${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd || true"
+    ];
+    Environment = [
+      "XDG_CACHE_HOME=${stateDir}/.cache"
+      "SINEX_ANNEX_PATH=${workDir}/annex"
+    ];
+  };
 
   systemd.services.sinex-ingestd.after = lib.mkAfter [
     "sinex-migrations.service"
@@ -246,16 +246,13 @@ host    all             all             ::1/128                 trust
   ];
 
   # NATS: clear JetStream state on boot to avoid overlap errors and ensure clean bootstrap.
-  systemd.services.nats.serviceConfig = lib.mkMerge [
-    (config.systemd.services.nats.serviceConfig or {})
-    {
-      PermissionsStartOnly = true;
-      ExecStartPre = [
-        "${pkgs.coreutils}/bin/rm -rf ${config.services.sinex.stateRoot}/nats"
-        "${pkgs.coreutils}/bin/install -d -o nats -g nats ${config.services.sinex.stateRoot}/nats/jetstream"
-      ];
-    }
-  ];
+  systemd.services.nats.serviceConfig = {
+    PermissionsStartOnly = true;
+    ExecStartPre = [
+      "${pkgs.coreutils}/bin/rm -rf ${config.services.sinex.stateRoot}/nats"
+      "${pkgs.coreutils}/bin/install -d -o nats -g nats ${config.services.sinex.stateRoot}/nats/jetstream"
+    ];
+  };
 
   # Package overlays
   nixpkgs.overlays = [

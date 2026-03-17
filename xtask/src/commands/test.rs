@@ -848,25 +848,56 @@ async fn execute_coverage(cov: &CoverageArgs, ctx: &CommandContext) -> Result<Co
         .await
 }
 
-async fn execute_mutants(m: &MutantsArgs, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
+    use color_eyre::eyre::eyre;
+
     // Guard: mutants invokes cargo-mutants which needs target/ lock
     if std::env::var("NEXTEST_RUN_ID").is_ok() {
-        return Err(color_eyre::eyre::eyre!(
+        return Err(eyre!(
             "Cannot run `xtask test mutants` inside an active nextest run — \
              cargo target/ lock would deadlock.\n\
              Use `xtask test --bg mutants` instead."
         ));
     }
 
-    crate::commands::mutants::MutantsCommand {
-        package: m.package.clone(),
-        file: m.file.clone(),
-        timeout: m.timeout,
-        jobs: m.jobs,
-        args: vec![],
+    if !ProcessBuilder::new("cargo-mutants")
+        .arg("--version")
+        .run_success()?
+    {
+        return Err(eyre!(
+            "cargo-mutants not found in PATH. Add it to this repo's devshell/flake."
+        ));
     }
-    .execute(ctx)
-    .await
+
+    let mut builder = ProcessBuilder::new("cargo-mutants");
+    builder = builder
+        .arg("--timeout")
+        .arg(format!("{}", m.timeout))
+        .arg("--jobs")
+        .arg(format!("{}", m.jobs));
+
+    if let Some(pkg) = &m.package {
+        builder = builder.arg("--package").arg(pkg);
+    }
+    if let Some(f) = &m.file {
+        builder = builder.arg("--file").arg(f);
+    }
+
+    let description = match (&m.package, &m.file) {
+        (Some(pkg), _) => format!("cargo-mutants --package {pkg}"),
+        (None, Some(f)) => format!("cargo-mutants --file {f}"),
+        (None, None) => "cargo-mutants (full workspace)".to_string(),
+    };
+
+    builder
+        .with_description(&description)
+        .inherit_output()
+        .run()?;
+
+    Ok(CommandResult::success()
+        .with_message("Mutation testing completed successfully")
+        .with_detail(format!("Timeout per mutant: {}s", m.timeout))
+        .with_detail(format!("Parallel jobs: {}", m.jobs)))
 }
 
 async fn execute_vm(vm: &VmArgs, ctx: &CommandContext) -> Result<CommandResult> {

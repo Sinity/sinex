@@ -24,7 +24,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         ts_orig: Some(Timestamp::now()),
         host: HostName::new("localhost"),
         payload,
-        node_version: Some("test".to_string()),
+        node_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::from_uuid(Uuid::now_v7()),
@@ -34,6 +34,12 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
             offset_kind: OffsetKind::Byte,
         },
         associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
     }
 }
 
@@ -193,7 +199,7 @@ sinex_proptest! {
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
-        prop_assert_eq!(event.node_version, deserialized.node_version);
+        prop_assert_eq!(event.node_run_id, deserialized.node_run_id);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
         prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
         Ok(())
@@ -467,7 +473,7 @@ mod unit_tests {
         assert!(ts_orig <= now);
         assert!(now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
-        assert_eq!(event.node_version.as_deref(), Some("test"));
+        assert!(event.node_run_id.is_some());
         assert!(event.payload_schema_id.is_none());
         Ok(())
     }

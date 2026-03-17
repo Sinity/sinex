@@ -76,6 +76,8 @@
 // Tests are designed to be idempotent and clean up after themselves.
 
 // === Complete System Validation ===
+// Tests assert behavioral invariants visible to users, not implementation details.
+// "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.
 
 mod agent_lifecycle_chaos_test;
 mod attack_simulation_test;
@@ -90,6 +92,7 @@ mod coordination_handoff_test;
 mod coordination_resilience_test;
 mod database_degradation_test;
 mod database_resilience_chaos_test;
+mod dst_turmoil_test;
 mod enhanced_boundary_test;
 mod event_ordering_guard_test;
 mod event_ordering_perf_test;
@@ -105,6 +108,7 @@ mod large_payload_test;
 mod material_idempotency_test;
 mod memory_usage_test;
 mod migration_safety_test;
+mod model_based_event_repo_test;
 mod namespace_isolation_test;
 mod nix_module_integration_test;
 mod node_crash_recovery_test;

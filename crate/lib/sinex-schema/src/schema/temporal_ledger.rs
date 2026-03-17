@@ -61,9 +61,9 @@ pub struct TemporalLedgerRecord {
     pub offset_end: i64,
     pub offset_kind: String,
     pub ts_capture: OffsetDateTime,
-    pub precision: String,
-    pub clock: String,
-    pub source_type: String,
+    pub precision: sinex_primitives::domain::TemporalPrecision,
+    pub clock: sinex_primitives::domain::TemporalClock,
+    pub source_type: sinex_primitives::domain::TemporalSourceType,
 }
 
 impl TemporalLedger {
@@ -81,7 +81,7 @@ impl TemporalLedger {
             .col(ColumnDef::new(TemporalLedger::TsCapture).timestamp_with_time_zone().not_null())
             .col(ColumnDef::new(TemporalLedger::Precision).text().not_null().check(Expr::cust("precision IN ('exact', 'bounded')")))
             .col(ColumnDef::new(TemporalLedger::Clock).text().not_null().check(Expr::cust("clock IN ('monotonic', 'wall')")))
-            .col(ColumnDef::new(TemporalLedger::SourceType).text().not_null().check(Expr::cust("source_type IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_user')")))
+            .col(ColumnDef::new(TemporalLedger::SourceType).text().not_null().check(Expr::cust("source_type IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_ctime', 'inferred_user', 'staged_at')")))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), TemporalLedger::SourceMaterialId)

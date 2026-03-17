@@ -22,7 +22,7 @@ use xtask::sandbox::prelude::*;
 /// publishing. Verify the system degrades gracefully (events still get published)
 /// rather than crashing.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires database degradation simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -89,7 +89,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 /// Exhaust the connection pool by holding many connections simultaneously, then
 /// release them and verify the pool recovers.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires database degradation simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_connection_pool_recovery(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -136,7 +136,7 @@ async fn test_connection_pool_recovery(ctx: TestContext) -> TestResult<()> {
 /// After heavy database load, verify the system can return to normal operation
 /// and all subsequently published events persist correctly.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires database degradation simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_system_recovery_after_failure(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

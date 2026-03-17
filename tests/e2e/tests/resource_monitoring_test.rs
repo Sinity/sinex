@@ -20,7 +20,7 @@ use xtask::sandbox::prelude::*;
 /// Stress-test database connection limits by running many concurrent operations.
 /// Verify the system handles resource exhaustion gracefully.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_resource_limits_under_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -93,7 +93,7 @@ async fn test_resource_limits_under_load(ctx: TestContext) -> TestResult<()> {
 /// Publish a large volume of events and monitor that the system handles them
 /// without unbounded resource growth.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires dedicated performance environment"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_memory_monitoring_high_volume(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

@@ -174,8 +174,7 @@ async fn main() -> Result<()> {
             cors_origins,
         } => {
             // CLI args override the loaded config before the runtime starts.
-            let config =
-                base_config.with_cli_overrides(database_url, tcp_listen, cors_origins);
+            let config = base_config.with_cli_overrides(database_url, tcp_listen, cors_origins);
 
             info!("Starting RPC server on {}", config.tcp_listen);
 
@@ -186,8 +185,8 @@ async fn main() -> Result<()> {
 
             // Start RPC server with shutdown signal
             let result = rpc_server::run(&config, services, shutdown_rx)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
             // Clean up shutdown task
             shutdown_task.abort();

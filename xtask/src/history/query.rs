@@ -1299,10 +1299,10 @@ impl HistoryDb {
         );
 
         let mut stmt = conn.prepare(&sql)?;
-        let count: usize = stmt.query_row(
-            rusqlite::params_from_iter(bound_params.iter()),
-            |row| row.get(0),
-        )?;
+        let count: usize = stmt
+            .query_row(rusqlite::params_from_iter(bound_params.iter()), |row| {
+                row.get(0)
+            })?;
         Ok(count)
     }
 }

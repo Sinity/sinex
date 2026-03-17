@@ -327,7 +327,16 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
     // Default current_checkpoint impl which returns None or we could implement it
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None) // Ingestors often manage checkpointing internally or via the state saving
+        // On genuine first run (revision 0), no prior checkpoint exists — gap-fill is not needed
+        if self.state.revision == 0 {
+            return Ok(Checkpoint::None);
+        }
+        // Return serialized state as External checkpoint, enabling gap-fill on restart
+        let state_json = serde_json::to_value(&self.state).unwrap_or(serde_json::Value::Null);
+        Ok(Checkpoint::external(
+            state_json,
+            format!("ingestor_{}", self.ingestor.name()),
+        ))
     }
 }
 

@@ -37,6 +37,9 @@ pub use super::coordination::{PipelineNamespace, PipelineScope};
 pub use super::events::EventPublisher;
 pub use super::nats::EventOverrides;
 
+// Full-stack test fixture
+pub use super::stack::{TEST_RPC_TOKEN, TestCoreStack};
+
 // Chaos testing re-exports
 pub use super::chaos::{
     ChaosContext, ChaosEventProcessor, ChaosEventResult, ChaosMetrics, ChaosMetricsSnapshot,

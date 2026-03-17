@@ -10,17 +10,20 @@ use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
-use sinex_node_sdk::runtime::stream::{ReplayPumpConfig, ReplayPumpProgress, publish_replay_event};
+use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
+use sinex_node_sdk::runtime::stream::{
+    Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
+    ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
+};
 use sinex_primitives::domain::{EventSource, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Pagination, SinexError};
-use sinex_primitives::{Timestamp, Uuid};
-use std::collections::HashMap;
+use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
@@ -143,7 +146,7 @@ pub async fn spawn_replay_control(
 ) -> Result<ReplayControlClient> {
     let env = environment().clone();
 
-    // Create execution engine with NATS client for event republishing
+    // Create execution engine with NATS client for node-dispatch replay control
     let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 
@@ -346,7 +349,12 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn execute(&self, operation_id: Uuid, executor: String) -> Result<ReplayOperation> {
+    pub async fn execute(
+        &self,
+        operation_id: Uuid,
+        executor: String,
+        dry_run: bool,
+    ) -> Result<ReplayOperation> {
         // Validate executor identity
         validate_actor_for_action(&executor, ReplayAction::Execute)?;
 
@@ -354,6 +362,7 @@ impl ReplayControlClient {
             .send(ReplayControlRequest::Execute {
                 operation_id,
                 executor,
+                dry_run,
             })
             .await?;
         response
@@ -389,8 +398,15 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn list(&self, state: Option<ReplayState>) -> Result<Vec<ReplayOperation>> {
-        let response = self.send(ReplayControlRequest::List { state }).await?;
+    pub async fn list(
+        &self,
+        state: Option<ReplayState>,
+        node: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<ReplayOperation>> {
+        let response = self
+            .send(ReplayControlRequest::List { state, node, limit })
+            .await?;
         Ok(response.operations.unwrap_or_default())
     }
 }
@@ -541,12 +557,27 @@ impl ReplayControlServer {
             ReplayControlRequest::Execute {
                 operation_id,
                 executor: actor,
+                dry_run,
             } => {
                 // Server-side validation of executor (defense in depth)
                 validate_actor_for_action(&actor, ReplayAction::Execute)?;
 
-                let updated = executor.execute(operation_id, actor).await?;
-                ReplayControlResponse::success(Some(updated), None, None)
+                if dry_run {
+                    // Dry-run: compute cascade impact then cancel. No side effects.
+                    let operation = replay.load_operation(operation_id).await?;
+                    let preview = replay.generate_preview_summary(&operation.scope).await?;
+                    replay
+                        .cancel(
+                            operation_id,
+                            "dry-run completed (no changes persisted)".into(),
+                        )
+                        .await?;
+                    let updated = replay.load_operation(operation_id).await?;
+                    ReplayControlResponse::success(Some(updated), Some(preview), None)
+                } else {
+                    let updated = executor.execute(operation_id, actor).await?;
+                    ReplayControlResponse::success(Some(updated), None, None)
+                }
             }
             ReplayControlRequest::Cancel {
                 operation_id,
@@ -568,8 +599,10 @@ impl ReplayControlServer {
                 let op = replay.load_operation(operation_id).await?;
                 ReplayControlResponse::success(Some(op), None, None)
             }
-            ReplayControlRequest::List { state } => {
-                let ops = replay.list_operations(state).await?;
+            ReplayControlRequest::List { state, node, limit } => {
+                let ops = replay
+                    .list_operations(state, node.as_deref(), limit)
+                    .await?;
                 ReplayControlResponse::success(None, None, Some(ops))
             }
         };
@@ -583,14 +616,15 @@ impl ReplayControlServer {
 /// The execution engine:
 /// 1. Queries events from the database matching the replay scope
 /// 2. Expands and archives the full affected cascade (live -> archive)
-/// 3. Republishes material-root events through NATS for reprocessing
-/// 3. Tracks progress via checkpoints
-/// 4. Handles errors gracefully with proper state transitions
+/// 3. Dispatches a scan command to the target ingestor node via NATS
+/// 4. The node re-reads source material and emits fresh events through normal flow
+/// 5. Tracks progress via checkpoints and NATS progress messages
 #[derive(Clone)]
 struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
     env: SinexEnvironment,
+    scan_completion_timeout: Duration,
 }
 
 impl ReplayExecutionEngine {
@@ -599,7 +633,14 @@ impl ReplayExecutionEngine {
             replay,
             nats_client,
             env: environment(),
+            scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
         }
+    }
+
+    #[cfg(test)]
+    fn with_scan_completion_timeout(mut self, scan_completion_timeout: Duration) -> Self {
+        self.scan_completion_timeout = scan_completion_timeout;
+        self
     }
 
     async fn execute(&self, operation_id: Uuid, executor_name: String) -> Result<ReplayOperation> {
@@ -773,12 +814,14 @@ impl ReplayExecutionEngine {
         }
     }
 
+    /// Pagination batch size for collecting scope events from the database.
+    const SCOPE_QUERY_BATCH_SIZE: i64 = 500;
+
     async fn collect_scope_events(
         &self,
         scope: &ReplayScope,
         time_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
-        config: &ReplayPumpConfig,
     ) -> Result<Vec<StoredEvent>> {
         let event_source = EventSource::new(&scope.node_id).map_err(|e| {
             eyre!(SinexError::validation("Invalid replay scope node_id").with_std_error(&e))
@@ -791,7 +834,7 @@ impl ReplayExecutionEngine {
         let mut events = Vec::new();
 
         loop {
-            let page = Pagination::new(Some(config.batch_size), Some(offset));
+            let page = Pagination::new(Some(Self::SCOPE_QUERY_BATCH_SIZE), Some(offset));
             let batch = pool
                 .events()
                 .get_by_source_and_time_range(&event_source, time_window.0, time_window.1, page)
@@ -816,10 +859,46 @@ impl ReplayExecutionEngine {
                 material_id.is_some() && material_ok && event_type_ok
             });
             events.extend(filtered);
-            offset += config.batch_size;
+            offset += Self::SCOPE_QUERY_BATCH_SIZE;
         }
 
         Ok(events)
+    }
+
+    async fn resolve_replay_materials(
+        &self,
+        pool: &sqlx::PgPool,
+        material_ids: &[Uuid],
+    ) -> Result<Vec<ResolvedReplayMaterial>> {
+        let mut resolved = Vec::with_capacity(material_ids.len());
+        let mut missing = Vec::new();
+
+        for material_id in material_ids {
+            let record = pool
+                .source_materials()
+                .get_by_id(Id::from_uuid(*material_id))
+                .await
+                .map_err(|e| eyre!("{e}"))
+                .wrap_err("Failed to resolve source material for replay")?;
+
+            match record {
+                Some(record) => resolved.push(ResolvedReplayMaterial::from(record)),
+                None => missing.push(*material_id),
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(eyre!(
+                "Replay scope referenced missing source materials: {}",
+                missing
+                    .iter()
+                    .map(Uuid::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+
+        Ok(resolved)
     }
 
     async fn derive_cascade_ids(
@@ -888,13 +967,113 @@ impl ReplayExecutionEngine {
         pool.events()
             .execute_cascade_archive(
                 cascade_ids,
-                "superseded by replay rescan",
+                "superseded by replay re-execution",
                 &operation_id.to_string(),
                 archived_by,
             )
             .await
             .map_err(|e| eyre!("{e}"))
             .wrap_err("Failed to archive replay cascade")
+    }
+
+    /// Collect scope metadata from events about to be archived.
+    ///
+    /// Returns `(event_type, scope_keys)` pairs grouped by `event_type`.
+    /// Called before `archive_cascade` so we can emit invalidation signals after.
+    async fn collect_cascade_scope_metadata(
+        &self,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+    ) -> Result<Vec<(String, Vec<String>)>> {
+        if cascade_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Query scope_key and event_type for cascade events that have scope_keys
+        let rows = sqlx::query!(
+            "SELECT event_type, scope_key FROM core.events \
+             WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
+            cascade_ids,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| eyre!("Failed to collect cascade scope metadata: {e}"))?;
+
+        // Group scope_keys by event_type
+        let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+        for row in rows {
+            if let Some(sk) = row.scope_key {
+                grouped.entry(row.event_type).or_default().push(sk);
+            }
+        }
+
+        // Dedup scope_keys per event_type
+        for keys in grouped.values_mut() {
+            keys.sort_unstable();
+            keys.dedup();
+        }
+
+        Ok(grouped.into_iter().collect())
+    }
+
+    /// Publish scope invalidation signals for archived events.
+    ///
+    /// Notifies derived nodes that scopes need recomputation because events
+    /// were archived. Only publishes for events that had `scope_keys`.
+    async fn publish_scope_invalidations(
+        &self,
+        scope_metadata: &[(String, Vec<String>)],
+        cascade_ids: &[Uuid],
+        operation_id: Uuid,
+        event_source: &str,
+    ) {
+        if scope_metadata.is_empty() {
+            return;
+        }
+
+        let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
+
+        for (event_type, scope_keys) in scope_metadata {
+            let invalidation = DerivedScopeInvalidation::archived(
+                cascade_ids.to_vec(),
+                event_source,
+                event_type.as_str(),
+            )
+            .with_operation(operation_id)
+            .with_scope_keys(scope_keys.clone());
+
+            match serde_json::to_vec(&invalidation) {
+                Ok(payload) => {
+                    if let Err(e) = self
+                        .nats_client
+                        .publish(invalidation_subject.clone(), payload.into())
+                        .await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            event_type,
+                            scope_count = scope_keys.len(),
+                            error = %e,
+                            "Failed to publish scope invalidation"
+                        );
+                    } else {
+                        debug!(
+                            operation_id = %operation_id,
+                            event_type,
+                            scope_count = scope_keys.len(),
+                            "Published scope invalidation"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        operation_id = %operation_id,
+                        error = %e,
+                        "Failed to serialize scope invalidation"
+                    );
+                }
+            }
+        }
     }
 
     async fn restore_cascade(
@@ -911,11 +1090,127 @@ impl ReplayExecutionEngine {
             .execute_cascade_restore(cascade_ids, &operation_id.to_string())
             .await
             .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to restore archived replay cascade after publish failure")?;
+            .wrap_err("Failed to restore archived replay cascade after replay dispatch failure")?;
         Ok(())
     }
 
-    /// Replay material-root events after archiving the affected cascade.
+    /// Timeout for the node to acknowledge the scan command.
+    const SCAN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Timeout for the entire scan operation to complete.
+    const SCAN_COMPLETION_TIMEOUT: Duration = Duration::from_mins(10);
+
+    /// Record replacement relations between archived (old) events and newly-created events.
+    ///
+    /// After a successful replay scan, this queries for:
+    /// - Old events: from `audit.archived_events` matching `cascade_ids`
+    /// - New events: from `core.events` with `created_by_operation_id = operation_id`
+    ///
+    /// Matching strategy: events sharing the same `equivalence_key` are `Superseded`.
+    /// Old events without a matching new event are recorded as `Recomputed` (paired with
+    /// an arbitrary new event from the same operation to maintain referential completeness).
+    async fn record_event_replacements(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+        cascade_ids: &[Uuid],
+        scope: &ReplayScope,
+        execution_window: (Timestamp, Timestamp),
+    ) -> Result<()> {
+        use sinex_db::repositories::{ReplacementKind, ReplacementRecord};
+
+        if cascade_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Query equivalence_key + scope_key for archived old events
+        let old_rows = sqlx::query!(
+            r#"SELECT id as "id!", scope_key, equivalence_key
+             FROM audit.archived_events WHERE id = ANY($1::uuid[])"#,
+            cascade_ids,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| eyre!("Failed to query archived events for replacement matching: {e}"))?;
+
+        // Query new events produced by this operation
+        let new_events = self
+            .collect_scope_events(scope, execution_window, pool)
+            .await?;
+
+        if new_events.is_empty() {
+            debug!(
+                operation_id = %operation_id,
+                old_count = old_rows.len(),
+                "No new events found after replay scan — skipping replacement recording"
+            );
+            return Ok(());
+        }
+
+        // Build equivalence_key → new_event_id index
+        let mut eq_key_to_new: HashMap<String, Uuid> = HashMap::new();
+        let mut first_new_id: Option<Uuid> = None;
+        for event in &new_events {
+            if let Some(id) = event.id.map(|id| *id.as_uuid()) {
+                if first_new_id.is_none() {
+                    first_new_id = Some(id);
+                }
+                if let Some(ref eq_key) = event.equivalence_key {
+                    eq_key_to_new.entry(eq_key.clone()).or_insert(id);
+                }
+            }
+        }
+
+        let fallback_new_id = match first_new_id {
+            Some(id) => id,
+            None => return Ok(()), // No new events with IDs — nothing to record
+        };
+
+        // Build replacement records
+        let mut replacements = Vec::with_capacity(old_rows.len());
+        for row in &old_rows {
+            let (new_event_id, kind) = match row
+                .equivalence_key
+                .as_ref()
+                .and_then(|eq| eq_key_to_new.get(eq))
+            {
+                Some(&matched_new_id) => (matched_new_id, ReplacementKind::Superseded),
+                None => (fallback_new_id, ReplacementKind::Recomputed),
+            };
+
+            replacements.push(ReplacementRecord {
+                old_event_id: row.id,
+                new_event_id,
+                relation_kind: kind,
+                scope_key: row.scope_key.clone(),
+                equivalence_key: row.equivalence_key.clone(),
+            });
+        }
+
+        let count = pool
+            .events()
+            .record_replacements(operation_id, &replacements)
+            .await
+            .map_err(|e| eyre!("{e}"))?;
+
+        info!(
+            operation_id = %operation_id,
+            replacement_count = count,
+            old_events = old_rows.len(),
+            new_events = new_events.len(),
+            "Recorded event replacement relations"
+        );
+
+        Ok(())
+    }
+
+    /// Dispatch a replay by telling the ingestor node to re-scan source material.
+    ///
+    /// Instead of republishing stored event rows to NATS (reinjection), this:
+    /// 1. Archives the affected cascade (existing events + derivatives)
+    /// 2. Sends a `NodeScanCommand` to the running ingestor via NATS request-reply
+    /// 3. Waits for the node to acknowledge and complete the scan
+    /// 4. The node re-reads source material and emits fresh events through normal flow
+    /// 5. Downstream automatons process the new events naturally via `JetStream`
     async fn replay_events(
         &self,
         operation_id: Uuid,
@@ -925,9 +1220,8 @@ impl ReplayExecutionEngine {
         checkpoint: &mut ReplayCheckpoint,
         executor_name: &str,
     ) -> Result<u64> {
-        let config = ReplayPumpConfig::default();
         let material_roots = self
-            .collect_scope_events(scope, execution_window, pool, &config)
+            .collect_scope_events(scope, execution_window, pool)
             .await?;
         if material_roots.is_empty() {
             info!(operation_id = %operation_id, "Replay scope matched zero live events");
@@ -944,9 +1238,29 @@ impl ReplayExecutionEngine {
             ));
         }
 
+        let normalized = scope.normalized_filters();
+        let material_ids: Vec<Uuid> = material_roots
+            .iter()
+            .filter_map(|event| match &event.provenance {
+                Provenance::Material { id, .. } => Some(*id.as_uuid()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
+
+        // Step 1: Archive the affected cascade
         let cascade_ids = self
             .derive_cascade_ids(pool, operation_id, &root_ids)
             .await?;
+
+        // Collect scope metadata before archiving (events move to audit after)
+        let scope_metadata = self
+            .collect_cascade_scope_metadata(pool, &cascade_ids)
+            .await
+            .unwrap_or_default();
+
         let archived_count = self
             .archive_cascade(pool, &cascade_ids, operation_id, executor_name)
             .await?;
@@ -954,69 +1268,225 @@ impl ReplayExecutionEngine {
             operation_id = %operation_id,
             material_roots = material_roots.len(),
             archived_count,
-            "Archived replay cascade before republishing roots"
+            "Archived replay cascade, dispatching scan to node"
         );
 
-        checkpoint.total_events = material_roots.len() as u64;
-        let js = async_nats::jetstream::new(self.nats_client.clone());
-        let replay = self.replay.clone();
-        let mut progress = ReplayPumpProgress::default();
-
-        for chunk in material_roots.chunks(config.batch_size as usize) {
-            progress.batch_number = progress.batch_number.saturating_add(1);
-
-            for event in chunk {
-                let event_id = match publish_replay_event(
-                    &js,
-                    &self.env,
-                    operation_id,
-                    event,
-                    config.publish_ack_timeout,
-                )
-                .await
-                {
-                    Ok(id) => id,
-                    Err(err) => {
-                        let restore_result =
-                            self.restore_cascade(pool, &cascade_ids, operation_id).await;
-                        if let Err(restore_err) = restore_result {
-                            error!(
-                                operation_id = %operation_id,
-                                error = %restore_err,
-                                "Replay publish failed and cascade restore also failed"
-                            );
-                        } else {
-                            warn!(
-                                operation_id = %operation_id,
-                                "Replay publish failed; archived cascade restored"
-                            );
-                        }
-
-                        return Err(eyre!(err.to_string()))
-                            .wrap_err("Failed during replay root republish loop");
-                    }
-                };
-
-                progress.processed_events = progress.processed_events.saturating_add(1);
-                progress.last_event_id = Some(event_id);
-            }
-
-            checkpoint.processed_events = progress.processed_events;
-            checkpoint.last_event_id = progress.last_event_id;
-            checkpoint.batch_number = progress.batch_number;
-            checkpoint.updated_at = sinex_primitives::temporal::now();
-            replay
-                .update_checkpoint(operation_id, checkpoint)
-                .await
-                .map_err(|e| eyre!("{e}"))
-                .wrap_err("Failed to persist replay checkpoint")?;
+        // Publish scope invalidation signals for archived derived events
+        if !scope_metadata.is_empty() {
+            self.publish_scope_invalidations(
+                &scope_metadata,
+                &cascade_ids,
+                operation_id,
+                &scope.node_id,
+            )
+            .await;
         }
 
-        checkpoint.processed_events = progress.processed_events;
-        checkpoint.last_event_id = progress.last_event_id;
-        checkpoint.batch_number = progress.batch_number;
-        checkpoint.updated_at = sinex_primitives::temporal::now();
-        Ok(progress.processed_events)
+        checkpoint.total_events = material_roots.len() as u64;
+
+        // Step 2: Build and send the scan command to the ingestor node
+        let scan_subject = self
+            .env
+            .nats_subject(&format!("sinex.control.nodes.{}.scan", scope.node_id));
+        let progress_subject = self
+            .env
+            .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+        let mut progress_sub = self
+            .nats_client
+            .subscribe(progress_subject.clone())
+            .await
+            .map_err(|e| eyre!("Failed to subscribe to replay progress: {e}"))?;
+
+        // Build MaterialReplayContext so the node knows this is a replay scan
+        let replay_context = MaterialReplayContext {
+            operation_id,
+            materials: replay_materials,
+            replay_scope: NodeReplayScopeFilters {
+                material_ids: normalized.material_ids,
+                event_types: normalized.event_types,
+            },
+        };
+
+        let scan_command = NodeScanCommand {
+            operation_id,
+            from: Checkpoint::None,
+            until: TimeHorizon::Historical {
+                end_time: execution_window.1,
+            },
+            args: ScanArgs {
+                targets: vec![scope.node_id.clone()],
+                dry_run: false,
+                interactive: false,
+                max_events: 0,
+                skip_duplicates: true,
+                config: HashMap::new(),
+                replay: Some(replay_context),
+            },
+        };
+
+        let command_payload = serde_json::to_vec(&scan_command)
+            .map_err(|e| eyre!("Failed to serialize NodeScanCommand: {e}"))?;
+
+        // Step 3: Send via NATS request-reply and wait for acknowledgement
+        let ack_msg = tokio::time::timeout(
+            Self::SCAN_ACK_TIMEOUT,
+            self.nats_client
+                .request(scan_subject.clone(), command_payload.into()),
+        )
+        .await
+        .map_err(|_| {
+            eyre!(
+                "Timed out waiting for scan ack from node '{}' after {:?}. \
+                 Is the node running?",
+                scope.node_id,
+                Self::SCAN_ACK_TIMEOUT
+            )
+        })?
+        .map_err(|e| eyre!("NATS request to {} failed: {e}", scan_subject))?;
+
+        let ack: NodeScanAck = serde_json::from_slice(&ack_msg.payload)
+            .map_err(|e| eyre!("Failed to deserialize NodeScanAck: {e}"))?;
+
+        if !ack.accepted {
+            // Node rejected the command — restore the cascade
+            self.restore_cascade(pool, &cascade_ids, operation_id)
+                .await?;
+            return Err(eyre!(
+                "Node '{}' rejected scan command: {}",
+                ack.node_name,
+                ack.error.unwrap_or_else(|| "unknown reason".to_string())
+            ));
+        }
+
+        info!(
+            operation_id = %operation_id,
+            node = %ack.node_name,
+            "Node accepted scan command, waiting for completion"
+        );
+
+        let replay = self.replay.clone();
+        let mut events_processed: u64 = 0;
+        let mut events_emitted: u64 = 0;
+
+        struct ReplayScanFailure {
+            error: color_eyre::eyre::Report,
+            emitted_count: u64,
+            restore_archived_cascade: bool,
+        }
+
+        let target_node_name = ack.node_name.clone();
+        let completion = match tokio::time::timeout(self.scan_completion_timeout, async {
+            while let Some(msg) = progress_sub.next().await {
+                match serde_json::from_slice::<NodeScanProgress>(&msg.payload) {
+                    Ok(progress) => {
+                        events_processed = progress.events_processed;
+                        events_emitted = progress.events_emitted;
+                        if let Some(error) = progress.error {
+                            return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                error: eyre!(
+                                    "Node '{}' failed replay scan: {}",
+                                    progress.node_name,
+                                    error
+                                ),
+                                emitted_count: progress.events_emitted,
+                                restore_archived_cascade: progress.events_emitted == 0,
+                            });
+                        }
+
+                        debug!(
+                            operation_id = %operation_id,
+                            events_processed = progress.events_processed,
+                            events_emitted = progress.events_emitted,
+                            "Replay progress update"
+                        );
+
+                        // Update checkpoint with progress
+                        checkpoint.processed_events = progress.events_processed;
+                        checkpoint.updated_at = sinex_primitives::temporal::now();
+                        let _ = replay.update_checkpoint(operation_id, checkpoint).await;
+
+                        // If final_report is present, the scan is complete
+                        if let Some(report) = &progress.final_report {
+                            info!(
+                                operation_id = %operation_id,
+                                events_processed = report.events_processed,
+                                "Node scan completed"
+                            );
+                            return Ok::<u64, ReplayScanFailure>(report.events_processed);
+                        }
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "Failed to parse replay progress message");
+                    }
+                }
+            }
+            Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                error: eyre!(
+                    "Replay progress stream closed before node '{}' reported completion",
+                    target_node_name
+                ),
+                emitted_count: events_emitted,
+                restore_archived_cascade: false,
+            })
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_timeout) => Err(ReplayScanFailure {
+                error: eyre!(
+                    "Replay scan timed out waiting for node '{}' to report completion after {:?}",
+                    target_node_name,
+                    self.scan_completion_timeout
+                ),
+                emitted_count: events_emitted,
+                restore_archived_cascade: false,
+            }),
+        };
+
+        match completion {
+            Ok(count) => {
+                checkpoint.processed_events = count;
+                checkpoint.updated_at = sinex_primitives::temporal::now();
+
+                // Record replacement relations between archived and newly-created events
+                if let Err(e) = self
+                    .record_event_replacements(
+                        pool,
+                        operation_id,
+                        &cascade_ids,
+                        scope,
+                        execution_window,
+                    )
+                    .await
+                {
+                    warn!(
+                        operation_id = %operation_id,
+                        error = %e,
+                        "Failed to record event replacements (non-fatal)"
+                    );
+                }
+
+                Ok(count)
+            }
+            Err(failure) => {
+                warn!(
+                    operation_id = %operation_id,
+                    error = %failure.error,
+                    events_emitted = failure.emitted_count,
+                    restore_archived_cascade = failure.restore_archived_cascade,
+                    "Replay scan failed"
+                );
+                if failure.restore_archived_cascade {
+                    let _ = self.restore_cascade(pool, &cascade_ids, operation_id).await;
+                }
+                Err(failure.error).wrap_err(if failure.restore_archived_cascade {
+                    "Replay scan failed before emitting replacement events"
+                } else {
+                    "Replay scan failed after the dispatch left coordinator certainty; archived cascade was left untouched to avoid reintroducing stale rows beside late or partial replacements"
+                })
+            }
+        }
     }
 }
 
@@ -1083,7 +1553,7 @@ impl ReplayTelemetry {
     }
 
     async fn sample(&self) -> Result<()> {
-        let operations = self.replay.list_operations(None).await?;
+        let operations = self.replay.list_operations(None, None, None).await?;
         let mut counts: HashMap<ReplayState, usize> = HashMap::new();
         for op in &operations {
             *counts.entry(op.state).or_default() += 1;
@@ -1123,6 +1593,8 @@ mod tests {
     use sinex_db::DbPool;
     use sinex_db::repositories::DbPoolExt;
     use sinex_db::repositories::state::Operation;
+    use sinex_node_sdk::runtime::stream::ScanReport;
+    use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
     use sinex_primitives::{DynamicPayload, Id, Uuid};
     use tokio::time::sleep;
     use xtask::sandbox::sinex_test;
@@ -1160,6 +1632,114 @@ mod tests {
             replay.transition(operation_id, *state).await?;
         }
         Ok(())
+    }
+
+    async fn spawn_fake_scan_node(
+        nats: Client,
+        env: SinexEnvironment,
+        node_name: &str,
+        events_processed: u64,
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<NodeScanCommand>,
+        tokio::task::JoinHandle<()>,
+    )> {
+        let node_name = node_name.to_string();
+        let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+        let mut sub = nats
+            .subscribe(subject)
+            .await
+            .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            if let Some(msg) = sub.next().await {
+                let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+                    .expect("fake node must receive a valid scan command");
+                let operation_id = command.operation_id;
+                let progress_subject =
+                    env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                let _ = command_tx.send(command.clone());
+
+                if let Some(reply) = msg.reply {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: true,
+                        error: None,
+                    };
+                    nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
+                        .await
+                        .expect("fake node ack publish should succeed");
+                }
+
+                let report = ScanReport {
+                    events_processed,
+                    duration: Duration::from_millis(5),
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    node_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
+                    successful_targets: vec![node_name.clone()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                };
+                let progress = NodeScanProgress {
+                    operation_id,
+                    node_name: node_name.clone(),
+                    events_processed,
+                    events_emitted: events_processed,
+                    final_report: Some(report),
+                    error: None,
+                };
+                nats.publish(
+                    progress_subject,
+                    serde_json::to_vec(&progress).unwrap().into(),
+                )
+                .await
+                .expect("fake node progress publish should succeed");
+            }
+        });
+
+        Ok((command_rx, handle))
+    }
+
+    async fn spawn_fake_scan_node_ack_only(
+        nats: Client,
+        env: SinexEnvironment,
+        node_name: &str,
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<NodeScanCommand>,
+        tokio::task::JoinHandle<()>,
+    )> {
+        let node_name = node_name.to_string();
+        let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+        let mut sub = nats
+            .subscribe(subject)
+            .await
+            .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            if let Some(msg) = sub.next().await {
+                let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+                    .expect("fake node must receive a valid scan command");
+                let _ = command_tx.send(command.clone());
+
+                if let Some(reply) = msg.reply {
+                    let ack = NodeScanAck {
+                        operation_id: command.operation_id,
+                        node_name: node_name.clone(),
+                        accepted: true,
+                        error: None,
+                    };
+                    nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
+                        .await
+                        .expect("fake node ack publish should succeed");
+                }
+            }
+        });
+
+        Ok((command_rx, handle))
     }
 
     #[sinex_test]
@@ -1265,11 +1845,11 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let ctx = ctx.with_nats().dedicated().await?;
 
-        let (material_id, inserted, inserted_ts) = loop {
+        let (material_id, inserted) = loop {
             let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
             let event = DynamicPayload::new(
                 "fs-test",
-                "file.created",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
                 json!({ "path": "/tmp/replay.txt" }),
             )
             .from_material(material_id)
@@ -1278,13 +1858,13 @@ mod tests {
             if let Some(ts_orig) = inserted.ts_orig
                 && ts_orig.inner().nanosecond() > 0
             {
-                break (material_id, inserted, ts_orig);
+                break (material_id, inserted);
             }
         };
 
         let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
         let replay_target_id = replay_target_event_id.to_uuid();
-        let target_window_end = inserted_ts;
+        let target_window_end = replay_target_event_id.timestamp();
         let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
         let cascaded = DynamicPayload::new(
@@ -1305,7 +1885,7 @@ mod tests {
             .await?;
         let nonmatch_event = DynamicPayload::new(
             "fs-test",
-            "file.created",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
             json!({ "path": "/tmp/replay-nonmatch.txt" }),
         )
         .from_material(nonmatch_material)
@@ -1319,10 +1899,8 @@ mod tests {
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = ctx.nats_client();
 
-        // Create a JetStream stream to receive replay-published events.
-        // Without this, publish acks never arrive and the replay loop times out.
-        // Subjects are environment-prefixed (e.g. "dev.events.raw.fs-test.file_created"),
-        // so we match the prefixed pattern via the environment helper.
+        // The replay engine should no longer publish raw replay rows itself.
+        // Keep a stream around so the test can assert that this count stays zero.
         let env = sinex_primitives::environment::environment();
         let js = async_nats::jetstream::new(nats_client.clone());
         let stream_name = format!("replay-test-{}", Uuid::now_v7().simple());
@@ -1332,15 +1910,18 @@ mod tests {
             ..Default::default()
         })
         .await?;
+        let (scan_command_rx, scan_handle) =
+            spawn_fake_scan_node(nats_client.clone(), env.clone(), "fs-test", 1).await?;
 
         let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
 
         let mut scope = sample_scope();
         scope.time_window = Some((target_window_start, target_window_end));
         scope.material_filter = Some(vec![*material_id.as_uuid()]);
-        scope
-            .filters
-            .insert("event_types".to_string(), json!(["file.created"]));
+        scope.filters.insert(
+            "event_types".to_string(),
+            json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+        );
 
         let planned = client
             .plan("test:replay-user".into(), scope.clone())
@@ -1360,7 +1941,7 @@ mod tests {
             preview
                 .get("replay_semantics")
                 .and_then(serde_json::Value::as_str),
-            Some("rescan_material_roots_only")
+            Some("reexecute_material_roots_via_node_scan")
         );
 
         let approved = client
@@ -1369,7 +1950,7 @@ mod tests {
         assert_eq!(approved.state, ReplayState::Approved);
 
         let executed = client
-            .execute(planned.operation_id, "service:executor-node".into())
+            .execute(planned.operation_id, "service:executor-node".into(), false)
             .await?;
         assert_eq!(executed.state, ReplayState::Completed);
         assert_eq!(executed.checkpoint.processed_events, 1);
@@ -1385,6 +1966,32 @@ mod tests {
         assert!(
             executed.outcome.is_some(),
             "Replay execution should record a concrete outcome for automation consumers"
+        );
+
+        let dispatched_command = scan_command_rx
+            .await
+            .map_err(|_| eyre!("fake fs-test node did not receive a scan command"))?;
+        let replay_context = dispatched_command
+            .args
+            .replay
+            .expect("gateway must populate typed replay context");
+        assert_eq!(replay_context.materials.len(), 1);
+        assert_eq!(
+            replay_context.materials[0].source_material_id,
+            *material_id.as_uuid(),
+            "replay context must carry resolved source material identity"
+        );
+        assert_eq!(
+            replay_context.replay_scope.material_ids,
+            Some(vec![*material_id.as_uuid()]),
+            "gateway must preserve normalized material filter in replay scope"
+        );
+        assert_eq!(
+            replay_context.replay_scope.event_types,
+            Some(vec![
+                FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()
+            ]),
+            "gateway must preserve normalized event type filter in replay scope"
         );
 
         use async_nats::jetstream::consumer::{
@@ -1422,48 +2029,9 @@ mod tests {
         }
         assert_eq!(
             replay_payloads.len(),
-            1,
-            "filtered replay should republish exactly one root event"
+            0,
+            "gateway replay must not republish stored raw rows"
         );
-
-        let replay_payload = replay_payloads.remove(0);
-        let replayed_event: StoredEvent<serde_json::Value> =
-            serde_json::from_value(replay_payload.clone())?;
-        let replayed_id = replayed_event
-            .id
-            .expect("replayed event payload should include id")
-            .to_uuid();
-        assert_ne!(
-            replayed_id, replay_target_id,
-            "replay must mint fresh event ids"
-        );
-        let planned_operation_id = planned.operation_id.to_string();
-        assert_eq!(
-            replay_payload
-                .get("replay_operation_id")
-                .and_then(serde_json::Value::as_str),
-            Some(planned_operation_id.as_str())
-        );
-        assert!(
-            replay_payload
-                .get("source_event_ids")
-                .is_none_or(serde_json::Value::is_null),
-            "material-root replay payloads must not carry source_event_ids"
-        );
-        match replayed_event.provenance {
-            Provenance::Material { id, .. } => {
-                assert_eq!(
-                    *id.as_uuid(),
-                    *material_id.as_uuid(),
-                    "replayed root must preserve source material provenance"
-                );
-            }
-            other => {
-                return Err(eyre!(
-                    "expected material provenance for replayed root event, got {other:?}"
-                ));
-            }
-        }
 
         let replay_target_live: i64 =
             sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
@@ -1507,74 +2075,199 @@ mod tests {
         assert_eq!(nonmatch_archived, 0);
 
         let material_root_id = ctx
-            .create_source_material(Some("replay-rescan-parity"))
+            .create_source_material(Some("replay-node-scan-parity"))
             .await?;
         let root = DynamicPayload::new(
-            "rescan-test",
-            "file.created",
-            json!({ "path": "/tmp/rescan-root.txt" }),
+            "reexecution-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/reexecution-root.txt" }),
         )
         .from_material(material_root_id)
         .build()?;
         let root_inserted = ctx.pool.events().insert(root).await?;
-        let root_event_id = root_inserted.id.expect("rescan root must have id");
+        let root_event_id = root_inserted.id.expect("reexecution root must have id");
         let root_id = root_event_id.to_uuid();
-        let rescan_derived = DynamicPayload::new(
-            "rescan-test",
+        let reexecution_derived = DynamicPayload::new(
+            "reexecution-test",
             "file.derived",
-            json!({ "path": "/tmp/rescan-derived.txt" }),
+            json!({ "path": "/tmp/reexecution-derived.txt" }),
         )
         .from_parents([root_event_id])?
         .build()?;
-        let derived_inserted = ctx.pool.events().insert(rescan_derived).await?;
+        let derived_inserted = ctx.pool.events().insert(reexecution_derived).await?;
         let derived_id = derived_inserted
             .id
-            .expect("rescan derived must have id")
+            .expect("reexecution derived must have id")
             .to_uuid();
-        let rescan_root_ts = root_inserted
-            .ts_orig
-            .expect("rescan root must have ts_orig");
-        let rescan_scope = ReplayScope {
-            node_id: "rescan-test".to_string(),
+        let reexecution_root_ts = root_event_id.timestamp();
+        let reexecution_scope = ReplayScope {
+            node_id: "reexecution-test".to_string(),
             time_window: Some((
-                rescan_root_ts - time::Duration::seconds(1),
-                rescan_root_ts + time::Duration::seconds(1),
+                reexecution_root_ts - time::Duration::seconds(1),
+                reexecution_root_ts + time::Duration::seconds(1),
             )),
             material_filter: None,
             filters: HashMap::new(),
         };
-        let planned_rescan = client.plan("test:replay-user".into(), rescan_scope).await?;
-        let (_, rescan_preview) = client.preview(planned_rescan.operation_id).await?;
+        let planned_reexecution = client
+            .plan("test:replay-user".into(), reexecution_scope)
+            .await?;
+        let (_, reexecution_preview) = client.preview(planned_reexecution.operation_id).await?;
         assert_eq!(
-            rescan_preview
+            reexecution_preview
                 .get("total_events")
                 .and_then(serde_json::Value::as_i64),
             Some(1),
-            "preview must count only material roots for rescan semantics"
+            "preview must count only material roots for node-scan replay semantics"
         );
         client
-            .approve(planned_rescan.operation_id, "admin:approver".into())
+            .approve(planned_reexecution.operation_id, "admin:approver".into())
             .await?;
-        let rescan_executed = client
-            .execute(planned_rescan.operation_id, "service:executor-node".into())
+        let (reexecution_command_rx, reexecution_handle) =
+            spawn_fake_scan_node(ctx.nats_client(), env.clone(), "reexecution-test", 1).await?;
+        let reexecution_executed = client
+            .execute(
+                planned_reexecution.operation_id,
+                "service:executor-node".into(),
+                false,
+            )
             .await?;
-        assert_eq!(rescan_executed.state, ReplayState::Completed);
-        assert_eq!(rescan_executed.checkpoint.total_events, 1);
-        assert_eq!(rescan_executed.checkpoint.processed_events, 1);
-        let root_archived_after_rescan: i64 = sqlx::query_scalar(
+        assert_eq!(reexecution_executed.state, ReplayState::Completed);
+        assert_eq!(reexecution_executed.checkpoint.total_events, 1);
+        assert_eq!(reexecution_executed.checkpoint.processed_events, 1);
+        let reexecution_command = reexecution_command_rx
+            .await
+            .map_err(|_| eyre!("fake reexecution-test node did not receive a scan command"))?;
+        let reexecution_context = reexecution_command
+            .args
+            .replay
+            .expect("reexecution must still carry replay context");
+        assert_eq!(reexecution_context.materials.len(), 1);
+        assert_eq!(
+            reexecution_context.materials[0].source_material_id,
+            *material_root_id.as_uuid(),
+        );
+        assert_eq!(
+            reexecution_context.replay_scope.material_ids, None,
+            "implicit replay scopes should not invent material filters"
+        );
+        let root_archived_after_reexecution: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
         )
         .bind(root_id)
         .fetch_one(&ctx.pool)
         .await?;
-        let derived_archived_after_rescan: i64 = sqlx::query_scalar(
+        let derived_archived_after_reexecution: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
         )
         .bind(derived_id)
         .fetch_one(&ctx.pool)
         .await?;
-        assert_eq!(root_archived_after_rescan, 1);
-        assert_eq!(derived_archived_after_rescan, 1);
+        assert_eq!(root_archived_after_reexecution, 1);
+        assert_eq!(derived_archived_after_reexecution, 1);
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake fs-test node task failed: {e}"))?;
+        reexecution_handle
+            .await
+            .map_err(|e| eyre!("fake reexecution-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_fails_when_node_never_reports_completion(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx.create_source_material(Some("replay-timeout")).await?;
+        let event = DynamicPayload::new(
+            "timeout-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-timeout.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+        let (scan_command_rx, scan_handle) =
+            spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "timeout-test").await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_completion_timeout(Duration::from_millis(100));
+        ReplayTelemetry::new(replay.clone()).spawn();
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+        let client = ReplayControlClient::new(env.clone(), nats_client, Duration::from_secs(30));
+
+        let mut scope = sample_scope();
+        scope.node_id = "timeout-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+        let err = client
+            .execute(approved.operation_id, "service:executor-node".into(), false)
+            .await
+            .expect_err("execute should fail when the node never reports completion");
+        assert!(
+            err.to_string()
+                .contains("archived cascade was left untouched"),
+            "timeout failure should explain why replay execution failed: {err}"
+        );
+
+        let operation = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(operation.state, ReplayState::Failed);
+        assert_eq!(operation.checkpoint.processed_events, 0);
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 0,
+            "timed-out replay should not resurrect archived rows"
+        );
+        assert_eq!(
+            archived_count, 1,
+            "timed-out replay should leave the archived cascade untouched"
+        );
+
+        let dispatched_command = scan_command_rx
+            .await
+            .map_err(|_| eyre!("fake timeout-test node did not receive a scan command"))?;
+        assert_eq!(dispatched_command.operation_id, approved.operation_id);
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake timeout-test node task failed: {e}"))?;
 
         Ok(())
     }
@@ -1665,6 +2358,8 @@ pub enum ReplayControlRequest {
     Execute {
         operation_id: Uuid,
         executor: String,
+        #[serde(default)]
+        dry_run: bool,
     },
     Cancel {
         operation_id: Uuid,
@@ -1676,6 +2371,8 @@ pub enum ReplayControlRequest {
     },
     List {
         state: Option<ReplayState>,
+        node: Option<String>,
+        limit: Option<i64>,
     },
 }
 
