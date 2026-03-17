@@ -49,7 +49,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 async fn test_schema_tables(runner: &mut TestRunner, pool: &PgPool) {
     let name = "schema: core.events and raw.source_material_registry exist";
 
-    let result: Result<Option<String>, _> = sqlx::query_scalar(
+    let result: Result<Option<String>, _> = sqlx::query_scalar!(
         "SELECT string_agg(schemaname || '.' || tablename, ',' ORDER BY 1) \
          FROM pg_tables \
          WHERE (schemaname = 'core'  AND tablename = 'events') \
@@ -74,7 +74,7 @@ async fn test_timescaledb_extension(runner: &mut TestRunner, pool: &PgPool) {
     let name = "timescaledb extension installed";
 
     let result: Result<Option<String>, _> =
-        sqlx::query_scalar("SELECT extname FROM pg_extension WHERE extname = 'timescaledb'")
+        sqlx::query_scalar!("SELECT extname FROM pg_extension WHERE extname = 'timescaledb'")
             .fetch_optional(pool)
             .await;
 
@@ -88,17 +88,20 @@ async fn test_timescaledb_extension(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_events_hypertable(runner: &mut TestRunner, pool: &PgPool) {
     let name = "core.events is a TimescaleDB hypertable";
 
-    let result: Result<Option<String>, _> = sqlx::query_scalar(
-        "SELECT hypertable_name \
-         FROM timescaledb_information.hypertables \
-         WHERE hypertable_schema = 'core' AND hypertable_name = 'events'",
+    let result: Result<Option<bool>, _> = sqlx::query_scalar!(
+        "SELECT EXISTS(\
+           SELECT 1 FROM timescaledb_information.hypertables \
+           WHERE hypertable_schema = 'core' AND hypertable_name = 'events'\
+         )",
     )
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await;
 
     match result {
-        Ok(Some(_)) => runner.pass(name),
-        Ok(None) => runner.fail(name, "core.events is not a TimescaleDB hypertable"),
+        Ok(Some(true)) => runner.pass(name),
+        Ok(Some(false)) | Ok(None) => {
+            runner.fail(name, "core.events is not a TimescaleDB hypertable");
+        }
         Err(e) => runner.fail(name, &format!("query error: {e}")),
     }
 }
@@ -243,15 +246,18 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_db_queryable(runner: &mut TestRunner, pool: &PgPool) {
     let name = "database queryable: no NULL id/payload rows";
 
-    let result: Result<i64, _> = sqlx::query_scalar(
+    let result: Result<Option<i64>, _> = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.events WHERE id IS NULL OR payload IS NULL",
     )
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(0) => runner.pass(name),
-        Ok(n) => runner.fail(name, &format!("{n} rows have NULL id or payload")),
+        Ok(n) if n.unwrap_or(0) == 0 => runner.pass(name),
+        Ok(n) => runner.fail(
+            name,
+            &format!("{} rows have NULL id or payload", n.unwrap_or(0)),
+        ),
         Err(e) => runner.fail(name, &format!("query error: {e}")),
     }
 }
@@ -259,8 +265,10 @@ async fn test_db_queryable(runner: &mut TestRunner, pool: &PgPool) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
+    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
+        .ok()
+        .flatten()
         .unwrap_or(0)
 }

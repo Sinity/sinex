@@ -162,11 +162,15 @@
             fi
           '';
 
-          # Build a specific package from the workspace
+          # Build a specific package from the workspace.
+          # SQLX_OFFLINE=false: preBuild starts an ephemeral Postgres and sets DATABASE_URL,
+          # so sqlx::query! macros validate against a live schema (overrides the "true" in
+          # cargoArtifacts/buildDepsOnly which only compiled external deps without project macros).
           mkPackage = pname: craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts pname;
             cargoExtraArgs = "-p ${pname}";
             doCheck = false;
+            SQLX_OFFLINE = "false";
 
             preBuild = postgresPreBuild;
             postBuild = postgresPostBuild;
