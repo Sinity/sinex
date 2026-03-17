@@ -1,0 +1,23 @@
+---
+source: xtask/tests/cli_output_snapshots.rs
+expression: invocations
+---
+[
+  {
+    "args_json": "[volatile]",
+    "command": "[volatile]",
+    "cwd": "[volatile]",
+    "duration_secs": "[volatile]",
+    "exit_code": "[volatile]",
+    "finished_at": "[volatile]",
+    "git_commit": "[volatile]",
+    "git_dirty": "[volatile]",
+    "host": "[volatile]",
+    "id": "[volatile]",
+    "live_stage": "[volatile]",
+    "profile": "[volatile]",
+    "started_at": "[volatile]",
+    "status": "[volatile]",
+    "subcommand": "[volatile]"
+  }
+]
