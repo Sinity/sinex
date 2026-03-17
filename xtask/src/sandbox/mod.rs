@@ -34,6 +34,7 @@ pub mod snapshot_helper;
 pub mod stack;
 pub mod tether;
 pub mod timing;
+pub mod workspace;
 
 // Re-export types referenced by proc macro expansion (`::xtask::sandbox::TestResult`, etc.)
 pub use db::pool::acquire_pool_test_guard;
@@ -47,6 +48,7 @@ pub use chaos::ChaosInjector;
 pub use coordination::PipelineNamespace;
 pub use events::EventPublisher;
 pub use fs::EnvGuard;
+pub use workspace::EphemeralWorkspace;
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
