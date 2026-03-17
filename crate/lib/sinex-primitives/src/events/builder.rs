@@ -482,8 +482,28 @@ impl Provenance {
     }
 }
 
+/// Cached stable host identity.
+///
+/// Prefers `/etc/machine-id` (a stable UUID assigned at OS provision time) over
+/// `gethostname()` (mutable, ephemeral). Falls back to the hostname if the
+/// machine-id file is absent or unreadable. The value is computed once and
+/// reused for the lifetime of the process.
+static HOST_IDENTITY: std::sync::LazyLock<crate::domain::HostName> =
+    std::sync::LazyLock::new(|| {
+        let id = std::fs::read_to_string("/etc/machine-id")
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                gethostname::gethostname()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+        crate::domain::HostName::new(id)
+    });
+
 // Helper function to get hostname (needed by builder)
 #[must_use]
 pub fn get_hostname() -> crate::domain::HostName {
-    crate::domain::HostName::new(gethostname::gethostname().to_string_lossy().to_string())
+    HOST_IDENTITY.clone()
 }
