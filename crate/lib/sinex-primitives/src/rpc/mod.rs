@@ -37,6 +37,7 @@ pub mod pkm;
 pub mod replay;
 pub mod shadow;
 pub mod system;
+pub mod telemetry;
 
 /// Re-export all RPC types for convenience
 pub mod prelude {
@@ -54,4 +55,5 @@ pub mod prelude {
     pub use super::replay::*;
     pub use super::shadow::*;
     pub use super::system::*;
+    pub use super::telemetry::*;
 }

@@ -363,7 +363,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_replay_execute_operation, handle_replay_list_operations,
         handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
-        handle_system_health, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_system_health, handle_telemetry_command_frequency, handle_telemetry_file_activity,
+        handle_telemetry_recent_activity, handle_telemetry_system_state,
+        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
         handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
         handle_tombstone_status,
     };
@@ -445,6 +447,32 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "gitops.list_sources",
             Role::ReadOnly,
             boxed!(handle_gitops_list_sources),
+        )
+        // Telemetry continuous-aggregate views (ReadOnly)
+        .pool_rpc(
+            "telemetry.window_focus",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_window_focus),
+        )
+        .pool_rpc(
+            "telemetry.command_frequency",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_command_frequency),
+        )
+        .pool_rpc(
+            "telemetry.file_activity",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_file_activity),
+        )
+        .pool_rpc(
+            "telemetry.recent_activity",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_recent_activity),
+        )
+        .pool_rpc(
+            "telemetry.system_state",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_system_state),
         )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)

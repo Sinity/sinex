@@ -67,6 +67,13 @@ pub const GITOPS_CREATE_SOURCE: &str = "gitops.create_source";
 pub const GITOPS_DELETE_SOURCE: &str = "gitops.delete_source";
 pub const GITOPS_TRIGGER_SYNC: &str = "gitops.trigger_sync";
 
+// Telemetry
+pub const TELEMETRY_WINDOW_FOCUS: &str = "telemetry.window_focus";
+pub const TELEMETRY_COMMAND_FREQUENCY: &str = "telemetry.command_frequency";
+pub const TELEMETRY_FILE_ACTIVITY: &str = "telemetry.file_activity";
+pub const TELEMETRY_RECENT_ACTIVITY: &str = "telemetry.recent_activity";
+pub const TELEMETRY_SYSTEM_STATE: &str = "telemetry.system_state";
+
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
 pub const LIFECYCLE_TOMBSTONE_PREVIEW: &str = "lifecycle.tombstone.preview";

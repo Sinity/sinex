@@ -84,6 +84,8 @@ pub mod exploration;
 pub mod health_reporter;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
+#[cfg(feature = "db")]
+pub mod historical_importer;
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
@@ -192,6 +194,8 @@ pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 // Re-export preflight utilities
 #[cfg(feature = "db")]
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+#[cfg(feature = "db")]
+pub use historical_importer::{HistoricalImporter, ImportProgress};
 #[cfg(feature = "preflight")]
 pub use preflight::{VerificationStatus, run_preflight_checks, verify_service_dependencies};
 
