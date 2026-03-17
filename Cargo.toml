@@ -247,6 +247,7 @@ proptest = "1"
 rstest = "0.25"
 insta = { version = "1.42", features = ["json", "yaml", "redactions"] }
 tracing-test = "0.2"
+turmoil = "0.6"
 
 # System
 gethostname = "0.4"
