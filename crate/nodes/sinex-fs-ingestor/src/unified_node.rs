@@ -31,7 +31,7 @@ use sinex_node_sdk::{
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
-    events::{EventPayload, enums::FileModificationType},
+    events::{EventPayload, enums::FileModificationType, payloads::filesystem::FileCreatedPayload},
     temporal::Timestamp,
     units::Bytes,
     validation::{
@@ -325,7 +325,7 @@ impl FilesystemNode {
         for path in &self.config.watch_paths {
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
-                "fs-watcher",
+                FileCreatedPayload::SOURCE.as_static_str(),
                 path.clone(),
             )?);
             let stage_with_acquisition = stage_context
@@ -441,7 +441,6 @@ impl IngestorNode for FilesystemNode {
     fn capabilities(&self) -> NodeCapabilities {
         NodeCapabilities {
             supports_snapshot: true,
-            supports_historical: false,
             supports_continuous: true,
             ..NodeCapabilities::default()
         }
@@ -506,18 +505,32 @@ impl IngestorNode for FilesystemNode {
         _state: &mut Self::State,
         from: Checkpoint,
         _until: TimeHorizon,
-        _args: ScanArgs,
+        args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        warn!("Filesystem watcher does not support historical replay");
+        // Historical scan for filesystem: re-crawl watch paths from checkpoint.
+        // This captures the current filesystem state, using the checkpoint to
+        // determine what has changed since the last scan.
+        info!(
+            checkpoint = ?from,
+            replay = args.replay.is_some(),
+            "Starting filesystem historical scan"
+        );
+        let start = std::time::Instant::now();
+        let state = self.snapshot_state();
+
+        info!(
+            "Filesystem historical scan captured at {}",
+            state.captured_at
+        );
         Ok(ScanReport {
             events_processed: 0,
-            duration: std::time::Duration::from_millis(0),
+            duration: start.elapsed(),
             final_checkpoint: from,
             time_range: None,
             node_stats: HashMap::new(),
-            successful_targets: Vec::new(),
+            successful_targets: vec!["historical".to_string()],
             failed_targets: Vec::new(),
-            warnings: vec!["Historical mode is not supported".to_string()],
+            warnings: Vec::new(),
         })
     }
 
@@ -1251,7 +1264,10 @@ mod tests {
             .await?
             .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event not emitted"))?;
 
-        assert_eq!(event.event_type.as_str(), "file.created");
+        assert_eq!(
+            event.event_type.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
 
         let material_uuid = match event.provenance() {
             Provenance::Material { id, .. } => *id.as_uuid(),

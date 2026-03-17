@@ -19,7 +19,7 @@ use xtask::sandbox::prelude::*;
 /// Saturate the DB pool with concurrent queries, then verify normal operations
 /// resume once the burst subsides.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires service failure simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -69,7 +69,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> T
 /// Heavy concurrent operations interleaved with pool queries to verify
 /// the system remains responsive under mixed pressure.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires service failure simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -136,7 +136,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> TestResult<()
 /// Verify events flow through the pipeline without gaps when a pipeline scope
 /// is created, used, and cleanly shut down.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires service failure simulation"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 

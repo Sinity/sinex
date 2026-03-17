@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 /// watched. The pipeline should persist the events without crashing even if the
 /// payload contains error-like metadata.
 #[sinex_test]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -55,7 +55,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestRe
 /// Publish events simulating a directory unmount scenario. The payloads include
 /// ENOENT / ESTALE errors to verify the pipeline handles stale-path events.
 #[sinex_test]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -94,7 +94,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult
 /// Concurrent file-system event publishing from multiple simulated watchers,
 /// verifying all events arrive intact without corruption.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

@@ -90,7 +90,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
             host: HostName::new("test-host"),
-            node_version: Some("test".to_string()),
+            node_run_id: Some(Uuid::now_v7()),
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -100,6 +100,12 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
                 offset_kind: OffsetKind::Byte,
             },
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
         let payload = serde_json::to_vec(&event)?;
         js.publish(subject.clone(), payload.into()).await?.await?;

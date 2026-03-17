@@ -199,6 +199,9 @@
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
 
+            # Developer tooling (used by VM concurrency tests)
+            xtask = mkPackage "xtask";
+
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
               name = "sinex";
@@ -233,6 +236,7 @@
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
+            xtask = sinexPackages.xtask;
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
@@ -376,6 +380,7 @@
                       done
                       exec setsid "$_xtask_bin" infra start
                     ) &
+                    _sinex_infra_starting=1
                     echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
                   fi
                 fi
@@ -386,8 +391,20 @@
                   export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
-                # MOTD: show workspace health on shell entry (non-blocking).
+                # MOTD: show workspace health on shell entry.
+                # If infra was just launched, poll for readiness before status
+                # so the MOTD reflects actual state instead of racing startup.
                 if [ -x "$_xtask_bin" ]; then
+                  if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
+                    _deadline=$((SECONDS + 8))
+                    while [ $SECONDS -lt $_deadline ]; do
+                      _pg_up=0; _nats_up=0
+                      pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
+                      (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
+                      [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
+                      sleep 0.3
+                    done
+                  fi
                   "$_xtask_bin" status --summary 2>/dev/null || true
                 fi
               '';

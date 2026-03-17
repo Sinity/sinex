@@ -10,6 +10,9 @@ pub use sinex_primitives::primitives;
 
 pub mod apply;
 
+// Auto-convergence engine: diffs declared schema against DB, emits minimal DDL.
+pub mod converge;
+
 // The single source of truth for all schema definitions.
 pub mod schema;
 

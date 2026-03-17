@@ -378,6 +378,9 @@ pub struct CommandContext {
     /// X9: `Mutex` instead of `RefCell` so `CommandContext` is `Sync`-compatible
     /// if ever shared across threads (e.g., inside `Arc`).
     completed_stages: Mutex<Vec<(String, f64, bool)>>,
+    /// Abstraction over cargo invocations (check, clippy, fmt).
+    /// Production code uses `RealCargoRunner`; tests inject `MockCargoRunner`.
+    cargo_runner: std::sync::Arc<dyn crate::cargo_runner::CargoRunner>,
 }
 
 impl CommandContext {
@@ -399,6 +402,34 @@ impl CommandContext {
             history_db: Mutex::new(None),
             db_path,
             completed_stages: Mutex::new(Vec::new()),
+            cargo_runner: std::sync::Arc::new(crate::cargo_runner::RealCargoRunner),
+        }
+    }
+
+    /// Create a `CommandContext` with an explicit history DB path override.
+    ///
+    /// Used in tests to inject an ephemeral SQLite database rather than touching
+    /// the real history DB. Set `XTASK_HISTORY_DB` env var before constructing,
+    /// or pass the path directly here.
+    #[must_use]
+    pub fn new_with_db_override(
+        writer: crate::output::OutputWriter,
+        background: bool,
+        invocation_id: Option<i64>,
+        command_name: impl Into<String>,
+        db_path: PathBuf,
+    ) -> Self {
+        Self {
+            start_time: std::time::Instant::now(),
+            writer,
+            background,
+            command_name: command_name.into(),
+            invocation_id,
+            finished: AtomicBool::new(false),
+            history_db: Mutex::new(None),
+            db_path,
+            completed_stages: Mutex::new(Vec::new()),
+            cargo_runner: std::sync::Arc::new(crate::cargo_runner::RealCargoRunner),
         }
     }
 
@@ -406,6 +437,28 @@ impl CommandContext {
     #[must_use]
     pub fn command_name(&self) -> &str {
         &self.command_name
+    }
+
+    /// Access the injected cargo runner (check, clippy, fmt).
+    ///
+    /// Production code uses `RealCargoRunner`. Tests inject `MockCargoRunner`
+    /// via `CommandContext::with_cargo_runner`.
+    #[must_use]
+    pub fn cargo_runner(&self) -> &dyn crate::cargo_runner::CargoRunner {
+        self.cargo_runner.as_ref()
+    }
+
+    /// Return a new context with the given cargo runner substituted.
+    ///
+    /// Used in tests to inject a `MockCargoRunner` without touching the real
+    /// history DB or filesystem paths.
+    #[must_use]
+    pub fn with_cargo_runner(
+        mut self,
+        runner: std::sync::Arc<dyn crate::cargo_runner::CargoRunner>,
+    ) -> Self {
+        self.cargo_runner = runner;
+        self
     }
 
     /// Execute a closure with a cached history DB connection.
@@ -445,6 +498,21 @@ impl CommandContext {
                 None
             }
         }
+    }
+
+    /// Execute a closure with a `HistoryAnalysis` view over the cached DB.
+    ///
+    /// Convenience wrapper around `try_with_history_db` for commands that use
+    /// `HistoryAnalysis` queries. Returns `None` only if the DB can't be opened;
+    /// propagates `Err` from the closure.
+    pub fn with_history_analysis<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryAnalysis<'_>) -> Result<R>,
+    {
+        self.try_with_history_db(|db| {
+            let analysis = crate::history::HistoryAnalysis::new(db);
+            f(&analysis)
+        })
     }
 
     /// Execute a closure with the cached history DB, propagating errors.

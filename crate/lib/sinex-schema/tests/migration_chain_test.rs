@@ -41,7 +41,7 @@ async fn insert_test_event(
 
     sqlx::query(
         r"
-        INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, node_version, source_material_id, anchor_byte)
+        INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, node_run_id, source_material_id, anchor_byte)
         VALUES ($1::uuid, $2, $3, $4::jsonb, NOW(), $5, $6, $7::uuid, $8)
         ",
     )
@@ -50,7 +50,7 @@ async fn insert_test_event(
     .bind("test.security")
     .bind(serde_json::json!({"test": "operation_id_guard"}))
     .bind("test-host")
-    .bind("test-v1")
+    .bind(Uuid::now_v7())
     .bind(material_id.to_uuid())
     .bind(0_i64)
     .execute(pool)

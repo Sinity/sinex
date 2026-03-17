@@ -12,6 +12,7 @@
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::Timestamp;
+use sinex_primitives::events::payloads::filesystem::FileCreatedPayload;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use uuid::Uuid;
@@ -64,16 +65,12 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 
     // Create test event that would come from a node
     let node_event = ctx
-        .publish(DynamicPayload::new(
-            "fs-watcher",
-            "file.created",
-            serde_json::json!({
-                "path": "/tmp/test_file.txt",
-                "size": 1024,
-                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
-                "permissions": 644
-            }),
-        ))
+        .publish(FileCreatedPayload {
+            path: "/tmp/test_file.txt".into(),
+            size: 1024,
+            created_at: Timestamp::now(),
+            permissions: Some(644),
+        })
         .await?;
 
     // Event is automatically stored via publish_json_event
@@ -116,15 +113,12 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
 
     // Create multiple events as would be sent in a batch
     let batch_events = vec![
-        ctx.publish(DynamicPayload::new(
-            "fs-watcher",
-            "file.created",
-            serde_json::json!({
-                "path": "/tmp/batch_file_1.txt",
-                "size": 512,
-                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
-            }),
-        ))
+        ctx.publish(FileCreatedPayload {
+            path: "/tmp/batch_file_1.txt".into(),
+            size: 512,
+            created_at: Timestamp::now(),
+            permissions: None,
+        })
         .await?,
         ctx.publish(DynamicPayload::new(
             "terminal",

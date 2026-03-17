@@ -122,7 +122,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-            node_version: Some("test-ingestor".to_string()),
+            node_run_id: Some(Uuid::now_v7()),
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -132,6 +132,12 @@ impl EventPublisher for Sandbox {
                 offset_kind: OffsetKind::Byte,
             },
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         // Use the trait method recursion or self method?
@@ -176,8 +182,8 @@ impl EventPublisher for Sandbox {
             uuid
         };
 
-        if envelope.node_version.is_none() {
-            envelope.node_version = Some("test-ingestd".to_string());
+        if envelope.node_run_id.is_none() {
+            envelope.node_run_id = Some(Uuid::now_v7());
         }
         let payload = serde_json::to_vec(&envelope)?;
 
@@ -220,7 +226,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                node_version: Some("test-ingestor".to_string()),
+                node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -230,6 +236,12 @@ impl Sandbox {
                     offset_kind: OffsetKind::Byte,
                 },
                 associated_blob_ids: None,
+                temporal_policy: None,
+                semantics_version: None,
+                scope_key: None,
+                equivalence_key: None,
+                created_by_operation_id: None,
+                node_model: None,
             };
             events.push(event);
         }
@@ -273,7 +285,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                node_version: Some("test-ingestor".to_string()),
+                node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -283,6 +295,12 @@ impl Sandbox {
                     offset_kind: OffsetKind::Byte,
                 },
                 associated_blob_ids: None,
+                temporal_policy: None,
+                semantics_version: None,
+                scope_key: None,
+                equivalence_key: None,
+                created_by_operation_id: None,
+                node_model: None,
             };
 
             let event_uuid = self.publish_prebuilt_event(&event).await?;

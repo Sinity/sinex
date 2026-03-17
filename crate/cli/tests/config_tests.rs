@@ -240,9 +240,7 @@ async fn test_config_fixture_generates_valid_toml() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_config_fixture_generates_valid_yaml() -> TestResult<()> {
-    let fixture = ConfigFixture::new()
-        .default_format("yaml")
-        .editor("nano");
+    let fixture = ConfigFixture::new().default_format("yaml").editor("nano");
 
     let yaml = fixture.to_yaml();
 

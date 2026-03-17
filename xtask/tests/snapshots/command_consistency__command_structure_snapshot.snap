@@ -1568,7 +1568,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Quick one-liner summary (replaces 'motd' command)",
+          "help": "Rich multi-section MOTD",
           "long": "summary",
           "name": "summary",
           "possible_values": [
@@ -2788,6 +2788,36 @@ expression: json
           ],
           "name": "eta",
           "subcommands": []
+        },
+        {
+          "about": "Show exercise run history with pass/fail counts and regression detection",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of recent exercise runs to show (default: 10)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show individual exercise-level results (verbose)",
+              "long": "verbose",
+              "name": "verbose",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "exercise",
+          "subcommands": []
         }
       ]
     },
@@ -3477,6 +3507,52 @@ expression: json
           "help": "After seeding, print the DB path as an export statement for shell activation (T4)",
           "long": "activate",
           "name": "activate",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Write a deterministic QA manifest (exercise IDs + pass/fail) to this path",
+          "long": "audit-file",
+          "name": "audit_file",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Diff results against the committed baseline, fail on regressions",
+          "long": "ci-check",
+          "name": "ci_check",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Override the baseline path used by `--ci-check`",
+          "long": "baseline",
+          "name": "baseline",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Update the committed baseline with the current run results",
+          "long": "update-baseline",
+          "name": "update_baseline",
           "possible_values": [
             "true",
             "false"

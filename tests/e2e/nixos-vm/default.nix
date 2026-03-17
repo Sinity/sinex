@@ -5,6 +5,7 @@
 , pg_jsonschema ? null
 , sinex ? null
 , sinexCli ? null
+, xtask ? null
 }:
 
 {
@@ -17,11 +18,11 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
     lib = pkgs.lib;
   };
-  
+
   maintenance = import ./test-scenarios/maintenance.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
-  
+
   "node-matrix" = import ./test-scenarios/node-matrix.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
@@ -44,6 +45,26 @@
 
   "mtls-enforcement" = import ./test-scenarios/mtls-enforcement.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  # ─── Chaos scenarios ─────────────────────────────────────────────────────────
+
+  "chaos-network-partition" = import ./test-scenarios/chaos-network-partition.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "chaos-process-restart" = import ./test-scenarios/chaos-process-restart.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "chaos-clock-skew" = import ./test-scenarios/chaos-clock-skew.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  # ─── xtask concurrency (requires pre-built xtask binary) ─────────────────────
+
+  "xtask-concurrency" = import ./test-scenarios/xtask-concurrency.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli xtask;
   };
 
 }

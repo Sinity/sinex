@@ -117,6 +117,13 @@ pub struct TestGatewayConfig {
     pub tls_cert: PathBuf,
     /// Path to TLS server private key (PEM)
     pub tls_key: PathBuf,
+    /// RPC bearer token for authentication. If set, the gateway requires this
+    /// token on every request. Format: `<secret>:<role>` (e.g. `test-token:admin`).
+    pub rpc_token: Option<String>,
+    /// Make replay control optional (degrade gracefully without NATS replay).
+    pub replay_control_optional: bool,
+    /// Disable RPC rate limiting (default: true — rate limiting disabled in tests).
+    pub rpc_rate_limit_disabled: bool,
 }
 
 impl TestGatewayConfig {
@@ -140,6 +147,9 @@ impl TestGatewayConfig {
             nats_url,
             tls_cert: tls_dir.join("server.pem"),
             tls_key: tls_dir.join("server-key.pem"),
+            rpc_token: None,
+            replay_control_optional: false,
+            rpc_rate_limit_disabled: true,
         })
     }
 }
@@ -165,12 +175,29 @@ impl Drop for TestGatewayHandle {
     }
 }
 
+/// Allocate a free TCP port by briefly binding to `:0` and releasing.
+///
+/// There's a small TOCTOU window between release and process bind, but
+/// it's acceptable for tests since port exhaustion is extremely unlikely.
+pub fn allocate_free_port() -> Result<std::net::SocketAddr> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    drop(listener);
+    Ok(addr)
+}
+
 /// Spawn a gateway instance for use in integration tests.
 ///
-/// The gateway binary must be pre-built. The function returns after the
-/// process has been spawned but does NOT wait for readiness — callers
-/// should poll the TCP address or give the process a brief startup window.
+/// The gateway binary must be pre-built. When `wait_ready` is true (default),
+/// this polls the TCP port until the gateway accepts connections before returning.
 pub async fn start_test_gateway(config: TestGatewayConfig) -> Result<TestGatewayHandle> {
+    start_test_gateway_inner(config, true).await
+}
+
+async fn start_test_gateway_inner(
+    config: TestGatewayConfig,
+    wait_ready: bool,
+) -> Result<TestGatewayHandle> {
     let workspace = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
         "debug"
@@ -187,7 +214,14 @@ pub async fn start_test_gateway(config: TestGatewayConfig) -> Result<TestGateway
         );
     }
 
-    let listen_str = config.listen_addr.to_string();
+    // If port 0 was requested, allocate a real port before spawning
+    let actual_addr = if config.listen_addr.port() == 0 {
+        allocate_free_port()?
+    } else {
+        config.listen_addr
+    };
+
+    let listen_str = actual_addr.to_string();
 
     let mut cmd = tokio::process::Command::new(&binary_path);
     #[cfg(target_os = "linux")]
@@ -208,16 +242,57 @@ pub async fn start_test_gateway(config: TestGatewayConfig) -> Result<TestGateway
             "SINEX_GATEWAY_TLS_KEY",
             config.tls_key.to_string_lossy().as_ref(),
         )
-        .stdout(Stdio::piped())
+        // Clear mTLS client CA so the subprocess doesn't inherit it from the
+        // parent environment (NixOS, other tests) and unexpectedly require
+        // client certificates.
+        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA");
+    if config.rpc_rate_limit_disabled {
+        cmd.env("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
+    }
+    if let Some(token) = &config.rpc_token {
+        cmd.env("SINEX_RPC_TOKEN", token);
+    }
+    if config.replay_control_optional {
+        cmd.env("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    }
+    cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
     let child = cmd.spawn()?;
 
-    Ok(TestGatewayHandle {
-        addr: config.listen_addr,
+    let mut handle = TestGatewayHandle {
+        addr: actual_addr,
         child,
-    })
+    };
+
+    if wait_ready {
+        if let Err(e) = wait_for_gateway_tcp(&actual_addr).await {
+            let _ = handle.stop().await;
+            return Err(e).wrap_err("Gateway failed to become ready");
+        }
+    }
+
+    Ok(handle)
+}
+
+/// Poll until the gateway's TCP socket accepts connections.
+async fn wait_for_gateway_tcp(addr: &std::net::SocketAddr) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        match tokio::net::TcpStream::connect(addr).await {
+            Ok(_) => return Ok(()),
+            Err(_) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => {
+                return Err(eyre!(
+                    "Gateway at {} did not accept TCP connections within 30s: {e}",
+                    addr
+                ));
+            }
+        }
+    }
 }
 
 /// Find the workspace root by traversing up from current directory

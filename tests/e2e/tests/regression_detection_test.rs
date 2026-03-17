@@ -24,7 +24,7 @@ use std::time::Duration;
 async fn test_regression_detector_mechanism(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
     // Neither exists as of 2026-03. See planning docs for roadmap.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }
 
 #[sinex_test]
@@ -32,7 +32,7 @@ async fn test_regression_detector_mechanism(_ctx: TestContext) -> TestResult<()>
 async fn test_e2e_real_database_performance(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
     // Neither exists as of 2026-03. See planning docs for roadmap.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }
 
 #[sinex_test]
@@ -40,7 +40,7 @@ async fn test_e2e_real_database_performance(_ctx: TestContext) -> TestResult<()>
 async fn test_performance_baseline_validation(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
     // Neither exists as of 2026-03. See planning docs for roadmap.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }
 
 #[sinex_test]
@@ -48,5 +48,5 @@ async fn test_performance_baseline_validation(_ctx: TestContext) -> TestResult<(
 async fn test_latency_outlier_detection(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
     // Neither exists as of 2026-03. See planning docs for roadmap.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }

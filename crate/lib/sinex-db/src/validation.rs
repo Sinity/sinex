@@ -15,6 +15,14 @@ use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::Result as SinexResult;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::filesystem::{
+    FileCreatedPayload, FileDeletedPayload, FileModifiedPayload,
+};
+use sinex_primitives::events::payloads::shell::{
+    AtuinCommandExecutedPayload, BashCommandExecutedPayload, FishCommandExecutedPayload,
+    KittyCommandExecutedPayload, ZshCommandExecutedPayload,
+};
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
@@ -271,7 +279,7 @@ impl EventValidator {
             payload: payload.clone(),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("validator"),
-            node_version: None,
+            node_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::<SourceMaterial>::new(),
@@ -281,6 +289,12 @@ impl EventValidator {
                 offset_kind: OffsetKind::Byte,
             },
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
         self.validate(&event)
     }
@@ -376,16 +390,25 @@ impl EventValidator {
         Ok(())
     }
     fn validate_domain_specific_rules(&self, event: &Event<JsonValue>) -> ValidationResult {
-        match (event.source.as_ref(), event.event_type.as_ref()) {
-            ("fs-watcher", et)
-                if matches!(et, "file.created" | "file.modified" | "file.deleted") =>
-            {
-                Self::validate_filesystem_payload(et, &event.payload)
-            }
-            (source, "command.executed") if source == "terminal" || source == "terminal.kitty" => {
-                Self::validate_terminal_payload(&event.payload)
-            }
-            _ => Ok(()),
+        let source = event.source.as_ref();
+        let et = event.event_type.as_ref();
+        let fs_source = FileCreatedPayload::SOURCE.as_static_str();
+        if source == fs_source
+            && (et == FileCreatedPayload::EVENT_TYPE.as_static_str()
+                || et == FileModifiedPayload::EVENT_TYPE.as_static_str()
+                || et == FileDeletedPayload::EVENT_TYPE.as_static_str())
+        {
+            Self::validate_filesystem_payload(et, &event.payload)
+        } else if et == KittyCommandExecutedPayload::EVENT_TYPE.as_static_str()
+            && (source == KittyCommandExecutedPayload::SOURCE.as_static_str()
+                || source == AtuinCommandExecutedPayload::SOURCE.as_static_str()
+                || source == BashCommandExecutedPayload::SOURCE.as_static_str()
+                || source == ZshCommandExecutedPayload::SOURCE.as_static_str()
+                || source == FishCommandExecutedPayload::SOURCE.as_static_str())
+        {
+            Self::validate_terminal_payload(&event.payload)
+        } else {
+            Ok(())
         }
     }
     fn validate_filesystem_payload(event_type: &str, payload: &JsonValue) -> ValidationResult {
@@ -397,7 +420,7 @@ impl EventValidator {
             });
         };
         Self::require_string_field(obj, "path")?;
-        if event_type != "file.deleted" {
+        if event_type != FileDeletedPayload::EVENT_TYPE.as_static_str() {
             Self::require_number_field(obj, "size")?;
         }
         if let Some(perms) = obj.get("permissions")
@@ -419,15 +442,16 @@ impl EventValidator {
                 actual: json_type_name(payload).to_string(),
             });
         };
-        Self::require_string_field(obj, "command")?;
-        Self::require_number_field(obj, "exit_code")?;
-        if let Some(ts) = obj.get("timestamp")
-            && !ts.is_string()
-        {
-            return Err(ValidationError::InvalidType {
-                field: "timestamp".to_string(),
-                expected: "string".to_string(),
-                actual: json_type_name(ts).to_string(),
+        // Atuin payloads use `command_string`; all other sources use `command`.
+        // Require at least one to be a non-empty string.
+        let has_command = obj
+            .get("command")
+            .or_else(|| obj.get("command_string"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty());
+        if !has_command {
+            return Err(ValidationError::MissingField {
+                field: "command (or command_string)".to_string(),
             });
         }
         Ok(())

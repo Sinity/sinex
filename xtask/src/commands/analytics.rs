@@ -5,7 +5,6 @@ use console::style;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::config::config;
 use crate::history::query::HistoryAnalysis;
 use crate::history::{HistoryDb, PackageHealth, WorkspaceHealthReport};
 
@@ -68,26 +67,31 @@ impl XtaskCommand for AnalyticsCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let db = open_history_db()?;
-        let analysis = HistoryAnalysis::new(&db);
-
-        match &self.subcommand {
-            AnalyticsSubcommand::WorkspaceHealth { breakdown } => {
-                execute_workspace_health(&analysis, *breakdown, ctx)
+        use color_eyre::eyre::eyre;
+        let sub = &self.subcommand;
+        ctx.try_with_history_db(|db| {
+            let analysis = HistoryAnalysis::new(db);
+            match sub {
+                AnalyticsSubcommand::WorkspaceHealth { breakdown } => {
+                    execute_workspace_health(&analysis, *breakdown, ctx)
+                }
+                AnalyticsSubcommand::Hotspots { limit } => {
+                    execute_hotspots(&analysis, *limit, ctx)
+                }
+                AnalyticsSubcommand::Reliability { limit } => {
+                    execute_reliability(&analysis, *limit, ctx)
+                }
+                AnalyticsSubcommand::Velocity => execute_velocity(&analysis, ctx),
+                AnalyticsSubcommand::Recommend => execute_recommend(&analysis, ctx),
+                AnalyticsSubcommand::Resources { command, limit } => {
+                    execute_resources(db, command.as_deref(), *limit, ctx)
+                }
+                AnalyticsSubcommand::Stages { command, limit } => {
+                    execute_stages(db, command.as_deref(), *limit, ctx)
+                }
             }
-            AnalyticsSubcommand::Hotspots { limit } => execute_hotspots(&analysis, *limit, ctx),
-            AnalyticsSubcommand::Reliability { limit } => {
-                execute_reliability(&analysis, *limit, ctx)
-            }
-            AnalyticsSubcommand::Velocity => execute_velocity(&analysis, ctx),
-            AnalyticsSubcommand::Recommend => execute_recommend(&analysis, ctx),
-            AnalyticsSubcommand::Resources { command, limit } => {
-                execute_resources(&db, command.as_deref(), *limit, ctx)
-            }
-            AnalyticsSubcommand::Stages { command, limit } => {
-                execute_stages(&db, command.as_deref(), *limit, ctx)
-            }
-        }
+        })
+        .ok_or_else(|| eyre!("history DB unavailable"))?
     }
 }
 
@@ -493,9 +497,6 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
-fn open_history_db() -> Result<HistoryDb> {
-    HistoryDb::open(&config().history_db_path())
-}
 
 #[allow(dead_code)]
 fn render_package_health_row(pkg: &PackageHealth) -> [String; 5] {

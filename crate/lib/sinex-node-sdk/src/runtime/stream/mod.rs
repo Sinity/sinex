@@ -11,12 +11,9 @@ pub use checkpoint::Checkpoint;
 pub use handles::{
     EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, ServiceInfo,
 };
-#[cfg(feature = "db")]
-pub use kernel::replay_source_window;
 pub use kernel::{
-    PullConsumerSpec, ReplayPumpConfig, ReplayPumpProgress, ShadowConsumerSpec,
-    build_replay_publish_envelope, consume_pull_loop, create_shadow_consumer, delete_consumer,
-    ensure_pull_consumer, list_consumers, publish_replay_event, pull_batch,
+    PullConsumerSpec, ShadowConsumerSpec, consume_pull_loop, create_shadow_consumer,
+    delete_consumer, ensure_pull_consumer, list_consumers, pull_batch,
     validate_pull_consumer_config,
 };
 pub use runtime_state::NodeRuntimeState;
@@ -37,16 +34,19 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
+use sinex_db::SourceMaterialRecord;
 use sinex_db::models::SourceMaterial;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sinex_primitives::{
-    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Uuid, non_empty::NonEmptyVec,
+    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
+    non_empty::NonEmptyVec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -100,6 +100,67 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     }
 }
 
+/// Coordinator-resolved replay metadata passed into node scans.
+///
+/// When a replay operation triggers a historical scan, the coordinator resolves the
+/// source material record and scope filters once, then passes them typed into the node.
+/// This prevents nodes from re-querying `source_material_registry` as a second authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedReplayMaterial {
+    /// Stable registry identity of the source material.
+    pub source_material_id: Uuid,
+
+    /// Material kind (for example `annex` or `git`).
+    pub material_kind: String,
+
+    /// Source identifier (for example file path or upstream URI).
+    pub source_identifier: String,
+
+    /// Registry metadata for the material.
+    pub material_metadata: serde_json::Value,
+
+    /// Material start bound, if known.
+    pub material_start_time: Option<Timestamp>,
+
+    /// Material end bound, if known.
+    pub material_end_time: Option<Timestamp>,
+}
+
+impl From<SourceMaterialRecord> for ResolvedReplayMaterial {
+    fn from(record: SourceMaterialRecord) -> Self {
+        Self {
+            source_material_id: record.id,
+            material_kind: record.material_kind,
+            source_identifier: record.source_identifier,
+            material_metadata: record.metadata,
+            material_start_time: record.start_time,
+            material_end_time: record.end_time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialReplayContext {
+    /// Unique ID for this replay operation (for correlation and idempotency).
+    pub operation_id: Uuid,
+
+    /// Fully resolved source materials covered by this replay scope.
+    pub materials: Vec<ResolvedReplayMaterial>,
+
+    /// Scope filters narrowing what to replay within the material.
+    pub replay_scope: ReplayScopeFilters,
+}
+
+/// Scope filters for replay operations, narrowing what to replay within a material.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReplayScopeFilters {
+    /// Restrict replay to specific source materials.
+    pub material_ids: Option<Vec<Uuid>>,
+
+    /// Restrict replay to specific event types.
+    pub event_types: Option<Vec<String>>,
+}
+
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanArgs {
@@ -120,6 +181,11 @@ pub struct ScanArgs {
 
     /// Node-specific configuration
     pub config: HashMap<String, serde_json::Value>,
+
+    /// Replay context when this scan was triggered by a material replay operation.
+    /// `None` for normal (non-replay) scans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<MaterialReplayContext>,
 }
 
 impl Default for ScanArgs {
@@ -131,8 +197,66 @@ impl Default for ScanArgs {
             max_events: 0,
             skip_duplicates: true,
             config: HashMap::new(),
+            replay: None,
         }
     }
+}
+
+// ── Node-Dispatch Replay Wire Types ──────────────────────────────────────────
+//
+// These types implement the node-dispatch replay protocol. Instead of the
+// gateway republishing stored event rows to NATS (reinjection), it dispatches
+// a scan command to the running ingestor node. The node re-reads source material
+// through its normal scan_historical() path and emits fresh events.
+//
+// Protocol:
+//   gateway → NATS request `sinex.control.nodes.<name>.scan` (NodeScanCommand)
+//   node    → NATS reply (NodeScanAck)
+//   node    → NATS publish `sinex.control.replay.progress.<operation_id>` (NodeScanProgress)
+
+/// Command dispatched to a running node to trigger a scan.
+/// Published to `sinex.control.nodes.<name>.scan` via NATS request-reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeScanCommand {
+    /// Unique identifier for this replay operation (correlation + idempotency).
+    pub operation_id: Uuid,
+    /// Resume from this checkpoint (usually `Checkpoint::None` for full replay).
+    pub from: Checkpoint,
+    /// Scan horizon — `Historical` with an `end_time` for replay.
+    pub until: TimeHorizon,
+    /// Scan arguments including `MaterialReplayContext` in `args.replay`.
+    pub args: ScanArgs,
+}
+
+/// Acknowledgement from node after receiving scan command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeScanAck {
+    /// Correlates with the `NodeScanCommand.operation_id`.
+    pub operation_id: Uuid,
+    /// Node that received the command.
+    pub node_name: String,
+    /// Whether the command was accepted.
+    pub accepted: bool,
+    /// Error message if rejected (e.g., scan already in progress, not an ingestor).
+    pub error: Option<String>,
+}
+
+/// Progress update published by node during dispatched scan.
+/// Published to `sinex.control.replay.progress.<operation_id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeScanProgress {
+    /// Correlates with the `NodeScanCommand.operation_id`.
+    pub operation_id: Uuid,
+    /// Node executing the scan.
+    pub node_name: String,
+    /// Events processed so far.
+    pub events_processed: u64,
+    /// Events emitted (may be fewer than processed if filtering).
+    pub events_emitted: u64,
+    /// Final report when scan completes (None while in progress).
+    pub final_report: Option<ScanReport>,
+    /// Terminal error when the scan could not complete.
+    pub error: Option<String>,
 }
 
 async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Store> {
@@ -379,7 +503,7 @@ impl Default for NodeCapabilities {
     fn default() -> Self {
         Self {
             supports_continuous: true,
-            supports_historical: false,
+            supports_historical: true,
             supports_snapshot: false,
             supports_interactive: false,
             max_scan_size: None,
@@ -461,8 +585,11 @@ impl std::fmt::Display for RunnerLifecycle {
 }
 
 /// Unified runner for nodes
+type NodeFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
+
 pub struct NodeRunner<T: Node> {
     node: T,
+    node_factory: Option<NodeFactory<T>>,
     lifecycle: RunnerLifecycle,
     handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,
@@ -473,6 +600,7 @@ pub struct NodeRunner<T: Node> {
     schema_listener_handle: Option<tokio::task::JoinHandle<()>>,
     checkpoint_cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
+    command_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
 }
@@ -490,11 +618,33 @@ struct ResolvedBatch {
     last_event_id: Option<Uuid>,
 }
 
+#[cfg(feature = "messaging")]
+struct DispatchedScanOutcome {
+    report: ScanReport,
+    events_emitted: u64,
+}
+
+#[cfg(feature = "messaging")]
+struct FailedDispatchedScanOutcome {
+    error: SinexError,
+    events_emitted: u64,
+}
+
 impl<T: Node + 'static> NodeRunner<T> {
     /// Create a new node runner
     pub fn new(node: T) -> Self {
+        Self::new_with_optional_factory(node, None)
+    }
+
+    /// Create a node runner with a factory for fresh worker instances.
+    pub fn new_with_factory(node: T, node_factory: NodeFactory<T>) -> Self {
+        Self::new_with_optional_factory(node, Some(node_factory))
+    }
+
+    fn new_with_optional_factory(node: T, node_factory: Option<NodeFactory<T>>) -> Self {
         Self {
             node,
+            node_factory,
             lifecycle: RunnerLifecycle::Created,
             handles: None,
             service_info: None,
@@ -505,6 +655,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             schema_listener_handle: None,
             checkpoint_cleanup_handle: None,
             consumer_handle: None,
+            command_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
@@ -823,7 +974,10 @@ impl<T: Node + 'static> NodeRunner<T> {
     }
 
     /// Run in service mode with startup sequence
-    pub async fn run_service(&mut self) -> NodeResult<()> {
+    pub async fn run_service(&mut self) -> NodeResult<()>
+    where
+        T: Default,
+    {
         match self.lifecycle {
             RunnerLifecycle::Initialized => {}
             RunnerLifecycle::Running => {
@@ -846,6 +1000,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             "Starting service with startup sequence"
         );
 
+        // Start command listener for node-dispatch replay (scan commands via NATS).
+        // This allows the gateway to dispatch historical scans to running nodes.
+        #[cfg(feature = "messaging")]
+        self.start_command_listener();
+
         match node_type {
             NodeType::Ingestor => {
                 // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
@@ -863,6 +1022,471 @@ impl<T: Node + 'static> NodeRunner<T> {
                         "Messaging feature required for Automaton mode".to_string(),
                     ))
                 }
+            }
+        }
+    }
+
+    /// Start the NATS command listener for node-dispatch replay.
+    ///
+    /// Subscribes to `sinex.control.nodes.<node_name>.scan` using NATS request-reply.
+    /// When a `NodeScanCommand` arrives, the listener:
+    /// 1. Replies with `NodeScanAck` (accepted or rejected)
+    /// 2. If accepted, spawns an isolated replay worker for the same node type/config
+    /// 3. Publishes `NodeScanProgress` updates to `sinex.control.replay.progress.<operation_id>`
+    ///
+    /// Only ingestor nodes accept scan commands; automata reject them (they receive
+    /// re-derived events naturally via `JetStream`).
+    #[cfg(feature = "messaging")]
+    fn start_command_listener(&mut self) {
+        let handles = if let Some(h) = &self.handles {
+            h.clone()
+        } else {
+            warn!("Cannot start command listener: handles not initialized");
+            return;
+        };
+        let service_info = if let Some(service_info) = &self.service_info {
+            service_info.clone()
+        } else {
+            warn!("Cannot start command listener: service info not initialized");
+            return;
+        };
+        let work_dir_utf8 = if let Some(work_dir_utf8) = &self.work_dir_utf8 {
+            work_dir_utf8.clone()
+        } else {
+            warn!("Cannot start command listener: work dir not initialized");
+            return;
+        };
+
+        let nats_client = match handles.transport() {
+            EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+        };
+
+        let node_name = self.node.node_name().to_string();
+        let node_type = self.node.node_type();
+        let supports_historical = self.node.capabilities().supports_historical;
+        let env = sinex_primitives::environment::environment().clone();
+        let raw_config = self.raw_config.clone().unwrap_or_default();
+        let dry_run = service_info.dry_run();
+        let node_factory = self.node_factory.clone();
+
+        let handle = tokio::spawn(async move {
+            let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+
+            let mut sub = match nats_client.subscribe(subject.clone()).await {
+                Ok(sub) => sub,
+                Err(err) => {
+                    warn!(error = %err, subject = %subject, "Failed to subscribe to scan command subject");
+                    return;
+                }
+            };
+
+            info!(subject = %subject, "Command listener started for node-dispatch replay");
+
+            let active_scan = Arc::new(AtomicBool::new(false));
+
+            while let Some(msg) = sub.next().await {
+                let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
+                    Ok(cmd) => cmd,
+                    Err(err) => {
+                        warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                        if let Some(reply) = msg.reply {
+                            let nack = NodeScanAck {
+                                operation_id: Uuid::now_v7(),
+                                node_name: node_name.clone(),
+                                accepted: false,
+                                error: Some(format!("Failed to deserialize command: {err}")),
+                            };
+                            let _ = nats_client
+                                .publish(
+                                    reply,
+                                    serde_json::to_vec(&nack).unwrap_or_default().into(),
+                                )
+                                .await;
+                        }
+                        continue;
+                    }
+                };
+
+                let operation_id = command.operation_id;
+
+                if node_type != NodeType::Ingestor {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: false,
+                        error: Some(format!(
+                            "Node '{node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
+                        )),
+                    };
+                    if let Some(reply) = msg.reply {
+                        let _ = nats_client
+                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                            .await;
+                    }
+                    continue;
+                }
+
+                if !supports_historical {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: false,
+                        error: Some(format!(
+                            "Node '{node_name}' does not support historical scans (supports_historical = false)"
+                        )),
+                    };
+                    if let Some(reply) = msg.reply {
+                        let _ = nats_client
+                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                            .await;
+                    }
+                    continue;
+                }
+
+                if dry_run {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: false,
+                        error: Some(
+                            "Node is running in dry-run mode and cannot execute replay scans"
+                                .to_string(),
+                        ),
+                    };
+                    if let Some(reply) = msg.reply {
+                        let _ = nats_client
+                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                            .await;
+                    }
+                    continue;
+                }
+
+                let Some(factory) = node_factory.clone() else {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: false,
+                        error: Some("Node was started without a replay worker factory".to_string()),
+                    };
+                    if let Some(reply) = msg.reply {
+                        let _ = nats_client
+                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                            .await;
+                    }
+                    continue;
+                };
+
+                if active_scan.swap(true, Ordering::SeqCst) {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: false,
+                        error: Some("A scan is already in progress on this node".to_string()),
+                    };
+                    if let Some(reply) = msg.reply {
+                        let _ = nats_client
+                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                            .await;
+                    }
+                    continue;
+                }
+
+                let ack = NodeScanAck {
+                    operation_id,
+                    node_name: node_name.clone(),
+                    accepted: true,
+                    error: None,
+                };
+                if let Some(reply) = msg.reply {
+                    let _ = nats_client
+                        .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
+                        .await;
+                }
+
+                info!(
+                    operation_id = %operation_id,
+                    node = %node_name,
+                    "Accepted scan command, spawning historical scan task"
+                );
+
+                let scan_client = nats_client.clone();
+                let scan_env = env.clone();
+                let scan_node_name = node_name.clone();
+                let scan_active = active_scan.clone();
+                let scan_handles = handles.clone();
+                let scan_service_info = service_info.clone();
+                let scan_raw_config = raw_config.clone();
+                let scan_work_dir_utf8 = work_dir_utf8.clone();
+                let scan_command = command.clone();
+
+                tokio::spawn(async move {
+                    let progress_subject = scan_env
+                        .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                    let start_progress = NodeScanProgress {
+                        operation_id,
+                        node_name: scan_node_name.clone(),
+                        events_processed: 0,
+                        events_emitted: 0,
+                        final_report: None,
+                        error: None,
+                    };
+                    let _ = scan_client
+                        .publish(
+                            progress_subject.clone(),
+                            serde_json::to_vec(&start_progress)
+                                .unwrap_or_default()
+                                .into(),
+                        )
+                        .await;
+
+                    let scan_outcome = Self::execute_dispatched_scan(
+                        factory,
+                        scan_handles,
+                        scan_service_info,
+                        scan_raw_config,
+                        scan_work_dir_utf8,
+                        scan_command,
+                    )
+                    .await;
+
+                    let final_progress = match scan_outcome {
+                        Ok(outcome) => {
+                            let mut report = outcome.report;
+                            report
+                                .node_stats
+                                .entry("events_emitted".to_string())
+                                .or_insert(outcome.events_emitted);
+                            NodeScanProgress {
+                                operation_id,
+                                node_name: scan_node_name.clone(),
+                                events_processed: report.events_processed,
+                                events_emitted: outcome.events_emitted,
+                                final_report: Some(report),
+                                error: None,
+                            }
+                        }
+                        Err(outcome) => {
+                            warn!(
+                                operation_id = %operation_id,
+                                node = %scan_node_name,
+                                error = %outcome.error,
+                                events_emitted = outcome.events_emitted,
+                                "Dispatched scan failed"
+                            );
+                            NodeScanProgress {
+                                operation_id,
+                                node_name: scan_node_name.clone(),
+                                events_processed: outcome.events_emitted,
+                                events_emitted: outcome.events_emitted,
+                                final_report: None,
+                                error: Some(outcome.error.to_string()),
+                            }
+                        }
+                    };
+
+                    if let Err(err) = scan_client
+                        .publish(
+                            progress_subject,
+                            serde_json::to_vec(&final_progress)
+                                .unwrap_or_default()
+                                .into(),
+                        )
+                        .await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %scan_node_name,
+                            error = %err,
+                            "Failed to publish final scan progress"
+                        );
+                    }
+
+                    scan_active.store(false, Ordering::SeqCst);
+                });
+            }
+
+            info!("Command listener subscription closed");
+        });
+
+        self.command_listener_handle = Some(handle);
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn execute_dispatched_scan(
+        node_factory: NodeFactory<T>,
+        base_handles: NodeHandles,
+        base_service_info: ServiceInfo,
+        raw_config: HashMap<String, serde_json::Value>,
+        work_dir_utf8: Utf8PathBuf,
+        command: NodeScanCommand,
+    ) -> Result<DispatchedScanOutcome, FailedDispatchedScanOutcome> {
+        let replay_service_name = format!(
+            "{}.replay.{}",
+            base_service_info.service_name(),
+            command.operation_id.simple()
+        );
+        let replay_service_info = ServiceInfo::new(
+            replay_service_name.clone(),
+            base_service_info.host().to_string(),
+            base_service_info.work_dir().clone(),
+            base_service_info.dry_run(),
+        );
+
+        let (replay_handles, emitted_counter, forwarder_handle) =
+            Self::build_replay_worker_handles(
+                &base_handles,
+                &replay_service_name,
+                command.operation_id,
+            )
+            .await
+            .map_err(|error| FailedDispatchedScanOutcome {
+                error,
+                events_emitted: 0,
+            })?;
+
+        let typed_config = if raw_config.is_empty() {
+            T::Config::default()
+        } else {
+            let config_value =
+                serde_json::to_value(&raw_config).map_err(|error| FailedDispatchedScanOutcome {
+                    error: SinexError::configuration(format!(
+                        "Failed to serialize replay worker config: {error}"
+                    )),
+                    events_emitted: 0,
+                })?;
+            serde_json::from_value(config_value).map_err(|error| FailedDispatchedScanOutcome {
+                error: SinexError::configuration(format!(
+                    "Failed to parse replay worker config: {error}"
+                )),
+                events_emitted: 0,
+            })?
+        };
+
+        let init_context = NodeInitContext::new(
+            typed_config,
+            raw_config,
+            replay_service_info,
+            replay_handles,
+            work_dir_utf8,
+        );
+
+        let mut worker = node_factory();
+        if let Err(error) = worker.initialize(init_context).await {
+            return Err(FailedDispatchedScanOutcome {
+                error,
+                events_emitted: 0,
+            });
+        }
+
+        let scan_result = worker
+            .scan(command.from.clone(), command.until.clone(), command.args)
+            .await;
+        let shutdown_result = worker.shutdown().await;
+        drop(worker);
+
+        let events_emitted = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
+
+        match (scan_result, shutdown_result) {
+            (Ok(report), Ok(())) => Ok(DispatchedScanOutcome {
+                report,
+                events_emitted,
+            }),
+            (Err(error), Ok(())) => Err(FailedDispatchedScanOutcome {
+                error,
+                events_emitted,
+            }),
+            (Ok(_), Err(error)) => Err(FailedDispatchedScanOutcome {
+                error,
+                events_emitted,
+            }),
+            (Err(scan_error), Err(shutdown_error)) => Err(FailedDispatchedScanOutcome {
+                error: scan_error.with_context("shutdown_error", shutdown_error.to_string()),
+                events_emitted,
+            }),
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn build_replay_worker_handles(
+        base_handles: &NodeHandles,
+        replay_service_name: &str,
+        operation_id: Uuid,
+    ) -> NodeResult<(
+        NodeHandles,
+        Arc<AtomicU64>,
+        tokio::task::JoinHandle<NodeResult<()>>,
+    )> {
+        let checkpoint_kv = create_checkpoint_kv(base_handles.transport()).await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            checkpoint_kv,
+            replay_service_name.to_string(),
+            format!("replay-{}", operation_id.simple()),
+            format!("dispatch-{}", operation_id.simple()),
+        ));
+
+        let (replay_sender, mut replay_receiver) =
+            mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+        let replay_emitter = base_handles.emitter().clone_with_sender(replay_sender);
+        let target_sender = base_handles.emitter().sender();
+        let emitted_counter = Arc::new(AtomicU64::new(0));
+        let counter = emitted_counter.clone();
+        let forwarder_handle = tokio::spawn(async move {
+            while let Some(event) = replay_receiver.recv().await {
+                target_sender.send(event).await.map_err(|_| {
+                    SinexError::processing("Replay forwarder target channel closed".to_string())
+                })?;
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        });
+
+        let confirmation_buffer = base_handles.confirmation_buffer();
+        let schema_cache = base_handles.schema_cache();
+        #[cfg(feature = "db")]
+        let replay_handles = match base_handles.db_pool().cloned() {
+            Some(db_pool) => NodeHandles::new(
+                db_pool,
+                checkpoint_manager,
+                replay_emitter,
+                base_handles.transport().clone(),
+                confirmation_buffer,
+                schema_cache,
+            ),
+            None => NodeHandles::new_edge(
+                checkpoint_manager,
+                replay_emitter,
+                base_handles.transport().clone(),
+                confirmation_buffer,
+                schema_cache,
+            ),
+        };
+        #[cfg(not(feature = "db"))]
+        let replay_handles = NodeHandles::new_edge(
+            checkpoint_manager,
+            replay_emitter,
+            base_handles.transport().clone(),
+            confirmation_buffer,
+            schema_cache,
+        );
+
+        Ok((replay_handles, emitted_counter, forwarder_handle))
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn finish_replay_forwarder(
+        forwarder_handle: tokio::task::JoinHandle<NodeResult<()>>,
+        emitted_counter: Arc<AtomicU64>,
+    ) -> u64 {
+        match forwarder_handle.await {
+            Ok(Ok(())) => emitted_counter.load(Ordering::SeqCst),
+            Ok(Err(error)) => {
+                warn!(error = %error, "Replay forwarder failed");
+                emitted_counter.load(Ordering::SeqCst)
+            }
+            Err(join_error) => {
+                warn!(error = %join_error, "Replay forwarder join failed");
+                emitted_counter.load(Ordering::SeqCst)
             }
         }
     }
@@ -1272,7 +1896,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             host: String,
             #[serde(rename = "payload")]
             event_payload: JsonValue,
-            node_version: Option<String>,
+            node_run_id: Option<String>,
             payload_schema_id: Option<String>,
             associated_blob_ids: Option<Vec<String>>,
             source_material_id: Option<String>,
@@ -1353,10 +1977,18 @@ impl<T: Node + 'static> NodeRunner<T> {
             payload: published.event_payload,
             ts_orig: Some(provisional.ts_orig),
             host: HostName::from(published.host),
-            node_version: published.node_version,
+            node_run_id: published
+                .node_run_id
+                .and_then(|s| s.parse::<sinex_primitives::Uuid>().ok()),
             payload_schema_id,
             provenance,
             associated_blob_ids,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         })
     }
 
@@ -1556,9 +2188,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             "schema broadcast listener",
         )
         .await;
+        Self::abort_task(&mut self.command_listener_handle, "command listener").await;
         self.shutdown_leader_state().await;
         self.shutdown_event_batcher().await;
         Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
+        Self::abort_task(&mut self.command_listener_handle, "node command listener").await;
         Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
 
         self.node.shutdown().await

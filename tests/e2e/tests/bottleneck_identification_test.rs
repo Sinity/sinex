@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires JetStream metrics exposure in sinex-node-sdk
     // (consumer stats API, backlog threshold config). Not implemented as of 2026-03.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }
 
 #[sinex_test]
@@ -22,5 +22,5 @@ async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> TestResult<()> {
 async fn jetstream_detect_publish_pressure(_ctx: TestContext) -> TestResult<()> {
     // Blocked: requires JetStream metrics exposure in sinex-node-sdk
     // (consumer stats API, backlog threshold config). Not implemented as of 2026-03.
-    Ok(())
+    unimplemented!("blocked: see file comment for missing infrastructure")
 }

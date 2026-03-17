@@ -6,10 +6,11 @@
 //! - Requeue messages from DLQ back to main stream
 //! - Purge DLQ messages
 
+use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
-use crate::service_container::ServiceContainer;
+use tracing::warn;
 
 // Re-export RPC types for consistency
 pub use sinex_primitives::rpc::dlq::{
@@ -18,10 +19,7 @@ pub use sinex_primitives::rpc::dlq::{
 };
 
 /// Handle DLQ list request - returns statistics about DLQ
-pub async fn handle_dlq_list(
-    services: &ServiceContainer,
-    _params: Value,
-) -> Result<Value> {
+pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| eyre!("NATS client is not available"))?;
@@ -45,10 +43,7 @@ pub async fn handle_dlq_list(
 }
 
 /// Handle DLQ peek request - preview messages without removing them
-pub async fn handle_dlq_peek(
-    services: &ServiceContainer,
-    params: Value,
-) -> Result<Value> {
+pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Result<Value> {
     use async_nats::jetstream;
     use futures::StreamExt;
     let nats_client = services
@@ -174,17 +169,24 @@ pub async fn handle_dlq_requeue(
             .retry_by_id(event_id)
             .await
             .map_err(|e| eyre!("Failed to requeue event {}: {}", event_id, e))?;
-        1
+        1usize
     } else if requeue_params.all {
         // Requeue all events
         info!(
             token_prefix = %auth.token_prefix,
             "DLQ requeue all operation initiated"
         );
-        handler
+        let result = handler
             .retry_all()
             .await
-            .map_err(|e| eyre!("Failed to requeue all DLQ messages: {}", e))?
+            .map_err(|e| eyre!("Failed to requeue all DLQ messages: {}", e))?;
+        if result.permanently_failed > 0 {
+            warn!(
+                permanently_failed = result.permanently_failed,
+                "Some DLQ messages exceeded max retries and were permanently discarded"
+            );
+        }
+        result.retried
     } else {
         return Err(eyre!("Must specify either 'event_id' or 'all: true'"));
     };

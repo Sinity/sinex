@@ -131,6 +131,50 @@ define_event_payload! {
     } => ("shell.atuin", "command.completed");
 }
 
+// Shell history real-time command monitoring
+//
+// These sources emit `command.executed` events captured from live shell history
+// monitoring (as distinct from histfile imports, which emit `command.historical`).
+
+define_event_payload! {
+    /// Command executed event captured from live Bash history monitoring.
+    pub struct BashCommandExecutedPayload {
+        command: CommandText,
+        working_directory: Option<RecordedPath>,
+        exit_code: Option<ExitCode>,
+        duration_ms: Option<u64>,
+        user: Option<String>,
+        session_id: Option<String>,
+        environment_hash: Option<String>,
+    } => ("shell.history.bash", "command.executed");
+}
+
+define_event_payload! {
+    /// Command executed event captured from live Zsh history monitoring.
+    pub struct ZshCommandExecutedPayload {
+        command: CommandText,
+        working_directory: Option<RecordedPath>,
+        exit_code: Option<ExitCode>,
+        duration_ms: Option<u64>,
+        user: Option<String>,
+        session_id: Option<String>,
+        environment_hash: Option<String>,
+    } => ("shell.history.zsh", "command.executed");
+}
+
+define_event_payload! {
+    /// Command executed event captured from live Fish history monitoring.
+    pub struct FishCommandExecutedPayload {
+        command: CommandText,
+        working_directory: Option<RecordedPath>,
+        exit_code: Option<ExitCode>,
+        duration_ms: Option<u64>,
+        user: Option<String>,
+        session_id: Option<String>,
+        environment_hash: Option<String>,
+    } => ("shell.history.fish", "command.executed");
+}
+
 // Generic shell history import payloads
 
 define_event_payload! {

@@ -6,6 +6,7 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use sinex_primitives::domain::{TemporalClock, TemporalPrecision, TemporalSourceType};
 use sinex_primitives::{Id, Timestamp, events::OffsetKind};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
@@ -248,12 +249,12 @@ pub struct TemporalLedgerEntry {
     pub offset_kind: OffsetKind,
     /// Capture timestamp
     pub ts_capture: Timestamp,
-    /// Precision of the capture timing (e.g., "bounded", "exact")
-    pub precision: String,
-    /// Clock type used (e.g., "wall", "monotonic")
-    pub clock: String,
-    /// Source type (e.g., "`realtime_capture`", "`batch_import`")
-    pub source_type: String,
+    /// Precision of the capture timing
+    pub precision: TemporalPrecision,
+    /// Clock type used
+    pub clock: TemporalClock,
+    /// How the capture timestamp was determined
+    pub source_type: TemporalSourceType,
 }
 impl TemporalLedgerEntry {
     /// Create a new ledger entry for a realtime capture
@@ -269,9 +270,34 @@ impl TemporalLedgerEntry {
             offset_end,
             offset_kind: OffsetKind::Byte,
             ts_capture,
-            precision: "bounded".to_string(),
-            clock: "wall".to_string(),
-            source_type: "realtime_capture".to_string(),
+            precision: TemporalPrecision::Bounded,
+            clock: TemporalClock::Wall,
+            source_type: TemporalSourceType::RealtimeCapture,
+        }
+    }
+
+    /// Create a `staged_at` ledger entry — the fallback timestamp for material
+    /// events that lack an intrinsic or inferred timestamp from the content.
+    ///
+    /// Written at material-begin time so that `LedgerReader::derive_ts_orig()`
+    /// always finds a persisted timestamp instead of falling back to an
+    /// ephemeral `Timestamp::now()`. This makes material `ts_orig` reproducible
+    /// across replays.
+    #[must_use]
+    pub fn staged_at(
+        source_material_id: uuid::Uuid,
+        offset_end: i64,
+        ts_capture: Timestamp,
+    ) -> Self {
+        Self {
+            source_material_id,
+            offset_start: 0,
+            offset_end,
+            offset_kind: OffsetKind::Byte,
+            ts_capture,
+            precision: TemporalPrecision::Bounded,
+            clock: TemporalClock::Wall,
+            source_type: TemporalSourceType::StagedAt,
         }
     }
 }
@@ -882,9 +908,9 @@ impl SourceMaterialRepository<'_> {
             entry.offset_end,
             entry.offset_kind.as_wire_str(),
             *entry.ts_capture,
-            entry.precision,
-            entry.clock,
-            entry.source_type
+            entry.precision.to_string() as String,
+            entry.clock.to_string() as String,
+            entry.source_type.to_string() as String
         )
         .execute(self.pool)
         .await

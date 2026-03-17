@@ -190,24 +190,34 @@ impl HealthReporter {
     #[allow(clippy::expect_used)] // RwLock poison means prior panic — propagating is correct
     pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
         let new_status = self.calculate_status();
-        let mut last_status_guard = self
-            .last_status
-            .write()
-            .expect("health reporter status lock poisoned");
-        let old_status = *last_status_guard;
 
-        // Only emit if status changed
-        if new_status != old_status {
-            let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
-            let reason = format!(
-                "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {})",
-                old_status,
-                new_status,
-                error_rate * 100.0,
-                self.metrics.events_processed.load(Ordering::Relaxed),
-                self.metrics.errors.load(Ordering::Relaxed),
-            );
+        // Read current status and determine if emission is needed.
+        // Guard must be dropped before the await to keep the future Send.
+        let (should_emit, old_status, reason) = {
+            let last_status_guard = self
+                .last_status
+                .read()
+                .expect("health reporter status lock poisoned");
+            let old_status = *last_status_guard;
 
+            if new_status == old_status {
+                (false, old_status, String::new())
+            } else {
+                let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
+                let reason = format!(
+                    "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {})",
+                    old_status,
+                    new_status,
+                    error_rate * 100.0,
+                    self.metrics.events_processed.load(Ordering::Relaxed),
+                    self.metrics.errors.load(Ordering::Relaxed),
+                );
+                (true, old_status, reason)
+            }
+            // guard dropped here
+        };
+
+        if should_emit {
             self.observer
                 .emit_health_status(
                     &self.component_name,
@@ -218,6 +228,11 @@ impl HealthReporter {
                 .await
                 .map_err(|e| SinexError::service(format!("Failed to emit health status: {e}")))?;
 
+            // Update stored status after successful emission
+            let mut last_status_guard = self
+                .last_status
+                .write()
+                .expect("health reporter status lock poisoned");
             *last_status_guard = new_status;
         }
 

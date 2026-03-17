@@ -11,24 +11,28 @@ Does your node capture data from the external world?
   │           ├── YES → IngestorNode + StageAsYouGoNode pattern
   │           └── NO  → IngestorNode
   └── NO → Does it transform/filter existing events?
-            ├── YES → AutomatonNode
-            └── NO  → Node (direct impl, rare)
+            ├── YES → Is it 1:1 stateless transformation?
+            │           ├── YES → TransducerNode
+            │           └── NO  → Does it aggregate over time windows?
+            │                       ├── YES → WindowedNode
+            │                       └── NO  → ScopeReconcilerNode
+            └── NO → Node (direct impl, rare)
 ```
 
 ## Trait Comparison Matrix
 
-| Aspect | IngestorNode | AutomatonNode | StageAsYouGoNode | Node (base) |
-|--------|-------------|---------------|------------------|-------------|
-| **Purpose** | External world → events | Event → derived event | Binary content staging | Runtime dispatch |
-| **Input** | External sources | Single typed event | Raw bytes + metadata | Checkpoint + TimeHorizon |
-| **Output** | `ScanReport` (batched) | `Option<Output>` per event | `StageAsYouGoResult` | `ScanReport` |
-| **Scan modes** | Snapshot, historical, continuous | Continuous only | N/A (helper pattern) | All (delegated) |
-| **State type** | Custom `S` in `IngestorState<S>` | Custom `S` in `PersistedState<S>` | N/A | Via adapter |
-| **Checkpoint** | Explicit (user returns in state) | Automatic (every N events / M secs) | Via enclosing ingestor | In `ScanReport` |
-| **Error handling** | User responsibility | Auto DLQ/skip/retry | User responsibility | N/A |
-| **Config** | User-defined type | Built-in `NodeAdapterConfig` | N/A | Generic |
-| **Boilerplate** | ~50 lines | ~10 lines | Used within ingestors | ~100+ lines |
-| **Health monitoring** | Manual | Automatic (if NATS available) | N/A | Via adapter |
+| Aspect | IngestorNode | TransducerNode | WindowedNode | ScopeReconcilerNode | StageAsYouGoNode | Node (base) |
+|--------|-------------|--------|---------|-----------|-----------|-------------|
+| **Purpose** | External world → events | 1:1 event transformation | Time-windowed aggregation | State reconciliation | Binary content staging | Runtime dispatch |
+| **Input** | External sources | Single event → output | Event stream over window | Scope state updates | Raw bytes + metadata | Checkpoint + TimeHorizon |
+| **Output** | `ScanReport` (batched) | `Option<Output>` | Windowed aggregate | Reconciled state events | `StageAsYouGoResult` | `ScanReport` |
+| **Scan modes** | Snapshot, historical, continuous | Continuous only | Continuous only | Continuous only | N/A (helper pattern) | All (delegated) |
+| **State type** | Custom `S` in `IngestorState<S>` | Custom `S` in `PersistedState<S>` | Custom `S` in `PersistedState<S>` | Custom `S` in `PersistedState<S>` | N/A | Via adapter |
+| **Checkpoint** | Explicit (user returns in state) | Automatic (every N events / M secs) | Automatic (window-based) | Automatic (scope-driven) | Via enclosing ingestor | In `ScanReport` |
+| **Error handling** | User responsibility | Auto DLQ/skip/retry | Auto DLQ/skip/retry | Auto DLQ/skip/retry | User responsibility | N/A |
+| **Config** | User-defined type | Built-in `NodeAdapterConfig` | Built-in `NodeAdapterConfig` | Built-in `NodeAdapterConfig` | N/A | Generic |
+| **Boilerplate** | ~50 lines | ~15 lines | ~20 lines | ~25 lines | Used within ingestors | ~100+ lines |
+| **Health monitoring** | Manual | Automatic (if NATS available) | Automatic (if NATS available) | Automatic (if NATS available) | N/A | Via adapter |
 
 ## When to Use Each Trait
 
@@ -45,19 +49,44 @@ desktop activity tracker, document parser.
 - State is checkpointed to file + NATS KV automatically via `IngestorNodeAdapter`
 - Exploration hooks available (`get_source_state`, `get_coverage_analysis`)
 
-### AutomatonNode — "I process events from the pipeline"
+### TransducerNode — "I perform 1:1 event transformation"
 
-Use when your node subscribes to events and optionally emits derived events.
+Use when your node transforms individual events in a stateless manner.
 
-**Examples:** command canonicalizer, analytics aggregator, health monitor,
-content classifier.
+**Examples:** command canonicalizer, event enricher, format converter.
 
 **Key characteristics:**
-- Minimal boilerplate — implement `process()` and a few metadata methods
-- Automatic batching, checkpointing, and health reporting
+- Pure 1:1 transformation: one input event → zero or one output event
+- Minimal state (mostly event-independent)
 - Return `Some(output)` to emit, `None` to filter/skip
-- Error handling via `handle_error()` → `ErrorAction::{Retry, SendToDLQ, Skip}`
-- Designed to be LLM-friendly (constrained enough for reliable code generation)
+- Error handling via DLQ, retry, or skip actions
+- Lowest boilerplate for simple transformations
+
+### WindowedNode — "I aggregate events over time windows"
+
+Use when your node combines multiple events within a time or count window.
+
+**Examples:** analytics aggregator, metrics summarizer, trend detector.
+
+**Key characteristics:**
+- Processes events within sliding time windows or event-count buckets
+- Emits aggregate results at window boundaries
+- Maintains window state across multiple input events
+- Automatic checkpoint at window completion
+- Return aggregated `Some(output)` per window boundary
+
+### ScopeReconcilerNode — "I track and reconcile scope state"
+
+Use when your node maintains per-scope state and emits reconciliation events.
+
+**Examples:** health monitor, state tracker, scope-aware aggregator.
+
+**Key characteristics:**
+- Tracks distinct scopes (e.g., per-source, per-device)
+- Maintains and evolves state per scope
+- Emits reconciliation events when scope state changes
+- Handles scope creation, updates, and cleanup
+- Automatic DLQ/retry for failed reconciliations
 
 ### StageAsYouGoNode — "I need streaming content capture"
 
@@ -75,19 +104,19 @@ progressively into JetStream rather than buffered in memory.
 
 ### Node (direct impl) — "The adapters don't fit my use case"
 
-Almost never needed. Both `IngestorNodeAdapter` and `AutomatonNodeAdapter` implement
+Almost never needed. Both `IngestorNodeAdapter` and `DerivedNodeAdapter` implement
 this trait for you. Only implement directly if you need custom scan dispatching or
-a node type that doesn't fit the ingestor/automaton dichotomy.
+a node type that doesn't fit the ingestor/derived-node model.
 
 ## Real Implementations
 
-| Node | Trait | Crate |
-|------|-------|-------|
-| sinex-fs-ingestor | `IngestorNode` + `StageAsYouGoNode` | `crate/nodes/sinex-fs-ingestor` |
-| sinex-terminal-ingestor | `IngestorNode` | `crate/nodes/sinex-terminal-ingestor` |
-| sinex-desktop-ingestor | `IngestorNode` | `crate/nodes/sinex-desktop-ingestor` |
-| sinex-system-ingestor | `IngestorNode` | `crate/nodes/sinex-system-ingestor` |
-| sinex-document-ingestor | `IngestorNode` + `StageAsYouGoNode` | `crate/nodes/sinex-document-ingestor` |
-| sinex-analytics-automaton | `AutomatonNode` | `crate/nodes/sinex-analytics-automaton` |
-| sinex-terminal-command-canonicalizer | `AutomatonNode` | `crate/nodes/sinex-terminal-command-canonicalizer` |
-| sinex-health-automaton | `AutomatonNode` | `crate/nodes/sinex-health-automaton` |
+| Node | Trait | Adapter | Crate |
+|------|-------|---------|-------|
+| sinex-fs-ingestor | `IngestorNode` + `StageAsYouGoNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-fs-ingestor` |
+| sinex-terminal-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-terminal-ingestor` |
+| sinex-desktop-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-desktop-ingestor` |
+| sinex-system-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-system-ingestor` |
+| sinex-document-ingestor | `IngestorNode` + `StageAsYouGoNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-document-ingestor` |
+| sinex-analytics-automaton | `WindowedNode` | `WindowedNodeAdapter` | `crate/nodes/sinex-analytics-automaton` |
+| sinex-terminal-command-canonicalizer | `TransducerNode` | `TransducerNodeAdapter` | `crate/nodes/sinex-terminal-command-canonicalizer` |
+| sinex-health-automaton | `ScopeReconcilerNode` | `ScopeReconcilerNodeAdapter` | `crate/nodes/sinex-health-automaton` |

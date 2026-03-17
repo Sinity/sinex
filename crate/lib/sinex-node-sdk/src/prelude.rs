@@ -31,14 +31,9 @@ pub use crate::{IngestorNode, IngestorNodeAdapter, IngestorState};
 #[cfg(feature = "messaging")]
 pub use crate::{LifecycleManager, ServiceStatus};
 
-// Event handling and replay
+// Event handling
 #[cfg(feature = "messaging")]
 pub use crate::{EventSender, EventStream};
-#[cfg(all(feature = "db", feature = "messaging"))]
-pub use crate::{
-    MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
-    ReplayProgress, ReplayResult, ReplayService, ReplayStats,
-};
 
 // CLI and utilities
 #[cfg(feature = "messaging")]

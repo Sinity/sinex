@@ -502,6 +502,16 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
             qb.push(" AND source_event_ids IS NULL");
         }
     }
+
+    if let Some(ref scope_key) = query.scope_key {
+        qb.push(" AND scope_key = ");
+        qb.push_bind(scope_key.clone());
+    }
+
+    if let Some(ref equivalence_key) = query.equivalence_key {
+        qb.push(" AND equivalence_key = ");
+        qb.push_bind(equivalence_key.clone());
+    }
 }
 
 fn push_payload_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &PayloadFilter) {

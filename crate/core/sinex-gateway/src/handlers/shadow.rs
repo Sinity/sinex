@@ -9,6 +9,7 @@
 //! - Use fan-out delivery (don't steal messages from production)
 //! - Can be created, listed, and deleted via RPC
 
+use crate::service_container::ServiceContainer;
 use async_nats::jetstream;
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
@@ -16,7 +17,6 @@ use sinex_node_sdk::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
 use tracing::{info, warn};
-use crate::service_container::ServiceContainer;
 
 // Re-export shared types
 pub use sinex_primitives::rpc::shadow::{
@@ -28,10 +28,7 @@ pub use sinex_primitives::rpc::shadow::{
 ///
 /// This creates a durable consumer that receives copies of all events
 /// matching the filter without affecting production consumers.
-pub async fn handle_shadow_create(
-    services: &ServiceContainer,
-    params: Value,
-) -> Result<Value> {
+pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| eyre!("NATS client is not available"))?;
@@ -104,10 +101,7 @@ pub async fn handle_shadow_create(
 }
 
 /// List active shadow consumers
-pub async fn handle_shadow_list(
-    services: &ServiceContainer,
-    params: Value,
-) -> Result<Value> {
+pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| eyre!("NATS client is not available"))?;

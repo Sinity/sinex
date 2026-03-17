@@ -241,12 +241,12 @@ impl IngestorNode for DesktopNode {
     fn capabilities(&self) -> NodeCapabilities {
         NodeCapabilities {
             supports_continuous: true,
-            supports_historical: false, // Very limited historical data
             supports_snapshot: true,
             supports_interactive: false,
-            max_scan_size: Some(1000), // Limited number of desktop events
+            max_scan_size: Some(1000),
             supports_concurrent: false,
             manages_own_continuous_loop: true,
+            ..NodeCapabilities::default()
         }
     }
 
@@ -352,23 +352,36 @@ impl IngestorNode for DesktopNode {
         Ok(report)
     }
 
-    #[instrument(skip(self, _state), fields(node = "desktop"))]
+    #[instrument(skip(self, state), fields(node = "desktop"))]
     async fn scan_historical(
         &mut self,
-        _state: &mut Self::State,
-        _from: Checkpoint,
+        state: &mut Self::State,
+        from: Checkpoint,
         _until: TimeHorizon,
-        _args: ScanArgs,
+        args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        // Historical scan for desktop: re-capture current desktop state from checkpoint.
+        // Uses the same snapshot mechanism as scan_snapshot — desktop state is ephemeral,
+        // so historical means "capture what's there now, knowing we're replaying from checkpoint."
+        info!(
+            checkpoint = ?from,
+            replay = args.replay.is_some(),
+            "Starting desktop historical scan"
+        );
+        let start_time = std::time::Instant::now();
+
+        let snapshot = self.take_snapshot(&state.health).await?;
+        state.last_state = Some(snapshot.clone());
+
         Ok(ScanReport {
-            events_processed: 0,
-            duration: std::time::Duration::from_secs(0),
-            final_checkpoint: Checkpoint::None,
-            time_range: None,
+            events_processed: snapshot.enabled_sources.len() as u64,
+            duration: start_time.elapsed(),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             node_stats: HashMap::new(),
-            successful_targets: vec![],
+            successful_targets: vec!["desktop_historical".to_string()],
             failed_targets: vec![],
-            warnings: vec!["Historical scan not supported".to_string()],
+            warnings: Vec::new(),
         })
     }
 

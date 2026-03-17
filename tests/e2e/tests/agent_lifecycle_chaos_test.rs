@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 /// deregister) concurrently through the event pipeline. Verify all lifecycle events
 /// are persisted without corruption.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_agent_lifecycle_concurrent_operations(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -98,7 +98,7 @@ async fn test_agent_lifecycle_concurrent_operations(ctx: TestContext) -> TestRes
 /// Simulate rapid agent registration and heartbeat bursts with interleaved failures.
 /// Agents register, emit heartbeats, some "crash" (stop sending), and new ones take over.
 #[sinex_test(timeout = 60)]
-#[ignore = "chaos test requiring controlled failure injection"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_agent_registration_and_heartbeat_chaos(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

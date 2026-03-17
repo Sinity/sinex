@@ -9,7 +9,7 @@ use xtask::sandbox::prelude::*;
 /// Publish events with extreme timestamps (far future, far past, epoch) and verify
 /// the pipeline stores them correctly without rejection or corruption.
 #[sinex_test]
-#[ignore = "requires security testing infrastructure"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn validator_rejects_future_ts_orig_beyond_drift(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -70,7 +70,7 @@ async fn validator_rejects_future_ts_orig_beyond_drift(ctx: TestContext) -> Test
 /// Publish events with null bytes embedded in payload strings and verify the pipeline
 /// doesn't crash, truncate, or corrupt the data.
 #[sinex_test]
-#[ignore = "requires security testing infrastructure"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;

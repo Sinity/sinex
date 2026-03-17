@@ -62,10 +62,11 @@ impl TestNodePublisher {
             "payload": payload,
             "ts_orig": ts_orig,
             "host": "test-host",
-            "node_version": "test",
+            "node_run_id": Uuid::now_v7().to_string(),
             // Provenance: every event must have either source_material_id or source_event_ids.
             // Use the well-known test fixture material seeded into every test database.
             "source_material_id": "00000000-0000-7000-8000-000000000000",
+            "anchor_byte": 0,
         });
 
         let subject = env.nats_subject_with_namespace(
@@ -125,8 +126,9 @@ async fn publish_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "node_version": "test",
+        "node_run_id": Uuid::now_v7().to_string(),
         "source_material_id": "00000000-0000-7000-8000-000000000000",
+        "anchor_byte": 0,
     });
 
     let subject = env.nats_subject_with_namespace(

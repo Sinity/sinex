@@ -140,6 +140,8 @@ impl XtaskCommand for ResetCommand {
             }
             if self.seed {
                 // Reseed with synthetic data after wipe.
+                // Exception: reset deletes then recreates the DB — ctx.with_history_db()
+                // would re-open the old (now-deleted) path. Must open the fresh path directly.
                 use crate::history::HistoryDb;
                 use crate::history::seed::{SeedOptions, seed_history};
                 let db = HistoryDb::open(&path)?;

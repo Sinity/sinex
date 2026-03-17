@@ -171,7 +171,7 @@ impl<'ctx> PipelineScope<'ctx> {
             host: sinex_primitives::domain::HostName::new(
                 gethostname::gethostname().to_string_lossy().to_string(),
             ),
-            node_version: Some("test-ingestd".to_string()),
+            node_run_id: Some(sinex_primitives::Uuid::now_v7()),
             payload_schema_id: None,
             provenance: sinex_primitives::events::Provenance::Material {
                 id: material_id,
@@ -181,6 +181,12 @@ impl<'ctx> PipelineScope<'ctx> {
                 offset_kind: sinex_primitives::events::OffsetKind::Byte,
             },
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let event_id: uuid::Uuid = self.ctx.publish_prebuilt_event(&event).await?;

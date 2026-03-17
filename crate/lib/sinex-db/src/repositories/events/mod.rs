@@ -32,7 +32,13 @@ macro_rules! event_select_columns {
          source_event_ids::uuid[] as source_event_ids, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
-         node_version"
+         node_run_id::uuid as node_run_id, \
+         temporal_policy, \
+         semantics_version, \
+         scope_key, \
+         equivalence_key, \
+         created_by_operation_id::uuid as created_by_operation_id, \
+         node_model"
     };
 }
 
@@ -46,6 +52,6 @@ pub mod queries;
 pub use conversions::{EventRecordExt, records_to_events};
 pub use persistence::{
     BatchViolation, COPY_BATCH_THRESHOLD, CascadeSource, EventAnnotation, EventPayloadSchema,
-    EventRepository, EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp,
-    StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
+    EventRepository, EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, ReplacementKind,
+    ReplacementRecord, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };

@@ -352,10 +352,14 @@ where
             .is_err()
         {
             timed_out_clone.store(true, Ordering::Relaxed);
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
             std::thread::sleep(Duration::from_secs(2));
             if watchdog_pid_is_cargo(pid) {
-                unsafe { libc::kill(pid as i32, libc::SIGKILL); }
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
             }
         }
     });

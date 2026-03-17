@@ -449,6 +449,35 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
             CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
+
+            CREATE TABLE IF NOT EXISTS exercise_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                tier TEXT,
+                total INTEGER NOT NULL,
+                passed INTEGER NOT NULL,
+                failed INTEGER NOT NULL,
+                skipped INTEGER NOT NULL,
+                duration_secs REAL NOT NULL,
+                report_json TEXT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS exercise_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL REFERENCES exercise_runs(id) ON DELETE CASCADE,
+                exercise_id TEXT NOT NULL,
+                exercise_tier TEXT,
+                passed INTEGER NOT NULL,
+                duration_secs REAL NOT NULL,
+                error TEXT,
+                step_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_exercise_runs_invocation ON exercise_runs(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_exercise_runs_recorded ON exercise_runs(recorded_at);
+            CREATE INDEX IF NOT EXISTS idx_exercise_results_run ON exercise_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_exercise_results_id ON exercise_results(exercise_id);
             ",
         )?;
         Ok(())
@@ -467,6 +496,8 @@ impl HistoryDb {
             DROP TABLE IF EXISTS invocation_packages;
             DROP TABLE IF EXISTS build_diagnostics;
             DROP TABLE IF EXISTS test_results;
+            DROP TABLE IF EXISTS exercise_results;
+            DROP TABLE IF EXISTS exercise_runs;
             DROP TABLE IF EXISTS invocations;
             DROP TABLE IF EXISTS metadata;
             ",
@@ -2287,6 +2318,116 @@ impl HistoryDb {
     // ──────────────────────────────────────────────────────────────────────
 
     /// Record a pre-fix diagnostic snapshot on an invocation (called before `xtask fix` runs).
+    /// Record a completed exercise run into `exercise_runs` + `exercise_results`.
+    ///
+    /// Stores tier breakdown, pass/fail counts, duration, full report JSON, and
+    /// per-exercise results so `xtask history exercise` can surface regressions.
+    /// Called best-effort from `ExerciseCommand::execute()` via `ctx.with_history_db`.
+    pub fn record_exercise_run(
+        &self,
+        invocation_id: i64,
+        report: &crate::commands::exercise::ExerciseReport,
+    ) -> Result<()> {
+        let report_json = serde_json::to_string(report).ok();
+        // Infer tier from results: if mixed, leave NULL (multi-tier run).
+        let tier: Option<&str> = {
+            let tiers: std::collections::HashSet<&str> =
+                report.results.iter().map(|r| r.tier.as_str()).collect();
+            if tiers.len() == 1 {
+                tiers.into_iter().next()
+            } else {
+                None
+            }
+        };
+
+        let run_id = self.conn.query_row(
+            r"INSERT INTO exercise_runs
+                (invocation_id, tier, total, passed, failed, skipped, duration_secs, report_json)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              RETURNING id",
+            rusqlite::params![
+                invocation_id,
+                tier,
+                report.total as i64,
+                report.passed as i64,
+                report.failed as i64,
+                report.skipped as i64,
+                report.duration_secs,
+                report_json,
+            ],
+            |row| row.get::<_, i64>(0),
+        ).context("failed to insert exercise_run row")?;
+
+        for entry in &report.results {
+            self.conn.execute(
+                r"INSERT INTO exercise_results
+                    (run_id, exercise_id, exercise_tier, passed, duration_secs, error, step_count)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    run_id,
+                    entry.id,
+                    entry.tier,
+                    entry.passed as i64,
+                    entry.duration_secs,
+                    entry.error,
+                    entry.steps.len() as i64,
+                ],
+            ).context("failed to insert exercise_result row")?;
+        }
+
+        Ok(())
+    }
+
+    /// Fetch recent exercise runs for `xtask history exercise`.
+    pub fn get_exercise_runs(&self, limit: usize) -> Result<Vec<ExerciseRunRow>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT er.id, er.invocation_id, er.tier, er.total, er.passed, er.failed,
+                     er.skipped, er.duration_secs, er.recorded_at,
+                     inv.status, inv.git_commit
+              FROM exercise_runs er
+              LEFT JOIN invocations inv ON inv.id = er.invocation_id
+              ORDER BY er.recorded_at DESC
+              LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |row| {
+            Ok(ExerciseRunRow {
+                run_id: row.get(0)?,
+                invocation_id: row.get(1)?,
+                tier: row.get(2)?,
+                total: row.get(3)?,
+                passed: row.get(4)?,
+                failed: row.get(5)?,
+                skipped: row.get(6)?,
+                duration_secs: row.get(7)?,
+                recorded_at: row.get(8)?,
+                invocation_status: row.get(9)?,
+                git_commit: row.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Fetch per-exercise results for a run.
+    pub fn get_exercise_results_for_run(&self, run_id: i64) -> Result<Vec<ExerciseResultRow>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT exercise_id, exercise_tier, passed, duration_secs, error, step_count
+              FROM exercise_results WHERE run_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map([run_id], |row| {
+            Ok(ExerciseResultRow {
+                exercise_id: row.get(0)?,
+                exercise_tier: row.get(1)?,
+                passed: row.get::<_, i64>(2)? != 0,
+                duration_secs: row.get(3)?,
+                error: row.get(4)?,
+                step_count: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn record_fix_session_snapshot(
         &self,
         invocation_id: i64,
@@ -3219,6 +3360,31 @@ pub struct CommandStats {
     pub successes: i64,
     pub failures: i64,
     pub avg_duration_secs: Option<f64>,
+}
+
+/// One row from `exercise_runs` joined to `invocations`.
+pub struct ExerciseRunRow {
+    pub run_id: i64,
+    pub invocation_id: Option<i64>,
+    pub tier: Option<String>,
+    pub total: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    pub duration_secs: f64,
+    pub recorded_at: String,
+    pub invocation_status: Option<String>,
+    pub git_commit: Option<String>,
+}
+
+/// One row from `exercise_results`.
+pub struct ExerciseResultRow {
+    pub exercise_id: String,
+    pub exercise_tier: Option<String>,
+    pub passed: bool,
+    pub duration_secs: f64,
+    pub error: Option<String>,
+    pub step_count: i64,
 }
 
 fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {

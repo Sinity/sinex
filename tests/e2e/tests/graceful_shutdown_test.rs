@@ -54,7 +54,7 @@ async fn build_test_event_bytes(
         payload,
         ts_orig: Some(sinex_primitives::Timestamp::now()),
         host: HostName::new("test-host"),
-        node_version: Some("test".to_string()),
+        node_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: material_id,
@@ -64,6 +64,12 @@ async fn build_test_event_bytes(
             offset_kind: OffsetKind::Byte,
         },
         associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
     };
 
     Ok(serde_json::to_vec(&event)?)
@@ -280,7 +286,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 payload: json!({"seq": idx}),
                 ts_orig: Some(sinex_primitives::Timestamp::now()),
                 host: HostName::new("test-host"),
-                node_version: Some("test".to_string()),
+                node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -290,6 +296,12 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                     offset_kind: OffsetKind::Byte,
                 },
                 associated_blob_ids: None,
+                temporal_policy: None,
+                semantics_version: None,
+                scope_key: None,
+                equivalence_key: None,
+                created_by_operation_id: None,
+                node_model: None,
             };
             if let Ok(p) = serde_json::to_vec(&event) {
                 let _ = js_clone.publish(subject.clone(), p.into()).await;

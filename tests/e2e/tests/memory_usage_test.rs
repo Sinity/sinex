@@ -158,7 +158,7 @@ impl MemoryMetrics {
 
 /// Test memory usage during event processing
 #[sinex_test]
-#[ignore = "memory benchmark - run with --heavy"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -226,7 +226,7 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
 
 /// Test memory usage under concurrent processing
 #[sinex_test]
-#[ignore = "memory benchmark - run with --heavy"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
     let shared_metrics = Arc::new(tokio::sync::Mutex::new(MemoryMetrics::new()));
 
@@ -325,7 +325,7 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
 
 /// Test memory usage with large payloads
 #[sinex_test]
-#[ignore = "memory benchmark - run with --heavy"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
     let mut metrics = MemoryMetrics::new();
 
@@ -400,7 +400,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
 
 /// Test memory usage during stress conditions
 #[sinex_test]
-#[ignore = "memory benchmark - run with --heavy"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     let mut metrics = MemoryMetrics::new();
 
@@ -517,7 +517,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
 
 /// Test memory usage with database connection pools
 #[sinex_test]
-#[ignore = "memory benchmark - run with --heavy"]
+#[ignore = "heavy: run with xtask test --heavy"]
 async fn test_connection_pool_memory_usage(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();

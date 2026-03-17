@@ -49,6 +49,16 @@ impl Default for DlqRetryConfig {
     }
 }
 
+/// Result of a DLQ retry operation, distinguishing retried from permanently
+/// failed messages.
+#[derive(Debug, Clone, Default)]
+pub struct DlqRetryResult {
+    /// Messages successfully republished to their original subject.
+    pub retried: usize,
+    /// Messages that exceeded `max_retries` and were permanently acked/discarded.
+    pub permanently_failed: usize,
+}
+
 /// DLQ retry handler
 pub struct DlqRetryHandler {
     nats_client: async_nats::Client,
@@ -71,8 +81,11 @@ impl DlqRetryHandler {
         }
     }
 
-    /// Retry all messages from DLQ
-    pub async fn retry_all(&self) -> NodeResult<usize> {
+    /// Retry all pending messages from DLQ.
+    ///
+    /// Drains the current backlog (message count at invocation time) then stops.
+    /// A 5-second receive timeout acts as a secondary guard against hangs.
+    pub async fn retry_all(&self) -> NodeResult<DlqRetryResult> {
         info!("Starting DLQ retry operation");
 
         let js = jetstream::new(self.nats_client.clone());
@@ -82,6 +95,15 @@ impl DlqRetryHandler {
             .get_stream(&dlq_stream)
             .await
             .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
+
+        // Snapshot pending count to bound the drain. Without this, the loop
+        // would run forever if new messages arrive during processing.
+        let target_count = stream.cached_info().state.messages;
+        if target_count == 0 {
+            info!("DLQ is empty, nothing to retry");
+            return Ok(DlqRetryResult::default());
+        }
+        info!("DLQ has {target_count} pending messages to drain");
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -101,14 +123,30 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| SinexError::processing("Failed to get DLQ messages").with_source(e))?;
 
-        let mut retried = 0;
+        let mut result = DlqRetryResult::default();
         let mut processed = 0u64;
 
-        while let Some(result) = messages.next().await {
-            match result {
-                Ok(msg) => {
+        while processed < target_count {
+            // 5-second receive timeout: break if the stream stalls (e.g.
+            // messages were acked by another consumer between our count and now).
+            let next = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
+            match next {
+                Ok(Some(Ok(msg))) => {
                     if self.handle_dlq_message(&js, &msg).await? {
-                        retried += 1;
+                        result.retried += 1;
+                    } else {
+                        // handle_dlq_message returns false for both retry failures
+                        // and permanently-failed messages. Check retry count to
+                        // distinguish.
+                        let retry_count = msg
+                            .headers
+                            .as_ref()
+                            .and_then(|h| h.get("Retry-Count"))
+                            .and_then(|v| v.as_str().parse::<u32>().ok())
+                            .unwrap_or(0);
+                        if retry_count >= self.config.max_retries {
+                            result.permanently_failed += 1;
+                        }
                     }
                     processed += 1;
 
@@ -124,14 +162,25 @@ impl DlqRetryHandler {
                             .await;
                     }
                 }
-                Err(e) => {
+                Ok(Some(Err(e))) => {
                     error!("Error reading DLQ message: {e}");
+                    processed += 1;
+                }
+                // Timeout or stream ended — stop draining
+                Ok(None) | Err(_) => {
+                    info!(
+                        "DLQ drain stopped after {processed}/{target_count} messages (stream exhausted or timeout)"
+                    );
+                    break;
                 }
             }
         }
 
-        info!("DLQ retry complete: {retried} messages retried");
-        Ok(retried)
+        info!(
+            "DLQ retry complete: {} retried, {} permanently failed out of {processed} processed",
+            result.retried, result.permanently_failed
+        );
+        Ok(result)
     }
 
     /// Retry a specific message by ID
@@ -205,7 +254,13 @@ impl DlqRetryHandler {
             .unwrap_or(0);
 
         if retry_count >= self.config.max_retries {
-            warn!("Message exceeded max retries ({retry_count}), permanently failing");
+            let subject = &msg.subject;
+            warn!(
+                subject = %subject,
+                retry_count,
+                max_retries = self.config.max_retries,
+                "Message exceeded max retries, permanently failing"
+            );
             if let Err(e) = msg.ack().await {
                 error!("Failed to ack permanently failed message: {e}");
             }

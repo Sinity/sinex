@@ -65,6 +65,25 @@ pub enum DbCommands {
         #[arg(short = 'f', long, default_value = "table")]
         format: OutputFormat,
     },
+
+    /// List derived node scope health (from `core.derived_scope_summary` view)
+    Scopes {
+        /// Filter by node name
+        #[arg(long)]
+        node: Option<String>,
+
+        /// Show only scopes not updated since N hours ago
+        #[arg(long, value_name = "HOURS")]
+        stale_since: Option<u64>,
+
+        /// Maximum number of results
+        #[arg(short, long, default_value = "50")]
+        limit: i64,
+
+        /// Output format
+        #[arg(short = 'f', long, default_value = "table")]
+        format: OutputFormat,
+    },
 }
 
 impl DbCommands {
@@ -99,6 +118,12 @@ impl DbCommands {
                 .await
             }
             Self::Stats { by_type, format } => db_stats(&pool, *by_type, *format).await,
+            Self::Scopes {
+                node,
+                stale_since,
+                limit,
+                format,
+            } => db_scopes(&pool, node.as_deref(), *stale_since, *limit, *format).await,
         }
     }
 }
@@ -341,4 +366,105 @@ async fn db_stats(pool: &DbPool, by_type: bool, format: OutputFormat) -> Result<
     .display(&format)?;
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ScopeRow {
+    node: String,
+    scope_key: String,
+    event_type: String,
+    event_count: i64,
+    last_updated: String,
+    semantics_version: Option<String>,
+    temporal_policy: Option<String>,
+}
+
+async fn db_scopes(
+    pool: &DbPool,
+    node: Option<&str>,
+    stale_since: Option<u64>,
+    limit: i64,
+    format: OutputFormat,
+) -> Result<()> {
+    use sqlx::QueryBuilder;
+
+    let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
+        "SELECT node, scope_key, event_type, event_count::bigint, \
+         to_char(last_updated, 'YYYY-MM-DD HH24:MI:SS') as last_updated, \
+         semantics_version, temporal_policy \
+         FROM core.derived_scope_summary WHERE 1=1",
+    );
+
+    if let Some(n) = node {
+        qb.push(" AND node = ");
+        qb.push_bind(n.to_string());
+    }
+
+    if let Some(hours) = stale_since {
+        qb.push(format!(
+            " AND last_updated < NOW() - INTERVAL '{hours} hours'"
+        ));
+    }
+
+    qb.push(" ORDER BY last_updated DESC LIMIT ");
+    qb.push_bind(limit);
+
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = qb
+        .build_query_as()
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+    let scopes: Vec<ScopeRow> = rows
+        .into_iter()
+        .map(
+            |(node, scope_key, event_type, event_count, last_updated, sv, tp)| ScopeRow {
+                node,
+                scope_key,
+                event_type,
+                event_count,
+                last_updated,
+                semantics_version: sv,
+                temporal_policy: tp,
+            },
+        )
+        .collect();
+
+    CommandOutput::list(scopes, "No derived scopes found.", format_scopes_table)
+        .display(&format)?;
+    Ok(())
+}
+
+fn format_scopes_table(scopes: &[ScopeRow]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("Derived Scopes ({} entries):\n\n", scopes.len()));
+    output.push_str(&format!(
+        "{:<25} {:<25} {:<25} {:>8} {:<20} {}\n",
+        "NODE", "SCOPE KEY", "EVENT TYPE", "COUNT", "LAST UPDATED", "VERSION"
+    ));
+    output.push_str(&"-".repeat(115));
+    output.push('\n');
+
+    for scope in scopes {
+        let version = scope.semantics_version.as_deref().unwrap_or("-");
+        output.push_str(&format!(
+            "{:<25} {:<25} {:<25} {:>8} {:<20} {}\n",
+            scope.node,
+            scope.scope_key,
+            scope.event_type,
+            scope.event_count,
+            scope.last_updated,
+            version
+        ));
+    }
+
+    output
 }

@@ -4458,6 +4458,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
 
 [[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "rand_xorshift"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5539,6 +5549,7 @@ dependencies = [
  "futures",
  "parking_lot",
  "pretty_assertions",
+ "proptest",
  "serde_json",
  "sinex-db",
  "sinex-gateway",
@@ -5552,6 +5563,7 @@ dependencies = [
  "tokio-stream",
  "toml 0.8.23",
  "tracing",
+ "turmoil",
  "uuid",
  "validator",
  "xtask",
@@ -5980,10 +5992,14 @@ dependencies = [
  "proptest",
  "rcgen",
  "regex",
+ "reqwest 0.12.24",
  "rstest",
  "serde_json",
+ "sinex-db",
  "sinex-gateway",
  "sinex-node-sdk",
+ "sinex-primitives",
+ "sqlx",
  "tempfile",
  "time",
  "tokio",
@@ -6013,6 +6029,7 @@ dependencies = [
  "insta",
  "predicates",
  "proptest",
+ "rand 0.10.0",
  "ratatui",
  "reqwest 0.12.24",
  "rustls 0.22.4",
@@ -7188,6 +7205,21 @@ checksum = "9fe58ebd5edd976e0fe0f8a14d2a04b7c81ef153ea9a54eebc42e67c2c23b4e5"
 dependencies = [
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "turmoil"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f0d6c134ef37268c94d50fb74252af1c34c5c88389e2c1af85654da944ceb52"
+dependencies = [
+ "bytes",
+ "indexmap 2.12.0",
+ "rand 0.8.5",
+ "rand_distr",
+ "scoped-tls",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

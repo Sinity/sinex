@@ -2,13 +2,13 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
-use std::path::PathBuf;
-use std::time::Duration;
 use sinex_db::PoolConfig;
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::nats::NatsConnectionConfig;
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+use std::time::Duration;
 
 /// Gateway configuration.
 ///
@@ -384,7 +384,12 @@ impl GatewayConfig {
             return Ok((Some(contents.trim().to_string()), Some(path)));
         }
 
-        Ok((self.rpc_token.as_ref().map(|token| token.trim().to_string()), None))
+        Ok((
+            self.rpc_token
+                .as_ref()
+                .map(|token| token.trim().to_string()),
+            None,
+        ))
     }
 
     #[must_use]
@@ -402,22 +407,24 @@ impl GatewayConfig {
         Duration::from_secs(self.nats_consumer_create_timeout_secs)
     }
 
+    // SAFETY: these are known non-zero compile-time constants.
+    const DEFAULT_RATE_RPS: NonZeroU32 = NonZeroU32::new(100).unwrap();
+    const DEFAULT_RATE_BURST: NonZeroU32 = NonZeroU32::new(50).unwrap();
+    const DEFAULT_RATE_PER_MIN: NonZeroU32 = NonZeroU32::new(6000).unwrap();
+
     #[must_use]
     pub fn rate_limit_requests_per_second(&self) -> NonZeroU32 {
-        NonZeroU32::new(self.rpc_rate_limit_requests_per_sec)
-            .unwrap_or_else(|| NonZeroU32::new(default_rate_limit_requests_per_second()).expect("default rate limit is non-zero"))
+        NonZeroU32::new(self.rpc_rate_limit_requests_per_sec).unwrap_or(Self::DEFAULT_RATE_RPS)
     }
 
     #[must_use]
     pub fn rate_limit_burst(&self) -> NonZeroU32 {
-        NonZeroU32::new(self.rpc_rate_limit_burst)
-            .unwrap_or_else(|| NonZeroU32::new(default_rate_limit_burst()).expect("default burst is non-zero"))
+        NonZeroU32::new(self.rpc_rate_limit_burst).unwrap_or(Self::DEFAULT_RATE_BURST)
     }
 
     #[must_use]
     pub fn rate_limit_per_minute(&self) -> NonZeroU32 {
-        NonZeroU32::new(self.rpc_rate_limit_per_minute)
-            .unwrap_or_else(|| NonZeroU32::new(default_rate_limit_per_minute()).expect("default distributed rate limit is non-zero"))
+        NonZeroU32::new(self.rpc_rate_limit_per_minute).unwrap_or(Self::DEFAULT_RATE_PER_MIN)
     }
 
     #[must_use]
@@ -426,8 +433,7 @@ impl GatewayConfig {
     }
 
     fn apply_gateway_env_overrides(&mut self) {
-        self.tcp_listen =
-            env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone());
+        self.tcp_listen = env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone());
         self.cors_origins =
             env_string_override("SINEX_GATEWAY_CORS_ORIGINS", self.cors_origins.clone());
         self.pool_max_connections = env_u32_override(
@@ -451,32 +457,39 @@ impl GatewayConfig {
         self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take());
         self.tls_client_ca =
             env_option_override("SINEX_GATEWAY_TLS_CLIENT_CA", self.tls_client_ca.take());
-        self.require_client_tls = env_bool_override(
-            "SINEX_GATEWAY_REQUIRE_CLIENT_TLS",
-            self.require_client_tls,
-        );
+        self.require_client_tls =
+            env_bool_override("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", self.require_client_tls);
         self.max_concurrency =
             env_usize_override("SINEX_GATEWAY_MAX_CONCURRENCY", self.max_concurrency);
         self.request_timeout_secs = env_u64_override(
             "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
             self.request_timeout_secs,
         );
-        self.max_body_bytes =
-            env_u64_override("SINEX_GATEWAY_MAX_BODY_BYTES", self.max_body_bytes);
+        self.max_body_bytes = env_u64_override("SINEX_GATEWAY_MAX_BODY_BYTES", self.max_body_bytes);
         self.max_blob_bytes =
             env_usize_override("SINEX_GATEWAY_MAX_BLOB_BYTES", self.max_blob_bytes);
     }
 
     fn apply_manual_env_overrides(&mut self) {
-        self.rpc_token = std::env::var("SINEX_RPC_TOKEN").ok().map(|v| v.trim().to_string()).or(self.rpc_token.take());
-        self.rpc_token_file = std::env::var("SINEX_RPC_TOKEN_FILE").ok().or(self.rpc_token_file.take());
+        self.rpc_token = std::env::var("SINEX_RPC_TOKEN")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .or(self.rpc_token.take());
+        self.rpc_token_file = std::env::var("SINEX_RPC_TOKEN_FILE")
+            .ok()
+            .or(self.rpc_token_file.take());
         self.admin_token_file = std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")
             .ok()
             .or(self.admin_token_file.take());
         self.nats.url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| self.nats.url.clone());
-        self.nats.name = std::env::var("SINEX_NATS_NAME").ok().or(self.nats.name.take());
+        self.nats.name = std::env::var("SINEX_NATS_NAME")
+            .ok()
+            .or(self.nats.name.take());
         self.nats.require_tls = env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls);
-        self.nats.ca_cert = std::env::var("SINEX_NATS_CA_CERT").ok().map(PathBuf::from).or(self.nats.ca_cert.take());
+        self.nats.ca_cert = std::env::var("SINEX_NATS_CA_CERT")
+            .ok()
+            .map(PathBuf::from)
+            .or(self.nats.ca_cert.take());
         self.nats.client_cert = std::env::var("SINEX_NATS_CLIENT_CERT")
             .ok()
             .map(PathBuf::from)
@@ -493,16 +506,16 @@ impl GatewayConfig {
             .ok()
             .map(PathBuf::from)
             .or(self.nats.nkey_seed_file.take());
-        self.nats.token = std::env::var("SINEX_NATS_TOKEN").ok().or(self.nats.token.take());
+        self.nats.token = std::env::var("SINEX_NATS_TOKEN")
+            .ok()
+            .or(self.nats.token.take());
         self.nats.token_file = std::env::var("SINEX_NATS_TOKEN_FILE")
             .ok()
             .map(PathBuf::from)
             .or(self.nats.token_file.take());
 
-        self.rpc_rate_limit_enabled = env_bool_override(
-            "SINEX_RPC_RATE_LIMIT_ENABLED",
-            self.rpc_rate_limit_enabled,
-        );
+        self.rpc_rate_limit_enabled =
+            env_bool_override("SINEX_RPC_RATE_LIMIT_ENABLED", self.rpc_rate_limit_enabled);
         self.rpc_rate_limit_requests_per_sec = env_u32_override(
             "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC",
             self.rpc_rate_limit_requests_per_sec,
@@ -540,10 +553,9 @@ impl GatewayConfig {
             std::env::var("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION")
                 .ok()
                 .or(self.native_messaging_protocol_version.take());
-        self.native_messaging_capabilities =
-            std::env::var("SINEX_NATIVE_MESSAGING_CAPABILITIES")
-                .ok()
-                .or(self.native_messaging_capabilities.take());
+        self.native_messaging_capabilities = std::env::var("SINEX_NATIVE_MESSAGING_CAPABILITIES")
+            .ok()
+            .or(self.native_messaging_capabilities.take());
         self.native_messaging_extension_roles =
             std::env::var("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES")
                 .ok()

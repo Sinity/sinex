@@ -1,13 +1,14 @@
-//! Git Activity Detector - Example `AutomatonNode` Implementation
+//! Git Activity Detector - Example `TransducerNode` Implementation
 //!
-//! This example demonstrates how to use `AutomatonNode` to create
+//! This example demonstrates how to use `TransducerNode` to create
 //! a node that detects git commands from terminal events.
 //!
 //! Run with: cargo run --example `git_activity_detector`
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::Timestamp;
-use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
+use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
+use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -69,7 +70,7 @@ pub struct GitActivityState {
 }
 
 // ============================================================================
-// AutomatonNode Implementation
+// TransducerNode Implementation
 // ============================================================================
 
 /// Git Activity Detector - detects git commands from terminal events
@@ -102,7 +103,7 @@ impl Default for GitActivityDetector {
     }
 }
 
-impl AutomatonNode for GitActivityDetector {
+impl TransducerNode for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;
     type Output = GitActivityEvent;
@@ -123,8 +124,8 @@ impl AutomatonNode for GitActivityDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         // Filter: only process git commands
         if !input.command.trim_start().starts_with("git ") {
             return Ok(None);
@@ -144,15 +145,19 @@ impl AutomatonNode for GitActivityDetector {
             .entry(subcommand.clone())
             .or_insert(0) += 1;
 
-        // Emit output event
-        Ok(Some(GitActivityEvent {
-            subcommand,
-            repo_path: input.cwd,
-            full_command: input.command,
-            exit_code: input.exit_code,
-            success: input.exit_code == 0,
-            timestamp: input.timestamp,
-        }))
+        // 1:1 transform: ts_orig from input, single parent
+        Ok(Some(DerivedOutput::transduced(
+            GitActivityEvent {
+                subcommand,
+                repo_path: input.cwd,
+                full_command: input.command,
+                exit_code: input.exit_code,
+                success: input.exit_code == 0,
+                timestamp: input.timestamp,
+            },
+            context.ts_orig.unwrap_or_else(Timestamp::now),
+            context.trigger_uuid(),
+        )))
     }
 }
 
@@ -161,15 +166,15 @@ impl AutomatonNode for GitActivityDetector {
 // ============================================================================
 
 fn main() {
-    println!("Git Activity Detector - AutomatonNode Example");
+    println!("Git Activity Detector - TransducerNode Example");
     println!("================================================");
     println!();
-    println!("This demonstrates AutomatonNode with ~100 lines of code:");
+    println!("This demonstrates TransducerNode with ~100 lines of code:");
     println!("  - Input:  terminal.command.executed");
     println!("  - Output: git.activity.detected");
     println!("  - State:  Command counts by repo and type");
     println!();
-    println!("In production, wrap with AutomatonNodeNode and run:");
+    println!("In production, wrap with TransducerNodeAdapter and run:");
     println!("  sx dev crate/lib/sinex-node-sdk --bin git-activity-detector");
 }
 
@@ -180,16 +185,22 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::domain::{EventSource, EventType};
-    use uuid::Uuid;
+    use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+    use sinex_primitives::events::Event;
+    use sinex_primitives::{Id, JsonValue};
     use xtask::sandbox::prelude::*;
 
-    fn test_context() -> NodeEventContext {
-        NodeEventContext {
-            source: EventSource::from_static("test"),
-            event_type: EventType::from_static("terminal.command.executed"),
+    fn test_context() -> DerivedTriggerContext {
+        let event_id: Id<Event<JsonValue>> = Id::new();
+        DerivedTriggerContext {
+            trigger_event_id: event_id,
+            source: "test".into(),
+            event_type: "terminal.command.executed".into(),
             ts_orig: None,
-            event_id: Uuid::now_v7(),
+            ts_coided: event_id.timestamp(),
+            processing_mode: ProcessingMode::Live,
+            trigger_kind: TriggerKind::NewEvent,
+            created_by_operation_id: None,
         }
     }
 
@@ -229,9 +240,9 @@ mod tests {
         assert!(result.is_some());
 
         let output = result.unwrap();
-        assert_eq!(output.subcommand, "commit");
-        assert_eq!(output.repo_path, "/home/user/project");
-        assert!(output.success);
+        assert_eq!(output.payload.subcommand, "commit");
+        assert_eq!(output.payload.repo_path, "/home/user/project");
+        assert!(output.payload.success);
 
         assert_eq!(state.total_commands, 1);
         assert_eq!(state.commands_by_type.get("commit"), Some(&1));

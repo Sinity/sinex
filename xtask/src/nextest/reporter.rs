@@ -5,8 +5,8 @@ use serde::Deserialize;
 use std::io::BufRead;
 use std::thread;
 
-use crate::history::TestStatus;
 use crate::history::HistoryDb;
+use crate::history::TestStatus;
 
 /// Strict types for Nextest JSON messages (libtest-json-plus format)
 ///
