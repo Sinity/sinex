@@ -158,7 +158,7 @@ async fn transducer_invalidation_returns_empty() -> TestResult<()> {
 #[derive(Default, Serialize, Deserialize)]
 struct ReconcilerState;
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize)]
 struct RInput {
     value: i64,
 }
@@ -230,6 +230,99 @@ impl ScopeReconcilerNode for TestReconciler {
             scope_key.to_string(),
         )])
     }
+}
+
+#[sinex_test]
+async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+
+    let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
+    let mut state = ReconcilerState;
+    let ctx = make_context();
+
+    let result = wrapper
+        .process_derived(
+            &mut state,
+            event_stub(serde_json::json!({ "value": 42 })),
+            &ctx,
+        )
+        .await?;
+
+    let output = result.expect("single-scope live processing should emit");
+    assert_eq!(output.payload["total"], 42);
+    assert_eq!(output.payload["count"], 1);
+    assert_eq!(output.scope_key.as_deref(), Some("default"));
+
+    Ok(())
+}
+
+struct MultiScopeReconciler;
+
+impl ScopeReconcilerNode for MultiScopeReconciler {
+    type State = ReconcilerState;
+    type Input = RInput;
+    type Output = ROutput;
+
+    fn name(&self) -> &'static str {
+        "test-multi-scope-reconciler"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "measurement.taken"
+    }
+    fn output_event_type(&self) -> &'static str {
+        "measurement.aggregate"
+    }
+
+    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+        vec!["scope-a".into(), "scope-b".into()]
+    }
+
+    async fn reconcile(
+        &mut self,
+        _state: &mut Self::State,
+        scope_key: &str,
+        input: Self::Input,
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+        Ok(Some(DerivedOutput::reconciled(
+            ROutput {
+                total: input.value,
+                count: 1,
+            },
+            context.ts_orig.unwrap_or_else(Timestamp::now),
+            vec![*context.trigger_event_id.as_uuid()],
+            scope_key.to_string(),
+        )))
+    }
+}
+
+#[sinex_test]
+async fn reconciler_live_processing_rejects_multiple_scope_keys() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+
+    let mut wrapper = ScopeReconcilerWrapper(MultiScopeReconciler);
+    let mut state = ReconcilerState;
+    let ctx = make_context();
+
+    let err = wrapper
+        .process_derived(
+            &mut state,
+            event_stub(serde_json::json!({ "value": 42 })),
+            &ctx,
+        )
+        .await
+        .expect_err("multi-scope live processing should be rejected");
+
+    assert!(
+        matches!(
+            err,
+            NodeLogicError::Processing(message)
+                if message.contains("supports at most one scope per trigger")
+        ),
+        "unexpected error: {err:?}"
+    );
+
+    Ok(())
 }
 
 #[sinex_test]
