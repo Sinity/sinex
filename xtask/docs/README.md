@@ -10,7 +10,7 @@
 xtask check                    # Fast compile check
 xtask check --lint             # Compile + clippy
 xtask check --full             # fmt + clippy + forbidden
-xtask test                     # Run tests (retries enabled)
+xtask test                     # Run tests (retries disabled)
 xtask fix                      # Auto-fix formatting + clippy
 
 # With JSON output (recommended for agents)
@@ -104,7 +104,7 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 
 | Command | Purpose |
 |---------|---------|
-| `xtask test` | Run tests (retries enabled) |
+| `xtask test` | Run tests (retries disabled) |
 | `xtask test --debug` | Single-threaded, full output |
 | `xtask test --prime` | Prime database pool before tests |
 | `xtask test --heavy` | Include `#[ignore]` tests |
@@ -271,7 +271,7 @@ xtask check --full && xtask test
 ### Full Validation
 
 ```bash
-xtask ci workspace
+xtask ci postgres -- xtask ci workspace
 ```
 
 ### Debug a Failing Test

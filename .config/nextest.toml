@@ -2,14 +2,14 @@
 # Nextest Configuration
 # =============================================================================
 # Profiles:
-#   default  - Standard runs (use for CI and pre-commit)
+#   default  - Standard nextest runs (used by xtask test locally and inside CI stages)
 #   debug    - Single-threaded with full output for debugging
 # =============================================================================
 
-# Use for: CI, pre-commit checks, general development
+# Use for: general xtask test runs; retries are intentionally disabled.
 [profile.default]
 # -----------------------------------------------------------------------------
-# default: Standard runs
+# default: Standard runs with no automatic retries
 # -----------------------------------------------------------------------------
 fail-fast          = false
 test-threads       = "num-cpus"
@@ -62,7 +62,7 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 # -----------------------------------------------------------------------------
 # debug: Single-threaded debugging
 # -----------------------------------------------------------------------------
-# Use for: Investigating flaky tests, seeing full output
+# Use for: Investigating failures with deterministic, single-threaded output
 [profile.debug]
 test-threads   = 1
 retries        = 0
