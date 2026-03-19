@@ -93,6 +93,19 @@ disabled (e.g. staging migrations).
   `services.sinex.nodes.generatedUnits` for other subsystems (pre-flight,
   tests).
 
+### Transport Security
+- gateway TLS lives under `services.sinex.core.gateway.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`
+- non-loopback gateway binds require mTLS and a configured `tlsClientCAFile`
+- shared NATS client transport lives under `services.sinex.nodes.nats.{servers,tls,auth}`
+- NATS mTLS uses `services.sinex.nodes.nats.tls.{caCertFile,clientCertFile,clientKeyFile}`
+- choose exactly one NATS auth mode under `services.sinex.nodes.nats.auth.{tokenFile,credsFile,nkeySeedFile}`
+
+### Environment Rendering
+- the module is the canonical config surface; emitted env vars are an implementation detail of the generated units
+- gateway TLS options render `SINEX_GATEWAY_TLS_CERT`, `SINEX_GATEWAY_TLS_KEY`, `SINEX_GATEWAY_TLS_CLIENT_CA`, and `SINEX_GATEWAY_REQUIRE_CLIENT_TLS`
+- shared NATS options render `SINEX_NATS_URL`, `SINEX_NATS_MONITORING_PORT`, `SINEX_NATS_REQUIRE_TLS`, `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`, and one of `SINEX_NATS_{TOKEN,CREDS,NKEY_SEED}_FILE`
+- `services.sinex.nodes.defaults.env` is reserved for genuinely env-only behavior flags, not primary transport or secret wiring
+
 ### Observability
 - Structured log retention is configured via `observability.logging.retention`.
 - Prometheus/Grafana/exporters turn on automatically when

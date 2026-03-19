@@ -11,6 +11,36 @@ and other stable infrastructure wiring. In particular, gateway and NATS TLS shou
 through the NixOS module surface, not by manually stuffing `SINEX_*` transport variables into
 service environments.
 
+## Canonical Ownership
+
+- deployed systems should be configured through `services.sinex.*` NixOS options
+- if a NixOS option renders an environment variable, the option is the owner and the env var is only process-level transport
+- direct/manual runs may still set `SINEX_*` variables explicitly
+- gateway TLS/auth options live under `services.sinex.core.gateway.*`
+- shared NATS transport/auth options live under `services.sinex.nodes.nats.{servers,tls,auth}`
+
+## NixOS-Managed Variables
+
+These variables are not the preferred authoring surface on managed hosts.
+
+| NixOS option owner | Rendered env vars |
+|---|---|
+| `services.sinex.core.gateway.tls*`, `requireClientTLS`, `autoGenerateTls` | `SINEX_GATEWAY_TLS_CERT`, `SINEX_GATEWAY_TLS_KEY`, `SINEX_GATEWAY_TLS_CLIENT_CA`, `SINEX_GATEWAY_REQUIRE_CLIENT_TLS` |
+| `services.sinex.core.gateway.limits.*` | `SINEX_GATEWAY_MAX_CONCURRENCY`, `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, `SINEX_GATEWAY_MAX_BODY_BYTES`, `SINEX_GATEWAY_MAX_BLOB_BYTES` |
+| `services.sinex.nodes.nats.servers`, `monitoringPort` | `SINEX_NATS_URL`, `SINEX_NATS_MONITORING_PORT` |
+| `services.sinex.nodes.nats.tls.*` | `SINEX_NATS_REQUIRE_TLS`, `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY` |
+| `services.sinex.nodes.nats.auth.*` | `SINEX_NATS_TOKEN_FILE`, `SINEX_NATS_CREDS_FILE`, `SINEX_NATS_NKEY_SEED_FILE` |
+| `services.sinex.nodes.defaults.env` | arbitrary pass-through env-only flags |
+
+## Env-Only Variables
+
+These are not the primary declarative configuration surface:
+
+- `DATABASE_URL`: direct-run database connection string; the NixOS module synthesizes it for managed services
+- `RUST_LOG`: standard process logging override
+- `SOURCE_DATE_EPOCH` and `node_*`: build metadata, not service configuration
+- ad-hoc direct-run variables used outside NixOS service management, such as manual `sinex-gateway` or node launches
+
 ## Naming Convention
 
 All Sinex application variables **MUST** use the `SINEX_` prefix.
@@ -33,7 +63,7 @@ All Sinex application variables **MUST** use the `SINEX_` prefix.
 | Desktop ingestor | `crate/nodes/sinex-desktop-ingestor/docs/environment.md` |
 | Terminal ingestor | `crate/nodes/sinex-terminal-ingestor/docs/environment.md` |
 
-## Shared Variables
+## Shared Variables For Direct Runs
 
 ### Database
 
@@ -44,10 +74,7 @@ DATABASE_URL="postgresql://user:pass@localhost/sinex_dev"
 # Alternative: Unix socket connection (devenv default)
 DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
 
-# Connection pool settings
-SINEX_DB_POOL_SIZE=20
-SINEX_POOL_ACQUIRE_WARN_MS=1000
-SINEX_DB_ACQUIRE_TIMEOUT_SECS=60
+# Additional DB tuning may exist per service; see the owning crate env docs.
 ```
 
 ### Storage & Paths
@@ -151,10 +178,12 @@ sinex-gateway
 ```
 
 For declarative hosts, use the NixOS module instead of exporting these values in shell profile
-or service-manager glue.
+or service-manager glue. If an env var has a typed `services.sinex.*` owner, set the option, not the variable.
 
 ## See Also
 
 - Type-safe config values: `crate/lib/sinex-primitives/docs/newtypes.md`
 - Security model and posture: `docs/current/security.md`
-- NixOS TLS wiring: `docs/current/configuration/tls-nixos-integration.md`
+- Gateway env surface: `crate/core/sinex-gateway/docs/environment.md`
+- NATS env surface: `crate/core/sinex-ingestd/docs/environment.md`
+- NixOS module surface: `nixos/modules/README.md`

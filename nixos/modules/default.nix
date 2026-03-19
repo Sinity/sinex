@@ -648,17 +648,27 @@ in
                 tlsCertFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.";
+                  description = ''
+                    Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
+                    Exported as <literal>SINEX_GATEWAY_TLS_CERT</literal>.
+                  '';
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.";
+                  description = ''
+                    Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
+                    Exported as <literal>SINEX_GATEWAY_TLS_KEY</literal>.
+                  '';
                 };
                 tlsClientCAFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Client CA bundle for gateway mTLS. Required for non-loopback binds and whenever requireClientTLS is enabled.";
+                  description = ''
+                    Client CA bundle for gateway mTLS. Required for non-loopback binds
+                    and whenever requireClientTLS is enabled. Exported as
+                    <literal>SINEX_GATEWAY_TLS_CLIENT_CA</literal>.
+                  '';
                 };
                 autoGenerateTls = mkOption {
                   type = bool;
@@ -667,6 +677,9 @@ in
                     Automatically generate a self-signed TLS certificate for the gateway on first boot.
                     Stores credentials at <literal>''${stateRoot}/tls/gateway.{crt,key}</literal> and
                     sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
+                    Those paths are then exported as
+                    <literal>SINEX_GATEWAY_TLS_CERT</literal> /
+                    <literal>SINEX_GATEWAY_TLS_KEY</literal>.
                     Suitable for single-host deployments. For production clusters, provide real certs.
                   '';
                 };
@@ -717,12 +730,18 @@ in
                 servers = mkOption {
                   type = strList;
                   default = [ "nats://127.0.0.1:4222" ];
-                  description = "List of NATS server URLs shared by core services and nodes.";
+                  description = ''
+                    List of NATS server URLs shared by core services and nodes.
+                    Rendered as <literal>SINEX_NATS_URL</literal> for managed services.
+                  '';
                 };
                 monitoringPort = mkOption {
                   type = port;
                   default = 8222;
-                  description = "NATS monitoring port.";
+                  description = ''
+                    NATS monitoring port.
+                    Rendered as <literal>SINEX_NATS_MONITORING_PORT</literal> for managed services.
+                  '';
                 };
                 tls = mkOption {
                   type = submodule {
@@ -739,17 +758,26 @@ in
                       caCertFile = mkOption {
                         type = nullOr path;
                         default = null;
-                        description = "CA bundle used to verify the NATS server certificate.";
+                        description = ''
+                          CA bundle used to verify the NATS server certificate.
+                          Exported as <literal>SINEX_NATS_CA_CERT</literal>.
+                        '';
                       };
                       clientCertFile = mkOption {
                         type = nullOr path;
                         default = null;
-                        description = "Client certificate for NATS mutual TLS.";
+                        description = ''
+                          Client certificate for NATS mutual TLS.
+                          Exported as <literal>SINEX_NATS_CLIENT_CERT</literal>.
+                        '';
                       };
                       clientKeyFile = mkOption {
                         type = nullOr path;
                         default = null;
-                        description = "Client private key for NATS mutual TLS.";
+                        description = ''
+                          Client private key for NATS mutual TLS.
+                          Exported as <literal>SINEX_NATS_CLIENT_KEY</literal>.
+                        '';
                       };
                     };
                   };
@@ -765,6 +793,7 @@ in
                         description = ''
                           Path to a file containing the shared NATS auth token.
                           Prefer this for simple file-backed secret deployment.
+                          Exported as <literal>SINEX_NATS_TOKEN_FILE</literal>.
                         '';
                       };
                       credsFile = mkOption {
@@ -773,6 +802,7 @@ in
                         description = ''
                           Path to a NATS credentials file (`.creds`, JWT + seed).
                           Use this when the NATS deployment expects credentials-file auth.
+                          Exported as <literal>SINEX_NATS_CREDS_FILE</literal>.
                         '';
                       };
                       nkeySeedFile = mkOption {
@@ -781,6 +811,7 @@ in
                         description = ''
                           Path to a file containing the NATS NKey seed.
                           Use this only when the deployment expects direct NKey auth.
+                          Exported as <literal>SINEX_NATS_NKEY_SEED_FILE</literal>.
                         '';
                       };
                     };

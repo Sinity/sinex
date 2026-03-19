@@ -111,4 +111,4 @@ These are deliberate policy choices, not unfinished work disguised as future int
 - [System Operations And Integrity Architecture](architecture/SystemOperations_And_Integrity_Architecture.md)
 - [Gateway Coordination](../../crate/core/sinex-gateway/docs/coordination.md)
 - [Environment Variables](configuration/environment-variables.md)
-- [TLS / NixOS Integration](configuration/tls-nixos-integration.md)
+- [NixOS Module Surface](../../nixos/modules/README.md)

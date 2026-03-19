@@ -56,4 +56,4 @@ SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90
 
 - Transport security: `docs/transport_security.md`
 - Global env vars: `docs/current/configuration/environment-variables.md`
-- NixOS TLS wiring: `docs/current/configuration/tls-nixos-integration.md`
+- NixOS module surface: `nixos/modules/README.md`
