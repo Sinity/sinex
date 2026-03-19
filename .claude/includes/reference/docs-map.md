@@ -11,10 +11,10 @@ Documentation layout:
 | **Documentation index** | `docs/README.md` | `docs/documentation-guidelines.md` |
 | **Architecture overview** | `docs/current/architecture/Core_Architecture.md` | `docs/current/architecture/` |
 | **Security** | `docs/current/security.md` | `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` |
-| **Type system patterns** | `docs/current/architecture/type-system-patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
-| **Distributed patterns** | `docs/current/architecture/distributed-patterns.md` | |
-| **Observability** | `docs/current/architecture/observability.md` | |
-| **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
+| **Type system patterns** | `crate/lib/sinex-primitives/docs/type_system_patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
+| **Distributed patterns** | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` | `crate/lib/sinex-node-sdk/docs/coordination.md` |
+| **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |
+| **Current state tracking** | `crate/lib/sinex-services/docs/current_state_tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **General vision / gap / roadmap** | `/realm/project/sinex-target-vision/AGENTS.md` | `/realm/project/sinex-target-vision/canon/` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `README.md#contributing` | `docs/README.md` |
@@ -41,8 +41,8 @@ Documentation layout:
 | **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `crate/lib/sinex-primitives/docs/event_taxonomy_and_enums.md` |
 | **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
 | **CLI usage** | `crate/cli/docs/README.md` | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
-| **Data lifecycle** | `docs/current/architecture/data-lifecycle.md` | 3-tier: live → archive → tombstone |
-| **NATS subjects** | `docs/current/architecture/nats-subjects.md` | Subject naming conventions |
+| **Data lifecycle** | `crate/lib/sinex-db/docs/data_lifecycle.md` | 3-tier: live → archive → tombstone |
+| **NATS subjects** | `crate/lib/sinex-primitives/docs/nats_subjects.md` | Subject naming conventions |
 | **Feature flags** | `docs/current/configuration/feature-flags.md` | |
 | **TLS / NixOS** | `docs/current/configuration/tls-nixos-integration.md` | `docs/current/configuration/tls-setup.md` |
 | **xtask guide** | `xtask/docs/README.md` | |

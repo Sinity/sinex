@@ -17,6 +17,9 @@ The Sinex Node SDK is the unified framework for building **Ingestors** (sensors 
 - [**Stage-as-You-Go**](stage_as_you_go.md) – Real-time provenance tracking for streaming data.
 - [**Preflight Verification**](preflight.md) – Fail-fast safety checks for deployment readiness.
 - [**Health Monitoring**](health_monitoring_integration.md) – Automatic success/error rate tracking and status emission.
+- [**Distributed Patterns**](distributed_patterns.md) – Eventing, backpressure, idempotency, and runtime concurrency doctrine.
+- [**Observability**](observability.md) – Journald-first monitoring and checkpoint telemetry.
+- [**Extensibility**](extensibility.md) – Extension patterns for nodes, events, and runtime composition.
 
 ### Vision & Roadmap
 - [**SDK Vision**](vision.md) – Hot reload, Seamless Developer Experience, and the Prompt-to-Node development workflow.

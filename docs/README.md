@@ -23,7 +23,7 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 
 ## Current (what is live now)
 
-- `current/architecture/` — core architecture, type system, distributed behavior, observability, and security architecture.
+- `current/architecture/` — cross-cutting architecture and security/integrity invariants.
 - `current/configuration/` — shared environment variables and configuration policy.
 - `current/security.md` — current security posture and guardrails.
 - `xtask/docs/verification.md` — perf verification and contracts.
@@ -50,6 +50,14 @@ Implementation details are documented close to the code:
 | `sinex-gateway` | `crate/core/sinex-gateway/docs/README.md` |
 | `sinexctl` | `crate/cli/docs/README.md` |
 | `xtask` | `xtask/docs/README.md` |
+
+Key moved architecture topics:
+
+- query/read path and gateway coordination: `crate/core/sinex-gateway/docs/`
+- current-state tracking: `crate/lib/sinex-services/docs/current_state_tracking.md`
+- data lifecycle: `crate/lib/sinex-db/docs/data_lifecycle.md`
+- type system and NATS subjects: `crate/lib/sinex-primitives/docs/`
+- distributed runtime, observability, extensibility: `crate/lib/sinex-node-sdk/docs/`
 
 ## Contributing to Documentation
 

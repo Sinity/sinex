@@ -29,4 +29,6 @@ Reach for this crate whenever you need to:
 - `crate/lib/sinex-core/docs/db_repositories.md` – repository pattern and usage examples.
 - `crate/lib/sinex-core/docs/types_overview.md` – catalog of major type families (events, errors, IDs, utilities).
 - `docs/current/architecture/Core_Architecture.md` – the system-level flow that these abstractions support.
+- `crate/lib/sinex-primitives/docs/type_system_patterns.md` – richer doctrine for domain typing, validation, and state machines.
+- `crate/lib/sinex-primitives/docs/nats_subjects.md` – subject naming and transport contracts.
 - `docs/documentation-guidelines.md` – expectations when updating or extending crate docs.

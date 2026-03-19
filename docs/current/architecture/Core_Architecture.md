@@ -126,14 +126,14 @@ Schema & Taxonomy
 
 Implementation Guides
 - nodes SDK and patterns: `crate/lib/sinex-node-sdk/docs/overview.md`
-- Gateway/CLI: see repository README and `crate/cli` (`sinexctl`)
+- Gateway/query surface: `crate/core/sinex-gateway/docs/interaction_and_query.md`; CLI surface: `crate/cli/docs/README.md`
 
 ## Deep Dives
 
 **Pattern Documentation:**
-- [type-system-patterns.md](./type-system-patterns.md) — Newtypes, validated types, state machines, compile-time safety
-- [distributed-patterns.md](./distributed-patterns.md) — Event sourcing, CQRS, concurrency, idempotency, backpressure
-- [observability.md](./observability.md) — Journald monitoring, checkpoint system
+- `crate/lib/sinex-primitives/docs/type_system_patterns.md` — Newtypes, validated types, state machines, compile-time safety
+- `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` — Event sourcing, CQRS, concurrency, idempotency, backpressure
+- `crate/lib/sinex-node-sdk/docs/observability.md` — Journald monitoring, checkpoint system
 
 **Crate-Specific Diagrams:**
 - Ingestd: `crate/core/sinex-ingestd/docs/diagrams.md` — Event sourcing & NATS topology

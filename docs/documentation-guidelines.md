@@ -62,7 +62,7 @@ Example:
   plus clearly labeled planning, vision, and analysis tracks.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
-  `../../docs/current/architecture/UserInteraction_And_Query_Architecture.md` for wider context.
+  `../../docs/current/architecture/Core_Architecture.md` for wider context.
 - When crate-level changes alter system-wide behaviour, update the relevant
   global doc and leave a short link from the crate so readers can follow the
   chain.
