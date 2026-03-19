@@ -36,5 +36,5 @@
 ## See Also
 
 - Global architecture: `README.md#architecture`
-- Operations: `OPERATIONS.md`
+- Deployment and operations: `README.md#deployment--operations`
 - Deployment config: `nixos/modules/README.md`

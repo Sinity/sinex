@@ -2,16 +2,15 @@
 
 Documentation layout:
 
-- `README.md` owns project overview, architecture, security, and development entrypoints.
-- `OPERATIONS.md` owns current hardening gaps and runbook material.
+- `README.md` owns project overview, architecture, security, development, and stable deployment guidance.
 - Cross-cutting vision, target-state, and roadmap material lives in the sibling report repo at `/realm/project/sinex-target-vision/`.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
-| **Documentation index** | `README.md` | `OPERATIONS.md` |
-| **Architecture overview** | `README.md#architecture` | `OPERATIONS.md` |
-| **Security** | `README.md#security` | `OPERATIONS.md` |
+| **Documentation index** | `README.md` | `nixos/modules/README.md` |
+| **Architecture overview** | `README.md#architecture` | `crate/core/sinex-gateway/docs/architecture.md` |
+| **Security** | `README.md#security` | `nixos/modules/README.md` |
 | **Type system patterns** | `crate/lib/sinex-primitives/docs/type_system_patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
 | **Distributed patterns** | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` | `crate/lib/sinex-node-sdk/docs/coordination.md` |
 | **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |
