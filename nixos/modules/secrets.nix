@@ -71,8 +71,10 @@ let
   defaultIdentities = [ "/etc/ssh/ssh_host_ed25519_key" ]
     ++ optional (builtins.pathExists "/home/${defaultOwner}/.ssh/id_ed25519") "/home/${defaultOwner}/.ssh/id_ed25519";
 
-  # Whether to actually configure agenix
-  shouldConfigureAgenix = agenixAvailable && cfg.enable && (cfg.secrets.enableAgenix or false);
+  # Whether to actually configure agenix. Secret-backed provisioning paths such as
+  # `sinnix.services.sinex.provisionDatabase` need the resolved secret files even
+  # before the full Sinex service stack is enabled.
+  shouldConfigureAgenix = agenixAvailable && (cfg.secrets.enableAgenix or false);
 
 in
 {

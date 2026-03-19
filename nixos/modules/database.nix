@@ -210,6 +210,18 @@ in
       ];
     })
 
+    (mkIf cfg.enable {
+      assertions = [
+        {
+          assertion = lib.hasSuffix "_${cfg.nats.environment}" db.name;
+          message = ''
+            services.sinex.database.name must end with "_${cfg.nats.environment}" so the
+            runtime database stays namespaced to the active Sinex environment.
+          '';
+        }
+      ];
+    })
+
     (mkIf (db.enable && db.autoSetup) {
       services.postgresql = {
         enable = true;

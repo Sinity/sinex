@@ -13,6 +13,8 @@ let
   coreEnabled = sinexEnabled && coreCfg.enable;
   nodesEnabled = sinexEnabled && nodesCfg.enable;
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
+  schemaApplyEnabled = sinexEnabled && cfg.database.enable;
+  localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
 
   stateRoot = cfg.stateRoot;
   runtimeDir = "${stateRoot}/run";
@@ -27,6 +29,8 @@ let
   # blob-init initialises the git-annex repo; both gateway and ingestd use it.
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
+  schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
+  postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" ];
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
     set -euo pipefail
@@ -217,10 +221,6 @@ let
           "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
           "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
           "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-          # Gateway can serve DB-backed requests (analytics, search) without NATS.
-          # OPTIONAL=1 prevents a startup crash-loop when NATS is slow to start.
-          # Replay control will be unavailable until a restart after NATS is ready.
-          "SINEX_REPLAY_CONTROL_OPTIONAL=1"
         ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
         ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
@@ -241,7 +241,7 @@ let
       );
       # Ordering for core services.
       # Base: hard infrastructure that both services depend on.
-      coreRequires = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
+      coreRequires = postgresServiceUnits ++ schemaApplyUnits ++ optionals natsEnabled [ "nats.service" ];
       # After adds soft ordering units that should complete first but aren't fatal if absent.
       coreAfter = coreRequires
         ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ]
@@ -291,11 +291,8 @@ let
         description = "Sinex gateway";
         wantedBy = [ "multi-user.target" ];
         after = gatewayAfter;
-        requires = [ "postgresql.service" ] ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
-        # NATS, bootstrap, and blob-init are soft: gateway can serve DB-backed requests
-        # (analytics, search) without them. SINEX_REPLAY_CONTROL_OPTIONAL=1 (below)
-        # makes the replay control bus non-fatal, so gateway starts without blocking.
-        wants = optionals natsEnabled [ "nats.service" ] ++ coreWants;
+        requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
+        wants = coreWants;
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             # sinex-gateway does not emit sd_notify, so run it as a simple
@@ -347,6 +344,12 @@ let
       description = "Filesystem node";
       inherit instances batch resources extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = {
+        # The default watch path is /home/<target>; keep home read-only rather
+        # than hiding it entirely so the configured watch paths are actually
+        # observable on real hosts.
+        ProtectHome = lib.mkForce "read-only";
+      };
     };
 
   mkTerminalUnits =
@@ -404,7 +407,9 @@ let
       resources = params.resources;
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
-      afterUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
+      serviceConfigOverrides = params.serviceConfig or {};
+      afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
+      requireUnits = schemaApplyUnits;
       # Nodes publish to NATS and don't strictly require ingestd to be up.
       # Use `wants` so that ingestd going down doesn't cascade-stop all nodes;
       # NATS will buffer events until ingestd recovers.
@@ -419,11 +424,12 @@ let
         description = "${params.description} (instance ${toString instance})";
         wantedBy = [ "multi-user.target" ];
         after = afterUnits;
+        requires = requireUnits;
         wants = wantsUnits;
-        serviceConfig = mkBaseServiceConfig resources env {
+        serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
           WorkingDirectory = stateRoot;
-        };
+        } // serviceConfigOverrides);
       };
     in
     if instances <= 0 then {} else
@@ -452,8 +458,8 @@ let
     {
       description = params.description;
       wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" ] ++ optionals coreEnabled [ "sinex-ingestd.service" ];
-      requires = [ "postgresql.service" ];
+      after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
+      requires = schemaApplyUnits ++ postgresServiceUnits;
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
         WorkingDirectory = stateRoot;

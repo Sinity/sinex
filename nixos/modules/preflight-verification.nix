@@ -12,16 +12,21 @@ let
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
 
   sinexEnabled = cfg.enable;
+  schemaApplyEnabled = sinexEnabled && cfg.database.enable;
   preflightEnabled = sinexEnabled && preflight.enable;
   updatesEnabled = sinexEnabled && updates.enable;
 
   generatedUnits = config.sinex._generatedUnits;
+  localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
+  localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
+  schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
   # Guard core units only when the core subsystem is enabled.
   # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
   # before either layer accepts production traffic.
   coreEnabled = sinexEnabled && (cfg.core.enable or false);
   coreUnitsToGuard = lib.optionals coreEnabled [ "sinex-ingestd" "sinex-gateway" ];
   unitsToGuard = coreUnitsToGuard ++ generatedUnits;
+  allDatabases = unique ([ cfg.database.name ] ++ cfg.database.extraDatabases);
 
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;
@@ -65,6 +70,16 @@ let
         exit 0
         ;;
     esac
+  '';
+
+  schemaApplyScript = pkgs.writeShellScript "sinex-schema-apply" ''
+    set -euo pipefail
+
+    for db_name in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
+      echo "$(date): applying Sinex schema to $db_name"
+      ${cfg.package}/bin/xtask infra schema-apply \
+        --database-url "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/$db_name"
+    done
   '';
 
   unitsShellList = concatStringsSep " " (map (unit: escapeShellArg "${unit}.service") unitsToGuard);
@@ -176,6 +191,23 @@ let
 in
 {
   config = mkMerge [
+    (mkIf schemaApplyEnabled {
+      systemd.services.sinex-schema-apply = {
+        description = "Apply Sinex declarative schema";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ] ++ localPostgresUnits;
+        requires = localPostgresUnits;
+        serviceConfig = {
+          ExecStart = schemaApplyScript;
+          TimeoutStartSec = preflight.timeoutSec;
+        } // mkHelperServiceConfig {
+          user = cfg.database.user;
+          group = cfg.database.user;
+          remainAfterExit = true;
+        };
+      };
+    })
+
     (mkIf preflightEnabled {
       systemd.services =
         let
@@ -185,10 +217,13 @@ in
           sinex-preflight = {
             description = "Sinex pre-flight verification";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network-online.target" "postgresql.service" ]
+            after = [ "network-online.target" ]
+              ++ schemaApplyUnits
+              ++ localPostgresUnits
               ++ optionals natsEnabled [ "nats.service" ];
             # Require the services that preflight actively checks.
-            requires = [ "postgresql.service" ]
+            requires = schemaApplyUnits
+              ++ localPostgresUnits
               ++ optionals natsEnabled [ "nats.service" ];
             serviceConfig = {
               Type = "oneshot";
@@ -215,10 +250,6 @@ in
         };
 
       assertions = [
-        {
-          assertion = cfg.database.autoSetup || config.services.postgresql.enable;
-          message = "Pre-flight verification requires PostgreSQL to be enabled";
-        }
         {
           assertion = unitsToGuard != [];
           message = "No services found to guard with pre-flight verification";

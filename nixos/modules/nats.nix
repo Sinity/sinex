@@ -464,8 +464,8 @@ in
               subjArgs = concatStringsSep " " (map (s: "--subjects ${escapeShellArg s}") stream.subjects);
               maxMsgsPerSubjectArg = optionalString (stream ? maxMsgsPerSubject) "--max-msgs-per-subject ${toString stream.maxMsgsPerSubject}";
             in ''
-              if ! ${natsCli}/bin/nats --server "$NATS_URL" "''${token_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
-                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${token_args[@]}" stream add ${stream.name} \
+              if ! ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
+                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${stream.name} \
                   --defaults \
                   ${subjArgs} \
                   --storage file \
@@ -486,9 +486,23 @@ in
         in
           pkgs.writeShellScript "sinex-nats-bootstrap" ''
             set -euo pipefail
-            token_args=()
+            auth_args=()
+            tls_args=()
             if [[ -n "''${NATS_TOKEN_FILE:-}" ]]; then
-              token_args+=(--token "$(<"$NATS_TOKEN_FILE")")
+              auth_args+=(--token "$(<"$NATS_TOKEN_FILE")")
+            elif [[ -n "''${NATS_CREDS:-}" ]]; then
+              auth_args+=(--creds "$NATS_CREDS")
+            elif [[ -n "''${NATS_NKEY:-}" ]]; then
+              auth_args+=(--nkey "$NATS_NKEY")
+            fi
+            if [[ -n "''${NATS_CA:-}" ]]; then
+              tls_args+=(--tlsca "$NATS_CA")
+            fi
+            if [[ -n "''${NATS_CERT:-}" ]]; then
+              tls_args+=(--tlscert "$NATS_CERT")
+            fi
+            if [[ -n "''${NATS_KEY:-}" ]]; then
+              tls_args+=(--tlskey "$NATS_KEY")
             fi
             ${script}
           '';

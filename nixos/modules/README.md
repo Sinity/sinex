@@ -59,9 +59,13 @@ values derived from `stateRoot` and the global `logLevel`.
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
   Flip it on explicitly when you need the cluster even with the main service
 disabled (e.g. staging migrations).
+- When `services.sinex.enable = true`, `database.name` defaults to
+  `sinex_<environment>` and must stay suffixed with
+  `services.sinex.nats.environment` so the runtime database cannot silently
+  drift away from the active NATS subject namespace.
 - `database.extraDatabases` lets you provision additional DBs (e.g. `sinex_dev`)
-  alongside the primary `database.name`; extensions and migrations run against
-  each entry automatically.
+  alongside the primary `database.name`; the module applies extensions during
+  PostgreSQL setup and declarative schema apply against each entry on boot.
 - Shared preload libraries always include TimescaleDB support plus schema/vector extensions required by migrations.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both
   Postgres `max_connections` and the CLI flags passed to service binaries.
@@ -101,6 +105,8 @@ disabled (e.g. staging migrations).
 - shared NATS client transport lives under `services.sinex.nodes.nats.{servers,tls,auth}`
 - NATS mTLS uses `services.sinex.nodes.nats.tls.{caCertFile,clientCertFile,clientKeyFile}`
 - choose exactly one NATS auth mode under `services.sinex.nodes.nats.auth.{tokenFile,credsFile,nkeySeedFile}`
+- JetStream bootstrap now reuses that same shared client auth/TLS material, so
+  secured local NATS deployments do not need a separate bootstrap-only secret path.
 
 ### Secret Conventions
 - gateway admin token falls back to agenix secret `sinex-gateway-admin-token`
@@ -119,9 +125,14 @@ disabled (e.g. staging migrations).
 - Prometheus/Grafana/exporters turn on automatically when
   `observability.monitoring.enable = true`. Extra scrape configs drop straight
   into `services.prometheus.extraScrapeConfigs`.
+- Grafana binds to loopback by default; widen it explicitly if you truly need
+  remote access and have matching firewall/TLS controls.
 - `observability.alerts.enable` adds the provided rule files to Prometheus.
 
 ### Lifecycle
+- The module now wires a first-boot `sinex-schema-apply` oneshot before guarded
+  services and before `sinex-preflight`, so schema creation is part of the real
+  deployment path instead of a VM-only convention.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back
@@ -152,3 +163,8 @@ disabled (e.g. staging migrations).
 - `nix run .#check` to validate the module evaluates with your configuration.
 - VM scenarios under `tests/e2e/nixos-vm` consume the same option tree – updating
   defaults in the module automatically propagates to the test fixtures.
+
+## Operational Notes
+- Filesystem nodes keep `/home` read-only instead of hidden entirely so the
+  default `watchPaths = [ "/home/<target>" ]` setup actually works under systemd
+  hardening.

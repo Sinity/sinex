@@ -175,7 +175,13 @@ in
           name = mkOption {
             type = str;
             default = "sinex";
-            description = "Database name used by Sinex.";
+            description = ''
+              Database name used by Sinex.
+
+              When <option>services.sinex.enable</option> is true, the module defaults this to
+              <literal>sinex_&lt;environment&gt;</literal> so the runtime database tracks
+              <option>services.sinex.nats.environment</option>.
+            '';
           };
 
           extraDatabases = mkOption {
@@ -1507,6 +1513,7 @@ in
 
       (mkIf cfg.enable {
         services.sinex.database.autoSetup = mkDefault true;
+        services.sinex.database.name = mkDefault "sinex_${cfg.nats.environment}";
         services.sinex.nats.autoSetup = mkDefault true;
       })
 
