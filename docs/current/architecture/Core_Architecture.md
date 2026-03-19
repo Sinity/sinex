@@ -114,7 +114,7 @@ Streaming & Ingestion
 - Messaging: NATS `JetStream` (subjects, durable consumers, explicit acks)
 - Backpressure: bounded batches, ack timeouts, lag monitoring
 - Ingestion: validation, persistence, idempotency, single writer
-- See also: `crate/lib/sinex-node-sdk/docs/provenance.md` (Stage-as-you-go + provenance rules) and `docs/vision/streaming-architecture.md` (backpressure guidance)
+- See also: `crate/lib/sinex-node-sdk/docs/provenance.md` (Stage-as-you-go + provenance rules), `/realm/project/sinex-target-vision/analysis/foundation/current-state-cartography.md` (JetStream-first pipeline state), and `/realm/project/sinex-target-vision/analysis/collations/design-decisions.md` (message-bus / backpressure design decisions)
 
 Security & Operations
 - Security model, threat mitigation: `docs/current/security.md`

@@ -2,7 +2,8 @@
 
 Documentation layout:
 
-- `docs/` is for global architecture, policy, and operational docs.
+- `docs/current/` is for authoritative present-state architecture, policy, and operational docs.
+- Cross-cutting vision, target-state, and roadmap material lives in the sibling report repo at `/realm/project/sinex-target-vision/`.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
@@ -14,6 +15,7 @@ Documentation layout:
 | **Distributed patterns** | `docs/current/architecture/distributed-patterns.md` | |
 | **Observability** | `docs/current/architecture/observability.md` | |
 | **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
+| **General vision / gap / roadmap** | `/realm/project/sinex-target-vision/AGENTS.md` | `/realm/project/sinex-target-vision/canon/` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `README.md#contributing` | `docs/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
@@ -34,11 +36,11 @@ Documentation layout:
 | **Provenance** | `crate/lib/sinex-node-sdk/docs/provenance.md` | |
 | **ingestd architecture** | `crate/core/sinex-ingestd/docs/architecture.md` | `crate/core/sinex-ingestd/docs/pipeline-design.md` |
 | **Gateway architecture** | `crate/core/sinex-gateway/docs/architecture.md` | `crate/core/sinex-gateway/docs/native_messaging.md` |
-| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `docs/planning/features/unified-privacy-engine.md` |
+| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `/realm/project/sinex-target-vision/analysis/domains/privacy-security.md` |
 | **Domain enums** | `crate/lib/sinex-primitives/src/domain.rs` | `crate/lib/sinex-primitives/docs/domain_types.md` |
 | **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `crate/lib/sinex-primitives/docs/event_taxonomy_and_enums.md` |
 | **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
-| **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |
+| **CLI usage** | `crate/cli/docs/README.md` | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
 | **Data lifecycle** | `docs/current/architecture/data-lifecycle.md` | 3-tier: live → archive → tombstone |
 | **NATS subjects** | `docs/current/architecture/nats-subjects.md` | Subject naming conventions |
 | **Feature flags** | `docs/current/configuration/feature-flags.md` | |

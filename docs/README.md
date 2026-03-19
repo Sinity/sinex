@@ -17,12 +17,9 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 ## Documentation Structure
 
 - `current/` — authoritative present-state docs (architecture, configuration, security).
-- `planning/` — near-term proposals and roadmaps under active consideration.
-- `vision/` — long-range direction and aspirational architecture.
-- `analysis/` — synthesized investigation output; not policy authority.
-- `exploration/` — in-progress investigation notes; promote stabilized content into `current/` or `planning/`.
 - `documentation-guidelines.md` — authoring and placement policy.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
+- General vision, target-state, gap, and cross-cutting planning synthesis live in the sibling report repo at `/realm/project/sinex-target-vision/`.
 
 ## Current (what is live now)
 
@@ -33,27 +30,10 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 - `xtask/docs/sandbox/README.md` — testing policy and sandbox usage.
 - `crate/core/sinex-ingestd/docs/schema_gitops.md` — schema GitOps operational flow.
 
-## Planning (what is next)
+## Cross-Cutting Vision And Planning
 
-- `planning/ROADMAP.md` — staged roadmap.
-- `planning/event-sources-coverage.md` — ingestion source coverage plan.
-- `planning/explore-ux-roadmap.md` — Explore UX planning.
-- `planning/features/` — feature proposals.
-
-## Vision (long-term)
-
-- `vision/manifesto.md` — design principles.
-- `vision/architectural-evolution.md` — long-term architecture progression.
-- `vision/streaming-architecture.md` — streaming-first architectural direction.
-- `vision/project-target-state.md` — target-state narrative.
-- `vision/semantic-desktop-stream.md` — semantic desktop direction.
-- `vision/multi-device-sync-architecture.md` — multi-device architecture.
-- `vision/feature-status.md` — high-level initiative status.
-
-## Analysis and Exploration
-
-- `analysis/synthesis/` — synthesized analysis artifacts used for decision support.
-- `exploration/README.md` — entry point for exploratory notes.
+- Maintained roadmap, target-state architecture, and gap framing live in `/realm/project/sinex-target-vision/`.
+- Keep future cross-cutting horizon docs there unless the material is directly implementation-facing for a specific crate or live subsystem.
 
 ## Crate-Level Documentation
 
@@ -68,6 +48,7 @@ Implementation details are documented close to the code:
 | `sinex-services` | `crate/lib/sinex-services/docs/README.md` |
 | `sinex-ingestd` | `crate/core/sinex-ingestd/docs/README.md` |
 | `sinex-gateway` | `crate/core/sinex-gateway/docs/README.md` |
+| `sinexctl` | `crate/cli/docs/README.md` |
 | `xtask` | `xtask/docs/README.md` |
 
 ## Contributing to Documentation
