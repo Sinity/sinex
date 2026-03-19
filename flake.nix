@@ -149,8 +149,12 @@
 
             # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
                         # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
+                        #
+                        # Use the schema crate's private bootstrap binary here rather than xtask:
+                        # compiling xtask itself pulls in sinex-db query macros that expect the
+                        # schema to already exist.
                         export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
-                        cargo run -p xtask -- infra schema-apply --database-url "$DATABASE_URL"
+                        cargo run -p sinex-schema --bin schema-apply-bootstrap
           '';
 
           postgresPostBuild = ''
