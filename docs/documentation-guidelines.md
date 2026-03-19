@@ -10,12 +10,12 @@ rustdoc.
 - **Single source of truth** – rich design, architecture, and workflow notes
   live next to the code they describe. Inline comments stay short and always
   point toward the canonical Markdown source.
-- **Present-state first** – policy and `docs/current/` content describe what is
+- **Present-state first** – policy and top-level `docs/` content describe what is
   true now. Historical context belongs only where it is required for active
   decisions.
 - **Layered narrative** – crate-local documentation owns the immediate “what”
   and “how”, while workspace-level docs under `docs/` provide only cross-cutting
-  present-state architecture, configuration, and security context. Long-term
+  present-state architecture, operations, and security context. Long-term
   vision and roadmap material live in the sibling `sinex-target-vision` repo.
   Link between layers so readers can move up or down the stack easily.
 - **Guaranteed discoverability** – every crate surfaces its main reference
@@ -54,7 +54,7 @@ Example:
 
 ```rust
 #![doc = include_str!("docs/README.md")]
-#![doc = include_str!("../../docs/current/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../docs/architecture.md")]
 ```
 
 ## 4. Workspace Documentation
@@ -64,7 +64,7 @@ Example:
   direct-run environment details belong in crate-local docs.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
-  `../../docs/current/architecture/Core_Architecture.md` for wider context.
+  `../../docs/architecture.md` for wider context.
 - When crate-level changes alter system-wide behaviour, update the relevant
   global doc and leave a short link from the crate so readers can follow the
   chain.

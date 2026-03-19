@@ -35,6 +35,6 @@
 
 ## See Also
 
-- Global architecture: `docs/current/architecture/Core_Architecture.md`
-- Operations: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
+- Global architecture: `docs/architecture.md`
+- Operations: `docs/operations-and-integrity.md`
 - Deployment config: `nixos/modules/README.md`

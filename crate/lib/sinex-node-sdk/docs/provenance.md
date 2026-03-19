@@ -5,7 +5,7 @@
 This note distils the actionable architecture guidance from longer-form
 Sinex architecture essays into a concise reference for engineers working on nodes,
 ingestors, and automata. For operational notes and deployment expectations,
-cross-reference `docs/current/architecture/Core_Architecture.md` and `nixos/README.md`.
+cross-reference `docs/architecture.md` and `nixos/README.md`.
 
 ## 1. Sensor / Ingestor Separation
 
@@ -67,7 +67,7 @@ Whenever Sinex emits `command.*` events, the same provenance guarantees apply:
       macro).
 - [ ] Event payload schema registered with validation coverage.
 - [ ] Provenance columns populated and invariants enforced (`UNIQUE(source_material_id, anchor_byte)`).
-- [ ] Security review performed using the guardrails in `docs/current/security.md`
+- [ ] Security review performed using the guardrails in `docs/security.md`
       (auth, TLS, secrets, data hygiene).
 
 Keeping these rules crisp prevents the architecture from collapsing back into a

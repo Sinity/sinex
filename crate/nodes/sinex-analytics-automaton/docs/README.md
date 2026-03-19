@@ -9,6 +9,6 @@ analytics over time windows.
 - Aggregates events within time windows and produces summary metrics.
 - Maintains checkpoint state for reliable replay.
 
-Reference `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for
+Reference `docs/operations-and-integrity.md` for
 consumer dashboards and `crate/lib/sinex-node-sdk/docs/overview.md` for the
 shared node architecture.

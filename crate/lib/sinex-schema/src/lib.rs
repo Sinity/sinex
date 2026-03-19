@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../docs/schema_design.md")]
-#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture.md")]
 
 //! Workspace declarative schema definitions and convergence apply engine.
 

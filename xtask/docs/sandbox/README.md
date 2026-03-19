@@ -3,7 +3,7 @@
 A comprehensive testing framework for the Sinex event-driven data capture system, providing
 database isolation, pipeline testing, and robust testing patterns.
 
-> **Workspace-wide handbook**: See `docs/current/getting-started.md` for onboarding
+> **Workspace-wide handbook**: See `docs/README.md` for documentation routing
 > and `xtask/docs/verification.md` for validation flows. This documentation
 > focuses on the test utilities API.
 

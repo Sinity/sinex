@@ -8,6 +8,6 @@ Key responsibilities:
 
 - Sampling and aggregating event activity across sources.
 - Emitting derived events that power the operational dashboards described in
-  `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.
+  `docs/operations-and-integrity.md`.
 - Coordinating with `sinex-node-sdk` primitives for health checks,
   replays, and graceful shutdown.

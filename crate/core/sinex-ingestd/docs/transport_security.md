@@ -55,5 +55,5 @@ grant each component family the narrowest NATS permissions that let it do its jo
 
 ## See Also
 
-- System-wide security model: `docs/current/security.md`
+- System-wide security model: `docs/security.md`
 - Node transport patterns: `crate/lib/sinex-node-sdk/docs/`

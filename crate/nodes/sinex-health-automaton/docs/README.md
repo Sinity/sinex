@@ -23,6 +23,6 @@ These events are produced by:
 Emits `health.aggregated_report` payloads containing aggregated health data
 across all monitored components, consumed by gateways and operators.
 
-See `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for the
+See `docs/operations-and-integrity.md` for the
 health model and `crate/lib/sinex-core/src/types/events/payloads/metrics.rs` for
 the `HealthStatusPayload` schema.

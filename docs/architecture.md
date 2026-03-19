@@ -116,5 +116,5 @@ Read/control substrate
 - observability and checkpoints: `crate/lib/sinex-node-sdk/docs/observability.md`
 - provenance and capture layering: `crate/lib/sinex-node-sdk/docs/provenance.md`
 - gateway/query surface: `crate/core/sinex-gateway/docs/interaction_and_query.md`
-- operations/integrity policy: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
-- current security posture: `docs/current/security.md`
+- operations/integrity policy: `docs/operations-and-integrity.md`
+- current security posture: `docs/security.md`

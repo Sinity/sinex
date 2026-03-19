@@ -30,5 +30,5 @@ The Gateway exposes RPC endpoints for user interaction and system control.
 
 ## See Also
 
-- System-wide security model: `docs/current/security.md`
+- System-wide security model: `docs/security.md`
 - Gateway overview: `docs/overview.md`

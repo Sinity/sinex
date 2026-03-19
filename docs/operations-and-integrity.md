@@ -63,4 +63,4 @@ Troubleshooting
 - observability and checkpoints: `crate/lib/sinex-node-sdk/docs/observability.md`
 - system-level journal/systemd ingestion: `crate/nodes/sinex-system-ingestor/docs/README.md`
 - gateway replay and coordination: `crate/core/sinex-gateway/docs/replay_control.md`, `crate/core/sinex-gateway/docs/coordination.md`
-- current security posture: `docs/current/security.md`
+- current security posture: `docs/security.md`

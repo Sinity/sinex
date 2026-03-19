@@ -26,9 +26,9 @@
 //! For detailed architectural deep dives, see the documentation in the `docs/` directory or
 //! the included structural analysis.
 
-#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../../../../docs/current/security.md")]
+#![doc = include_str!("../../../../docs/architecture.md")]
+#![doc = include_str!("../../../../docs/operations-and-integrity.md")]
+#![doc = include_str!("../../../../docs/security.md")]
 
 //! Thin facade that re-exports high-level services used by gateways and nodes.
 

@@ -4,7 +4,7 @@
 //! wires provenance through `source_material` records, and emits ingestion/health
 //! events that downstream services can rely on.
 //!
-//! See `docs/current/architecture/Core_Architecture.md` (blob storage) and the
+//! See `docs/architecture.md` (blob storage) and the
 //! `sinex-schema` declarative schema definitions for canonical table constraints.
 
 use crate::{NodeResult, SinexError};

@@ -2,15 +2,15 @@
 
 Documentation layout:
 
-- `docs/current/` is for authoritative present-state architecture, policy, and operational docs.
+- `docs/` is for authoritative cross-cutting present-state architecture, operations, and security docs.
 - Cross-cutting vision, target-state, and roadmap material lives in the sibling report repo at `/realm/project/sinex-target-vision/`.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
 | **Documentation index** | `docs/README.md` | `docs/documentation-guidelines.md` |
-| **Architecture overview** | `docs/current/architecture/Core_Architecture.md` | `docs/current/architecture/` |
-| **Security** | `docs/current/security.md` | `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` |
+| **Architecture overview** | `docs/architecture.md` | `docs/operations-and-integrity.md` |
+| **Security** | `docs/security.md` | `docs/operations-and-integrity.md` |
 | **Type system patterns** | `crate/lib/sinex-primitives/docs/type_system_patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
 | **Distributed patterns** | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` | `crate/lib/sinex-node-sdk/docs/coordination.md` |
 | **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |

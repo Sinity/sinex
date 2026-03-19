@@ -16,16 +16,19 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 
 ## Documentation Structure
 
-- `current/` — authoritative present-state docs (architecture and security).
+- `architecture.md` — live end-to-end system shape and component map.
+- `operations-and-integrity.md` — cross-cutting operational invariants and runbook policy.
+- `security.md` — trust boundaries, controls, and current gaps.
 - `documentation-guidelines.md` — authoring and placement policy.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
+- `nixos/modules/README.md` is the canonical deployment/configuration surface.
 - General vision, target-state, gap, and cross-cutting planning synthesis live in the sibling report repo at `/realm/project/sinex-target-vision/`.
 
-## Current (what is live now)
+## Cross-Cutting Present-State Owners
 
-- `current/architecture/` — cross-cutting architecture and security/integrity invariants.
-- `nixos/modules/README.md` — canonical deployment configuration surface.
-- `current/security.md` — current security posture and guardrails.
+- `architecture.md` — global flow, component map, and shared invariants.
+- `operations-and-integrity.md` — global operational model, integrity controls, and hardening gaps.
+- `security.md` — current security posture and guardrails.
 - `xtask/docs/verification.md` — perf verification and contracts.
 - `xtask/docs/sandbox/README.md` — testing policy and sandbox usage.
 - `crate/core/sinex-ingestd/docs/schema_gitops.md` — schema GitOps operational flow.

@@ -197,13 +197,13 @@ These guide architectural decisions:
 
 | I want to... | Start here |
 |--------------|------------|
-| Understand the architecture | [Core Architecture](docs/current/architecture/Core_Architecture.md) |
+| Understand the architecture | [Architecture](docs/architecture.md) |
 | Set up a development environment | [README.md](README.md#contributing) |
 | Build a custom ingestor | [Node SDK Overview](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Write tests | [Testing Sandbox Guide](xtask/docs/sandbox/README.md) |
 | Deploy on NixOS | [NixOS Module](nixos/README.md) |
 | Understand event schemas | [Event Taxonomy](crate/lib/sinex-schema/docs/event-taxonomy.md) |
-| Review security posture | [Security](docs/current/security.md) |
+| Review security posture | [Security](docs/security.md) |
 
 Full documentation index: [docs/README.md](docs/README.md)
 
@@ -268,7 +268,7 @@ For node work:
 Deployment-facing details live with their owners:
 - schema GitOps: [crate/core/sinex-ingestd/docs/schema_gitops.md](crate/core/sinex-ingestd/docs/schema_gitops.md)
 - system deployment: [nixos/README.md](nixos/README.md)
-- runtime invariants and operational architecture: [docs/current/architecture/SystemOperations_And_Integrity_Architecture.md](docs/current/architecture/SystemOperations_And_Integrity_Architecture.md)
+- runtime invariants and operational architecture: [docs/operations-and-integrity.md](docs/operations-and-integrity.md)
 
 See [CLAUDE.md](CLAUDE.md) for coding patterns and conventions.
 
@@ -299,7 +299,7 @@ Blanket at-rest encryption and automatic retention policies are not current syst
 intended model is capture-time privacy controls, host full-disk encryption, and explicit lifecycle
 operations.
 
-See [Security Posture](docs/current/security.md) for details.
+See [Security Posture](docs/security.md) for details.
 
 ---
 

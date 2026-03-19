@@ -8,5 +8,5 @@ delegates persistence to repositories, and drives material assembly.
 - Batches writes to reduce contention.
 - Emits structured logs with `UUIDv7` IDs for provenance tracking.
 
-Refer to `docs/current/architecture/Core_Architecture.md` for the event flow diagram and
+Refer to `docs/architecture.md` for the event flow diagram and
 queue interactions.

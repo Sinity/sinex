@@ -9,4 +9,4 @@ the shared annex storage helpers from `sinex-node-sdk`.
 - Emits provenance-rich events with `UUIDv7` IDs.
 
 See `crate/lib/sinex-node-sdk/docs/overview.md` for the automaton pattern
-and `docs/current/architecture/Core_Architecture.md` for ingestion topology.
+and `docs/architecture.md` for ingestion topology.

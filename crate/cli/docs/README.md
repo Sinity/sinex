@@ -12,4 +12,4 @@ This crate should own:
 - CLI-specific transport/auth UX
 - command-surface behavior
 - local configuration semantics
-- any query/interaction docs moved down from top-level `docs/current/architecture/`
+- any query/interaction docs moved down from top-level `docs/architecture.md`

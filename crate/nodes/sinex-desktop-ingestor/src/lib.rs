@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../lib/sinex-node-sdk/docs/overview.md")]
-#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture.md")]
 
 //! Desktop ingestor integrating clipboard and window-sensing feeds.
 
