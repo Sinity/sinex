@@ -10,6 +10,7 @@ pub mod verification;
 use crate::{NodeResult, SinexError};
 pub use services::verify_service_dependencies;
 use sinex_primitives::constants::timeouts;
+use sinex_primitives::environment::environment;
 use std::process::Output;
 pub use verification::run_preflight_checks;
 
@@ -43,6 +44,20 @@ pub enum VerificationStatus {
     Warning,
     Fail,
 }
+pub fn resolve_database_url() -> NodeResult<String> {
+    let base_url = std::env::var("DATABASE_URL").map_err(|_| {
+        SinexError::configuration("Database URL environment variable not set (DATABASE_URL)")
+    })?;
+
+    sinex_db::resolve_effective_database_url(&base_url).map_err(|err| {
+        SinexError::configuration(format!(
+            "Failed to resolve effective database URL for Sinex environment '{}'",
+            environment().name()
+        ))
+        .with_std_error(&err)
+    })
+}
+
 fn env_string_with_fallback(names: &[&str]) -> Option<String> {
     for name in names {
         if let Ok(value) = std::env::var(name) {
@@ -50,15 +65,6 @@ fn env_string_with_fallback(names: &[&str]) -> Option<String> {
         }
     }
     None
-}
-
-pub fn resolve_database_url() -> NodeResult<String> {
-    env_string_with_fallback(&["SINEX_DATABASE_URL", "DATABASE_URL"]).ok_or_else(|| {
-        SinexError::configuration(
-            "Database URL environment variable not set (SINEX_DATABASE_URL/DATABASE_URL)"
-                .to_string(),
-        )
-    })
 }
 
 pub fn resolve_nats_url() -> NodeResult<String> {

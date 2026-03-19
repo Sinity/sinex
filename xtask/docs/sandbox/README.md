@@ -145,8 +145,6 @@ sinex_proptest! {
 | `SINEX_TEST_NATS_TOKEN` | — | NATS authentication token |
 | `SINEX_TEST_NATS_CONFIG_FILE` | — | Custom NATS config path |
 | `SINEX_TEST_OPTIMIZATIONS` | `false` | Enable test optimizations |
-| `SINEX_REPLAY_CONTROL_OPTIONAL` | `false` | Bypass replay control (testing only) |
-
 ### Property Testing
 
 | Variable | Default | Purpose |

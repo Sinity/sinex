@@ -120,8 +120,6 @@ pub struct TestGatewayConfig {
     /// RPC bearer token for authentication. If set, the gateway requires this
     /// token on every request. Format: `<secret>:<role>` (e.g. `test-token:admin`).
     pub rpc_token: Option<String>,
-    /// Make replay control optional (degrade gracefully without NATS replay).
-    pub replay_control_optional: bool,
     /// Disable RPC rate limiting (default: true — rate limiting disabled in tests).
     pub rpc_rate_limit_disabled: bool,
 }
@@ -148,7 +146,6 @@ impl TestGatewayConfig {
             tls_cert: tls_dir.join("server.pem"),
             tls_key: tls_dir.join("server-key.pem"),
             rpc_token: None,
-            replay_control_optional: false,
             rpc_rate_limit_disabled: true,
         })
     }
@@ -251,9 +248,6 @@ async fn start_test_gateway_inner(
     }
     if let Some(token) = &config.rpc_token {
         cmd.env("SINEX_RPC_TOKEN", token);
-    }
-    if config.replay_control_optional {
-        cmd.env("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())

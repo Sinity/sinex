@@ -63,7 +63,6 @@ impl NativeMessagingTransport for HarnessTransport {
 async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
     env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -113,7 +112,6 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
     env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -156,7 +154,6 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
 async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
     env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -197,7 +194,6 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
 async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
     env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -238,7 +234,6 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
 async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
     env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",

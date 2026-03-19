@@ -11,7 +11,6 @@ async fn replay_cancel_from_previewed_state(ctx: TestContext) -> TestResult<()> 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", &nats_url);
-    env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let nats = services
@@ -123,7 +122,6 @@ async fn replay_cancel_from_approved_state(ctx: TestContext) -> TestResult<()> {
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", &nats_url);
-    env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let nats = services
@@ -243,7 +241,6 @@ async fn replay_list_filters_by_state(ctx: TestContext) -> TestResult<()> {
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", &nats_url);
-    env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let nats = services
@@ -371,7 +368,6 @@ async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> Te
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", &nats_url);
-    env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let nats = services

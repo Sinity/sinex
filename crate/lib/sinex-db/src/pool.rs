@@ -210,15 +210,19 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     Ok(pool)
 }
 
-pub fn get_database_url() -> Result<String> {
+pub fn resolve_effective_database_url(base_url: &str) -> Result<String> {
     use sinex_primitives::environment::environment;
 
+    environment().database_url(base_url).map_err(|e| {
+        SinexError::configuration("failed to construct database URL").with_std_error(&e)
+    })
+}
+
+pub fn get_database_url() -> Result<String> {
     let base_url = env::var("DATABASE_URL")
         .map_err(|_| SinexError::configuration("DATABASE_URL environment variable is required"))?;
 
-    environment().database_url(&base_url).map_err(|e| {
-        SinexError::configuration("failed to construct database URL").with_std_error(&e)
-    })
+    resolve_effective_database_url(&base_url)
 }
 
 pub async fn create_pool_strict() -> Result<DbPool> {

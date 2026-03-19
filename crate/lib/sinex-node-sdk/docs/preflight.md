@@ -5,9 +5,13 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 ## 🚦 Verification Categories
 
 ### 1. 🗄️ Database Readiness
-- **Connectivity**: Validates `DATABASE_URL` and pool acquisition.
+- **Connectivity**: Validates the same effective runtime database the node will use. `DATABASE_URL`
+  is resolved through the current Sinex environment, so a base URL like `.../sinex` becomes the
+  environment-scoped database (for example `sinex_dev`) before preflight connects.
 - **Extensions**: Verifies required Postgres extensions are loaded (`timescaledb`, `pg_jsonschema`, `vector`, `pg_trgm`).
-- **Schema Apply**: Performs declarative schema dry-run checks (required core tables/columns and schema source accessibility).
+- **Schema Readiness**: Performs declarative schema dry-run checks (required core tables/columns
+  and schema source accessibility). Preflight is read-only: it does **not** apply schema or create
+  the database for you.
 
 ### 2. 🛰️ Service Dependencies
 - **NATS `JetStream`**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.
@@ -47,6 +51,14 @@ sinex-preflight verify --skip resources --skip configuration --skip services
 
 ## 📊 Status Levels
 
-- **PASS**: All critical and optional checks succeeded.
+- **PASS**: All critical and optional checks succeeded against the effective runtime database and services.
 - **WARNING**: Critical checks passed, but optional dependencies are missing (e.g., `git-annex` not installed).
 - **FAIL**: Critical dependencies are missing. Startup is blocked.
+
+## Notes On First Boot
+
+- Preflight proves the target database and dependencies are readable and coherent; it does not
+  bootstrap them.
+- A fresh database without schema will fail schema/integration checks until schema apply has run.
+- If preflight fails on missing `core.events`, fix the deployment/bootstrap path rather than
+  expecting preflight itself to create schema.

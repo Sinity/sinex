@@ -704,17 +704,25 @@ pub async fn dispatch_rpc_method(
 
 /// Health check endpoint
 ///
-/// Returns 200 OK if the database is reachable; the response body is a JSON
-/// object reporting database, NATS, and replay-control status.
+/// Returns 200 OK while the gateway can still serve DB-backed RPCs; the JSON
+/// body distinguishes full health from degraded operation.
 ///
-/// NATS unavailability degrades the gateway (no rate limiting, no replay
-/// control) but does not prevent serving DB-backed RPC methods. The HTTP
-/// status therefore reflects only DB health; NATS state is surfaced in the
-/// response body so monitoring tools can alert without causing false 503s.
+/// NATS or replay-control failures no longer present as "healthy". Operators
+/// should read `status`, `healthy`, and `degradation_reasons` rather than
+/// treating HTTP 200 as full readiness.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let report = state.services.health_report().await;
+    let crate::service_container::GatewayHealthReport {
+        status: overall_status,
+        db_ok,
+        nats,
+        replay,
+        healthy,
+        serving,
+        degradation_reasons,
+    } = report;
 
-    let status = if report.db_ok {
+    let status = if serving {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -723,17 +731,20 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     (
         status,
         axum::Json(serde_json::json!({
-            "healthy": report.healthy,
-            "db": { "ok": report.db_ok },
+            "status": overall_status,
+            "healthy": healthy,
+            "serving": serving,
+            "degradation_reasons": degradation_reasons,
+            "db": { "ok": db_ok },
             "nats": {
-                "connected": report.nats.connected,
-                "latency_ms": report.nats.latency_ms,
-                "detail": report.nats.detail,
+                "connected": nats.connected,
+                "latency_ms": nats.latency_ms,
+                "detail": nats.detail,
             },
             "replay_control": {
-                "enabled": report.replay.enabled,
-                "connected": report.replay.connected,
-                "bypass_active": report.replay.bypass_active,
+                "enabled": replay.enabled,
+                "connected": replay.connected,
+                "last_error": replay.last_error,
             },
         })),
     )

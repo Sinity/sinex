@@ -28,7 +28,7 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 ## Supported RPC Methods
 
 ### System
-- `system.health` – Detailed health probe. Returns `healthy`, `degraded` (if DB is up but NATS is down), or `unhealthy`. Response includes per-component status for database, NATS, and replay control.
+- `system.health` – Detailed health probe. Returns `healthy`, `degraded`, or `unhealthy` plus `serving` and `degradation_reasons`. `serving` now requires DB, NATS, and replay control to be live, so a degraded gateway is not go-live ready.
 
 ### Analytics
 - `analytics.event_count_by_source` – counts per source across a time window.

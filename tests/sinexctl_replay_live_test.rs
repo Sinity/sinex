@@ -71,7 +71,6 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
         std::env::set_var("SINEX_RPC_TOKEN", TEST_TOKEN);
         std::env::set_var("SINEX_NATS_URL", &nats_url);
-        std::env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
     }
 
     let port = reserve_port()?;

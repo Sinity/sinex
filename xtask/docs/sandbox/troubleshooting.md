@@ -191,7 +191,7 @@ Artifacts contain:
 ### Use Debug Mode
 
 ```bash
-# Default: retries enabled
+# Default: retries disabled
 xtask test
 
 # Debug mode (single-threaded, full output)
@@ -364,7 +364,7 @@ println!("Cleanup failures: {}", stats.cleanup_failures);
 4. **Use TestSynchronizer** — wait for background signals
 5. **Use UUIDv7 ordering** — never assume insertion order
 6. **Use proptest** — find edge cases systematically
-7. **Use default flags** — retries enabled by default
+7. **Use default flags** — deterministic runs with retries disabled by default
 
 ## CI-Specific Tips
 
