@@ -4,24 +4,33 @@
 //! including `ContentService` and `PkmService`.
 
 use color_eyre::Result as EyreResult;
-use sinex_gateway::ServiceContainer;
+use sinex_gateway::{ServiceContainer, service_container::GatewayHealthStatus};
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
-/// Test successful initialization with valid database URL
-#[sinex_test]
-async fn test_service_container_initialization_success(ctx: TestContext) -> TestResult<()> {
-    let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let temp_dir = TempDir::new()?;
+fn configure_gateway_env(
+    env: &mut EnvGuard,
+    ctx: &TestContext,
+    annex_path: &std::path::Path,
+) -> TestResult<()> {
+    env.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
+        annex_path
             .to_str()
             .expect("path should be valid UTF-8"),
     );
+    Ok(())
+}
+
+/// Test successful initialization with valid database URL
+#[sinex_test]
+async fn test_service_container_initialization_success(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    let temp_dir = TempDir::new()?;
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
@@ -40,17 +49,11 @@ async fn test_service_container_initialization_success(ctx: TestContext) -> Test
 /// Test initialization with DATABASE_URL from environment
 #[sinex_test]
 async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.set("DATABASE_URL", ctx.database_url());
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     // Initialize service container without explicit URL (reads from DATABASE_URL env)
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
@@ -71,7 +74,6 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
@@ -100,7 +102,6 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
 #[sinex_test]
 async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     env.clear("DATABASE_URL");
     let temp_dir = TempDir::new()?;
     env.set(
@@ -130,16 +131,10 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
 /// Test service container cloning
 #[sinex_test]
 async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let cloned = container.clone();
@@ -159,8 +154,9 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
 /// Test annex path configuration
 #[sinex_test]
 async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
 
     // Test with custom annex path
     let custom_dir = TempDir::new()?;
@@ -192,16 +188,10 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
 /// Test concurrent service container initialization
 #[sinex_test]
 async fn test_service_container_concurrent_initialization(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let db_url = ctx.database_url().to_string();
     let futures = (0..5).map(|_| {
@@ -224,16 +214,10 @@ async fn test_service_container_concurrent_initialization(ctx: TestContext) -> T
 /// Test service Arc reference counting
 #[sinex_test]
 async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
@@ -268,16 +252,10 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
 async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> {
     use sinex_gateway::config::GatewayConfig;
 
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
     // Set a known pool size so assertions are deterministic regardless of defaults.
     // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
@@ -304,16 +282,10 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
 async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) -> TestResult<()> {
     use futures::future::join_all;
 
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let db_url = ctx.database_url().to_string();
     let container_a = ServiceContainer::from_database_url(db_url.clone()).await?;
@@ -344,16 +316,10 @@ async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) 
 /// Health report structure: verify all fields are present and have the right types.
 #[sinex_test]
 async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let report = container.health_report().await;
@@ -362,18 +328,41 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
         report.db_ok,
         "Database should be reachable during tests (db_ok=false in health report)"
     );
-    assert_eq!(
-        report.healthy, report.db_ok,
-        "healthy flag should reflect db_ok (NATS is not the hard gate)"
+    assert!(
+        report.serving,
+        "Gateway should report serving=true only when the end-to-end control path is live"
     );
+    match report.status {
+        GatewayHealthStatus::Healthy => {
+            assert!(
+                report.healthy,
+                "Healthy status must imply healthy=true"
+            );
+            assert!(
+                report.degradation_reasons.is_empty(),
+                "Healthy status should not carry degradation reasons"
+            );
+        }
+        GatewayHealthStatus::Degraded => {
+            assert!(
+                !report.healthy,
+                "Degraded status must imply healthy=false"
+            );
+            assert!(
+                !report.degradation_reasons.is_empty(),
+                "Degraded status should explain what is missing"
+            );
+        }
+        GatewayHealthStatus::Unhealthy => {
+            panic!("Database-backed test fixture should not produce unhealthy gateway status");
+        }
+    }
     assert!(
         !report.nats.detail.is_empty(),
         "NATS probe detail should always be populated"
     );
-    assert!(
-        report.replay.bypass_allowed,
-        "Replay control bypass should be marked allowed when env var is set"
-    );
+    assert!(report.replay.enabled, "Replay control should be initialized");
+    assert!(report.replay.connected, "Replay control should be connected");
 
     Ok(())
 }

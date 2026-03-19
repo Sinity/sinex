@@ -3,13 +3,408 @@ use crate::Timestamp;
 use crate::models::Event;
 use crate::repositories::events::StreamBatchRow;
 use crate::repositories::events::conversions::extract_provenance;
+use crate::schema::Events;
+use sea_query::{ColumnSpec, ColumnType, Iden};
 use sqlx::Error;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 /// Trait for entities that can be serialized to Postgres COPY text format.
 pub trait ToPostgresCopy {
     /// Write the entity to a buffer in Postgres COPY RAW (text) format.
     /// Ends with a newline.
     fn write_copy_row(&self, buf: &mut Vec<u8>) -> Result<(), Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventCopyColumnType {
+    Uuid,
+    Text,
+    Jsonb,
+    Timestamptz,
+    Integer,
+    Bigint,
+    UuidArray,
+}
+
+impl EventCopyColumnType {
+    const fn staging_sql(self) -> &'static str {
+        match self {
+            Self::Uuid => "UUID",
+            Self::Text => "TEXT",
+            Self::Jsonb => "JSONB",
+            Self::Timestamptz => "TIMESTAMPTZ",
+            Self::Integer => "INTEGER",
+            Self::Bigint => "BIGINT",
+            Self::UuidArray => "UUID[]",
+        }
+    }
+
+    fn insert_select_expr(self, column_name: &str) -> String {
+        match self {
+            Self::Uuid => format!("{column_name}::uuid"),
+            Self::UuidArray => format!("{column_name}::uuid[]"),
+            Self::Text | Self::Jsonb | Self::Timestamptz | Self::Integer | Self::Bigint => {
+                column_name.to_owned()
+            }
+        }
+    }
+
+    fn matches_schema_type(self, column_type: &ColumnType) -> bool {
+        match self {
+            Self::Uuid => matches_uuid_type(column_type),
+            Self::Text => matches!(column_type, ColumnType::Text),
+            Self::Jsonb => matches!(column_type, ColumnType::JsonBinary),
+            Self::Timestamptz => matches!(column_type, ColumnType::TimestampWithTimeZone),
+            Self::Integer => matches!(column_type, ColumnType::Integer),
+            Self::Bigint => matches!(column_type, ColumnType::BigInteger),
+            Self::UuidArray => {
+                matches!(column_type, ColumnType::Array(inner) if matches_uuid_type(inner.as_ref()))
+            }
+        }
+    }
+}
+
+fn matches_uuid_type(column_type: &ColumnType) -> bool {
+    match column_type {
+        ColumnType::Uuid => true,
+        ColumnType::Custom(iden) => iden.to_string().eq_ignore_ascii_case("uuid"),
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EventCopyColumn {
+    event: Events,
+    copy_type: EventCopyColumnType,
+}
+
+impl EventCopyColumn {
+    fn name(self) -> String {
+        self.event.to_string()
+    }
+
+    fn staging_sql(self) -> String {
+        format!("{} {}", self.name(), self.copy_type.staging_sql())
+    }
+
+    fn insert_select_expr(self) -> String {
+        self.copy_type.insert_select_expr(&self.name())
+    }
+}
+
+const DB_MANAGED_EVENT_COLUMNS: [&str; 2] = ["ts_coided", "ts_persisted"];
+
+const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
+    EventCopyColumn {
+        event: Events::Id,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::Source,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::EventType,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::TsOrig,
+        copy_type: EventCopyColumnType::Timestamptz,
+    },
+    EventCopyColumn {
+        event: Events::TsOrigSubnano,
+        copy_type: EventCopyColumnType::Integer,
+    },
+    EventCopyColumn {
+        event: Events::Host,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::Payload,
+        copy_type: EventCopyColumnType::Jsonb,
+    },
+    EventCopyColumn {
+        event: Events::SourceMaterialId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::AnchorByte,
+        copy_type: EventCopyColumnType::Bigint,
+    },
+    EventCopyColumn {
+        event: Events::OffsetStart,
+        copy_type: EventCopyColumnType::Bigint,
+    },
+    EventCopyColumn {
+        event: Events::OffsetEnd,
+        copy_type: EventCopyColumnType::Bigint,
+    },
+    EventCopyColumn {
+        event: Events::OffsetKind,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::SourceEventIds,
+        copy_type: EventCopyColumnType::UuidArray,
+    },
+    EventCopyColumn {
+        event: Events::PayloadSchemaId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::NodeRunId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::AssociatedBlobIds,
+        copy_type: EventCopyColumnType::UuidArray,
+    },
+    EventCopyColumn {
+        event: Events::TemporalPolicy,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::SemanticsVersion,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::ScopeKey,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::EquivalenceKey,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::CreatedByOperationId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::NodeModel,
+        copy_type: EventCopyColumnType::Text,
+    },
+];
+
+static EVENT_COPY_CONTRACT_CHECK: OnceLock<()> = OnceLock::new();
+
+fn copy_columns() -> &'static [EventCopyColumn] {
+    EVENT_COPY_CONTRACT_CHECK.get_or_init(|| verify_event_copy_contract());
+    &EVENT_COPY_COLUMNS
+}
+
+#[derive(Debug, Clone)]
+struct AuthoritativeEventColumn {
+    column_type: ColumnType,
+    not_null: bool,
+}
+
+fn authoritative_copy_columns() -> BTreeMap<String, AuthoritativeEventColumn> {
+    Events::create_table_statement()
+        .get_columns()
+        .iter()
+        .filter_map(|column| {
+            let name = column.get_column_name();
+            if DB_MANAGED_EVENT_COLUMNS.contains(&name.as_str()) {
+                return None;
+            }
+
+            let column_type = column.get_column_type().cloned().unwrap_or_else(|| {
+                panic!("core.events column {name} has no declared type in schema authority")
+            });
+
+            Some((
+                name,
+                AuthoritativeEventColumn {
+                    column_type,
+                    not_null: column_is_not_null(column),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn column_is_not_null(column: &sea_query::ColumnDef) -> bool {
+    column
+        .get_column_spec()
+        .iter()
+        .any(|spec| matches!(spec, ColumnSpec::NotNull))
+}
+
+fn verify_event_copy_contract() {
+    let authoritative_columns = authoritative_copy_columns();
+
+    let mut contract_names = BTreeSet::new();
+    let mut duplicate_contract_names = BTreeSet::new();
+    for column in EVENT_COPY_COLUMNS {
+        let name = column.name();
+        if !contract_names.insert(name.clone()) {
+            duplicate_contract_names.insert(name);
+        }
+    }
+
+    if !duplicate_contract_names.is_empty() {
+        panic!(
+            "COPY contract duplicates core.events columns: {}",
+            duplicate_contract_names
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    let authoritative_names: BTreeSet<String> = authoritative_columns.keys().cloned().collect();
+    if contract_names != authoritative_names {
+        let missing_from_copy = authoritative_names
+            .difference(&contract_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let extra_in_copy = contract_names
+            .difference(&authoritative_names)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        panic!(
+            "COPY contract drifted from authoritative core.events schema; missing_from_copy=[{}] extra_in_copy=[{}]",
+            missing_from_copy.join(", "),
+            extra_in_copy.join(", ")
+        );
+    }
+
+    let mut type_mismatches = Vec::new();
+    for column in EVENT_COPY_COLUMNS {
+        let name = column.name();
+        let authoritative_type = authoritative_columns
+            .get(&name)
+            .unwrap_or_else(|| panic!("verified COPY column {name} missing from schema map"));
+
+        if !column
+            .copy_type
+            .matches_schema_type(&authoritative_type.column_type)
+        {
+            type_mismatches.push(format!(
+                "{name}: schema={:?}, copy={:?}",
+                authoritative_type.column_type, column.copy_type
+            ));
+        }
+    }
+
+    assert!(
+        type_mismatches.is_empty(),
+        "COPY contract type drifted from authoritative core.events schema: {}",
+        type_mismatches.join("; ")
+    );
+}
+
+pub(crate) fn event_copy_column_count() -> usize {
+    copy_columns().len()
+}
+
+pub(crate) fn event_copy_column_index(event: Events) -> usize {
+    let event_name = event.to_string();
+    copy_columns()
+        .iter()
+        .position(|column| column.name() == event_name)
+        .unwrap_or_else(|| panic!("COPY contract missing core.events column {event_name}"))
+}
+
+pub(crate) fn event_copy_column_list_sql() -> String {
+    copy_columns()
+        .iter()
+        .map(|column| column.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) fn event_copy_staging_columns_sql() -> String {
+    let authoritative = authoritative_copy_columns();
+    copy_columns()
+        .iter()
+        .map(|column| {
+            let name = column.name();
+            let authoritative_column = authoritative
+                .get(&name)
+                .unwrap_or_else(|| panic!("COPY contract missing authoritative schema for {name}"));
+
+            let mut sql = column.staging_sql();
+            if authoritative_column.not_null {
+                sql.push_str(" NOT NULL");
+            }
+            sql
+        })
+        .collect::<Vec<_>>()
+        .join(",\n                ")
+}
+
+pub(crate) fn event_copy_insert_select_sql() -> String {
+    copy_columns()
+        .iter()
+        .map(|column| column.insert_select_expr())
+        .collect::<Vec<_>>()
+        .join(",\n                ")
+}
+
+struct CopyRowWriter<'a> {
+    buf: &'a mut Vec<u8>,
+    fields_written: usize,
+}
+
+impl<'a> CopyRowWriter<'a> {
+    fn new(buf: &'a mut Vec<u8>) -> Self {
+        let _ = copy_columns();
+        Self {
+            buf,
+            fields_written: 0,
+        }
+    }
+
+    fn field(&mut self, event: Events, value: Option<&str>) -> Result<(), Error> {
+        self.begin_field(event)?;
+        write_field(self.buf, value);
+        Ok(())
+    }
+
+    fn i64_field(&mut self, event: Events, value: Option<i64>) -> Result<(), Error> {
+        self.begin_field(event)?;
+        write_i64_field(self.buf, value);
+        Ok(())
+    }
+
+    fn begin_field(&mut self, event: Events) -> Result<(), Error> {
+        let actual_name = event.to_string();
+        let expected = copy_columns().get(self.fields_written).ok_or_else(|| {
+            Error::Protocol(format!(
+                "COPY writer emitted unexpected extra field {actual_name}"
+            ))
+        })?;
+        let expected_name = expected.name();
+
+        if actual_name != expected_name {
+            return Err(Error::Protocol(format!(
+                "COPY writer column order drift at field {}: expected {expected_name}, got {actual_name}",
+                self.fields_written
+            )));
+        }
+
+        if self.fields_written > 0 {
+            self.buf.push(b'\t');
+        }
+        self.fields_written += 1;
+        Ok(())
+    }
+
+    fn finish(self) -> Result<(), Error> {
+        let expected_field_count = copy_columns().len();
+        if self.fields_written != expected_field_count {
+            return Err(Error::Protocol(format!(
+                "COPY writer emitted {} fields, expected {}",
+                self.fields_written, expected_field_count
+            )));
+        }
+
+        self.buf.push(b'\n');
+        Ok(())
+    }
 }
 
 impl ToPostgresCopy for Event<JsonValue> {
@@ -51,73 +446,52 @@ impl ToPostgresCopy for Event<JsonValue> {
             format!("{{{}}}", formatted.join(","))
         });
 
-        // Write fields separated by tab
-        write_field(buf, Some(&id));
-        buf.push(b'\t');
-        write_field(buf, Some(self.source.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(self.event_type.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(&ts_orig_str));
-        buf.push(b'\t');
-        write_i64_field(buf, Some(i64::from(ts_orig_subnano)));
-        buf.push(b'\t');
-        write_field(buf, Some(self.host.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(&payload));
-        buf.push(b'\t');
-        write_field(buf, source_material_id.as_deref());
-        buf.push(b'\t');
-        write_i64_field(buf, anchor_byte);
-        buf.push(b'\t');
-        write_i64_field(buf, offset_start);
-        buf.push(b'\t');
-        write_i64_field(buf, offset_end);
-        buf.push(b'\t');
-        write_field(buf, offset_kind.as_deref());
-        buf.push(b'\t');
-        write_field(buf, source_event_ids_str.as_deref());
-        buf.push(b'\t');
-        write_field(buf, payload_schema_id.as_deref());
-        buf.push(b'\t');
+        let mut writer = CopyRowWriter::new(buf);
+        writer.field(Events::Id, Some(&id))?;
+        writer.field(Events::Source, Some(self.source.as_str()))?;
+        writer.field(Events::EventType, Some(self.event_type.as_str()))?;
+        writer.field(Events::TsOrig, Some(&ts_orig_str))?;
+        writer.i64_field(Events::TsOrigSubnano, Some(i64::from(ts_orig_subnano)))?;
+        writer.field(Events::Host, Some(self.host.as_str()))?;
+        writer.field(Events::Payload, Some(&payload))?;
+        writer.field(Events::SourceMaterialId, source_material_id.as_deref())?;
+        writer.i64_field(Events::AnchorByte, anchor_byte)?;
+        writer.i64_field(Events::OffsetStart, offset_start)?;
+        writer.i64_field(Events::OffsetEnd, offset_end)?;
+        writer.field(Events::OffsetKind, offset_kind.as_deref())?;
+        writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
+        writer.field(Events::PayloadSchemaId, payload_schema_id.as_deref())?;
         {
             let node_run_id_str = self.node_run_id.map(|id| id.to_string());
-            write_field(buf, node_run_id_str.as_deref());
+            writer.field(Events::NodeRunId, node_run_id_str.as_deref())?;
         }
-        buf.push(b'\t');
-        write_field(buf, associated_blob_ids_str.as_deref());
-        // Synthetic event metadata
-        buf.push(b'\t');
-        write_field(
-            buf,
+        writer.field(
+            Events::AssociatedBlobIds,
+            associated_blob_ids_str.as_deref(),
+        )?;
+        writer.field(
+            Events::TemporalPolicy,
             self.temporal_policy
                 .as_ref()
                 .map(std::string::ToString::to_string)
                 .as_deref(),
-        );
-        buf.push(b'\t');
-        write_field(buf, self.semantics_version.as_deref());
-        buf.push(b'\t');
-        write_field(buf, self.scope_key.as_deref());
-        buf.push(b'\t');
-        write_field(buf, self.equivalence_key.as_deref());
-        buf.push(b'\t');
+        )?;
+        writer.field(Events::SemanticsVersion, self.semantics_version.as_deref())?;
+        writer.field(Events::ScopeKey, self.scope_key.as_deref())?;
+        writer.field(Events::EquivalenceKey, self.equivalence_key.as_deref())?;
         {
             let created_by_str = self.created_by_operation_id.map(|id| id.to_string());
-            write_field(buf, created_by_str.as_deref());
+            writer.field(Events::CreatedByOperationId, created_by_str.as_deref())?;
         }
-        buf.push(b'\t');
-        write_field(
-            buf,
+        writer.field(
+            Events::NodeModel,
             self.node_model
                 .as_ref()
                 .map(std::string::ToString::to_string)
                 .as_deref(),
-        );
+        )?;
 
-        buf.push(b'\n');
-
-        Ok(())
+        writer.finish()
     }
 }
 
@@ -154,65 +528,40 @@ impl ToPostgresCopy for StreamBatchRow {
                     format!("{{{}}}", formatted.join(","))
                 });
 
-        // Column order: id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
-        //   source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-        //   source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
-        //   temporal_policy, semantics_version, scope_key, equivalence_key,
-        //   created_by_operation_id, node_model
-        write_field(buf, Some(&id));
-        buf.push(b'\t');
-        write_field(buf, Some(self.source.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(self.event_type.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(&ts_orig_str));
-        buf.push(b'\t');
-        write_i64_field(buf, Some(i64::from(ts_orig_subnano)));
-        buf.push(b'\t');
-        write_field(buf, Some(self.host.as_str()));
-        buf.push(b'\t');
-        write_field(buf, Some(&payload));
-        buf.push(b'\t');
-        write_field(buf, source_material_id_str.as_deref());
-        buf.push(b'\t');
-        write_i64_field(buf, self.anchor_byte);
-        buf.push(b'\t');
-        write_i64_field(buf, self.offset_start);
-        buf.push(b'\t');
-        write_i64_field(buf, self.offset_end);
-        buf.push(b'\t');
-        write_field(buf, self.offset_kind.as_deref());
-        buf.push(b'\t');
-        write_field(buf, source_event_ids_str.as_deref());
-        buf.push(b'\t');
-        write_field(buf, payload_schema_id_str.as_deref());
-        buf.push(b'\t');
+        let mut writer = CopyRowWriter::new(buf);
+        writer.field(Events::Id, Some(&id))?;
+        writer.field(Events::Source, Some(self.source.as_str()))?;
+        writer.field(Events::EventType, Some(self.event_type.as_str()))?;
+        writer.field(Events::TsOrig, Some(&ts_orig_str))?;
+        writer.i64_field(Events::TsOrigSubnano, Some(i64::from(ts_orig_subnano)))?;
+        writer.field(Events::Host, Some(self.host.as_str()))?;
+        writer.field(Events::Payload, Some(&payload))?;
+        writer.field(Events::SourceMaterialId, source_material_id_str.as_deref())?;
+        writer.i64_field(Events::AnchorByte, self.anchor_byte)?;
+        writer.i64_field(Events::OffsetStart, self.offset_start)?;
+        writer.i64_field(Events::OffsetEnd, self.offset_end)?;
+        writer.field(Events::OffsetKind, self.offset_kind.as_deref())?;
+        writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
+        writer.field(Events::PayloadSchemaId, payload_schema_id_str.as_deref())?;
         {
             let node_run_id_str = self.node_run_id.map(|id| id.to_string());
-            write_field(buf, node_run_id_str.as_deref());
+            writer.field(Events::NodeRunId, node_run_id_str.as_deref())?;
         }
-        buf.push(b'\t');
-        write_field(buf, associated_blob_ids_str.as_deref());
-        // Synthetic event metadata
-        buf.push(b'\t');
-        write_field(buf, self.temporal_policy.as_deref());
-        buf.push(b'\t');
-        write_field(buf, self.semantics_version.as_deref());
-        buf.push(b'\t');
-        write_field(buf, self.scope_key.as_deref());
-        buf.push(b'\t');
-        write_field(buf, self.equivalence_key.as_deref());
-        buf.push(b'\t');
+        writer.field(
+            Events::AssociatedBlobIds,
+            associated_blob_ids_str.as_deref(),
+        )?;
+        writer.field(Events::TemporalPolicy, self.temporal_policy.as_deref())?;
+        writer.field(Events::SemanticsVersion, self.semantics_version.as_deref())?;
+        writer.field(Events::ScopeKey, self.scope_key.as_deref())?;
+        writer.field(Events::EquivalenceKey, self.equivalence_key.as_deref())?;
         {
             let created_by_str = self.created_by_operation_id.map(|id| id.to_string());
-            write_field(buf, created_by_str.as_deref());
+            writer.field(Events::CreatedByOperationId, created_by_str.as_deref())?;
         }
-        buf.push(b'\t');
-        write_field(buf, self.node_model.as_deref());
+        writer.field(Events::NodeModel, self.node_model.as_deref())?;
 
-        buf.push(b'\n');
-
-        Ok(())
+        writer.finish()
     }
 }
 
@@ -315,14 +664,15 @@ mod tests {
         trimmed.split('\t').map(str::to_string).collect()
     }
 
-    /// The COPY format must have exactly 22 fields (one per column) separated by tabs.
+    /// The COPY format must have exactly one field per authoritative writable event column.
     #[sinex_test]
     async fn produces_exactly_22_fields() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
         assert_eq!(
             fields.len(),
-            22,
-            "Expected 22 tab-separated fields, got {}:\n{fields:?}",
+            event_copy_column_count(),
+            "Expected {} tab-separated fields, got {}:\n{fields:?}",
+            event_copy_column_count(),
             fields.len()
         );
         Ok(())
@@ -341,12 +691,24 @@ mod tests {
     #[sinex_test]
     async fn null_optionals_write_null_sentinel() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
-        // source_material_id = fields[7], anchor_byte = [8], offset_start = [9],
-        // offset_end = [10], offset_kind = [11], source_event_ids = [12],
-        // payload_schema_id = [13], node_run_id = [14], associated_blob_ids = [15],
-        // temporal_policy = [16], semantics_version = [17], scope_key = [18],
-        // equivalence_key = [19], created_by_operation_id = [20], node_model = [21]
-        for idx in [7usize, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] {
+        for event in [
+            Events::SourceMaterialId,
+            Events::AnchorByte,
+            Events::OffsetStart,
+            Events::OffsetEnd,
+            Events::OffsetKind,
+            Events::SourceEventIds,
+            Events::PayloadSchemaId,
+            Events::NodeRunId,
+            Events::AssociatedBlobIds,
+            Events::TemporalPolicy,
+            Events::SemanticsVersion,
+            Events::ScopeKey,
+            Events::EquivalenceKey,
+            Events::CreatedByOperationId,
+            Events::NodeModel,
+        ] {
+            let idx = event_copy_column_index(event);
             assert_eq!(
                 fields[idx], "\\N",
                 "Field {idx} should be \\N for None, got {:?}",
@@ -363,7 +725,7 @@ mod tests {
         let mut row = minimal_row();
         row.payload = json!({"k": "v\tw"});
         let fields = row_fields(&row);
-        let payload_field = &fields[6]; // payload is column index 6
+        let payload_field = &fields[event_copy_column_index(Events::Payload)];
         assert!(
             !payload_field.contains('\t'),
             "Literal tab must be escaped in payload"
@@ -381,7 +743,7 @@ mod tests {
         let mut row = minimal_row();
         row.payload = json!({"k": "line1\nline2"});
         let fields = row_fields(&row);
-        let payload_field = &fields[6];
+        let payload_field = &fields[event_copy_column_index(Events::Payload)];
         assert!(
             !payload_field.contains('\n'),
             "Literal newline must be escaped"
@@ -398,7 +760,7 @@ mod tests {
         let fields = row_fields(&row);
         // "C:\\Users\\test" → JSON string "C:\Users\test" → COPY escaped "C:\\Users\\test"
         assert!(
-            fields[6].contains("\\\\"),
+            fields[event_copy_column_index(Events::Payload)].contains("\\\\"),
             "Backslash should be doubled in COPY output"
         );
         Ok(())
@@ -416,9 +778,8 @@ mod tests {
         row.associated_blob_ids = Some(vec![u1, u2]);
 
         let fields = row_fields(&row);
-        // source_event_ids = field 12, associated_blob_ids = field 15
-        let sei = &fields[12];
-        let abi = &fields[15];
+        let sei = &fields[event_copy_column_index(Events::SourceEventIds)];
+        let abi = &fields[event_copy_column_index(Events::AssociatedBlobIds)];
 
         assert!(
             sei.starts_with('{') && sei.ends_with('}'),
@@ -453,10 +814,26 @@ mod tests {
         row.offset_end = Some(100);
 
         let fields = row_fields(&row);
-        assert_ne!(fields[7], "\\N", "source_material_id should not be \\N");
-        assert_eq!(fields[8], "42", "anchor_byte should be '42'");
-        assert_eq!(fields[9], "0", "offset_start should be '0'");
-        assert_eq!(fields[10], "100", "offset_end should be '100'");
+        assert_ne!(
+            fields[event_copy_column_index(Events::SourceMaterialId)],
+            "\\N",
+            "source_material_id should not be \\N"
+        );
+        assert_eq!(
+            fields[event_copy_column_index(Events::AnchorByte)],
+            "42",
+            "anchor_byte should be '42'"
+        );
+        assert_eq!(
+            fields[event_copy_column_index(Events::OffsetStart)],
+            "0",
+            "offset_start should be '0'"
+        );
+        assert_eq!(
+            fields[event_copy_column_index(Events::OffsetEnd)],
+            "100",
+            "offset_end should be '100'"
+        );
         Ok(())
     }
 
@@ -470,16 +847,19 @@ mod tests {
         let fields = row_fields(&row);
         // UUID has 36 chars (8-4-4-4-12 + 4 hyphens)
         assert_eq!(
-            fields[0].len(),
+            fields[event_copy_column_index(Events::Id)].len(),
             36,
             "ID field should be UUID (36 chars), got {:?}",
-            fields[0]
+            fields[event_copy_column_index(Events::Id)]
         );
-        assert!(fields[0].contains('-'), "UUID must contain hyphens");
+        assert!(
+            fields[event_copy_column_index(Events::Id)].contains('-'),
+            "UUID must contain hyphens"
+        );
         // Must round-trip through Uuid
-        let parsed: Uuid = fields[0]
+        let parsed: Uuid = fields[event_copy_column_index(Events::Id)]
             .parse()
-            .expect("field[0] must be parseable as UUID");
+            .expect("id field must be parseable as UUID");
         assert_eq!(parsed, id, "UUID must match original Uuid's UUID");
         Ok(())
     }
@@ -490,7 +870,7 @@ mod tests {
         let mut row = minimal_row();
         row.payload = json!({"k": "line1\r\nline2"});
         let fields = row_fields(&row);
-        let payload_field = &fields[6];
+        let payload_field = &fields[event_copy_column_index(Events::Payload)];
         assert!(
             !payload_field.contains('\r'),
             "Literal \\r must be escaped in payload"

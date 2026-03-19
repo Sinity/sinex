@@ -355,8 +355,7 @@ host    all             all             ::1/128                 trust
             dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
           in {
             Type = "oneshot";
-            Environment = [ "DATABASE_URL=${dbUrl}" ];
-            ExecStart = "${sinexPackage}/bin/sinex-schema up";
+            ExecStart = "${sinexPackage}/bin/xtask infra schema-apply --database-url ${lib.escapeShellArg dbUrl}";
           };
       };
       systemd.services.sinex-ingestd.after = [ "sinex-migrations.service" ];

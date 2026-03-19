@@ -2,28 +2,20 @@
 
 **Local-first event capture for your machine. Query your digital history like a database.**
 
-<!-- Badges (CI not yet configured)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/...)](#)
-[![License](https://img.shields.io/badge/license-MIT-blue)](#license)
--->
-
-[Quick Start](#quick-start) · [Documentation](docs/README.md) · [Architecture](#architecture) · [Contributing](#contributing)
+[Quick Start](#quick-start) · [Architecture](#architecture) · [Security](#security) · [Deployment & Operations](#deployment--operations)
 
 ---
 
-## What is Sinex?
+## What Is Sinex?
 
-Sinex captures events from your computer—filesystem changes, terminal commands, window focus, clipboard, system events—and stores them in a queryable PostgreSQL database with precise timestamps and provenance tracking.
+Sinex captures local activity as typed, timestamped events and stores them in
+an append-only PostgreSQL event log. The runtime is built around Rust services,
+NATS JetStream transport, and a NixOS deployment surface.
 
-It's infrastructure for building personal analytics, workflow automation, and context-aware tools on top of your own activity data.
+The system is meant for grounded local analytics, replayable derived state, and
+operator-visible automation, not opaque cloud processing.
 
-## Why Sinex?
-
-The value isn't individual events. It's the **relationships between them**.
-
-### Temporal Joins
-
-Ask questions impossible with disconnected data sources:
+Example payoff:
 
 ```sql
 -- What was I researching when that build failed?
@@ -35,37 +27,20 @@ WHERE c.command LIKE 'cargo test%'
   AND v.domain = 'stackoverflow.com';
 ```
 
-Shell history alone can't tell you this. Browser history alone can't either. Sinex captures both with shared timestamps, making the temporal join possible.
+## Current Surfaces
 
-### Contextual Queries
-
-Filter by activity context, not just content:
-
-```bash
-# Find Rust articles I read while my editor was focused
-exo find --type "webpage" \
-  --semantic-search "Rust procedural macros" \
-  --since "1w" \
-  --context '{"window_class": "Code - OSS"}'
-```
-
-### Pattern Detection
-
-Automata can detect patterns across event streams:
-
-```
-# Repeated typo detection
-(Command {text: "cargp ...", exit_code: 1}) ->
-(Command {text: "cargo ...", exit_code: 0})
-```
-
-Five occurrences in an hour → suggest a shell alias.
-
----
+| Surface | Current Owner |
+|---------|---------------|
+| Capture | crate-local ingestors under `crate/nodes/` |
+| Query / control | `sinex-gateway` + `sinexctl` |
+| Persistence | `sinex-ingestd` + PostgreSQL |
+| Derived state | automata and replay-aware node runtime |
+| Deployment | NixOS modules + systemd |
+| Extension | `sinex-node-sdk` |
 
 ## Architecture
 
-```
+```text
 Ingestors          Automata             Clients
   fs, terminal,      analytics,           CLI, browser
   desktop, system    derived nodes        extension
@@ -73,235 +48,137 @@ Ingestors          Automata             Clients
        ▼                 ▼                    │
   ┌────────────────────────────────────────┐  │
   │         NATS JetStream                 │  │
-  │       (Event Transport)                │  │
+  │       (event transport)                │  │
   └──────────────┬─────────────────────────┘  │
                  │                            │
                  ▼                            │
         ┌────────────────┐                    │
-        │  sinex-ingestd │ Validate, persist  │
+        │  sinex-ingestd │ validate, persist  │
         └───────┬────────┘                    │
                 │                             │
                 ▼                             │
         ┌────────────────┐                    │
         │   PostgreSQL   │ TimescaleDB,       │
-        │   + Extensions │ pgvector, pg_jsonschema     │
+        │   + extensions │ pgvector, schemas  │
         └───────┬────────┘                    │
                 │                             │
                 ▼                             │
         ┌────────────────┐                    │
         │ sinex-gateway  │◄───────────────────┘
-        │  (JSON-RPC)    │ Auth, rate limiting
+        │   JSON-RPC     │ auth, rate limits
         └────────────────┘
 ```
 
-<details>
-<summary><strong>Technical Stack</strong></summary>
+### Core Invariants
 
-- **Language:** Rust
-- **Database:** PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
-- **Messaging:** NATS JetStream for durable event transport
-- **Deployment:** NixOS modules with systemd hardening
-- **IDs:** UUIDv7-backed, time-ordered primary keys
+- canonical persistence flows through `sinex-ingestd`
+- `core.events` is append-only; corrections become new events with provenance
+- derived events carry source, temporal, and replay metadata
+- `UUIDv7` IDs provide ordering; `ts_orig` and `ts_coided` are distinct and load-bearing
+- blobs are content-addressed and referenced stably
+- long-running replay/lifecycle work is recorded in `operations_log`
 
-</details>
+### Operating Model
 
-<details>
-<summary><strong>Component Details</strong></summary>
+- services run as separate systemd units with NixOS-managed configuration
+- observability is journald-first; service logs are part of the event universe
+- nodes and derived automata recover through checkpoints and replay
+- replay, archive, and restore are explicit control-plane operations
+- direct DB access is diagnostic; the normal control/query boundary is the gateway
 
-| Component | Purpose |
-|-----------|---------|
-| **Ingestors** | Capture events: filesystem, terminal, desktop, system |
-| **NATS JetStream** | Durable message bus with replay capability |
-| **sinex-ingestd** | Validate events, persist to Postgres, emit confirmations |
-| **PostgreSQL** | Event storage with time-series optimization |
-| **Automata** | Transform raw events into derived knowledge |
-| **sinex-gateway** | JSON-RPC API with TLS, auth, rate limiting |
+### Stack
 
-</details>
-
----
-
-## Features
-
-<details>
-<summary><strong>For Users</strong></summary>
-
-- **Event Sources:** Filesystem, terminal (Kitty/Atuin), clipboard, window focus, systemd, D-Bus
-- **Dual-Mode Capture:** Real-time sensor mode + batch scanner mode
-- **Query Interface:** `sinexctl`, SQL access, JSON-RPC API
-- **Immutable History:** Events are append-only with full provenance
-
-</details>
-
-<details>
-<summary><strong>For Developers</strong></summary>
-
-- **Node SDK:** Build custom ingestors with `sinex-node-sdk`
-- **Typed Events:** Derive macros for event payloads with validation
-- **Test Infrastructure:** Isolated database pools, property testing, NATS fixtures
-- **Schema Management:** JSON Schema generation from Rust types
-
-</details>
-
-<details>
-<summary><strong>For Operators</strong></summary>
-
-- **NixOS Module:** Declarative deployment with systemd integration
-- **TLS/mTLS:** Required for non-loopback; optional client certs
-- **Rate Limiting:** Per-token limits via governor (100 req/sec default)
-- **Systemd Hardening:** NoNewPrivileges, ProtectSystem=strict, capability bounding
-
-</details>
-
----
+- Rust
+- PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
+- NATS JetStream
+- NixOS modules + systemd hardening
 
 ## Quick Start
 
 ```bash
-# Clone and enter dev environment
-git clone https://github.com/sinity/sinex.git && cd sinex
+git clone https://github.com/sinity/sinex.git
+cd sinex
 nix develop  # or: direnv allow
 
-# Start infrastructure
 xtask infra start
-
-# Run core services
 xtask run core --logs
-
-# Inspect available nodes/bundles
 xtask run list
-
-# Query recent events
 sinexctl recent -n 10
 ```
 
-For database setup, TLS configuration, and RPC authentication, see the docs linked below.
+## Development
 
----
+```bash
+xtask check
+xtask test
+xtask check --full && xtask test
+```
 
-## Principles
+Useful entrypoints:
 
-These guide architectural decisions:
+- local runtime loop: `xtask infra start` and `xtask run core --logs`
+- xtask/tooling reference: [xtask/README.md](xtask/README.md)
+- testing workflows: [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
 
-- **Cognitive Sovereignty** — The human remains the ultimate authority. Every automation is explainable, inspectable, and reversible.
+## Deployment & Operations
 
-- **Local-First** — All core capabilities work without external services. Every byte of captured data stays under your direct control.
+The canonical deployment surface is the NixOS module tree under `services.sinex`.
+Stable operational guidance lives here and in [nixos/modules/README.md](nixos/modules/README.md).
+There is no separate top-level operations runbook anymore.
 
-- **Single Event Stream** — Raw events and derived synthesis share one append-only log. Provenance (`source_event_ids`) distinguishes them, not separate storage.
+Hardening defaults that are already part of the repo:
 
-- **Declarative Core** — Logic lives as data. Prefer SQL/flow definitions for deterministic synthesis; reserve imperative code for genuinely non-deterministic operations.
+- gateway RPC is TLS-only and non-loopback binds require mTLS policy
+- managed long-running units and helper/maintenance oneshots use systemd sandboxing
+- managed local NATS now has typed server TLS under `services.sinex.nats.tls.*`
+- managed local NATS now has typed subject-level authz for the current shared runtime identity under `services.sinex.nats.authorization.sharedClient.*`
+- shared client transport still lives under `services.sinex.nodes.nats.{servers,tls,auth}` and is exported to all managed services automatically
 
----
+Conventional secret names that the module now resolves automatically through agenix:
+
+- gateway admin token: `sinex-gateway-admin-token`
+- local NATS server TLS: `sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`
+- shared NATS client TLS/auth: `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`
+- compatibility aliases are also accepted for the NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`
+
+Common operator entrypoints:
+
+```bash
+xtask doctor
+xtask status --summary
+xtask infra status
+journalctl -u sinex-gateway -u sinex-ingestd -f
+```
 
 ## Documentation
 
 | I want to... | Start here |
 |--------------|------------|
-| Understand the architecture | [Core Architecture](docs/current/architecture/Core_Architecture.md) |
-| Set up a development environment | [README.md](README.md#contributing) |
-| Build a custom ingestor | [Node SDK Overview](crate/lib/sinex-node-sdk/docs/overview.md) |
-| Write tests | [Testing Sandbox Guide](xtask/docs/sandbox/README.md) |
-| Deploy on NixOS | [NixOS Module](nixos/README.md) |
-| Understand event schemas | [Event Taxonomy](crate/lib/sinex-schema/docs/event-taxonomy.md) |
-| Review security posture | [Security](docs/current/security.md) |
-
-Full documentation index: [docs/README.md](docs/README.md)
-
----
-
-## Contributing
-
-### Codebase Orientation
-
-```text
-crate/
-├── core/                      # Runtime binaries: ingestd + gateway
-├── lib/                       # Shared libraries: primitives, schema, db, node-sdk, services, macros
-├── nodes/                     # Ingestors + automatons
-├── cli/                       # sinexctl
-└── xtask/                     # Developer workflow automation
-```
-
-Rule of thumb:
-- touch `crate/lib/` for shared types, schema, DB, and runtime patterns
-- touch `crate/core/` for ingest/gateway runtime behavior
-- touch `crate/nodes/` for event capture and derived-node logic
-- touch `xtask/` for developer workflow automation
-
-### Development Workflow
-
-```bash
-xtask check              # Fast iteration: compile check
-xtask test               # Run affected tests
-xtask check --full && xtask test  # Before commit
-xtask ci workspace       # Full validation (before PR)
-```
-
-Use `xtask check --lint` when you want clippy in the fast loop, and
-`xtask test --debug -E 'test(name)'` when you need a single test with full output.
-
-If your change touches schema behavior, also run:
-
-```bash
-xtask ci schema-only
-```
-
-For local runtime work:
-
-```bash
-xtask infra start
-xtask run core --logs
-xtask run list
-```
-
-For payload/schema work:
-- update payloads under `crate/lib/sinex-primitives/src/events/payloads/`
-- update schema/taxonomy ownership in `sinex-schema` as needed
-- run targeted `xtask test -p <package>`
-- run `xtask ci schema-only` when schema behavior changes
-
-For node work:
-- implement against `sinex-node-sdk`
-- use the standard node CLI shape (`service` / `scan` / `explore`)
-- validate manually with `xtask run node <name>`
-
-Deployment-facing details live with their owners:
-- schema GitOps: [crate/core/sinex-ingestd/docs/schema_gitops.md](crate/core/sinex-ingestd/docs/schema_gitops.md)
-- system deployment: [nixos/README.md](nixos/README.md)
-- runtime invariants and operational architecture: [docs/current/architecture/SystemOperations_And_Integrity_Architecture.md](docs/current/architecture/SystemOperations_And_Integrity_Architecture.md)
-
-See [CLAUDE.md](CLAUDE.md) for coding patterns and conventions.
-
-### Good First Issues
-
-- Add a new event source ingestor
-- Improve query CLI ergonomics
-- Write documentation for underdocumented components
-- Add test coverage for edge cases
-
----
+| Understand the system shape | [README.md#architecture](README.md#architecture) |
+| Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
+| Deploy on NixOS | [nixos/README.md](nixos/README.md) |
+| Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
+| Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
+| Work on the CLI/tooling loop | [xtask/README.md](xtask/README.md) |
 
 ## Security
 
-**Strengths:**
-- Input validation with adversarial test coverage
-- TLS-only gateway RPC; mTLS for non-loopback
-- Bearer token authentication with constant-time comparison
-- Per-token rate limiting (100 req/sec default)
-- systemd hardening (NoNewPrivileges, ProtectSystem=strict)
+Threat model shorthand:
 
-**Gaps:**
-- Core services still share one database role
-- NATS transport is not enforced TLS-only by default
-- Secret wiring is still only partially consolidated across services
+- trusted single-user local host
+- nodes submit over NATS; the gateway is the hardened external boundary
+- canonical persistence stays single-writer through `sinex-ingestd`
+- host full-disk encryption and capture-time privacy controls are the intended baseline
 
-Blanket at-rest encryption and automatic retention policies are not current system goals; the
-intended model is capture-time privacy controls, host full-disk encryption, and explicit lifecycle
-operations.
+Current controls:
 
-See [Security Posture](docs/current/security.md) for details.
-
----
+- typed payload validation with schema checks
+- TLS-only gateway RPC; non-loopback binds require stronger transport policy
+- bearer-token auth with constant-time comparison
+- per-token rate limiting
+- structured request access audit logs on RPC, SSE, and native-messaging dispatch paths
+- systemd hardening from the NixOS deployment layer, including helper/maintenance units
+- typed managed-NATS TLS and subject-level authorization surfaces in the NixOS module
 
 ## License
 

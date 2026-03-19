@@ -198,7 +198,12 @@ pub trait WindowedNode: Send + Sync + 'static {
 
 // ── ScopeReconcilerNode ────────────────────────────────────────────────
 
-/// A scope-based reconciler: derives scope key(s) from triggers, reconciles per-scope state.
+/// A scope-based reconciler: derives a live scope from each trigger and reconciles per-scope
+/// state.
+///
+/// Live event processing can emit at most one derived event per trigger, so implementations must
+/// resolve to zero or one scope key on that path. Invalidation fan-out is handled separately by
+/// the adapter, which calls [`ScopeReconcilerNode::recompute_scope`] once per affected scope.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not implement `ScopeReconcilerNode`",
     label = "missing ScopeReconcilerNode implementation",
@@ -219,7 +224,11 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         DerivedNodeModel::ScopeReconciler
     }
 
-    /// Derive scope key(s) from a trigger event.
+    /// Derive the live scope key from a trigger event.
+    ///
+    /// Return an empty vector to skip live processing for this trigger. Returning more than one
+    /// key is rejected by the adapter because the live path can emit at most one output event per
+    /// trigger.
     fn scope_keys(&self, input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String>;
 
     /// Reconcile a scope: given the trigger and current state, produce output.
@@ -540,7 +549,6 @@ impl<N: ScopeReconcilerNode + Default> Default for ScopeReconcilerWrapper<N> {
 impl<N> DerivedNodeImpl for ScopeReconcilerWrapper<N>
 where
     N: ScopeReconcilerNode,
-    N::Input: Clone,
 {
     type State = N::State;
 
@@ -569,28 +577,16 @@ where
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
 
-        // Derive scope keys
         let scope_keys = self.0.scope_keys(&input, context);
 
-        // Design constraint: process_derived returns Option<DerivedOutput> (single
-        // output per event). When an event maps to multiple scope keys, only the first
-        // non-None scope output is returned on the live processing path. This is acceptable
-        // because:
-        //   1. All current nodes produce exactly one scope key per event.
-        //   2. The invalidation path (process_invalidation_derived) correctly handles all
-        //      scopes via individual recompute_scope() calls.
-        //   3. Multi-scope live output would require Vec<DerivedOutput> return type.
-        for scope_key in &scope_keys {
-            match self
-                .0
-                .reconcile(state, scope_key, input.clone(), context)
-                .await?
-            {
+        match scope_keys.as_slice() {
+            [] => Ok(None),
+            [scope_key] => match self.0.reconcile(state, scope_key, input, context).await? {
                 Some(output) => {
                     let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
                         NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
                     })?;
-                    return Ok(Some(DerivedOutput {
+                    Ok(Some(DerivedOutput {
                         payload: json_payload,
                         ts_orig: output.ts_orig,
                         source_event_ids: output.source_event_ids,
@@ -598,13 +594,16 @@ where
                         semantics_version: output.semantics_version,
                         scope_key: output.scope_key,
                         equivalence_key: output.equivalence_key,
-                    }));
+                    }))
                 }
-                None => continue,
-            }
+                None => Ok(None),
+            },
+            _ => Err(NodeLogicError::Processing(format!(
+                "ScopeReconcilerNode '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
+                self.0.name(),
+                scope_keys.len()
+            ))),
         }
-
-        Ok(None)
     }
 
     /// Scope reconciler recomputation: parse working set, delegate to `recompute_scope()`.

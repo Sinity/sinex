@@ -106,4 +106,4 @@ These modules run synchronously and use shared database pools. Keep transactions
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
 * CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
 * Service documentation: `crate/lib/sinex-services/docs/*.md`.
-* Future architecture: `docs/vision/project-target-state.md`, `docs/vision/streaming-architecture.md`.
+* Future architecture: `/realm/project/sinex-target-vision/canon/vision.md`, `/realm/project/sinex-target-vision/analysis/domains/capture-infrastructure.md`.

@@ -707,10 +707,7 @@ fn run_schema_apply_inner(verbose: bool) -> Result<bool> {
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Applying declarative schema", 5);
 
-    let handle = tokio::runtime::Handle::current();
-    let result = tokio::task::block_in_place(|| {
-        handle.block_on(sinex_db::apply_schema_for_url(&config.database_url()))
-    });
+    let result = crate::infra::stack::apply_schema_for_database_url(&config.database_url(), false);
 
     let elapsed = start.elapsed();
     match result {

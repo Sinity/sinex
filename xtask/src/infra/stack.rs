@@ -375,27 +375,30 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Apply declarative database schema using sinex-db's in-process helper.
+/// Apply declarative database schema to an explicit database URL.
 ///
-/// Uses `block_in_place` since this is called from sync infra start context
+/// Uses `block_in_place` since this is called from sync command contexts
 /// but needs to call async `apply_schema_for_url`.
-pub fn pg_apply_schema(config: &StackConfig, verbose: bool) -> Result<()> {
+pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("Applying declarative database schema...");
     }
 
     let handle = tokio::runtime::Handle::current();
-    tokio::task::block_in_place(|| {
-        handle.block_on(sinex_db::apply_schema_for_url(&config.database_url()))
-    })
-    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
-    .context("Failed to apply declarative schema")?;
+    tokio::task::block_in_place(|| handle.block_on(sinex_db::apply_schema_for_url(database_url)))
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+        .context("Failed to apply declarative schema")?;
 
     if verbose {
         println!("Schema apply complete");
     }
 
     Ok(())
+}
+
+/// Apply declarative database schema using the current stack configuration.
+pub fn pg_apply_schema(config: &StackConfig, verbose: bool) -> Result<()> {
+    apply_schema_for_database_url(&config.database_url(), verbose)
 }
 
 #[must_use]

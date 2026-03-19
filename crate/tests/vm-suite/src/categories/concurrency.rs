@@ -107,8 +107,7 @@ fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
     let handles: Vec<_> = (0..5)
         .map(|_| {
             thread::spawn(|| {
-                xtask_json(&["check", "--bg"])
-                    .and_then(|v| v["data"]["job_id"].as_u64())
+                xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64())
             })
         })
         .collect();
@@ -125,7 +124,7 @@ fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
 
     // Wait for all jobs to complete (coordinator deduplicates — some may attach)
     for &jid in &job_ids {
-        if wait_for_job(jid, Duration::from_secs(120)).is_none() {
+        if wait_for_job(jid, Duration::from_mins(2)).is_none() {
             runner.fail(name, &format!("job {jid} did not complete within 120s"));
             return;
         }
@@ -172,14 +171,9 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     let name = "zombie reaping: orphaned jobs become terminal after SIGKILL";
 
     // Start a background job
-    let jid = match xtask_json(&["check", "--bg"])
-        .and_then(|v| v["data"]["job_id"].as_u64())
-    {
-        Some(id) => id,
-        None => {
-            runner.fail(name, "failed to start background check job");
-            return;
-        }
+    let jid = if let Some(id) = xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64()) { id } else {
+        runner.fail(name, "failed to start background check job");
+        return;
     };
 
     // Give it a moment to write its PID
@@ -197,7 +191,10 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
 
     // After next `jobs list`, orphaned jobs should be retroactively marked Failed
     let jobs = jobs_list(10);
-    let orphaned: Vec<_> = jobs.iter().filter(|j| j["id"].as_u64() == Some(jid)).collect();
+    let orphaned: Vec<_> = jobs
+        .iter()
+        .filter(|j| j["id"].as_u64() == Some(jid))
+        .collect();
 
     if orphaned.is_empty() {
         // Job not in recent list — either completed normally or was cleaned up
@@ -222,21 +219,16 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     let name = "PID reuse safety: cancel reads /proc/{pid}/cmdline before killing";
 
     // Start a background job and get its PID
-    let jid: u64 = match xtask_json(&["check", "--bg"])
-        .and_then(|v| v["data"]["job_id"].as_u64())
-    {
-        Some(id) => id,
-        None => {
-            runner.fail(name, "failed to start background check job");
-            return;
-        }
+    let jid: u64 = if let Some(id) = xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64()) { id } else {
+        runner.fail(name, "failed to start background check job");
+        return;
     };
 
     thread::sleep(Duration::from_secs(1));
 
     // Get the recorded PID
-    let recorded_pid = xtask_json(&["jobs", "status", &jid.to_string()])
-        .and_then(|v| v["data"]["pid"].as_u64());
+    let recorded_pid =
+        xtask_json(&["jobs", "status", &jid.to_string()]).and_then(|v| v["data"]["pid"].as_u64());
 
     let Some(pid) = recorded_pid else {
         // Job completed before we could read the PID — skip
@@ -246,9 +238,7 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
 
     // Kill the process
     let pid_str = pid.to_string();
-    let _ = Command::new("kill")
-        .args(["-9", pid_str.as_str()])
-        .status();
+    let _ = Command::new("kill").args(["-9", pid_str.as_str()]).status();
 
     thread::sleep(Duration::from_secs(1));
 
@@ -300,9 +290,7 @@ fn test_history_db_consistency(runner: &mut TestRunner) {
     } else {
         runner.fail(
             name,
-            &format!(
-                "expected history to grow by 1 (before={before}, after={after})"
-            ),
+            &format!("expected history to grow by 1 (before={before}, after={after})"),
         );
     }
 }

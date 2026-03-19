@@ -1,64 +1,55 @@
-## Description
+## Intent
 
-<!-- Provide a brief summary of your changes -->
+What is this PR trying to achieve?
 
-## Type of Change
+## Source
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-- [ ] Performance improvement
-- [ ] Code refactoring
+- Closes:
+- Related:
+- Derived from doc / report / note:
 
-## Testing
+## Scope
 
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] All new and existing tests pass locally
-- [ ] I have run `xtask test` to verify basic functionality
+What is intentionally in scope here?
 
-## Abstraction Compliance Checklist
+## Why This Shape
 
-### Database Operations
+Why is this the right implementation or contract shape instead of plausible alternatives?
 
-- [ ] Database access flows through `sinex-db` repositories/query helpers (no ad-hoc `PgPool` usage).
-- [ ] SQL uses `sqlx::query!`/`query_as!` (compile-time checked) or `sqlx::QueryBuilder` for dynamic clauses—never raw string concatenation.
-- [ ] IDs use native UUID bindings directly (no conversion helper shims, no manual parse chains in query paths).
+## Non-Goals / Deferred Work
 
-### Error Handling
+What is explicitly not being solved here?
 
-- [ ] Workspace crates return `SinexError` from `sinex-primitives` rather than `anyhow!` in production paths.
-- [ ] `.with_context()` is used to enrich fallible operations.
-- [ ] No `.unwrap()` / `.expect()` outside tests and intentional crash points.
+## Verification
 
-### Validation & Constants
+List the checks you ran and the exact commands when useful.
 
-- [ ] Inputs go through the shared validation / sanitization helpers (`sinex_primitives::validation`, path sanitizers, etc.) instead of bespoke logic.
-- [ ] Event/source/service identifiers reuse existing constants when available—avoid sprinkling string literals such as `"process.heartbeat"` throughout the codebase.
-- [ ] Timestamps use `Timestamp` from `sinex-primitives` (not `time::OffsetDateTime`).
+```bash
+# commands here
+```
 
-## Code Quality
+## Impact
 
-- [ ] I have run `cargo fmt` to format my code
-- [ ] I have run `cargo clippy` and addressed all warnings
-- [ ] If schema definitions changed, I ran `xtask schema generate` and committed the updated `schemas/` artifacts
-- [ ] I have added/updated documentation as needed
-- [ ] My code follows the project's style guidelines
+- Schema / database:
+- Deployment / operations:
+- Docs / canon:
+- Security / privacy:
 
-## Related Issues
+## Sinex Guardrails
 
-<!-- Link to related issues: Fixes #123, Relates to #456 -->
+- [ ] Existing shared abstractions were reused instead of adding local shims.
+- [ ] Query/persistence paths still flow through the typed `sinex-*` layers rather than ad-hoc escape hatches.
+- [ ] Provenance, replay, and identifier semantics remain honest.
+- [ ] Schema or generated artifacts were updated if this change requires them.
 
-## Additional Notes
+## Follow-Ups
 
-<!-- Any additional information that reviewers should know -->
+Anything that should become a separate issue after this lands.
 
----
+## Checklist
 
-### Reviewer Checklist
-
-- [ ] Code uses proper Sinex abstractions (QueryBuilder, CoreError, constants)
-- [ ] No anti-patterns introduced (raw SQL, anyhow, hardcoded strings)
-- [ ] Tests follow the same abstraction standards
-- [ ] Documentation is clear and up-to-date
-- [ ] Performance impact has been considered
+- [ ] This branch is tied to an issue or an explicit source document/report.
+- [ ] The PR body explains scope and non-goals clearly.
+- [ ] Verification is recorded honestly.
+- [ ] Docs / operational impact is called out if relevant.
+- [ ] Remaining follow-up work is split out instead of hidden.

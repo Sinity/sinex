@@ -339,7 +339,7 @@ mod tests {
         );
 
         // Non-package paths return None (workspace-level handled upstream)
-        assert_eq!(path_to_package("docs/README.md"), None);
+        assert_eq!(path_to_package("README.md"), None);
         assert_eq!(path_to_package("Cargo.toml"), None);
         assert_eq!(path_to_package("Cargo.lock"), None);
         assert_eq!(path_to_package(".config/nextest.toml"), None);
@@ -405,7 +405,7 @@ mod tests {
     #[sinex_test]
     async fn test_files_to_packages_ignores_non_package_files() -> TestResult<()> {
         let files = vec![
-            "docs/README.md".into(),
+            "README.md".into(),
             ".github/workflows/ci.yml".into(),
             "README.md".into(),
         ];

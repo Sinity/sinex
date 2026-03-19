@@ -9,7 +9,7 @@ It is responsible for:
 - Publishing derived events consumed by gateways and health dashboards.
 
 See `crate/lib/sinex-node-sdk/docs/overview.md` for the shared node
-architecture and `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
+architecture and `README.md#deployment--operations`
 for downstream consumers.
 
 ## Watcher Overview

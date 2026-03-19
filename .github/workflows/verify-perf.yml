@@ -23,17 +23,17 @@ jobs:
         cache-name: sinity
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-    - name: Run perf verifier
+    - name: Run perf contract verification
       shell: bash
       run: |
         mkdir -p .artifacts
         nix develop --accept-flake-config --no-pure-eval --command \
           xtask ci postgres -- \
-          xtask verify perf \
+          xtask test bench --contracts \
             --profile fast \
             --runs 2 \
             --threads 12,24 \
-            --output-dir .artifacts/verify-perf \
+            --output .artifacts/verify-perf \
             --history-db .artifacts/bench-verify-history.db
 
     - name: Upload perf artifacts

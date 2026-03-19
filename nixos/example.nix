@@ -12,6 +12,7 @@
   services.sinex = {
     enable = true;
     users.target = "myuser"; # REQUIRED: replace with the user to observe
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     # Optional: select packages explicitly (module defaults work out of the box)
     # package = pkgs.sinex;
@@ -70,4 +71,6 @@
     createHome = true;
     extraGroups = [ "wheel" ];
   };
+
+  environment.etc."sinex/gateway-admin-token".text = "example-admin:admin";
 }

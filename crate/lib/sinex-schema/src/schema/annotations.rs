@@ -56,8 +56,7 @@ impl TableDef for Tags {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct TagRecord {
     pub id: Uuid,
     pub name: String,
@@ -230,8 +229,7 @@ impl TableDef for EventAnnotations {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventAnnotationRecord {
     pub id: Uuid,
     pub event_id: Uuid,

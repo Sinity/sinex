@@ -24,7 +24,7 @@ schemas/
 ### Current Implementation
 
 1. **Development**: Schemas are generated directly from the Rust `EventPayload`
-   implementations via the `sinex-schema` CLI (see below). Each run rewrites
+   implementations. Each run rewrites
    `schemas/v1/<source>/<event>.json` plus the accompanying `registry.json`.
    _Reminder: treat those files as generated output—run the generator rather than editing JSON manually._
 
@@ -137,12 +137,6 @@ Generate type-safe structs/classes from JSON schemas:
 ### Advanced Schema Tooling
 
 - **Schema Diffing**: Visual/programmatic comparison between versions
-
-  ```bash
-  # Conceptual tool
-  sinex-schema diff v1.0 v2.0 --event-type desktop.window_focused
-  # Output: Breaking changes detected, migration script generated
-  ```
 
 - **Migration Scripts**: Auto-generate data migration code for breaking changes
   - SQL migrations for data transformation (v1.0-to-v1.1.sql)

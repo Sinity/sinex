@@ -106,7 +106,10 @@ in
     (mkIf enableGrafana {
       services.grafana = {
         enable = true;
-        settings.server.http_port = monitoringCfg.grafana.port;
+        settings.server = {
+          http_addr = mkDefault "127.0.0.1";
+          http_port = monitoringCfg.grafana.port;
+        };
         provision = mkIf enablePrometheus {
           enable = true;
           datasources.settings.datasources = [

@@ -103,8 +103,7 @@ impl TableDef for Events {
 ///
 /// When the `serde` feature is enabled, this struct supports JSON serialization
 /// and deserialization, making it suitable for API responses and data interchange.
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventRecord {
     pub id: Uuid,
     pub source: String,
@@ -587,8 +586,7 @@ impl TableDef for EventTombstones {
 /// The Rust struct representation of a row from `core.event_tombstones`.
 ///
 /// Used for deserializing tombstone records for analytics and audit queries.
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventTombstoneRecord {
     pub id: Uuid,
     pub source: String,
@@ -705,8 +703,7 @@ impl TableDef for EventReplacements {
 }
 
 /// The Rust struct representation of a row from `audit.event_replacements`.
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventReplacementRecord {
     pub id: Uuid,
     pub old_event_id: Uuid,

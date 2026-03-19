@@ -347,6 +347,6 @@ Graceful Upgrade (Zero-Downtime)
 
 ## See Also
 
-- Patterns: `docs/current/architecture/distributed-patterns.md`
-- Observability: `docs/current/architecture/observability.md`
-- Type system: `docs/current/architecture/type-system-patterns.md`
+- Patterns: `crate/lib/sinex-node-sdk/docs/distributed_patterns.md`
+- Observability: `crate/lib/sinex-node-sdk/docs/observability.md`
+- Type system: `crate/lib/sinex-primitives/docs/type_system_patterns.md`

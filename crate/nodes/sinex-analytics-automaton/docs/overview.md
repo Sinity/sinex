@@ -7,7 +7,7 @@ checkpoint state so replays and continuous streaming share the same code paths.
 Key responsibilities:
 
 - Sampling and aggregating event activity across sources.
-- Emitting derived events that power the operational dashboards described in
-  `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.
+- Emitting derived events that power the operator-facing summaries surfaced through
+  the deployment path in `README.md#deployment--operations`.
 - Coordinating with `sinex-node-sdk` primitives for health checks,
   replays, and graceful shutdown.

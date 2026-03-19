@@ -1,33 +1,44 @@
 # CI Command
 
-Comprehensive continuous integration workflows for the Sinex workspace.
+Continuous-integration helpers for the Sinex workspace.
 
 ## Overview
 
-The `ci` command provides pre-configured CI workflows that combine multiple validation steps into a single command. These are designed for use in CI/CD pipelines and pre-merge validation.
+The `ci` command family provides reusable building blocks for CI/CD pipelines and
+pre-merge validation. The repository's main GitHub Actions gate currently runs the
+Postgres-backed workspace lane:
+
+`xtask xtr ci postgres -- xtask xtr ci workspace`
+
+This page documents that public `xtask ci` surface. Older references to
+`xtask verify` are stale; the public perf-verification entrypoint moved under
+`xtask test bench`.
 
 ## Subcommands
 
 ### `xtask ci workspace`
 
-Full workspace CI validation.
+Postgres-backed workspace validation.
 
 **What it does:**
-1. Runs `cargo fmt --check` to verify formatting
-2. Runs `cargo clippy --all-targets --all-features -- -D warnings` for lint errors
-3. Runs tests with the `default` profile (balanced parallelism, retries enabled)
-4. Generates test result artifacts
+1. Applies declarative schema to the target database
+2. Verifies required contract tables are present
+3. Runs `cargo deny check`
+4. Runs `xtask check` and `xtask lint-forbidden` in parallel
+5. Fails if the workspace is left dirty by generated output
+6. Runs `xtask test --fail-fast -p sinex-e2e-tests`
+7. Runs `xtask test --all --prime --exclude sinex-e2e-tests`
+
+This is the broadest Rust/package gate currently wired into GitHub Actions, but it
+still does **not** cover the NixOS VM suite under `tests/e2e/nixos-vm/`.
 
 **Usage:**
 ```bash
-# Basic usage
-xtask ci workspace
+# Typical local reproduction of the workspace gate
+xtask ci postgres -- xtask ci workspace
 
-# With custom target directory (for CI isolation)
+# Override the target directory when isolating build artifacts
 xtask ci workspace --target-dir /tmp/ci-build
-
-# JSON output for CI integration
-xtask ci workspace --json
 ```
 
 **Parameters:**
@@ -37,96 +48,85 @@ xtask ci workspace --json
 - `0` - All checks passed
 - `1` - One or more checks failed
 
-**JSON Output:**
-```json
-{
-  "command": "ci",
-  "status": "success",
-  "duration_secs": 125.3,
-  "timestamp": "2026-01-23T15:00:00Z",
-  "details": [
-    "Format check passed",
-    "Clippy check passed",
-    "Tests passed: 456 total"
-  ]
-}
-```
-
 **When to use:**
-- **CI/CD pipelines** - Use as the primary validation step
-- **Pre-merge checks** - Ensure code quality before merging
-- **Release validation** - Verify release candidates
+- **Postgres-backed pre-merge validation** - Reproduce the main Rust/package gate
+- **Schema + test integration checks** - Validate schema apply and the package-level
+  test surfaces together
+- **Before touching DB/test/lint surfaces** - Catch the broad workspace failures in one run
 
 **When NOT to use:**
 - **Quick local iteration** - Use `xtask check` instead (much faster)
-- **Debugging tests** - Use `xtask test --debug` for single-threaded execution
-- **Incremental testing** - Use `xtask test` for quick feedback
+- **Schema-only checks** - Use `xtask ci schema-only`
+- **VM deployment-path coverage** - Use `tests/e2e/nixos-vm` separately
+
+### `xtask ci postgres`
+
+Starts an ephemeral local Postgres instance, sets the expected CI environment
+variables, and runs the command that follows `--`.
+
+```bash
+xtask ci postgres -- xtask ci workspace
+xtask ci postgres -- xtask ci schema-only
+```
+
+The main CI workflow uses the `xtr` wrappers around these commands, but the command
+contract is the same.
+
+### `xtask ci schema-only`
+
+Runs only the declarative schema apply + readiness check path:
+
+```bash
+xtask ci postgres -- xtask ci schema-only
+```
+
+Use this when you need confidence in the schema bootstrap path without paying for the
+full workspace test suite.
+
+### `xtask ci check-ready`
+
+Checks that the required contract tables exist in the target database.
+
+```bash
+xtask ci check-ready
+```
+
+This is useful for debugging schema bootstrap failures or verifying a database after
+apply/setup.
 
 ## CI Integration Examples
 
 ### GitHub Actions
 
 ```yaml
-name: CI
-
-on: [push, pull_request]
-
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-
-      - name: Run CI Validation
-        run: xtask ci workspace --json | tee ci-results.json
-
-      - name: Check Results
+      - uses: actions/checkout@v5
+      - name: Postgres-backed workspace gate
         run: |
-          if jq -e '.status == "success"' ci-results.json > /dev/null; then
-            echo "✅ CI passed"
-          else
-            echo "❌ CI failed"
-            exit 1
-          fi
-```
-
-### GitLab CI
-
-```yaml
-test:
-  stage: test
-  script:
-    - xtask ci workspace --json > ci-results.json
-  artifacts:
-    reports:
-      junit: .sinex/nextest/junit.xml
-    paths:
-      - ci-results.json
+          xtask xtr ci postgres -- \
+          xtask xtr ci workspace
 ```
 
 ## Performance Notes
 
 **Expected duration:**
-- **Clean build**: 5-8 minutes (full compilation + tests)
-- **Incremental build**: 1-3 minutes (only changed code)
+- **Clean build**: variable; schema apply, dependency audit, and test execution all contribute
+- **Incremental build**: usually much faster once the Cargo/Nix caches are warm
 
 **Factors affecting duration:**
-- Number of changed files
-- Test parallelism (auto-detected from CPU count)
-- Whether build cache is warm
-- Network latency (for dependencies)
+- Schema/bootstrap cost
+- Cargo/Nix cache warmth
+- Test parallelism and E2E package runtime
+- Dependency audit and lint time
 
 **Optimization tips:**
-1. **Use build caching** - Cache `target/` directory between CI runs
-2. **Dependency caching** - Cache `~/.cargo/registry/` and `~/.cargo/git/`
-3. **Incremental compilation** - Enable in CI for faster rebuilds
-4. **Parallel test execution** - Default profile auto-detects optimal thread count
+1. **Use build caching** - Cache Cargo/Nix artifacts between CI runs
+2. **Run `xtask ci schema-only` first** - It isolates DB/bootstrap failures before the full gate
+3. **Use `schema-only` when narrowing DB bootstrap failures**
+4. **Remember nextest retries are disabled** - Intermittent failures need diagnosis, not hidden reruns
 
 ## Comparison with Other Commands
 
@@ -134,7 +134,8 @@ test:
 |---------|---------|----------|----------|
 | `xtask check` | Fast compile check | ~10s | Local iteration |
 | `xtask test` | Quick test run | ~30-60s | Pre-commit check |
-| `xtask ci workspace` | Full CI validation | ~2-5min | Pre-merge/CI pipeline |
+| `xtask ci schema-only` | Schema apply + readiness | Varies | DB/bootstrap validation |
+| `xtask ci workspace` | Broad Postgres-backed package gate | Varies | Pre-merge/CI pipeline |
 | `xtask doctor` | Environment diagnostics | ~5s | Troubleshooting |
 
 ## Troubleshooting
@@ -149,9 +150,9 @@ test:
    xtask doctor --pipelines
    ```
 
-2. **Run CI command locally:**
+2. **Run the same command locally:**
    ```bash
-   xtask ci workspace
+   xtask ci postgres -- xtask ci workspace
    ```
 
 3. **Compare configurations:**
@@ -159,9 +160,9 @@ test:
    - NATS configuration
    - TLS certificate paths
 
-### CI timeout
+### CI timeout or unexpectedly long runs
 
-**Cause:** Tests taking too long
+**Cause:** Schema/bootstrap cost, cache misses, or slow tests
 
 **Solutions:**
 1. **Increase timeout** in CI configuration (default: 30min)
@@ -169,14 +170,15 @@ test:
    ```bash
    xtask history tests slowest
    ```
-3. **Review test profile** - May need to reduce parallelism
+3. **Narrow the failing lane first** - Use `schema-only` before rerunning the full workspace gate
+4. **Review test profile** - The default nextest profile uses no retries
 
 ### Intermittent CI failures
 
-**Cause:** Flaky tests or timing issues
+**Cause:** Flaky tests, timing issues, or brittle environment assumptions
 
 **Solutions:**
-1. **Check retry configuration** in `.config/nextest.toml`
+1. **Check the failing lane** - schema/bootstrap, e2e package, or general tests
 2. **Identify flaky tests:**
    ```bash
    xtask history tests getting-slower
@@ -186,6 +188,6 @@ test:
 ## See Also
 
 - **Test profiles** - `.config/nextest.toml` - Profile configuration
-- **CI preflight** - `xtask ci workspace` - More comprehensive validation
+- **Verification overview** - `xtask/docs/verification.md`
 - **Doctor command** - `xtask doctor` - Environment diagnostics
 - **Testing guide** - `xtask/docs/sandbox/README.md` - Comprehensive testing documentation

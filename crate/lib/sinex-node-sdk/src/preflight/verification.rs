@@ -163,7 +163,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
 
     if !events_table_exists {
         return Err(SinexError::processing(
-            "core.events table does not exist".to_string(),
+            "core.events table does not exist; schema apply has not completed for the effective runtime database".to_string(),
         ));
     }
 

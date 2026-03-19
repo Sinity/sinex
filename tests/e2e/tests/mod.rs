@@ -1,5 +1,3 @@
-#![cfg(feature = "slow-tests")]
-
 // # System Tests
 //
 // Complete system validation tests that verify end-to-end behavior, external integrations,
@@ -109,6 +107,7 @@ mod material_idempotency_test;
 mod memory_usage_test;
 mod migration_safety_test;
 mod model_based_event_repo_test;
+mod model_based_schema_test;
 mod namespace_isolation_test;
 mod nix_module_integration_test;
 mod node_crash_recovery_test;

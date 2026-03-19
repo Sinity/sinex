@@ -158,8 +158,6 @@ impl MockGatewayClient {
                     replay_control: ReplayControlHealth {
                         status: HealthStatus::Healthy,
                         enabled: true,
-                        bypass_allowed: false,
-                        bypass_active: false,
                         connected: true,
                         last_error: None,
                     },

@@ -46,6 +46,10 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
     // Get database URL
     let database_url = resolve_database_url()?;
 
+    details.insert(
+        "database_url_source",
+        json!("DATABASE_URL (effective env-scoped)"),
+    );
     details.insert("database_url", json!(redact_password(&database_url)));
 
     // Test connection with timeout
@@ -60,13 +64,14 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
             pool
         }
         Ok(Err(e)) => {
-            let error_msg = format!("Database connection failed: {e}");
+            let error_msg =
+                format!("Database connection failed against effective runtime database: {e}");
             messages.push(format!("✗ {error_msg}"));
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
         Err(_) => {
             messages.push(format!(
-                "✗ Database connection timeout ({}s)",
+                "✗ Database connection timeout against effective runtime database ({}s)",
                 timeouts::TEST_DATABASE_TIMEOUT.as_secs()
             ));
             return Ok((VerificationStatus::Fail, json!(details), messages));

@@ -38,6 +38,7 @@ impl NatsHarness {
 pub fn admin_auth() -> RpcAuthContext {
     RpcAuthContext {
         token_prefix: "test****".to_string(),
+        actor_id: "token:test****".to_string(),
         authenticated_at: temporal::now(),
         role: Role::Admin,
     }

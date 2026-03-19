@@ -185,15 +185,9 @@ impl<T> EventBuilder<T, HasProvenance> {
             SinexError::invalid_state("EventBuilder missing provenance when building")
         })?;
 
-        // Auto-sync: if provenance carries an operation_id, populate the
-        // event-level `created_by_operation_id` so it persists to the DB column.
-        let created_by_operation_id = match &provenance {
-            Provenance::Synthesis {
-                operation_id: Some(op_id),
-                ..
-            } => Some(*op_id.as_uuid()),
-            _ => None,
-        };
+        // Auto-sync: synthesis operation lineage lives in the dedicated DB
+        // column, so keep the event-level field aligned with provenance.
+        let created_by_operation_id = provenance.operation_uuid();
 
         Ok(Event {
             id: self.id,
@@ -479,6 +473,12 @@ impl Provenance {
             Provenance::Synthesis { operation_id, .. } => *operation_id,
             Provenance::Material { .. } => None,
         }
+    }
+
+    /// Get the operation UUID used by event persistence, if any.
+    #[must_use]
+    pub fn operation_uuid(&self) -> Option<Uuid> {
+        self.operation_id().map(Id::to_uuid)
     }
 }
 

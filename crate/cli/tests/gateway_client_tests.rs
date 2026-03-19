@@ -61,8 +61,6 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,
                 enabled: true,
-                bypass_allowed: false,
-                bypass_active: false,
                 connected: true,
                 last_error: None,
             },
@@ -767,8 +765,6 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
                     "replay_control": {
                         "status": "healthy",
                         "enabled": true,
-                        "bypass_allowed": false,
-                        "bypass_active": false,
                         "connected": true,
                         "last_error": null
                     }

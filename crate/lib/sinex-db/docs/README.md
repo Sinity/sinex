@@ -15,6 +15,7 @@ This crate provides:
 |------|-------------|
 | [patterns.md](./patterns.md) | Repository trait, DbPoolExt, SQLX compile-time validation |
 | [diagrams.md](./diagrams.md) | Schema visualization, repository architecture diagrams |
+| [data_lifecycle.md](./data_lifecycle.md) | Live/archive/tombstone lifecycle and replay-facing retention rules |
 
 ## Quick Start
 

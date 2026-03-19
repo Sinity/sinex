@@ -72,10 +72,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         );
         std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
         std::env::set_var("SINEX_RPC_TOKEN", "test-token:admin");
-
-        // ServiceContainer::new tries to connect to NATS for replay control.
-        // In test context, NATS may not be available. Allow bypass so it's non-fatal.
-        std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+        std::env::set_var("SINEX_NATS_URL", ctx.nats_handle()?.client_url().to_string());
     }
 
     let port = reserve_port()?;
@@ -127,12 +124,10 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 
 #[sinex_test]
 async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
-    // DLQ operations require NATS. Without it, the RPC call will time out.
-    // Use a short timeout so the test completes quickly, and accept either
-    // success (NATS available) or a timeout/error (no NATS).
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
         .arg("test-token:admin")
@@ -148,7 +143,7 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
 
     gw.handle.abort();
 
-    // Verify the command doesn't panic — it may fail if NATS isn't available
+    // Verify the command doesn't panic even if the DLQ is empty or not yet populated.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success()
@@ -164,6 +159,7 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
 
 #[sinex_test]
 async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
     // `sinexctl watch` is an infinite polling loop — it never exits.
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
@@ -219,6 +215,7 @@ async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::
 
 #[sinex_test]
 async fn sinexctl_dlq_peek_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 

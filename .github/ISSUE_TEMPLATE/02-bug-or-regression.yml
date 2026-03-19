@@ -1,0 +1,62 @@
+name: Bug or Regression
+description: Report behavior that is wrong, misleading, broken, or has regressed.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What is happening?
+      placeholder: Include the wrong behavior, misleading signal, or failure mode.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction or trigger
+      description: How can this be reproduced or exercised?
+      placeholder: Commands, scenario, host state, input, or sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Suspected scope
+      description: Where does this likely live?
+      placeholder: Specific crates/modules/services/docs/tests if known.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - p0 - data loss / corruption / unsafe deployment
+        - p1 - major broken behavior / blocker
+        - p2 - important but workaround exists
+        - p3 - minor / localized
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Logs, screenshots, traces, failing output, or code references.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Fix acceptance criteria
+      description: What must be true before this can be closed?
+      placeholder: |
+        - [ ] Root cause identified
+        - [ ] Behavior corrected
+        - [ ] Regression coverage added or verification recorded
+    validations:
+      required: true

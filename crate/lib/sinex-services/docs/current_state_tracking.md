@@ -8,7 +8,12 @@ Sinex uses **TimescaleDB continuous aggregates** and **PostgreSQL materialized v
 
 **Rationale**: After evaluating streaming databases (Materialize, RisingWave), we determined that TimescaleDB continuous aggregates provide sufficient freshness and overlap significantly with streaming database capabilities, while avoiding operational overhead.
 
-See: `docs/current/analysis/streaming-database-evaluation.md`
+**Compressed conclusion**:
+- keep PostgreSQL + TimescaleDB as the active current-state substrate,
+- use continuous aggregates for time-bucketed operational state,
+- use materialized views for entity-level current-state projections,
+- reserve synthesis events for business-meaningful derived facts, not generic state mirrors,
+- revisit dedicated streaming databases only if freshness or scale requirements exceed what this stack can realistically satisfy.
 
 ## State Tracking Approaches
 
@@ -408,12 +413,10 @@ following thresholds is sustainably exceeded:
 4. **Multi-hypertable real-time materialized views** — would require a dedicated
    incremental view maintenance layer.
 
-When any of these triggers fires, evaluate RisingWave (see
-[Streaming Database Evaluation](../analysis/streaming-database-evaluation.md))
-before committing to the architecture change.
+When any of these triggers fires, re-open the streaming-database question using the decision
+summary above before committing to the architecture change.
 
 ## See Also
 
-- [Streaming Database Evaluation](../analysis/streaming-database-evaluation.md) - Architecture decision rationale
 - [TimescaleDB Continuous Aggregates Documentation](https://docs.timescale.com/use-timescale/latest/continuous-aggregates/)
 - [PostgreSQL Materialized Views Documentation](https://www.postgresql.org/docs/current/rules-materializedviews.html)

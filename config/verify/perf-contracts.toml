@@ -1,4 +1,4 @@
-# Performance budget contracts for `xtask verify perf`.
+# Performance budget contracts for `xtask test bench --contracts`.
 # Scenario keys must match benchmark scenario keys (e.g. t=12, t=24).
 
 [defaults]

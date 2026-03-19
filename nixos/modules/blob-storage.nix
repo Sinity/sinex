@@ -3,6 +3,8 @@
 with lib;
 
 let
+  systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  inherit (systemdHardening) mkHelperServiceConfig;
   cfg = config.services.sinex;
   blob = cfg.storage.blob;
   dlq = cfg.storage.dlq;
@@ -86,11 +88,12 @@ in
         after = [ "local-fs.target" ];
         path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
-          Type = "oneshot";
-          User = repositoryUser;
-          Group = repositoryUser;
-          RemainAfterExit = true;
           ExecStart = initScript;
+        } // mkHelperServiceConfig {
+          user = repositoryUser;
+          group = repositoryUser;
+          remainAfterExit = true;
+          readWritePaths = [ repoPath ];
         };
       };
     })
@@ -102,11 +105,12 @@ in
         requires = [ "sinex-blob-init.service" ];
         path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
-          Type = "oneshot";
-          User = repositoryUser;
-          Group = repositoryUser;
           WorkingDirectory = repoPath;
           ExecStart = gcScript;
+        } // mkHelperServiceConfig {
+          user = repositoryUser;
+          group = repositoryUser;
+          readWritePaths = [ repoPath ];
         };
       };
 
@@ -127,12 +131,13 @@ in
         requires = [ "sinex-blob-init.service" ];
         path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
-          Type = "oneshot";
-          User = repositoryUser;
-          Group = repositoryUser;
           WorkingDirectory = repoPath;
           ExecStart = fsckScript;
           TimeoutStartSec = 3600;
+        } // mkHelperServiceConfig {
+          user = repositoryUser;
+          group = repositoryUser;
+          readWritePaths = [ repoPath ];
         };
       };
 
@@ -153,11 +158,12 @@ in
         requires = [ "sinex-blob-init.service" ];
         path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
-          Type = "oneshot";
-          User = repositoryUser;
-          Group = repositoryUser;
           WorkingDirectory = repoPath;
           ExecStart = healthScript;
+        } // mkHelperServiceConfig {
+          user = repositoryUser;
+          group = repositoryUser;
+          readWritePaths = [ repoPath ];
         };
       };
 

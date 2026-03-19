@@ -8,12 +8,6 @@ name = "sinex-terminal-command-canonicalizer"
 [dependencies]
 human-panic = "2.0"
 
-[features]
-default = [
-]
-metrics = [
-]
-
 [package.version]
 workspace = true
 

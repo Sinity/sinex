@@ -119,7 +119,7 @@ pub enum TestSubcommand {
     Vm(VmArgs),
 }
 
-/// Benchmark arguments (absorbs former `xtask verify` functionality)
+/// Benchmark arguments and perf-contract/report workflow
 #[derive(Debug, Clone, clap::Args)]
 pub struct BenchArgs {
     /// Benchmark mode
@@ -150,7 +150,7 @@ pub struct BenchArgs {
     #[arg(long)]
     pub contracts_file: Option<PathBuf>,
 
-    /// Print summary from a perf report JSON (replaces `xtask verify report`)
+    /// Print summary from a stored perf report JSON
     #[arg(long)]
     pub report: Option<PathBuf>,
 
@@ -720,7 +720,7 @@ fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<CommandResul
     }
 
     if bench.contracts {
-        // Contract enforcement mode (replaces `xtask verify perf`)
+        // Contract enforcement mode for stored perf budgets.
         return crate::commands::verify::execute_perf(
             crate::commands::verify::PerfArgs {
                 profile: bench.profile.clone(),

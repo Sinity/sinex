@@ -137,7 +137,7 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 - ✅ Shared quota across all gateway instances
 - ✅ State survives hot reload / rolling upgrades
 - ✅ No quota reset bypass attacks
-- ✅ Graceful degradation when NATS unavailable
+- ✅ Fails fast when NATS is absent at startup; live KV issues fall back in-process
 
 **Environment Variables:**
 
@@ -268,7 +268,7 @@ This ensures newer builds win leadership even with same semver (critical for dev
 
 | State Type | Storage | Shared Across Instances | Survives Restart | Notes |
 |------------|---------|------------------------|------------------|-------|
-| **Rate Limits** | NATS KV | ✅ Yes | ✅ Yes | Fallback to in-memory if NATS unavailable |
+| **Rate Limits** | NATS KV | ✅ Yes | ✅ Yes | Falls back to in-memory only for live KV init failures after startup |
 | **Active Connections** | In-memory counter | ❌ No | ❌ No | Tracked for graceful drain only |
 | **Metrics** | In-memory counters | ❌ No | ❌ No | Emitted to NATS before shutdown |
 | **Replay Control** | NATS KV | ✅ Yes | ✅ Yes | Already shared, no changes needed |
@@ -329,8 +329,9 @@ Load Balancer
    with a 500ms timeout, catching stale connections that still report `Connected`
    in-process. `health_report()` aggregates DB, NATS, and replay-control status
    into a structured JSON response. The `/health` endpoint now returns that report
-   rather than a plain 503/200 string; NATS degradation is reported in the body
-   but doesn't flip the HTTP status (DB is the hard gate).
+   rather than a plain 503/200 string; HTTP 200 now requires DB, NATS, and replay
+   control to be live, while `status`, `healthy`, `serving`, and
+   `degradation_reasons` distinguish full readiness from NATS / replay-control outages.
 
 2. **Rate Limit Synchronization Batching** — ✅ **Implemented** (`distributed_rate_limit.rs`):
    Uses a local token reservation system (`DashMap`) to batch KV operations.

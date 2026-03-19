@@ -21,12 +21,6 @@ human-panic = "2.0"
 [dev-dependencies]
 tempfile = "3.13"
 
-[features]
-default = [
-]
-metrics = [
-]
-
 [package.version]
 workspace = true
 

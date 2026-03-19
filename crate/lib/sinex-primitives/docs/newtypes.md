@@ -252,6 +252,6 @@ let five_mib = Bytes::from_str("5MiB")?;
 ```
 
 ## Related Documentation
-- [Environment Variables](./environment-variables.md) - List of all `SINEX_*` variables
+- [NixOS Module Surface](../../../../nixos/modules/README.md) - deployment configuration surface
 - [Validation Ranges](../../exploration/validation-ranges.md) - Details on validation implementation
 - API docs: `cargo doc --package sinex-core --open` (see `types` module)

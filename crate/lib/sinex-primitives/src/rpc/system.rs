@@ -23,8 +23,6 @@ pub struct ComponentHealth {
 pub struct ReplayControlHealth {
     pub status: HealthStatus,
     pub enabled: bool,
-    pub bypass_allowed: bool,
-    pub bypass_active: bool,
     pub connected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,

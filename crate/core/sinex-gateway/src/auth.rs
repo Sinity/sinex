@@ -34,6 +34,15 @@ pub enum Role {
 }
 
 impl Role {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Role::ReadOnly => "readonly",
+            Role::Write => "write",
+            Role::Admin => "admin",
+        }
+    }
+
     /// Parse role from token suffix.
     pub fn from_token_suffix(suffix: &str) -> Result<Self, TokenRoleError> {
         match suffix {
@@ -115,11 +124,7 @@ impl Role {
 
 impl fmt::Display for Role {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Role::ReadOnly => write!(f, "readonly"),
-            Role::Write => write!(f, "write"),
-            Role::Admin => write!(f, "admin"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 

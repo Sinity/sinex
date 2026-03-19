@@ -1,6 +1,9 @@
 use super::conversions::{EventRecordExt, extract_provenance};
 use crate::JsonValue;
 use crate::models::Event;
+use crate::postgres_copy::{
+    event_copy_column_list_sql, event_copy_insert_select_sql, event_copy_staging_columns_sql,
+};
 use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
@@ -160,6 +163,22 @@ where
     }
 
     Ok(())
+}
+
+fn resolved_created_by_operation_id(event: &Event<JsonValue>) -> DbResult<Option<Uuid>> {
+    let provenance_operation_id = event.provenance.operation_uuid();
+
+    match (event.created_by_operation_id, provenance_operation_id) {
+        (Some(event_level), Some(provenance_level)) if event_level != provenance_level => {
+            Err(SinexError::invalid_state(format!(
+                "operation lineage mismatch: event.created_by_operation_id={event_level} \
+                 but provenance.operation_id={provenance_level}"
+            )))
+        }
+        (Some(event_level), _) => Ok(Some(event_level)),
+        (None, Some(provenance_level)) => Ok(Some(provenance_level)),
+        (None, None) => Ok(None),
+    }
 }
 
 impl<'a> Repository<'a> for EventRepository<'a> {
@@ -530,13 +549,13 @@ impl<'a> EventRepository<'a> {
         let payload = event.payload.clone();
         let node_run_id = event.node_run_id;
         let payload_schema_id = event.payload_schema_id;
+        let created_by_operation_id = resolved_created_by_operation_id(&event)?;
 
         // Synthetic event metadata
         let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
         let semantics_version = event.semantics_version.clone();
         let scope_key = event.scope_key.clone();
         let equivalence_key = event.equivalence_key.clone();
-        let created_by_operation_id = event.created_by_operation_id;
         let node_model_str = event.node_model.map(|m| m.to_string());
 
         // Execute with retry logic
@@ -706,6 +725,7 @@ impl<'a> EventRepository<'a> {
 
         // Synthetic event metadata
         let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
+        let created_by_operation_id = resolved_created_by_operation_id(&event)?;
         let node_model_str = event.node_model.map(|m| m.to_string());
 
         let record = sqlx::query_as!(
@@ -772,7 +792,7 @@ impl<'a> EventRepository<'a> {
             event.semantics_version,
             event.scope_key,
             event.equivalence_key,
-            event.created_by_operation_id,
+            created_by_operation_id,
             node_model_str
         )
         .fetch_one(&mut **tx)
@@ -977,7 +997,7 @@ impl<'a> EventRepository<'a> {
             semantics_versions.push(event.semantics_version.clone());
             scope_keys.push(event.scope_key.clone());
             equivalence_keys.push(event.equivalence_key.clone());
-            created_by_operation_ids.push(event.created_by_operation_id);
+            created_by_operation_ids.push(resolved_created_by_operation_id(event)?);
             node_models.push(event.node_model.map(|m| m.to_string()));
         }
 
@@ -1277,7 +1297,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// # Why not query params?
     /// `PostgreSQL`'s protocol limits a single statement to 65 535 bind parameters.
-    /// With 16 columns per row that caps VALUES batches at ~4 000 rows. COPY has no
+    /// With 22 writable event columns per row that caps VALUES batches at ~2 900 rows. COPY has no
     /// such limit and has lower per-row overhead.
     ///
     /// # Why not synthesis batches?
@@ -1299,6 +1319,10 @@ impl<'a> EventRepository<'a> {
                 .map_err(|e| db_error(e, "serialise batch row for COPY insert"))?;
         }
 
+        let staging_columns_sql = event_copy_staging_columns_sql();
+        let copy_columns_sql = event_copy_column_list_sql();
+        let insert_select_sql = event_copy_insert_select_sql();
+
         let mut tx = pool
             .begin()
             .await
@@ -1308,35 +1332,15 @@ impl<'a> EventRepository<'a> {
         // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
         // can write them without UUIDv7-type complications.  The INSERT SELECT below
         // applies `::uuid` casts when copying into `core.events`.
-        sqlx::query(
+        let create_staging_sql = format!(
             "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
-                id                      UUID        NOT NULL,
-                source                  TEXT        NOT NULL,
-                event_type              TEXT        NOT NULL,
-                ts_orig                 TIMESTAMPTZ,
-                ts_orig_subnano         INTEGER,
-                host                    TEXT        NOT NULL,
-                payload                 JSONB       NOT NULL,
-                source_material_id      UUID,
-                anchor_byte             BIGINT,
-                offset_start            BIGINT,
-                offset_end              BIGINT,
-                offset_kind             TEXT,
-                source_event_ids        UUID[],
-                payload_schema_id       UUID,
-                node_run_id             UUID,
-                associated_blob_ids     UUID[],
-                temporal_policy         TEXT,
-                semantics_version       TEXT,
-                scope_key               TEXT,
-                equivalence_key         TEXT,
-                created_by_operation_id UUID,
-                node_model              TEXT
-            )",
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
+                {staging_columns_sql}
+            )"
+        );
+        sqlx::query(&create_staging_sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
 
         sqlx::query("TRUNCATE sinex_batch_staging")
             .execute(&mut *tx)
@@ -1347,16 +1351,9 @@ impl<'a> EventRepository<'a> {
         // through `conn` is fully released before we run the INSERT SELECT.
         {
             let conn: &mut PgConnection = &mut tx;
+            let copy_sql = format!("COPY sinex_batch_staging ({copy_columns_sql}) FROM STDIN");
             let mut copy_writer = conn
-                .copy_in_raw(
-                    "COPY sinex_batch_staging (
-                        id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                        source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                        source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
-                        temporal_policy, semantics_version, scope_key, equivalence_key,
-                        created_by_operation_id, node_model
-                    ) FROM STDIN",
-                )
+                .copy_in_raw(&copy_sql)
                 .await
                 .map_err(|e| db_error(e, "start COPY for batch insert"))?;
 
@@ -1373,33 +1370,18 @@ impl<'a> EventRepository<'a> {
         } // `conn` dropped here → `tx` exclusively accessible again
 
         // Move rows from staging into core.events, applying UUIDv7 casts.
-        let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
-            "INSERT INTO core.events (
-                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, node_run_id, associated_blob_ids,
-                temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model
-            )
+        let insert_sql = format!(
+            "INSERT INTO core.events ({copy_columns_sql})
             SELECT
-                id::uuid,
-                source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                source_material_id::uuid,
-                anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids::uuid[],
-                payload_schema_id::uuid,
-                node_run_id::uuid,
-                associated_blob_ids::uuid[],
-                temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id::uuid,
-                node_model
+                {insert_select_sql}
             FROM sinex_batch_staging
             ON CONFLICT (id) DO NOTHING
-            RETURNING id::uuid",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "insert-select from staging for COPY batch insert"))?;
+            RETURNING id::uuid"
+        );
+        let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(&insert_sql)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "insert-select from staging for COPY batch insert"))?;
 
         tx.commit()
             .await
@@ -2464,6 +2446,67 @@ mod tests {
         record.source_event_ids = Some(vec![]);
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("source_event_ids"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn synthesis_operation_lineage_round_trips_from_record() -> color_eyre::Result<()> {
+        let mut record = base_record();
+        let parent_id = uuid::Uuid::now_v7();
+        let operation_id = uuid::Uuid::now_v7();
+        record.source_event_ids = Some(vec![parent_id]);
+        record.created_by_operation_id = Some(operation_id);
+
+        let event = record.try_to_event()?;
+
+        match &event.provenance {
+            crate::models::Provenance::Synthesis {
+                source_event_ids,
+                operation_id: provenance_operation_id,
+            } => {
+                assert_eq!(
+                    source_event_ids.as_slice(),
+                    &[sinex_primitives::events::EventId::from_uuid(parent_id)]
+                );
+                assert_eq!(
+                    provenance_operation_id.as_ref().map(Id::to_uuid),
+                    Some(operation_id)
+                );
+            }
+            other => panic!("expected synthesis provenance, got {other:?}"),
+        }
+        assert_eq!(event.created_by_operation_id, Some(operation_id));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn mismatched_operation_lineage_is_rejected() -> color_eyre::Result<()> {
+        let parent_id = Id::<Event<JsonValue>>::new();
+        let provenance_operation_id = Id::<sinex_primitives::events::builder::Operation>::new();
+        let event = Event {
+            id: Some(Id::new()),
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.event")?,
+            host: HostName::new("localhost"),
+            payload: json!({"ok": true}),
+            ts_orig: Some(Timestamp::now()),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: crate::models::Provenance::from_synthesis_safe(parent_id, vec![])
+                .with_operation(provenance_operation_id),
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: Some(uuid::Uuid::now_v7()),
+            node_model: None,
+        };
+
+        let err = resolved_created_by_operation_id(&event).expect_err("should fail");
+        assert!(format!("{err}").contains("operation lineage mismatch"));
+
         Ok(())
     }
 }

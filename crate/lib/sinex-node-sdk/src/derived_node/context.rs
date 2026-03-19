@@ -38,6 +38,12 @@ pub struct DerivedTriggerContext {
 }
 
 impl DerivedTriggerContext {
+    /// Operation lineage, if this processing call belongs to a replay/operation.
+    #[must_use]
+    pub fn operation_id(&self) -> Option<Id<Operation>> {
+        self.created_by_operation_id
+    }
+
     /// Convenience: get the trigger event ID as a raw UUID.
     #[must_use]
     pub fn trigger_uuid(&self) -> Uuid {
@@ -54,7 +60,9 @@ impl DerivedTriggerContext {
             ts_coided: event.id.map_or_else(Timestamp::now, |id| id.timestamp()),
             processing_mode: ProcessingMode::Live,
             trigger_kind: TriggerKind::NewEvent,
-            created_by_operation_id: None,
+            created_by_operation_id: event
+                .created_by_operation_id
+                .map(Id::<Operation>::from_uuid),
         }
     }
 
@@ -68,7 +76,9 @@ impl DerivedTriggerContext {
             ts_coided: event.id.map_or_else(Timestamp::now, |id| id.timestamp()),
             processing_mode: ProcessingMode::Replay,
             trigger_kind: TriggerKind::ReplayRecompute,
-            created_by_operation_id: operation_id,
+            created_by_operation_id: operation_id.or_else(|| {
+                event.created_by_operation_id.map(Id::<Operation>::from_uuid)
+            }),
         }
     }
 }

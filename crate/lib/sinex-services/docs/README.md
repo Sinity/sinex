@@ -20,6 +20,10 @@ Services are intentionally thin, stateless facades around database pools and spe
 | [`PkmService`](./pkm.md) | Knowledge Graph & Provenance | Entity/Relation creation, source material registry, stage-as-you-go workflows. |
 | [`SearchService`](./search.md) | Multi-dimensional search | Full-text event search, multi-field filtering, snippet extraction. |
 
+### Additional References
+
+- [`current_state_tracking.md`](./current_state_tracking.md) – continuous aggregates, materialized views, and current-state read models.
+
 ## Design Principles
 
 ### Thin Orchestration

@@ -1,6 +1,6 @@
 # Ingestd Patterns
 
-> Extracted from `docs/current/architecture/advanced-implementation-patterns.md` (Parts 1.3, 16)
+> Maintained ingestd-side pattern note for event sourcing, idempotency, and backpressure.
 
 ## Event Sourcing Architecture
 
@@ -115,6 +115,5 @@ fn validate_provenance(raw_event: &RawEvent) -> Result<PreparedProvenance> {
 
 ## See Also
 
-- Full patterns analysis: `docs/current/architecture/advanced-implementation-patterns.md`
 - Pipeline design: [pipeline-design.md](./pipeline-design.md)
 - Architecture: [architecture.md](./architecture.md)

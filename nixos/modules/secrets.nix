@@ -34,6 +34,24 @@ let
   nonExport = [
     "sinex-local-db"
     "sinex-gateway-admin-token"  # gateway reads via SINEX_GATEWAY_ADMIN_TOKEN_FILE (file path, not raw content)
+    "sinex-nats-ca"
+    "sinex-nats-client-ca"
+    "sinex-nats-client-cert"
+    "sinex-nats-client-creds"
+    "sinex-nats-client-key"
+    "sinex-nats-client-nkey"
+    "sinex-nats-server-cert"
+    "sinex-nats-server-key"
+    "sinex-nats-token"
+    "nats-ca"
+    "nats-client-ca"
+    "nats-client-cert"
+    "nats-client-creds"
+    "nats-client-key"
+    "nats-client-nkey"
+    "nats-server-cert"
+    "nats-server-key"
+    "nats-token"
     "sinex-remote-db"
     "sinex-remote-nats-ca"
     "sinex-remote-nats-cert"
@@ -53,8 +71,10 @@ let
   defaultIdentities = [ "/etc/ssh/ssh_host_ed25519_key" ]
     ++ optional (builtins.pathExists "/home/${defaultOwner}/.ssh/id_ed25519") "/home/${defaultOwner}/.ssh/id_ed25519";
 
-  # Whether to actually configure agenix
-  shouldConfigureAgenix = agenixAvailable && cfg.enable && (cfg.secrets.enableAgenix or false);
+  # Whether to actually configure agenix. Secret-backed provisioning paths such as
+  # `sinnix.services.sinex.provisionDatabase` need the resolved secret files even
+  # before the full Sinex service stack is enabled.
+  shouldConfigureAgenix = agenixAvailable && (cfg.secrets.enableAgenix or false);
 
 in
 {

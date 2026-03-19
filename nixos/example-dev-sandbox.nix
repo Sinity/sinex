@@ -18,6 +18,7 @@
   services.sinex = {
     enable = true;
     users.target = "developer";
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     database = {
       autoSetup = true;
@@ -124,6 +125,8 @@
       };
     };
   };
+
+  environment.etc."sinex/gateway-admin-token".text = "example-dev-sandbox-admin:admin";
 
   users.users.developer = {
     isNormalUser = true;

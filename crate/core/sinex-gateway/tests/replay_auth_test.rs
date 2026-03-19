@@ -53,7 +53,6 @@ impl RoleGateway {
         );
         env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", role_token);
-        env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
         env_guard.set("DATABASE_URL", database_url);
         env_guard.set("SINEX_NATS_URL", nats_url);
 

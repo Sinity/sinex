@@ -108,6 +108,8 @@ shadow-rs = "0.35"
 shadow-rs = "0.35"
 
 [dev-dependencies]
+portable-pty = "0.8"
+vt100 = "0.15"
 
 [lints]
 workspace = true

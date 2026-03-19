@@ -17,10 +17,11 @@ fn require_git_annex() -> TestResult<()> {
 }
 
 async fn blob_test_services(
-    ctx: &TestContext,
+    ctx: TestContext,
     repo_name: &str,
     max_blob_bytes: usize,
 ) -> TestResult<(TempDir, ServiceContainer)> {
+    let ctx = ctx.with_nats().shared().await?;
     let annex_dir = TempDir::new()?;
     let repo_path = annex_dir.path().join(repo_name);
     let repo_utf8 = Utf8PathBuf::from_path_buf(repo_path.clone())
@@ -35,7 +36,7 @@ async fn blob_test_services(
     );
     config.annex_path = repo_utf8.to_string();
     config.max_blob_bytes = max_blob_bytes;
-    config.replay_control_optional = true;
+    config.nats.url = ctx.nats_handle()?.client_url().to_string();
 
     let services = ServiceContainer::new(&config).await?;
     Ok((annex_dir, services))
@@ -44,7 +45,7 @@ async fn blob_test_services(
 #[sinex_test]
 async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_annex_dir, services) = blob_test_services(&ctx, "gateway-blob-test", 1024 * 1024).await?;
+    let (_annex_dir, services) = blob_test_services(ctx, "gateway-blob-test", 1024 * 1024).await?;
 
     // Simulate a 10MB upload with no authentication metadata.
     let oversized_blob = vec![0u8; 10 * 1024 * 1024];
@@ -68,7 +69,7 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
     let (_annex_dir, services) =
-        blob_test_services(&ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
+        blob_test_services(ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
 
     let before: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&ctx.pool)

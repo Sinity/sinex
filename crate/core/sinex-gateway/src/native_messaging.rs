@@ -904,7 +904,7 @@ async fn dispatch_method(
     };
 
     // Use shared dispatch table from rpc_server
-    crate::rpc_server::dispatch_rpc_method(services, method, params, &auth).await
+    crate::rpc_server::dispatch_rpc_method("native", services, method, params, &auth).await
 }
 
 /// Run the native messaging loop using stdin/stdout transport.
