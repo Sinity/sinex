@@ -34,5 +34,5 @@ The Gateway serves as the **hardened external interface** for the Sinex platform
 
 ## See Also
 
-- Global security: `docs/current/security.md`
-- Global config: `docs/current/configuration/environment-variables.md`
+- Global security posture: `docs/current/security.md`
+- Deployment config: `nixos/modules/README.md`

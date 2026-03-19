@@ -16,7 +16,7 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 
 ## Documentation Structure
 
-- `current/` — authoritative present-state docs (architecture, configuration, security).
+- `current/` — authoritative present-state docs (architecture and security).
 - `documentation-guidelines.md` — authoring and placement policy.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
 - General vision, target-state, gap, and cross-cutting planning synthesis live in the sibling report repo at `/realm/project/sinex-target-vision/`.
@@ -24,7 +24,7 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 ## Current (what is live now)
 
 - `current/architecture/` — cross-cutting architecture and security/integrity invariants.
-- `current/configuration/` — shared environment variables and configuration policy.
+- `nixos/modules/README.md` — canonical deployment configuration surface.
 - `current/security.md` — current security posture and guardrails.
 - `xtask/docs/verification.md` — perf verification and contracts.
 - `xtask/docs/sandbox/README.md` — testing policy and sandbox usage.

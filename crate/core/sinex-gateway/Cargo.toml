@@ -10,7 +10,7 @@ rustls-pemfile = "1"
 shadow-rs      = "0.35"
 human-panic    = "2.0"
 humantime      = "2.1"
-sinex-primitives = { path = "../../lib/sinex-primitives" }
+sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }
 
 [dev-dependencies]

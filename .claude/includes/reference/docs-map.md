@@ -16,7 +16,7 @@ Documentation layout:
 | **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |
 | **Current state tracking** | `crate/lib/sinex-services/docs/current_state_tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **General vision / gap / roadmap** | `/realm/project/sinex-target-vision/AGENTS.md` | `/realm/project/sinex-target-vision/canon/` |
-| **Environment variables** | `docs/current/configuration/environment-variables.md` | |
+| **Environment variables** | `nixos/modules/README.md` | crate-local `docs/environment.md` files |
 | **Getting started** | `README.md#contributing` | `docs/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
 | **Perf contracts** | `config/verify/perf-contracts.toml` | `xtask test bench --contracts` |
@@ -43,7 +43,7 @@ Documentation layout:
 | **CLI usage** | `crate/cli/docs/README.md` | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
 | **Data lifecycle** | `crate/lib/sinex-db/docs/data_lifecycle.md` | 3-tier: live → archive → tombstone |
 | **NATS subjects** | `crate/lib/sinex-primitives/docs/nats_subjects.md` | Subject naming conventions |
-| **Feature flags** | `docs/current/configuration/feature-flags.md` | |
-| **TLS / NixOS** | `docs/current/configuration/tls-nixos-integration.md` | `docs/current/configuration/tls-setup.md` |
+| **Feature flags** | owning crate `Cargo.toml` + crate docs when behavior-facing | |
+| **TLS / NixOS** | `nixos/modules/README.md` | crate-local transport/env docs |
 | **xtask guide** | `xtask/docs/README.md` | |
 | **Runtime metrics** | `xtask/src/runtime_metrics.rs` | Postgres queries for ingestd health |

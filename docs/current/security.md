@@ -3,12 +3,7 @@
 > Status: canonical
 > Last Verified: 2026-03-12 (code review)
 
-Sinex is primarily a single-user, local-first system. Its security model is built around:
-
-- capture-time privacy filtering
-- strict transport requirements on the control plane
-- process isolation via NixOS/systemd hardening
-- explicit, auditable lifecycle operations instead of silent background deletion
+Sinex is primarily a single-user, local-first system. Its security model is built around capture-time privacy filtering, hardened control-plane transport, NixOS/systemd isolation, and explicit lifecycle operations instead of silent background deletion.
 
 This document is the canonical current-state security reference.
 
@@ -41,34 +36,12 @@ This document is the canonical current-state security reference.
 
 ## Implemented Controls
 
-### Privacy and Input Boundaries
-
-- All text ingestion boundaries are expected to route through `privacy::engine().process()` with the right `ProcessingContext`.
-- The unified privacy engine is already implemented in `sinex_primitives::privacy`.
-- It covers secrets, PII, infrastructure identifiers, and window-title rules, with `Redact`, `Encrypt`, `Hash`, `Suppress`, and `Mask` strategies.
-- Event payloads also pass schema and structural validation before persistence.
-
-### Transport and Access Control
-
-- Gateway RPC is TLS-only.
-- Non-loopback gateway binds require mTLS.
-- Gateway startup requires a non-empty RPC token source.
-- Bearer tokens are checked with constant-time comparison.
-- Tokens carry `readonly|write|admin` roles and RPC dispatch enforces per-method RBAC.
-- Gateway rate limiting is implemented per token.
-
-### Process and Runtime Isolation
-
-- NixOS services run with strong systemd hardening, including `NoNewPrivileges` and `ProtectSystem=strict`.
-- Services run under a dedicated `sinex` system user.
-- Resource limits are applied through systemd/cgroup controls.
-
-### Data-Path Controls
-
-- Canonical event persistence goes through `sinex-ingestd`, not arbitrary direct writes from nodes.
-- Event persistence remains append-only with provenance tracking.
-- Lifecycle changes are intended to be explicit and auditable.
-- Automatic retention policies for `core.events` are intentionally not part of the current model.
+| Area | Implemented control | Owning detail |
+|------|---------------------|---------------|
+| Privacy and input boundaries | Text ingestion is expected to pass through `privacy::engine().process()` with the right `ProcessingContext`; payloads also pass schema/structural validation before persistence | `crate/lib/sinex-primitives/src/privacy/`, `crate/core/sinex-ingestd/docs/validator.md` |
+| Gateway transport and access control | RPC is TLS-only; non-loopback binds require mTLS; startup requires token source; bearer-token auth uses constant-time comparison; tokens carry `readonly|write|admin` roles; rate limiting is per token | `crate/core/sinex-gateway/docs/transport_security.md`, `crate/core/sinex-gateway/docs/environment.md` |
+| Process/runtime isolation | Services run as a dedicated `sinex` user under hardened systemd units with resource limits | `nixos/modules/README.md` |
+| Data-path controls | Canonical persistence goes through `sinex-ingestd`; event history remains append-only with provenance; lifecycle changes are explicit and auditable | `crate/core/sinex-ingestd/docs/architecture.md`, `crate/lib/sinex-db/docs/data_lifecycle.md` |
 
 ## Partial Controls and Gaps
 
@@ -110,5 +83,6 @@ These are deliberate policy choices, not unfinished work disguised as future int
 - [Core Architecture](architecture/Core_Architecture.md)
 - [System Operations And Integrity Architecture](architecture/SystemOperations_And_Integrity_Architecture.md)
 - [Gateway Coordination](../../crate/core/sinex-gateway/docs/coordination.md)
-- [Environment Variables](configuration/environment-variables.md)
+- [Gateway Transport Security](../../crate/core/sinex-gateway/docs/transport_security.md)
+- [Ingestd Transport Security](../../crate/core/sinex-ingestd/docs/transport_security.md)
 - [NixOS Module Surface](../../nixos/modules/README.md)

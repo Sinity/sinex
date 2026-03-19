@@ -149,5 +149,4 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 ## See Also
 
 - Transport security: `docs/transport_security.md`
-- Global env vars: `docs/current/configuration/environment-variables.md`
 - NixOS deployment surface: `nixos/modules/README.md`

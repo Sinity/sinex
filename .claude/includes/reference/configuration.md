@@ -129,4 +129,4 @@ Notes:
 - `sinex-node-sdk` uses env-first typed config (`NodeConfig::load_from_env`, `EventSourceConfig::load_from_env`, `AutomatonConfig::load_from_env`).
 - `sinex-gateway` now follows the same env-first typed-config model; NixOS remains the canonical deployment surface and env is the process-boundary transport.
 
-Full environment variable reference: `docs/current/configuration/environment-variables.md`
+Deployment configuration lives in `nixos/modules/README.md`; direct-run environment variables live in the owning crate docs.

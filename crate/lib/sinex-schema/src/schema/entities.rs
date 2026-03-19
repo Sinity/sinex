@@ -61,8 +61,7 @@ impl TableDef for Entities {
 }
 
 /// The Rust struct representation of a row from `core.entities`.
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EntityRecord {
     pub id: Uuid,
     pub entity_type: String,

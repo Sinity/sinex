@@ -59,8 +59,9 @@ Example:
 
 ## 4. Workspace Documentation
 
-- The top-level `docs/` directory hosts current architecture/operations policy,
-  configuration, and security only.
+- The top-level `docs/` directory hosts current architecture/operations policy
+  and security only. Deployment configuration belongs in `nixos/modules/`, and
+  direct-run environment details belong in crate-local docs.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
   `../../docs/current/architecture/Core_Architecture.md` for wider context.

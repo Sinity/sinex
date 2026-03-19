@@ -10,12 +10,6 @@ async-stream = "0.3"
 human-panic = "2.0"
 tokio-util   = "0.7"
 
-[features]
-default = [
-]
-metrics = [
-]
-
 [dev-dependencies]
 tempfile = "3.8"
 

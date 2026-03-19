@@ -51,8 +51,7 @@ impl TableDef for EventPayloadSchemas {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventPayloadSchemaRecord {
     pub id: Uuid,
     pub source: String,
@@ -194,8 +193,7 @@ impl TableDef for NodeManifests {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct NodeManifestRecord {
     pub id: i32,
     pub node_name: String,
@@ -349,8 +347,7 @@ impl TableDef for NodeRuns {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct NodeRunRecord {
     pub id: Uuid,
     pub node_manifest_id: i32,

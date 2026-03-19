@@ -23,5 +23,5 @@ TERM_SESSION_ID="..."
 
 ## See Also
 
-- Global env vars: `docs/current/configuration/environment-variables.md`
+- Deployment config: `nixos/modules/README.md`
 - Node SDK: `crate/lib/sinex-node-sdk/docs/`

@@ -37,4 +37,4 @@
 
 - Global architecture: `docs/current/architecture/Core_Architecture.md`
 - Operations: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
-- Global config: `docs/current/configuration/environment-variables.md`
+- Deployment config: `nixos/modules/README.md`

@@ -148,8 +148,7 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::BlobStorage(_) => (-32860, msg),
         SinexError::Coordination(_) => (-32861, msg),
 
-        // NATS-specific variants (only present when nats feature is enabled on sinex-primitives)
-        #[cfg(feature = "nats")]
+        // NATS-specific variants from sinex-primitives.
         SinexError::Nats(_)
         | SinexError::NatsAckFailed(_)
         | SinexError::NatsPublish(_)
