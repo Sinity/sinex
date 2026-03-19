@@ -4,7 +4,7 @@
 //! registers with the [`SubscriptionBus`], and streams events as SSE frames.
 
 use crate::auth::Role;
-use crate::rpc_server::RpcAuthContext;
+use crate::rpc_server::{AccessOutcome, RpcAuthContext, log_access_audit};
 use crate::sse_bus::{
     HEARTBEAT_INTERVAL, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
     SubscriptionBus,
@@ -45,6 +45,13 @@ pub(crate) async fn handle_sse_stream(
     let token = match state.auth.verify(&headers).await {
         Ok(t) => t,
         Err(_) => {
+            log_access_audit(
+                "sse",
+                "events.stream",
+                AccessOutcome::Unauthenticated,
+                None,
+                Some("missing or invalid bearer token"),
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header.",
@@ -56,11 +63,25 @@ pub(crate) async fn handle_sse_stream(
     let auth_ctx = match RpcAuthContext::from_token(&token) {
         Ok(ctx) => ctx,
         Err(_) => {
+            log_access_audit(
+                "sse",
+                "events.stream",
+                AccessOutcome::Rejected,
+                None,
+                Some("invalid token role encoding"),
+            );
             return (StatusCode::UNAUTHORIZED, "Invalid token role encoding.").into_response();
         }
     };
 
     if !auth_ctx.has_permission(Role::ReadOnly) {
+        log_access_audit(
+            "sse",
+            "events.stream",
+            AccessOutcome::Forbidden,
+            Some(&auth_ctx),
+            Some("insufficient permissions"),
+        );
         return (StatusCode::FORBIDDEN, "Insufficient permissions.").into_response();
     }
 
@@ -68,6 +89,13 @@ pub(crate) async fn handle_sse_stream(
     let bus = match state.sse_bus.as_ref() {
         Some(bus) => Arc::clone(bus),
         None => {
+            log_access_audit(
+                "sse",
+                "events.stream",
+                AccessOutcome::Unavailable,
+                Some(&auth_ctx),
+                Some("subscription bus unavailable"),
+            );
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Event streaming unavailable (NATS not connected).",
@@ -81,12 +109,28 @@ pub(crate) async fn handle_sse_stream(
         match serde_json::from_str::<SubscriptionFilter>(&filter_json) {
             Ok(f) => {
                 if let Err(e) = f.validate() {
+                    let detail = e.to_string();
+                    log_access_audit(
+                        "sse",
+                        "events.stream",
+                        AccessOutcome::InvalidRequest,
+                        Some(&auth_ctx),
+                        Some(&detail),
+                    );
                     return (StatusCode::BAD_REQUEST, format!("Invalid filter: {e}"))
                         .into_response();
                 }
                 f
             }
             Err(e) => {
+                let detail = e.to_string();
+                log_access_audit(
+                    "sse",
+                    "events.stream",
+                    AccessOutcome::InvalidRequest,
+                    Some(&auth_ctx),
+                    Some(&detail),
+                );
                 return (StatusCode::BAD_REQUEST, format!("Invalid filter JSON: {e}"))
                     .into_response();
             }
@@ -97,6 +141,13 @@ pub(crate) async fn handle_sse_stream(
 
     // ── Register ──
     let (sub_id, rx) = bus.register(filter);
+    log_access_audit(
+        "sse",
+        "events.stream",
+        AccessOutcome::Success,
+        Some(&auth_ctx),
+        None,
+    );
 
     // Build SSE stream from mpsc receiver + heartbeat
     let rx_stream = ReceiverStream::new(rx);

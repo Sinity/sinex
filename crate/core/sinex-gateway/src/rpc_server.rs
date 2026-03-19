@@ -429,6 +429,18 @@ impl AuthError {
     }
 }
 
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthError::Missing => write!(
+                f,
+                "authentication required: provide SINEX_RPC_TOKEN via Authorization header"
+            ),
+            AuthError::Invalid => write!(f, "authentication failed: invalid token"),
+        }
+    }
+}
+
 impl JsonRpcResponse {
     fn success(id: Option<Value>, result: Value) -> Self {
         Self {
@@ -474,6 +486,8 @@ impl JsonRpcResponse {
 pub struct RpcAuthContext {
     /// First 8 characters of the token for audit logging
     pub token_prefix: String,
+    /// Stable actor identity for access audit records
+    pub actor_id: String,
     /// Timestamp when authentication occurred
     pub authenticated_at: Timestamp,
     /// Role extracted from token (determines permissions)
@@ -486,8 +500,10 @@ impl RpcAuthContext {
     /// Parses the role from the token suffix (e.g., `sinex_xxx:readonly`)
     pub(crate) fn from_token(token: &str) -> Result<Self, crate::auth::TokenRoleError> {
         let (base, role) = crate::auth::Role::from_token(token)?;
+        let token_prefix = base.chars().take(8).collect::<String>();
         Ok(Self {
-            token_prefix: base.chars().take(8).collect::<String>(),
+            actor_id: format!("token:{token_prefix}"),
+            token_prefix,
             authenticated_at: Timestamp::now(),
             role,
         })
@@ -502,6 +518,7 @@ impl RpcAuthContext {
     pub fn system() -> Self {
         Self {
             token_prefix: "system".to_string(),
+            actor_id: "system:local".to_string(),
             authenticated_at: Timestamp::now(),
             role: crate::auth::Role::Admin,
         }
@@ -516,15 +533,91 @@ impl RpcAuthContext {
     pub fn extension(extension_id: &str, role: crate::auth::Role) -> Self {
         Self {
             token_prefix: format!("ext:{}", &extension_id[..extension_id.len().min(8)]),
+            actor_id: format!("extension:{extension_id}"),
             authenticated_at: Timestamp::now(),
             role,
         }
+    }
+
+    #[must_use]
+    pub fn actor_id(&self) -> &str {
+        &self.actor_id
     }
 
     /// Check if the token has at least the required role permission
     #[must_use]
     pub fn has_permission(&self, required: crate::auth::Role) -> bool {
         self.role.has_permission(required)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AccessOutcome {
+    Success,
+    Failed,
+    Unauthenticated,
+    Rejected,
+    RateLimited,
+    InvalidRequest,
+    Forbidden,
+    Unavailable,
+}
+
+impl AccessOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Unauthenticated => "unauthenticated",
+            Self::Rejected => "rejected",
+            Self::RateLimited => "rate_limited",
+            Self::InvalidRequest => "invalid_request",
+            Self::Forbidden => "forbidden",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+pub(crate) fn log_access_audit(
+    surface: &'static str,
+    operation: &str,
+    outcome: AccessOutcome,
+    auth: Option<&RpcAuthContext>,
+    detail: Option<&str>,
+) {
+    let actor = auth.map_or("anonymous", RpcAuthContext::actor_id);
+    let role = auth.map_or("none", |ctx| ctx.role.as_str());
+
+    match (outcome, detail) {
+        (AccessOutcome::Success, _) => info!(
+            event = "gateway.access",
+            surface,
+            operation,
+            outcome = outcome.as_str(),
+            actor,
+            role,
+            "Gateway access allowed"
+        ),
+        (_, Some(detail)) => warn!(
+            event = "gateway.access",
+            surface,
+            operation,
+            outcome = outcome.as_str(),
+            actor,
+            role,
+            detail,
+            "Gateway access denied or failed"
+        ),
+        _ => warn!(
+            event = "gateway.access",
+            surface,
+            operation,
+            outcome = outcome.as_str(),
+            actor,
+            role,
+            "Gateway access denied or failed"
+        ),
     }
 }
 
@@ -579,8 +672,9 @@ pub(crate) struct AppState {
 /// - **`ReadOnly`**: Query operations (search, analytics, status)
 /// - **Write**: `ReadOnly` + mutations (create entities, store blobs)
 /// - **Admin**: Write + destructive operations (tombstone, DLQ, shadow delete)
-#[tracing::instrument(skip(services, params, auth), fields(method))]
+#[tracing::instrument(skip(services, params, auth), fields(surface, method))]
 pub async fn dispatch_rpc_method(
+    surface: &'static str,
     services: &ServiceContainer,
     method: &str,
     params: serde_json::Value,
@@ -591,7 +685,21 @@ pub async fn dispatch_rpc_method(
     static REGISTRY: OnceLock<crate::rpc_registry::RpcRegistry> = OnceLock::new();
     let registry = REGISTRY.get_or_init(crate::rpc_registry::build_registry);
 
-    registry.dispatch(method, params, services, auth).await
+    let result = registry.dispatch(method, params, services, auth).await;
+    match &result {
+        Ok(_) => log_access_audit(surface, method, AccessOutcome::Success, Some(auth), None),
+        Err(err) => {
+            let detail = err.to_string();
+            log_access_audit(
+                surface,
+                method,
+                AccessOutcome::Failed,
+                Some(auth),
+                Some(&detail),
+            );
+        }
+    }
+    result
 }
 
 /// Health check endpoint
@@ -665,6 +773,14 @@ async fn handle_rpc(
         Ok(t) => t,
         Err(err) => {
             state.metrics.record_request_rejected();
+            let detail = err.to_string();
+            log_access_audit(
+                "rpc",
+                &request.method,
+                AccessOutcome::Unauthenticated,
+                None,
+                Some(&detail),
+            );
             return err.into_response();
         }
     };
@@ -674,6 +790,14 @@ async fn handle_rpc(
         Ok(ctx) => ctx,
         Err(err) => {
             state.metrics.record_request_rejected();
+            let detail = err.to_string();
+            log_access_audit(
+                "rpc",
+                &request.method,
+                AccessOutcome::Rejected,
+                None,
+                Some(&detail),
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(JsonRpcResponse::error(
@@ -690,6 +814,13 @@ async fn handle_rpc(
         let token_prefix = &token[..8.min(token.len())];
         warn!(token_prefix, "Request rejected: rate limit exceeded");
         state.metrics.record_rate_limited(token_prefix);
+        log_access_audit(
+            "rpc",
+            &request.method,
+            AccessOutcome::RateLimited,
+            Some(&auth_context),
+            None,
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(JsonRpcResponse::error(
@@ -702,6 +833,14 @@ async fn handle_rpc(
 
     if let Err(err) = validate_jsonrpc_request(&request) {
         state.metrics.record_request_rejected();
+        let detail = err.to_string();
+        log_access_audit(
+            "rpc",
+            &request.method,
+            AccessOutcome::InvalidRequest,
+            Some(&auth_context),
+            Some(&detail),
+        );
         let response = JsonRpcResponse::error(request.id, -32600, err.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
     }
@@ -715,6 +854,7 @@ async fn handle_rpc(
 
     // Use shared dispatch function with auth context
     let result = dispatch_rpc_method(
+        "rpc",
         &state.services,
         &request.method,
         request.params,
