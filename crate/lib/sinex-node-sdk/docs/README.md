@@ -39,6 +39,6 @@ The Sinex Node SDK is the unified framework for building **Ingestors** (sensors 
 
 ## 📚 See Also
 
-- **Global Architecture**: `docs/architecture.md`
+- **Global Architecture**: `README.md#architecture`
 - **Event Taxonomy**: `crate/lib/sinex-schema/docs/event-taxonomy.md`
-- **Security Guardrails**: `docs/security.md`
+- **Security Guardrails**: `README.md#security`

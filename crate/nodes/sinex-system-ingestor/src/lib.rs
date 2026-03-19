@@ -1,6 +1,5 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../lib/sinex-node-sdk/docs/overview.md")]
-#![doc = include_str!("../../../../docs/operations-and-integrity.md")]
 
 //! Unified system node that coordinates D-Bus, journal, udev, and systemd signals.
 

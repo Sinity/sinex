@@ -36,7 +36,7 @@ Key architectural decisions and implementation details are documented at their i
   - Rust code keeps compile-time safety with typed `Id<T>`
 
 ### Event Processing
-- **Ingestion & JetStream Overview**: [`docs/architecture.md`](../docs/architecture.md)
+- **Ingestion & JetStream Overview**: [`README.md#architecture`](../README.md#architecture)
   - Provenance and Stage-as-you-go responsibilities: [`crate/lib/sinex-node-sdk/docs/provenance.md`](../crate/lib/sinex-node-sdk/docs/provenance.md)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
 - **Node SDK Patterns**: [`crate/lib/sinex-node-sdk/docs/overview.md`](../crate/lib/sinex-node-sdk/docs/overview.md)
@@ -984,7 +984,7 @@ in
 
 ## Support & Documentation
 
-- **Architecture**: See `docs/architecture.md`
+- **Architecture**: See `README.md#architecture`
 - **Development**: See `CLAUDE.md` for developer reference
 - **CLI**: See `crate/cli/README.md` for sinexctl usage
 - **Issues**: Report to project repository

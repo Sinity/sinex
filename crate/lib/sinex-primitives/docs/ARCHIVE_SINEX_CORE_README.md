@@ -19,5 +19,5 @@
 
 ## See Also
 
-- Global architecture: `docs/architecture.md`
+- Global architecture: `README.md#architecture`
 - Type system patterns: `crate/lib/sinex-primitives/docs/type_system_patterns.md`

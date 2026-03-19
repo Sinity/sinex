@@ -2,22 +2,24 @@
 
 Documentation layout:
 
-- `docs/` is for authoritative cross-cutting present-state architecture, operations, and security docs.
+- `README.md` owns project overview, architecture, security, and development entrypoints.
+- `OPERATIONS.md` owns current hardening gaps and runbook material.
 - Cross-cutting vision, target-state, and roadmap material lives in the sibling report repo at `/realm/project/sinex-target-vision/`.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
-| **Documentation index** | `docs/README.md` | `docs/documentation-guidelines.md` |
-| **Architecture overview** | `docs/architecture.md` | `docs/operations-and-integrity.md` |
-| **Security** | `docs/security.md` | `docs/operations-and-integrity.md` |
+| **Documentation index** | `README.md` | `OPERATIONS.md` |
+| **Architecture overview** | `README.md#architecture` | `OPERATIONS.md` |
+| **Security** | `README.md#security` | `OPERATIONS.md` |
 | **Type system patterns** | `crate/lib/sinex-primitives/docs/type_system_patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
 | **Distributed patterns** | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` | `crate/lib/sinex-node-sdk/docs/coordination.md` |
 | **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |
 | **Current state tracking** | `crate/lib/sinex-services/docs/current_state_tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **General vision / gap / roadmap** | `/realm/project/sinex-target-vision/AGENTS.md` | `/realm/project/sinex-target-vision/canon/` |
 | **Environment variables** | `nixos/modules/README.md` | crate-local `docs/environment.md` files |
-| **Getting started** | `README.md#contributing` | `docs/README.md` |
+| **Getting started** | `README.md#quick-start` | `xtask/README.md` |
+| **Development workflow** | `README.md#development` | `xtask/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
 | **Perf contracts** | `config/verify/perf-contracts.toml` | `xtask test bench --contracts` |
 | **Verification workflow** | `xtask/docs/verification.md` | `xtask/docs/README.md` |

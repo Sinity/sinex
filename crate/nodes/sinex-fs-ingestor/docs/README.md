@@ -9,4 +9,4 @@ support snapshots, historical replays, and continuous monitoring.
 - Maintains checkpoints so the watcher can resume without gaps.
 
 See `crate/lib/sinex-node-sdk/docs/overview.md` for the shared lifecycle
-pattern and `docs/architecture.md` for downstream processing.
+pattern and `README.md#architecture` for downstream processing.

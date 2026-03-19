@@ -40,6 +40,6 @@ xtask status --summary
 
 ## Documentation
 
-- Command reference: `xtask/docs/README.md`
+- Command reference: `xtask/README.md`
 - Verification and perf contracts: `xtask/docs/verification.md`
 - Testing sandbox: `xtask/docs/sandbox/README.md`

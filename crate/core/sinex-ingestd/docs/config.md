@@ -11,7 +11,7 @@ Ingestd does not treat TOML/figment loading as a co-equal deployment path. For d
 systems, use typed NixOS options; for direct/manual runs, use env vars and CLI flags.
 
 Document any new knobs here and keep the examples in sync with
-`docs/operations-and-integrity.md`.
+`OPERATIONS.md`.
 
 Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
 

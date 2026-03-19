@@ -8,5 +8,5 @@ about equivalent command lines.
   environment references).
 - Emits canonical command events with provenance metadata.
 
-See `docs/architecture.md` and
+See `README.md#architecture` and
 `crate/lib/sinex-node-sdk/docs/overview.md` for context.
