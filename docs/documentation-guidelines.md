@@ -14,9 +14,10 @@ rustdoc.
   true now. Historical context belongs only where it is required for active
   decisions.
 - **Layered narrative** – crate-local documentation owns the immediate “what”
-  and “how”, while workspace-level docs under `docs/` provide cross-cutting
-  stories (architecture decisions, roadmaps, operations guides). Link between
-  layers so readers can move up or down the stack easily.
+  and “how”, while workspace-level docs under `docs/` provide only cross-cutting
+  present-state architecture, configuration, and security context. Long-term
+  vision and roadmap material live in the sibling `sinex-target-vision` repo.
+  Link between layers so readers can move up or down the stack easily.
 - **Guaranteed discoverability** – every crate surfaces its main reference
   material directly through rustdoc so `cargo doc` reaches the same context as a
   filesystem browse.
@@ -58,8 +59,8 @@ Example:
 
 ## 4. Workspace Documentation
 
-- The top-level `docs/` directory hosts current architecture/operations policy
-  plus clearly labeled planning, vision, and analysis tracks.
+- The top-level `docs/` directory hosts current architecture/operations policy,
+  configuration, and security only.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
   `../../docs/current/architecture/Core_Architecture.md` for wider context.

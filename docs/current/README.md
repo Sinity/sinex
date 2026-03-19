@@ -9,10 +9,9 @@ This section is the single source of truth for what **exists and works today**.
 
 **Deep dives:**
 
-- `architecture/` — Architecture references (core, provenance, security, operations, patterns)
+- `architecture/` — Cross-cutting architecture and operational invariants
 - `configuration/` — Environment variables and type-safe configuration patterns
 - `security.md` — Current security posture
-- `analysis/` — Investigation reports and supporting analysis artifacts
 - `../../xtask/docs/verification.md` — Perf verification and contracts
 - `../../xtask/docs/sandbox/README.md` — Testing policy and sandbox usage
 - `../../crate/core/sinex-ingestd/docs/schema_gitops.md` — Schema GitOps flow

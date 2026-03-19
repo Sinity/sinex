@@ -1,25 +1,16 @@
 Status: canonical
 Last Verified: 2025-09-06 (manual review)
-> **Purpose:** Canonical reference for the end-to-end system architecture and pointers to deeper component docs.
+> **Purpose:** Canonical reference for the live end-to-end system shape and the downward links to owning crate docs.
 # Core Architecture
 
-This is the consolidated architecture overview. It links to and summarizes the canonical documents.
-
-## Mission
-- Build a long-lived, user-controlled local event and knowledge system that preserves context, supports fast recall/automation, and remains privacy-preserving by default.
-
-## Key Principles
-- User sovereignty and local operation by default
-- Single writer + immutable event log with strict provenance
-- Open, hackable architecture with declarative schema convergence and no compatibility shims
-- Observability by default (journald heartbeat; traceable command/response)
+This document owns the cross-cutting architecture of the running system. Detailed subsystem doctrine lives in crate docs.
 
 ## System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SINEX ARCHITECTURE                                  │
-│                        Event-Sourced Observability                            │
+│                           SINEX ARCHITECTURE                               │
+│                        Event-Sourced Observability                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌───────────────────────┐         ┌──────────────────────────────────────────┐
@@ -47,9 +38,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
 │  │  systemd/udev)  │ │         │  │  │  - SourceMaterialRepository  │  │  │
 │  └─────────────────┘ │         │  │  │  - BlobRepository            │  │  │
 │                       │         │  │  └──────────────────────────────┘  │  │
-│                       │         │  └────────────────────┼─────────────────┘  │
-│  └─────────────────┘ │         │                       ↓                    │
-└───────────────────────┘         └───────────────────────┼────────────────────┘
+└───────────────────────┘         └───────────────────────┼─────────────────┘
                                                           ↓
         ┌─────────────────────────────────────────────────┼─────────────────┐
         │                    PERSISTENCE LAYER            ↓                 │
@@ -64,8 +53,6 @@ This is the consolidated architecture overview. It links to and summarizes the c
         │  │  │ Partitioned by │  │ registry +      │  │ Large binary   │││
         │  │  │ UUIDv7 timestamp │  │ temporal ledger │  │ storage        │││
         │  │  └────────────────┘  └────────────────┘  └────────────────┘││
-        │  │                                                               ││
-        │  │  Indexing: GIN (JSONB), BTREE (ts_coided), GiST (temporal)  ││
         │  └──────────────────────────────────────────────────────────────┘│
         └─────────────────────────────────────────────────────────────────┘
                                         ↑
@@ -74,71 +61,60 @@ This is the consolidated architecture overview. It links to and summarizes the c
         │                 QUERY LAYER   │                                   │
         │                               │                                   │
         │  ┌─────────────────────────────────────────────────────────────┐ │
-        │  │              sinex-gateway (RPC Server)                      │ │
-        │  │                                                               │ │
-        │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │ │
-        │  │  │ Auth Guard  │  │ Rate Limiter│  │ Query Router        │ │ │
-        │  │  │ (Bearer)    │  │ (per-token) │  │ - EventQuery        │ │ │
-        │  │  └─────────────┘  └─────────────┘  │ - MaterialQuery     │ │ │
-        │  │                                     │ - HealthQuery       │ │ │
-        │  │                                     └─────────────────────┘ │ │
+        │  │              sinex-gateway (RPC Server)                    │ │
+        │  │                                                           │ │
+        │  │  Auth + RBAC + limits + JSON-RPC dispatch                 │ │
         │  └─────────────────────────────────────────────────────────────┘ │
         └───────────────────────────────────────────────────────────────────┘
                                         ↓
         ┌───────────────────────────────┼──────────────────────────────────┐
-        │              AUTOMATA LAYER   │   (Event Nodes)                   │
+        │              DERIVED LAYER    │                                   │
         │                               │                                   │
-        │  ┌────────────────┐  ┌───────────────┐  ┌────────────────────┐  │
-        │  │ terminal-cmd   │  │ analytics-    │  │ health-automaton   │  │
-        │  │ canonicalizer  │  │  automaton    │  │ (health checks)    │  │
-        │  └────────────────┘  └───────────────┘  └────────────────────┘  │
-        │                                                                   │
-        │  All automata:                                                    │
-        │  - Consume confirmed events                                       │
-        │  - Maintain checkpoints (NATS KV)                                 │
-        │  - Leader/standby HA (advisory locks)                             │
-        │  - Graceful shutdown (WorkTracker)                                │
+        │  terminal-cmd canonicalizer, analytics automaton, health         │
+        │  automaton, and other derived nodes consume confirmed events      │
+        │  and emit new ones with replay metadata and checkpoints.          │
         └───────────────────────────────────────────────────────────────────┘
 ```
 
-## Flow
-- nodes → NATS `JetStream` → sinex-ingestd → Postgres (`core.events`) → Automata → Gateway (JSON‑RPC) → CLI.
+## End-To-End Flow
 
-Data Substrate
-- Storage: `PostgreSQL` (+ `TimescaleDB`)
-- IDs: `UUIDv7` IDs for ordering and distribution
-- Event store: `core.events` with strict provenance
-- Schema: see `crate/lib/sinex-schema/docs/overview.md` for table details
+- nodes emit events onto NATS `JetStream`
+- `sinex-ingestd` validates, assembles, and persists canonical events into `core.events`
+- derived nodes consume confirmed events, maintain checkpoints, and emit synthetic events
+- `sinex-gateway` exposes the query/control surface over JSON-RPC
+- `sinexctl` is the primary operator and developer client
 
-Streaming & Ingestion
-- Messaging: NATS `JetStream` (subjects, durable consumers, explicit acks)
-- Backpressure: bounded batches, ack timeouts, lag monitoring
-- Ingestion: validation, persistence, idempotency, single writer
-- See also: `crate/lib/sinex-node-sdk/docs/provenance.md` (Stage-as-you-go + provenance rules), `/realm/project/sinex-target-vision/analysis/foundation/current-state-cartography.md` (JetStream-first pipeline state), and `/realm/project/sinex-target-vision/analysis/collations/design-decisions.md` (message-bus / backpressure design decisions)
+## Cross-Cutting Invariants
 
-Security & Operations
-- Security model, threat mitigation: `docs/current/security.md`
-- Ops & integrity: backups, invariants, journald-based observability: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
+- canonical event persistence flows through `sinex-ingestd`
+- `core.events` is append-only; corrections become new events with provenance
+- derived events carry source, temporal, and replay metadata
+- `UUIDv7` IDs provide ordering; `ts_orig` and `ts_coided` have different meanings and are both load-bearing
+- gateway is the default query/control boundary; direct DB access is diagnostic, not the primary interface
 
-Schema & Taxonomy
-- Schema notes: `crate/lib/sinex-schema/docs/overview.md`
-- Event taxonomy: `crate/lib/sinex-schema/docs/event-taxonomy.md`
+## Core Substrates
 
-Implementation Guides
-- nodes SDK and patterns: `crate/lib/sinex-node-sdk/docs/overview.md`
-- Gateway/query surface: `crate/core/sinex-gateway/docs/interaction_and_query.md`; CLI surface: `crate/cli/docs/README.md`
+Data substrate
+- `PostgreSQL` + `TimescaleDB`
+- `core.events` as the canonical event store
+- `raw.source_material*` plus temporal ledger for material provenance
 
-## Deep Dives
+Streaming substrate
+- NATS `JetStream` with durable consumers and explicit ack flow
+- bounded batch processing, lag monitoring, idempotent ingestion
 
-**Pattern Documentation:**
-- `crate/lib/sinex-primitives/docs/type_system_patterns.md` — Newtypes, validated types, state machines, compile-time safety
-- `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` — Event sourcing, CQRS, concurrency, idempotency, backpressure
-- `crate/lib/sinex-node-sdk/docs/observability.md` — Journald monitoring, checkpoint system
+Read/control substrate
+- `sinex-gateway` for RPC and native messaging
+- `sinex-services` for query/read-model logic
+- `sinexctl` for operator workflows
 
-**Crate-Specific Diagrams:**
-- Ingestd: `crate/core/sinex-ingestd/docs/diagrams.md` — Event sourcing & NATS topology
-- Database: `crate/lib/sinex-db/docs/diagrams.md` — Schema & repository architecture
-- Testing: `xtask/docs/sandbox/diagrams.md` — Parallel test pool
-- Primitives: `crate/lib/sinex-primitives/docs/diagrams.md` — Type system & validation
+## Canonical Downward Links
 
-See also: `crate/lib/sinex-node-sdk/docs/provenance.md` for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.
+- schema and event taxonomy: `crate/lib/sinex-schema/docs/overview.md`, `crate/lib/sinex-schema/docs/event-taxonomy.md`
+- type system and transport contracts: `crate/lib/sinex-primitives/docs/type_system_patterns.md`, `crate/lib/sinex-primitives/docs/nats_subjects.md`
+- runtime/distributed behavior: `crate/lib/sinex-node-sdk/docs/distributed_patterns.md`
+- observability and checkpoints: `crate/lib/sinex-node-sdk/docs/observability.md`
+- provenance and capture layering: `crate/lib/sinex-node-sdk/docs/provenance.md`
+- gateway/query surface: `crate/core/sinex-gateway/docs/interaction_and_query.md`
+- operations/integrity policy: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
+- current security posture: `docs/current/security.md`
