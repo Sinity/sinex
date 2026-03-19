@@ -184,13 +184,19 @@ host    all             all             ::1/128                 trust
     '')
   ];
 
-  # Minimal tmpfiles rules
+  # Minimal tmpfiles rules.
+  # All intermediate directories must be listed explicitly with sinex ownership;
+  # systemd-tmpfiles creates unlisted parents as root:root, which prevents the
+  # sinex user from writing into subdirectories.
   systemd.tmpfiles.rules = [
     "d ${stateDir} 0755 sinex sinex -"
     "d /var/lib/sinex/watched 0777 sinex sinex -"
     "D ${stateDir}/nats 0755 sinex sinex -"
     "f ${stateDir}/.zsh_history 0644 sinex sinex -"
     "f ${stateDir}/.bash_history 0644 sinex sinex -"
+    # Intermediate dirs for workDir = stateDir/.cache/sinex/ingestd-dev
+    "d ${stateDir}/.cache 0755 sinex sinex -"
+    "d ${stateDir}/.cache/sinex 0755 sinex sinex -"
     "d ${workDir} 0755 sinex sinex -"
     "d ${workDir}/annex 0755 sinex sinex -"
     "d ${workDir}/assembler_state 0755 sinex sinex -"
@@ -246,10 +252,13 @@ host    all             all             ::1/128                 trust
   ];
 
   # NATS: clear JetStream state on boot to avoid overlap errors and ensure clean bootstrap.
+  # The rm -rf uses the `-` soft-fail prefix so that "Device or resource busy" on the
+  # JetStream directory (which can be busy on first boot before tmpfs unmounts) doesn't
+  # prevent NATS from starting.
   systemd.services.nats.serviceConfig = {
     PermissionsStartOnly = true;
     ExecStartPre = [
-      "${pkgs.coreutils}/bin/rm -rf ${config.services.sinex.stateRoot}/nats"
+      "-${pkgs.coreutils}/bin/rm -rf ${config.services.sinex.stateRoot}/nats"
       "${pkgs.coreutils}/bin/install -d -o nats -g nats ${config.services.sinex.stateRoot}/nats/jetstream"
     ];
   };

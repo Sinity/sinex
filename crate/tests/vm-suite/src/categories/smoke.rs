@@ -99,7 +99,7 @@ async fn test_events_hypertable(runner: &mut TestRunner, pool: &PgPool) {
 
     match result {
         Ok(Some(true)) => runner.pass(name),
-        Ok(Some(false)) | Ok(None) => {
+        Ok(Some(false) | None) => {
             runner.fail(name, "core.events is not a TimescaleDB hypertable");
         }
         Err(e) => runner.fail(name, &format!("query error: {e}")),
@@ -158,10 +158,7 @@ async fn test_batch_capture(runner: &mut TestRunner, pool: &PgPool) {
     let watched = "/var/lib/sinex/watched";
 
     for i in 0..20_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/batch-{i}.txt"),
-            format!("batch {i}"),
-        );
+        let _ = std::fs::write(format!("{watched}/batch-{i}.txt"), format!("batch {i}"));
     }
 
     let deadline = Instant::now() + Duration::from_secs(40);
@@ -189,8 +186,7 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
     let restart_ok = Command::new("systemctl")
         .args(["restart", "sinex-ingestd"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if !restart_ok {
         runner.fail(name, "systemctl restart sinex-ingestd failed");
@@ -204,13 +200,15 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
         let active = Command::new("systemctl")
             .args(["is-active", "--quiet", "sinex-ingestd"])
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.success());
         if active {
             break;
         }
         if Instant::now() >= up_deadline {
-            runner.fail(name, "sinex-ingestd did not become active within 30s after restart");
+            runner.fail(
+                name,
+                "sinex-ingestd did not become active within 30s after restart",
+            );
             return;
         }
     }

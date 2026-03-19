@@ -1,7 +1,7 @@
 //! NixOS VM test suite binary for sinex.
 //!
 //! Runs inside a NixOS VM and asserts behavioral invariants against live
-//! services (PostgreSQL, sinex-ingestd) using typed queries and process checks.
+//! services (`PostgreSQL`, sinex-ingestd) using typed queries and process checks.
 //! Called from testScript with:
 //!
 //!   `su - postgres -c "DATABASE_URL=postgresql:///sinex ${suite}/bin/run-suite --category smoke"`
@@ -22,7 +22,7 @@ struct Args {
     #[arg(long, default_value = "smoke")]
     category: String,
 
-    /// PostgreSQL connection URL
+    /// `PostgreSQL` connection URL
     #[arg(long, env = "DATABASE_URL", default_value = "postgresql:///sinex")]
     database_url: String,
 }
@@ -45,13 +45,13 @@ async fn main() -> Result<()> {
         }
         "concurrency" => categories::concurrency::run(&mut runner)?,
         "chaos-network-partition" => {
-            categories::chaos_network_partition::run(&mut runner, &args.database_url).await?
+            categories::chaos_network_partition::run(&mut runner, &args.database_url).await?;
         }
         "chaos-process-restart" => {
-            categories::chaos_process_restart::run(&mut runner, &args.database_url).await?
+            categories::chaos_process_restart::run(&mut runner, &args.database_url).await?;
         }
         "chaos-clock-skew" => {
-            categories::chaos_clock_skew::run(&mut runner, &args.database_url).await?
+            categories::chaos_clock_skew::run(&mut runner, &args.database_url).await?;
         }
         other => bail!(
             "Unknown category: {other}. Valid: smoke, integration, all, concurrency, \

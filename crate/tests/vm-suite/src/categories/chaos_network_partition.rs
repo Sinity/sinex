@@ -54,7 +54,7 @@ async fn test_baseline_pipeline(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_partition_ingestd_survives(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_partition_ingestd_survives(runner: &mut TestRunner, _pool: &PgPool) {
     let name = "chaos-network-partition: ingestd survives NATS partition";
 
     // Inject iptables rules to drop traffic to NATS port 4222
@@ -64,9 +64,7 @@ async fn test_partition_ingestd_survives(runner: &mut TestRunner, pool: &PgPool)
     ];
 
     for rule in inject_rules {
-        let _ = Command::new("sh")
-            .args(["-c", rule])
-            .status();
+        let _ = Command::new("sh").args(["-c", rule]).status();
     }
 
     // Also inject packet loss on loopback via tc (traffic control)
@@ -74,7 +72,10 @@ async fn test_partition_ingestd_survives(runner: &mut TestRunner, pool: &PgPool)
         .args(["-c", "tc qdisc add dev lo root handle 1: prio"])
         .status();
     let _ = Command::new("sh")
-        .args(["-c", "tc qdisc add dev lo parent 1:3 handle 30: netem loss 100%"])
+        .args([
+            "-c",
+            "tc qdisc add dev lo parent 1:3 handle 30: netem loss 100%",
+        ])
         .status();
     let _ = Command::new("sh")
         .args(["-c", "tc filter add dev lo protocol ip parent 1:0 prio 3 u32 match ip dport 4222 0xffff flowid 1:3"])
@@ -87,8 +88,7 @@ async fn test_partition_ingestd_survives(runner: &mut TestRunner, pool: &PgPool)
     let active = Command::new("systemctl")
         .args(["is-active", "--quiet", "sinex-ingestd"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
@@ -100,7 +100,7 @@ async fn test_partition_ingestd_survives(runner: &mut TestRunner, pool: &PgPool)
 async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-network-partition: ingestd survives during-partition period";
 
-    let before = event_count(pool).await;
+    let _before = event_count(pool).await;
     let watched = "/var/lib/sinex/watched";
 
     // Generate events during partition
@@ -118,8 +118,7 @@ async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
     let active = Command::new("systemctl")
         .args(["is-active", "--quiet", "sinex-ingestd"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
@@ -128,7 +127,7 @@ async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_partition_healed_ingestd_active(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_partition_healed_ingestd_active(runner: &mut TestRunner, _pool: &PgPool) {
     let name = "chaos-network-partition: partition healed, ingestd still active";
 
     // Heal the partition
@@ -149,8 +148,7 @@ async fn test_partition_healed_ingestd_active(runner: &mut TestRunner, pool: &Pg
     let active = Command::new("systemctl")
         .args(["is-active", "--quiet", "sinex-ingestd"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
