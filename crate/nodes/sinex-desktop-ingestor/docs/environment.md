@@ -23,5 +23,5 @@ HYPRLAND_INSTANCE_SIGNATURE="..."
 
 ## See Also
 
-- Global env vars: `docs/current/configuration/environment-variables.md`
+- Deployment config: `nixos/modules/README.md`
 - Node SDK: `crate/lib/sinex-node-sdk/docs/`

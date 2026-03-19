@@ -1,0 +1,12 @@
+---
+source: xtask/tests/pty_snapshot_tests.rs
+expression: screen
+---
+Progress for invocation #[INVOCATION_ID]:
+  Phase:   compile
+  Step:    building sinex-db
+  Done:    42.0%
+  Items:   21/50
+  Updated: 2026-03-19T00:00:00Z
+✓ history (0.00s)
+Progress for invocation #1

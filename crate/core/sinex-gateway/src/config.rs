@@ -46,10 +46,6 @@ pub struct GatewayConfig {
     #[serde(default = "default_annex_path")]
     pub annex_path: String,
 
-    /// Whether replay control is optional (degraded mode without NATS).
-    #[serde(default)]
-    pub replay_control_optional: bool,
-
     /// Bearer token used for RPC authentication.
     #[serde(default)]
     pub rpc_token: Option<String>,
@@ -259,7 +255,6 @@ impl Default for GatewayConfig {
             pool_min_connections: default_pool_min_connections(),
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             annex_path: default_annex_path(),
-            replay_control_optional: false,
             rpc_token: None,
             rpc_token_file: None,
             admin_token_file: None,
@@ -449,10 +444,6 @@ impl GatewayConfig {
             self.pool_acquire_timeout_secs,
         );
         self.annex_path = env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone());
-        self.replay_control_optional = env_bool_override(
-            "SINEX_GATEWAY_REPLAY_CONTROL_OPTIONAL",
-            self.replay_control_optional,
-        );
         self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take());
         self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take());
         self.tls_client_ca =

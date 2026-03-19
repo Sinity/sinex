@@ -1458,8 +1458,6 @@ pub enum HealthStatus {
     Degraded,
     /// One or more critical subsystems are unavailable
     Unhealthy,
-    /// Component is intentionally bypassed (e.g., replay control in bypass mode)
-    Bypassed,
 }
 
 impl std::fmt::Display for HealthStatus {
@@ -1468,7 +1466,6 @@ impl std::fmt::Display for HealthStatus {
             Self::Healthy => write!(f, "healthy"),
             Self::Degraded => write!(f, "degraded"),
             Self::Unhealthy => write!(f, "unhealthy"),
-            Self::Bypassed => write!(f, "bypassed"),
         }
     }
 }
@@ -1481,7 +1478,6 @@ impl std::str::FromStr for HealthStatus {
             "healthy" => Ok(Self::Healthy),
             "degraded" => Ok(Self::Degraded),
             "unhealthy" => Ok(Self::Unhealthy),
-            "bypassed" => Ok(Self::Bypassed),
             _ => Err(format!("unknown health status: {s}")),
         }
     }

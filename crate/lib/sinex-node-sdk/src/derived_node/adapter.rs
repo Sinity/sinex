@@ -286,7 +286,7 @@ where
 
         match result {
             Ok(Some(output)) => {
-                let output_event = self.build_output_event(output, source_event_id)?;
+                let output_event = self.build_output_event(output, source_event_id, &context)?;
                 self.persisted_state.events_processed += 1;
                 self.events_since_checkpoint += 1;
                 Ok(Some(output_event))
@@ -337,6 +337,7 @@ where
         &self,
         output: DerivedOutput<JsonValue>,
         fallback_source_id: Id<Event<JsonValue>>,
+        context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
         let typed_ids: Vec<Id<Event<JsonValue>>> = output
             .source_event_ids
@@ -345,6 +346,10 @@ where
             .collect();
         let source_event_ids = NonEmptyVec::from_vec(typed_ids)
             .unwrap_or_else(|| NonEmptyVec::single(fallback_source_id));
+        let provenance = Provenance::Synthesis {
+            source_event_ids,
+            operation_id: context.operation_id(),
+        };
 
         Ok(Event {
             id: Some(Id::new()),
@@ -355,16 +360,13 @@ where
             host: HostName::new(&self.host),
             node_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Synthesis {
-                source_event_ids,
-                operation_id: None,
-            },
+            provenance,
             associated_blob_ids: None,
             temporal_policy: Some(output.temporal_policy),
             semantics_version: output.semantics_version,
             scope_key: output.scope_key,
             equivalence_key: output.equivalence_key,
-            created_by_operation_id: None,
+            created_by_operation_id: provenance.operation_uuid(),
             node_model: Some(self.node.node_model()),
         })
     }
@@ -591,7 +593,7 @@ where
             let mut new_event_ids = Vec::new();
             for output in outputs {
                 let equivalence_key = output.equivalence_key.clone();
-                let output_event = self.build_output_event(output, fallback_id)?;
+                let output_event = self.build_output_event(output, fallback_id, &context)?;
                 let new_id = *output_event.id.unwrap_or_else(Id::new).as_uuid();
                 new_event_ids.push((new_id, equivalence_key));
                 all_outputs.push(output_event);
@@ -1002,7 +1004,7 @@ where
                 {
                     Ok(Some(output)) => {
                         let source_id = query_event.event.id.unwrap_or_default();
-                        let output_event = self.build_output_event(output, source_id)?;
+                        let output_event = self.build_output_event(output, source_id, &ctx)?;
                         if let Some(ref sender) = self.event_sender {
                             sender.send(output_event).await.map_err(|_| {
                                 SinexError::lifecycle("Event channel closed during replay")

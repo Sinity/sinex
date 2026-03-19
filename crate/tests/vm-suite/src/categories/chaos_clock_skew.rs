@@ -56,19 +56,19 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
 
     match violations {
         Some(0) => runner.pass(name),
-        Some(v) => runner.fail(name, &format!("{v} timestamp ordering violations at baseline")),
+        Some(v) => runner.fail(
+            name,
+            &format!("{v} timestamp ordering violations at baseline"),
+        ),
         None => runner.fail(name, "ts_coided monotonicity query failed"),
     }
 }
 
-async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, _pool: &PgPool) {
     let name = "chaos-clock-skew: ingestd survives clock advance";
 
     // Read current epoch
-    let epoch_output = Command::new("date")
-        .args(["+%s"])
-        .output()
-        .ok();
+    let epoch_output = Command::new("date").args(["+%s"]).output().ok();
 
     let current_epoch: i64 = epoch_output
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -85,8 +85,7 @@ async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, pool: &PgP
     let set_result = Command::new("date")
         .args(["-s", &format!("@{new_epoch}")])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if !set_result {
         runner.fail(name, "date -s command failed");
@@ -99,8 +98,7 @@ async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, pool: &PgP
     let active = Command::new("systemctl")
         .args(["is-active", "--quiet", "sinex-ingestd"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
@@ -144,10 +142,7 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
     let name = "chaos-clock-skew: no catastrophic timestamp corruption";
 
     // Read current epoch and restore clock first
-    let epoch_output = Command::new("date")
-        .args(["+%s"])
-        .output()
-        .ok();
+    let epoch_output = Command::new("date").args(["+%s"]).output().ok();
 
     let current_epoch: i64 = epoch_output
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -166,10 +161,7 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
     let before = event_count(pool).await;
     let watched = "/var/lib/sinex/watched";
     for i in 0..10_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/clock-post-{i}.txt"),
-            format!("post {i}"),
-        );
+        let _ = std::fs::write(format!("{watched}/clock-post-{i}.txt"), format!("post {i}"));
     }
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -205,7 +197,9 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
             if v as f64 > (final_count as f64 * 0.5) {
                 runner.fail(
                     name,
-                    &format!("{v} timestamp violations out of {final_count} events (>50%, catastrophic)"),
+                    &format!(
+                        "{v} timestamp violations out of {final_count} events (>50%, catastrophic)"
+                    ),
                 );
             } else {
                 runner.pass(name);
@@ -227,7 +221,7 @@ async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &
     match result {
         Ok(Some(chunk_count)) if chunk_count >= 1 => runner.pass(name),
         Ok(Some(0)) => runner.fail(name, "hypertable has no chunks"),
-        Ok(Some(n)) => runner.pass(name), // Any chunks > 0 is good
+        Ok(Some(_n)) => runner.pass(name), // Any chunks > 0 is good
         Ok(None) => runner.fail(name, "hypertable chunk count is NULL"),
         Err(e) => runner.fail(name, &format!("chunk query failed: {e}")),
     }

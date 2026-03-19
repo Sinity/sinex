@@ -12,6 +12,7 @@
   services.sinex = {
     enable = true;
     users.target = "sinex-prod"; # replace with the operator account to monitor
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     database = {
       autoSetup = true;
@@ -118,6 +119,8 @@
   };
 
   # Ensure the monitored operator account exists
+  environment.etc."sinex/gateway-admin-token".text = "example-coordination-admin:admin";
+
   users.users."sinex-prod" = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];

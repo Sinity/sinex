@@ -14,4 +14,4 @@
 ## See Also
 
 - Node SDK: `crate/lib/sinex-node-sdk/docs/`
-- Global architecture: `docs/current/architecture/`
+- Global architecture: `README.md#architecture`

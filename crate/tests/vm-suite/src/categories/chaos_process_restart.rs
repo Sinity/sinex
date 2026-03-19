@@ -49,7 +49,7 @@ async fn test_baseline_events_captured(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
     let name = "chaos-process-restart: ingestd restarts after SIGKILL";
 
     let watched = "/var/lib/sinex/watched";
@@ -75,9 +75,7 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, pool: &PgP
 
     if let Some(pid) = pid_str {
         // Kill with -9 (SIGKILL)
-        let _ = Command::new("kill")
-            .args(["-9", &pid])
-            .status();
+        let _ = Command::new("kill").args(["-9", &pid]).status();
     }
 
     // Wait for systemd to restart it (up to 30s)
@@ -87,8 +85,7 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, pool: &PgP
         let active = Command::new("systemctl")
             .args(["is-active", "--quiet", "sinex-ingestd"])
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.success());
         if active {
             runner.pass(name);
             // Wait for checkpoint replay
@@ -105,12 +102,11 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, pool: &PgP
 async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-process-restart: no data loss after restart";
 
-    let baseline_ids: Vec<sqlx::types::Uuid> = sqlx::query_scalar!(
-        "SELECT id FROM core.events ORDER BY id"
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let baseline_ids: Vec<sqlx::types::Uuid> =
+        sqlx::query_scalar!("SELECT id FROM core.events ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     if baseline_ids.is_empty() {
         runner.fail(name, "baseline IDs are empty, cannot verify data loss");
@@ -118,12 +114,11 @@ async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool)
     }
 
     // Baseline IDs should still exist after restart (no deletion)
-    let current_ids: Vec<sqlx::types::Uuid> = sqlx::query_scalar!(
-        "SELECT id FROM core.events ORDER BY id"
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let current_ids: Vec<sqlx::types::Uuid> =
+        sqlx::query_scalar!("SELECT id FROM core.events ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     let baseline_set: std::collections::HashSet<_> = baseline_ids.into_iter().collect();
     let current_set: std::collections::HashSet<_> = current_ids.into_iter().collect();

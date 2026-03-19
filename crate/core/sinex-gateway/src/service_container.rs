@@ -25,17 +25,21 @@ pub struct ServiceContainer {
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
-    replay_control_optional: bool,
-    replay_control_init_error: Option<ReplayControlError>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ReplayControlStatus {
     pub enabled: bool,
-    pub bypass_allowed: bool,
-    pub bypass_active: bool,
     pub connected: bool,
     pub last_error: Option<ReplayControlError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayHealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
 }
 
 const REPLAY_CONTROL_CONNECT_ATTEMPTS: usize = 3;
@@ -50,36 +54,31 @@ impl ServiceContainer {
     pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
         let mut config = GatewayConfig::load();
         config.database_url = database_url.into();
-        let replay_control_explicit = std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").is_ok();
-        let nats_url_explicit = std::env::var("SINEX_NATS_URL").is_ok();
-        if !replay_control_explicit && !nats_url_explicit {
-            config.replay_control_optional = true;
-        }
         Self::new(&config).await
     }
 
     /// Create a new service container from gateway configuration.
     pub async fn new(config: &GatewayConfig) -> Result<Self> {
-        let db_url = if config.database_url.is_empty() {
+        let db_url = if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
                 "Database URL not provided — set DATABASE_URL or the NixOS module option that exports it",
             )
             .into());
         } else {
-            &config.database_url
+            config.database_url.clone()
         };
 
         let base_config = config.pool_config();
         let service_config = per_service_pool_config(&base_config, 2);
 
-        let content_pool = create_pool_with_config(db_url, &service_config)
+        let content_pool = create_pool_with_config(&db_url, &service_config)
             .await
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
                     .with_operation("gateway.create_pool.content")
                     .with_source(e.to_string())
             })?;
-        let pkm_pool = create_pool_with_config(db_url, &service_config)
+        let pkm_pool = create_pool_with_config(&db_url, &service_config)
             .await
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
@@ -108,42 +107,17 @@ impl ServiceContainer {
             })?,
         );
 
-        // Initialize all services
-        let replay_control_optional = config.replay_control_optional;
-
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
         let nats_config = config.nats_connection_config();
-        let mut replay_control_init_error = None;
 
-        // Connect to NATS for replay control and coordination
-        let control_client = if replay_control_optional {
-            match connect_replay_control_with_backoff(
+        let control_client = Some(
+            connect_replay_control_with_backoff(
                 &nats_config,
                 replay.clone(),
                 config.replay_control_timeout(),
             )
-            .await
-            {
-                Ok(client) => Some(client),
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        "Replay control bus disabled (SINEX_REPLAY_CONTROL_OPTIONAL=1)"
-                    );
-                    replay_control_init_error = Some(ReplayControlError::new(err.to_string()));
-                    None
-                }
-            }
-        } else {
-            Some(
-                connect_replay_control_with_backoff(
-                    &nats_config,
-                    replay.clone(),
-                    config.replay_control_timeout(),
-                )
-                .await?,
-            )
-        };
+            .await?,
+        );
 
         // Two NATS connections are established intentionally:
         // 1. The replay-control connection (above) handles time-critical command traffic and
@@ -152,21 +126,17 @@ impl ServiceContainer {
         // 2. This second connection is used solely for coordination (KV store, service
         //    discovery). Separating them prevents a slow replay command from starving
         //    coordination queries on the shared connection.
-        let (nats_client, coordination_client) = match nats_config.connect().await {
-            Ok(client) => {
-                let js = async_nats::jetstream::new(client.clone());
-                // Use "sinex-gateway" as the service name for coordination queries
-                let coord = Some(Arc::new(CoordinationKvClient::new(
-                    js,
-                    "sinex-gateway".to_string(),
-                )));
-                (Some(client), coord)
-            }
-            Err(err) => {
-                warn!(error = %err, "Coordination client disabled (NATS connection failed)");
-                (None, None)
-            }
-        };
+        let coordination_nats = nats_config.connect().await.map_err(|err| {
+            SinexError::service("Failed to connect to NATS for coordination")
+                .with_operation("gateway.connect_nats.coordination")
+                .with_source(err.to_string())
+        })?;
+        let js = async_nats::jetstream::new(coordination_nats.clone());
+        let coordination_client = Some(Arc::new(CoordinationKvClient::new(
+            js,
+            "sinex-gateway".to_string(),
+        )));
+        let nats_client = Some(coordination_nats);
 
         // Get environment for handler operations
         let env = sinex_environment::environment();
@@ -186,8 +156,6 @@ impl ServiceContainer {
             coordination: coordination_client,
             nats_client,
             env,
-            replay_control_optional,
-            replay_control_init_error,
         })
     }
 
@@ -222,23 +190,16 @@ impl ServiceContainer {
 
     #[must_use]
     pub fn replay_control_status(&self) -> ReplayControlStatus {
-        let enabled = self.replay_control.is_some();
-        let bypass_active = self.replay_control_optional && !enabled;
-        let (connected, last_error) = match &self.replay_control {
+        let (enabled, connected, last_error) = match &self.replay_control {
             Some(client) => {
                 let snapshot = client.health_snapshot();
-                let last_error = snapshot
-                    .last_error
-                    .or_else(|| self.replay_control_init_error.clone());
-                (snapshot.connected, last_error)
+                (true, snapshot.connected, snapshot.last_error)
             }
-            None => (false, self.replay_control_init_error.clone()),
+            None => (false, false, Some(ReplayControlError::new("replay control not initialized"))),
         };
 
         ReplayControlStatus {
             enabled,
-            bypass_allowed: self.replay_control_optional,
-            bypass_active,
             connected,
             last_error,
         }
@@ -297,7 +258,7 @@ impl ServiceContainer {
     /// Covers:
     /// - Database reachability (ping via any pool)
     /// - NATS broker active probe (round-trip, not just cached state)
-    /// - Replay control bus connectivity and bypass status
+    /// - Replay control bus connectivity
     pub async fn health_report(&self) -> GatewayHealthReport {
         // Database ping — use the content pool (shared system pool).
         // Bounded by a 5-second timeout so a stalled DB doesn't hang the health endpoint.
@@ -310,16 +271,38 @@ impl ServiceContainer {
 
         let nats = self.probe_nats_active().await;
         let replay = self.replay_control_status();
+        let mut degradation_reasons = Vec::new();
 
-        // NATS is required unless the gateway was started with replay-control optional
-        // (SINEX_REPLAY_CONTROL_OPTIONAL=1), which signals that a NATS-free degraded
-        // mode is acceptable. In that case a NATS outage does not flip healthy to false.
-        let nats_ok = nats.connected || self.replay_control_optional;
+        if !db_ok {
+            degradation_reasons.push("database unreachable".to_string());
+        }
+        if !nats.connected {
+            degradation_reasons.push("NATS unavailable".to_string());
+        }
+        if !replay.connected {
+            degradation_reasons.push(if replay.enabled {
+                "replay control disconnected".to_string()
+            } else {
+                "replay control unavailable".to_string()
+            });
+        }
+
+        let healthy = db_ok && nats.connected && replay.connected;
+        let status = if !db_ok {
+            GatewayHealthStatus::Unhealthy
+        } else if healthy {
+            GatewayHealthStatus::Healthy
+        } else {
+            GatewayHealthStatus::Degraded
+        };
         GatewayHealthReport {
+            status,
             db_ok,
             nats,
             replay,
-            healthy: db_ok && nats_ok,
+            healthy,
+            serving: healthy,
+            degradation_reasons,
         }
     }
 }
@@ -338,15 +321,20 @@ pub struct NatsHealthProbe {
 /// Unified health report for the gateway.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GatewayHealthReport {
+    /// Overall status for operators: healthy, degraded, or unhealthy.
+    pub status: GatewayHealthStatus,
     /// Database is reachable
     pub db_ok: bool,
     /// NATS active probe result
     pub nats: NatsHealthProbe,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
-    /// Overall health: `db_ok` is always required; NATS is required unless
-    /// `SINEX_REPLAY_CONTROL_OPTIONAL=1` was set (degraded/read-only mode).
+    /// True only when the gateway and its coordination dependencies are fully healthy.
     pub healthy: bool,
+    /// Whether the gateway is ready to serve end-to-end RPC traffic.
+    pub serving: bool,
+    /// Reasons the gateway is not fully healthy.
+    pub degradation_reasons: Vec<String>,
 }
 
 async fn connect_replay_control_with_backoff(

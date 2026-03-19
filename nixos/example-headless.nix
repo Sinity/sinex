@@ -11,6 +11,7 @@
   services.sinex = {
     enable = true;
     users.target = "serveruser";
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     database = {
       autoSetup = true;
@@ -68,4 +69,6 @@
     createHome = true;
     extraGroups = [ "wheel" ];
   };
+
+  environment.etc."sinex/gateway-admin-token".text = "example-headless-admin:admin";
 }

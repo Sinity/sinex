@@ -77,8 +77,7 @@ impl TableDef for Blobs {
 ///
 /// When the `serde` feature is enabled, this struct supports JSON serialization
 /// and deserialization, making it suitable for API responses and content management.
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct BlobRecord {
     pub id: Uuid,
     pub annex_backend: String,

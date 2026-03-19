@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 blake3           = { workspace = true }
+serde            = { workspace = true, features = ["derive"] }
 sinex-primitives = { path = "../sinex-primitives" }
 time             = { workspace = true }
 tracing          = { workspace = true }

@@ -55,7 +55,6 @@ impl LiveGateway {
         );
         env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
-        env_guard.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
         env_guard.set("DATABASE_URL", database_url);
 
         let listener = TcpListener::bind("127.0.0.1:0")?;

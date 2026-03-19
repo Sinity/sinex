@@ -14,7 +14,7 @@ env:
 
 jobs:
   test:
-    name: Devenv Integration Test
+    name: Core verification gate
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref }}
@@ -55,19 +55,7 @@ jobs:
         cache-name: sinity
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-    - name: Verify conformance
-      shell: bash
-      run: |
-        nix develop --accept-flake-config --no-pure-eval --command \
-          xtask verify conformance
-
-    - name: Verify replay determinism
-      shell: bash
-      run: |
-        nix develop --accept-flake-config --no-pure-eval --command \
-          xtask verify replay-lab --seed 42
-
-    - name: Run migrations and tests
+    - name: Run Postgres-backed workspace gate
       shell: bash
       run: |
         nix develop --accept-flake-config --no-pure-eval --command \

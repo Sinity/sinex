@@ -44,6 +44,12 @@ pub enum InfraSubcommand {
         #[arg(long, short)]
         follow: bool,
     },
+    /// Apply the declarative schema to a database
+    SchemaApply {
+        /// Target database URL. Falls back to DATABASE_URL, then the current checkout stack.
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
     /// Manage VM integration
     Vm {
         #[command(subcommand)]
@@ -57,19 +63,30 @@ impl XtaskCommand for InfraCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let config = StackConfig::for_current_checkout()?;
-
         match &self.subcommand {
             InfraSubcommand::Start { all, processes } => {
+                let config = StackConfig::for_current_checkout()?;
                 execute_start(&config, *all, processes, ctx)
             }
-            InfraSubcommand::Stop => execute_stop(&config, ctx),
-            InfraSubcommand::Status { watch } => execute_status(&config, *watch, ctx).await,
+            InfraSubcommand::Stop => {
+                let config = StackConfig::for_current_checkout()?;
+                execute_stop(&config, ctx)
+            }
+            InfraSubcommand::Status { watch } => {
+                let config = StackConfig::for_current_checkout()?;
+                execute_status(&config, *watch, ctx).await
+            }
             InfraSubcommand::Logs {
                 process,
                 lines,
                 follow,
-            } => execute_logs(&config, process, *lines, *follow, ctx),
+            } => {
+                let config = StackConfig::for_current_checkout()?;
+                execute_logs(&config, process, *lines, *follow, ctx)
+            }
+            InfraSubcommand::SchemaApply { database_url } => {
+                execute_schema_apply(database_url.as_deref(), ctx)
+            }
             InfraSubcommand::Vm { cmd } => {
                 let vm_cmd = crate::commands::vm::VmCommand {
                     subcommand: cmd.clone(),
@@ -82,6 +99,18 @@ impl XtaskCommand for InfraCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::build()
     }
+}
+
+fn resolve_database_url(database_url: Option<&str>) -> Result<String> {
+    if let Some(database_url) = database_url {
+        return Ok(database_url.to_owned());
+    }
+
+    if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        return Ok(database_url);
+    }
+
+    Ok(StackConfig::for_current_checkout()?.database_url())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +189,15 @@ fn execute_start(
         .with_message("Infra started")
         .with_detail(format!("Postgres on port {pg_port}"))
         .with_detail(format!("NATS on port {nats_port}")))
+}
+
+fn execute_schema_apply(database_url: Option<&str>, ctx: &CommandContext) -> Result<CommandResult> {
+    ctx.heading("infra schema-apply");
+
+    let database_url = resolve_database_url(database_url)?;
+    stack::apply_schema_for_database_url(&database_url, ctx.is_human())?;
+
+    Ok(CommandResult::success().with_message("Schema applied"))
 }
 
 fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {

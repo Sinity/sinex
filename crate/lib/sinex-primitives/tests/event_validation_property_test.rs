@@ -145,14 +145,13 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
 }
 
 /// Strategy for generating concurrent operation events
-#[cfg(feature = "concurrent_tests")]
 fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(
         (0usize..10, 0u64..1000).prop_map(|(worker_id, operation_id)| {
             let payload = json!({
                 "worker_id": worker_id,
                 "operation_id": operation_id,
-                "timestamp": (*Timestamp::now()).timestamp_millis()
+                "timestamp": (*Timestamp::now()).unix_timestamp_nanos() / 1_000_000
             });
 
             let mut event = event_fixture(
@@ -168,7 +167,6 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
 }
 
 /// Strategy for performance characteristic events
-#[cfg(feature = "performance_tests")]
 fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(arbitrary_event(), 10..1000)
 }
@@ -474,13 +472,11 @@ sinex_proptest! {
 }
 
 // =============================================================================
-// Concurrent Tests (Feature-Gated)
+// Concurrent Tests
 // =============================================================================
 
-#[cfg(feature = "concurrent_tests")]
 mod concurrent_tests {
     use super::*;
-    use std::sync::Arc;
     use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
@@ -518,10 +514,9 @@ mod concurrent_tests {
 }
 
 // =============================================================================
-// Performance Tests (Feature-Gated)
+// Performance Tests
 // =============================================================================
 
-#[cfg(feature = "performance_tests")]
 mod performance_tests {
     use super::*;
     use std::time::Instant;
@@ -529,6 +524,7 @@ mod performance_tests {
     use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
+        #[ignore = "heavy: property throughput check"]
         fn property_event_creation_performance(
             events in performance_characteristic_events()
         ) -> TestResult<()> {

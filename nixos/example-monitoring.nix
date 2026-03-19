@@ -13,6 +13,7 @@
   services.sinex = {
     enable = true;
     users.target = "observer";
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     database = {
       autoSetup = true;
@@ -67,6 +68,8 @@
     isNormalUser = true;
     extraGroups = [ "wheel" ];
   };
+
+  environment.etc."sinex/gateway-admin-token".text = "example-monitoring-admin:admin";
 
   networking.firewall.interfaces.lo.allowedTCPPorts = [ 9090 3000 ];
 }

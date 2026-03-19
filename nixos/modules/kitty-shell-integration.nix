@@ -4,9 +4,12 @@
 with lib;
 
 let
+  systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  inherit (systemdHardening) mkHelperServiceConfig;
   cfg = config.services.sinex;
   kittySource = cfg.shell.kitty;
   targetUser = cfg.users.target;
+  targetHome = if targetUser == null then null else "/home/${targetUser}";
   kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.snippet;
   
   # Script to auto-configure kitty shell integration
@@ -116,27 +119,31 @@ in
         description = "Configure Kitty shell integration for Sinex";
         wantedBy = [ "multi-user.target" ];
         serviceConfig = {
-          Type = "oneshot";
-          User = targetUser;
-          Group = targetUser;
           ExecStart = "${configureKittyScript}";
-          RemainAfterExit = true;
+        } // mkHelperServiceConfig {
+          user = targetUser;
+          group = targetUser;
+          remainAfterExit = true;
+          protectHome = false;
+          readWritePaths = [ targetHome ];
         };
         environment = {
-          HOME = "/home/${targetUser}";
+          HOME = targetHome;
           USER = targetUser;
         };
       };
       systemd.services.sinex-kitty-teardown = {
         description = "Remove Kitty shell integration for Sinex";
         serviceConfig = {
-          Type = "oneshot";
-          User = targetUser;
-          Group = targetUser;
           ExecStart = "${removeKittyConfigScript}";
+        } // mkHelperServiceConfig {
+          user = targetUser;
+          group = targetUser;
+          protectHome = false;
+          readWritePaths = [ targetHome ];
         };
         environment = {
-          HOME = "/home/${targetUser}";
+          HOME = targetHome;
           USER = targetUser;
         };
       };

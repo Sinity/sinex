@@ -56,9 +56,6 @@ impl ReferenceModel {
         self.events.retain(|_, (s, _)| s.as_str() != source);
     }
 
-    fn get_by_id(&self, id: &str) -> Option<&(String, String)> {
-        self.events.get(id)
-    }
 }
 
 // ─── Operation vocabulary ─────────────────────────────────────────────────────

@@ -2,20 +2,23 @@
 
 Documentation layout:
 
-- `docs/` is for global architecture, policy, and operational docs.
+- `README.md` owns project overview, architecture, security, development, and stable deployment guidance.
+- Cross-cutting vision, target-state, and roadmap material lives in the sibling report repo at `/realm/project/sinex-target-vision/`.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
-| **Documentation index** | `docs/README.md` | `docs/documentation-guidelines.md` |
-| **Architecture overview** | `docs/current/architecture/Core_Architecture.md` | `docs/current/architecture/` |
-| **Security** | `docs/current/security.md` | `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` |
-| **Type system patterns** | `docs/current/architecture/type-system-patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
-| **Distributed patterns** | `docs/current/architecture/distributed-patterns.md` | |
-| **Observability** | `docs/current/architecture/observability.md` | |
-| **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
-| **Environment variables** | `docs/current/configuration/environment-variables.md` | |
-| **Getting started** | `README.md#contributing` | `docs/README.md` |
+| **Documentation index** | `README.md` | `nixos/modules/README.md` |
+| **Architecture overview** | `README.md#architecture` | `crate/core/sinex-gateway/docs/architecture.md` |
+| **Security** | `README.md#security` | `nixos/modules/README.md` |
+| **Type system patterns** | `crate/lib/sinex-primitives/docs/type_system_patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
+| **Distributed patterns** | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` | `crate/lib/sinex-node-sdk/docs/coordination.md` |
+| **Observability** | `crate/lib/sinex-node-sdk/docs/observability.md` | `crate/lib/sinex-node-sdk/docs/health_monitoring_integration.md` |
+| **Current state tracking** | `crate/lib/sinex-services/docs/current_state_tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
+| **General vision / gap / roadmap** | `/realm/project/sinex-target-vision/AGENTS.md` | `/realm/project/sinex-target-vision/canon/` |
+| **Environment variables** | `nixos/modules/README.md` | crate-local `docs/environment.md` files |
+| **Getting started** | `README.md#quick-start` | `xtask/README.md` |
+| **Development workflow** | `README.md#development` | `xtask/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
 | **Perf contracts** | `config/verify/perf-contracts.toml` | `xtask test bench --contracts` |
 | **Verification workflow** | `xtask/docs/verification.md` | `xtask/docs/README.md` |
@@ -34,14 +37,14 @@ Documentation layout:
 | **Provenance** | `crate/lib/sinex-node-sdk/docs/provenance.md` | |
 | **ingestd architecture** | `crate/core/sinex-ingestd/docs/architecture.md` | `crate/core/sinex-ingestd/docs/pipeline-design.md` |
 | **Gateway architecture** | `crate/core/sinex-gateway/docs/architecture.md` | `crate/core/sinex-gateway/docs/native_messaging.md` |
-| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `docs/planning/features/unified-privacy-engine.md` |
+| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `/realm/project/sinex-target-vision/analysis/domains/privacy-security.md` |
 | **Domain enums** | `crate/lib/sinex-primitives/src/domain.rs` | `crate/lib/sinex-primitives/docs/domain_types.md` |
 | **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `crate/lib/sinex-primitives/docs/event_taxonomy_and_enums.md` |
 | **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
-| **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |
-| **Data lifecycle** | `docs/current/architecture/data-lifecycle.md` | 3-tier: live → archive → tombstone |
-| **NATS subjects** | `docs/current/architecture/nats-subjects.md` | Subject naming conventions |
-| **Feature flags** | `docs/current/configuration/feature-flags.md` | |
-| **TLS / NixOS** | `docs/current/configuration/tls-nixos-integration.md` | `docs/current/configuration/tls-setup.md` |
+| **CLI usage** | `crate/cli/docs/README.md` | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
+| **Data lifecycle** | `crate/lib/sinex-db/docs/data_lifecycle.md` | 3-tier: live → archive → tombstone |
+| **NATS subjects** | `crate/lib/sinex-primitives/docs/nats_subjects.md` | Subject naming conventions |
+| **Feature flags** | owning crate `Cargo.toml` + crate docs when behavior-facing | |
+| **TLS / NixOS** | `nixos/modules/README.md` | crate-local transport/env docs |
 | **xtask guide** | `xtask/docs/README.md` | |
 | **Runtime metrics** | `xtask/src/runtime_metrics.rs` | Postgres queries for ingestd health |

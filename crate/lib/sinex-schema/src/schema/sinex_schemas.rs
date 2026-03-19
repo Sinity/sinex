@@ -23,9 +23,9 @@ use sqlx::FromRow;
 /// **Table: `sinex_schemas.event_payload_schemas`**
 ///
 /// The central registry for all event payload JSON schemas. This table acts as the
-/// data contract registry for the entire system. It is managed by the `sinex-schema`
-/// tool (which synchronizes from Rust code) and is read by `ingestd` at runtime
-/// to perform validation on all incoming events.
+/// data contract registry for the entire system. It is managed by the schema
+/// toolchain that synchronizes Rust definitions into Postgres and is read by
+/// `ingestd` at runtime to perform validation on all incoming events.
 #[derive(Iden, Copy, Clone)]
 pub enum EventPayloadSchemas {
     Table,
@@ -51,8 +51,7 @@ impl TableDef for EventPayloadSchemas {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct EventPayloadSchemaRecord {
     pub id: Uuid,
     pub source: String,
@@ -194,8 +193,7 @@ impl TableDef for NodeManifests {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct NodeManifestRecord {
     pub id: i32,
     pub node_name: String,
@@ -349,8 +347,7 @@ impl TableDef for NodeRuns {
     }
 }
 
-#[derive(Debug, FromRow)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct NodeRunRecord {
     pub id: Uuid,
     pub node_manifest_id: i32,

@@ -24,7 +24,7 @@
       port = 5432;
       name = "sinex";
       user = "sinex_agent";
-      passwordFile = config.sinex.secrets.paths."sinex-remote-db";
+      passwordFile = config.environment.etc."sinex/remote-db-password".source;
     };
 
     nats.environment = "prod";
@@ -40,9 +40,9 @@
         servers = [ "tls://core.example.net:4222" ];
         tls = {
           requireTls = true;
-          caCertFile = config.sinex.secrets.paths."sinex-remote-nats-ca";
-          clientCertFile = config.sinex.secrets.paths."sinex-remote-nats-cert";
-          clientKeyFile = config.sinex.secrets.paths."sinex-remote-nats-key";
+          caCertFile = config.environment.etc."sinex/remote-nats-ca.pem".source;
+          clientCertFile = config.environment.etc."sinex/remote-nats-cert.pem".source;
+          clientKeyFile = config.environment.etc."sinex/remote-nats-key.pem".source;
         };
       };
       defaults = {
@@ -86,6 +86,11 @@
     isNormalUser = true;
     createHome = true;
   };
+
+  environment.etc."sinex/remote-db-password".text = "replace-me";
+  environment.etc."sinex/remote-nats-ca.pem".text = "replace-with-real-ca";
+  environment.etc."sinex/remote-nats-cert.pem".text = "replace-with-real-client-cert";
+  environment.etc."sinex/remote-nats-key.pem".text = "replace-with-real-client-key";
 
   environment.systemPackages = with pkgs; [
     sinexCli

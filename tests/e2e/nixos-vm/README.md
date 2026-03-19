@@ -31,8 +31,15 @@ NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = t
 
 ## CI Coverage
 
-- Flake checks (and CI) currently build/run only the `basic` smoke and `preflight` coordination suites for fast gating.
-- All other scenarios (`maintenance`, `satellite-matrix`, `multi-source`, `failure-recovery`, `performance`) are manual/optional; run them locally with `./tests/e2e/nixos-vm/run-vm-tests.sh -c integration` or `-c all` before landing changes that touch their areas.
+- The default GitHub Actions gate in `.github/workflows/ci.yml` does **not** execute
+  this directory directly. It runs only the Postgres-backed `xtask ci workspace`
+  gate.
+- Flake checks and other automation currently cover only a narrow VM slice:
+  `basic` smoke plus `preflight` coordination coverage.
+- All other scenarios (`maintenance`, `satellite-matrix`, `multi-source`,
+  `failure-recovery`, `performance`) are non-gating. Run them locally with
+  `./tests/e2e/nixos-vm/run-vm-tests.sh -c integration` or `-c all` before landing
+  changes that touch their areas.
 
 ## Test Runner
 
@@ -101,43 +108,15 @@ in the qcow2 image.
    - Cascading and resource-storm scenarios with recovery asserts
    - Continuous monitoring via the chaos control plane
 
-### Modernization Roadmap
+## Coverage Notes
 
-- [x] Baseline smoke test (`basic`)
-- [x] Pre-flight / coordination coverage (`preflight`)
-- [x] Maintenance timers & blob storage (`maintenance`)
-- [x] Node service matrix (`node-matrix`)
-- [x] Re-enable multi-source stress testing on satellites
-- [x] Port failure-recovery suite to new services
-- [x] Restore performance suite on satellites
-- [ ] Rebuild production-scale soak on satellites
-- [ ] Port chaos scenarios with monitoring assertions
-
-## Key Improvements
-
-### 1. Faster Test Execution
-- **tmpfs for test data**: File operations use memory instead of disk
-- **Optimized VM profiles**: Right-sized resources for each test type
-- **Service optimization**: Disabled unnecessary services
-- **Batch operations**: Events generated in batches instead of one-by-one
-
-### 2. Better Stability
-- **Retry logic**: `wait_until_succeeds` for flaky operations
-- **Optional Wayland**: Tests gracefully handle missing window manager
-- **Health checks**: Proper service readiness validation
-- **Resource monitoring**: Prevent test failures from resource exhaustion
-
-### 3. Enhanced Debugging
-- **Keep failed VMs**: Debug mode keeps VMs running after failure
-- **Test helpers**: Common operations wrapped in reusable functions
-- **Health monitoring**: Built-in health check and monitoring tools
-- **Detailed logging**: All test output saved to result files
-
-### 4. Developer Experience
-- **Categorized tests**: Run subsets based on testing needs
-- **Progress reporting**: Real-time test status and duration
-- **Summary reports**: Aggregate results with pass/fail rates
-- **Interactive monitoring**: `sinex-monitor` for live system status
+- `basic` and `preflight` are the scenarios most closely aligned with automated
+  gating today.
+- The rest of the suite exists to catch deployment-path regressions that ordinary
+  Rust/package tests will miss, but those scenarios currently rely on explicit local
+  runs or targeted follow-up automation.
+- Treat this directory as deployment-path coverage, not as a promise that every
+  scenario is exercised on every PR.
 
 ## Writing New Tests
 
@@ -227,7 +206,7 @@ sinex-monitor [interval_seconds]
 
 1. **Timeout errors**: Increase timeout with `-t` flag
 2. **Resource exhaustion**: Use larger VM profile
-3. **Flaky tests**: Check for missing retry logic
+3. **Flaky tests**: Check for brittle ordering, missing waits, or resource pressure
 4. **Service failures**: Use health checks to validate readiness
 
 ### Debugging Failed Tests

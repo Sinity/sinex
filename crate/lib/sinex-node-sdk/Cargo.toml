@@ -25,8 +25,6 @@ sinex-db = { path = "../sinex-db", optional = true }
 default = ["db", "messaging", "preflight"]
 db = ["dep:sinex-db", "sinex-db/sqlx", "dep:sqlx"]
 messaging = ["async-nats"]
-event-source = []
-automaton = []
 preflight = []
 external-tests = []
 

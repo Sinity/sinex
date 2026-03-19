@@ -12,4 +12,4 @@
 
 - Keep `EventPayload` derive minimal, tested, and documented.
 - Keep this crate focused on proc-macro-only concerns.
-- If additional macros are introduced, document them in `docs/README.md` and add targeted tests in `tests/`.
+- If additional macros are introduced, document them in `README.md` and add targeted tests in `tests/`.

@@ -1,11 +1,17 @@
 # Verification Workflow
 
-Performance verification lives under `xtask test bench`, not a separate
-`xtask verify` surface.
+The public verification surface is currently split between:
+
+- `xtask test bench` for performance contracts and stored perf reports
+- `xtask ci ...` for schema/bootstrap/workspace validation
+
+There is still an internal `xtask/src/commands/verify.rs` module, but the top-level
+CLI does not expose a `verify` command today.
 
 ## Perf Verification
 
-Use benchmark mode for performance sweeps, contracts, and report handling:
+Performance verification lives under `xtask test bench`. Use benchmark mode for
+performance sweeps, contracts, and report handling:
 
 ```bash
 # Benchmark sweeps
@@ -30,15 +36,28 @@ Useful options:
 
 ## Non-Perf Verification
 
-Use the standard workspace checks for compile, lint, and test validation:
+Use the `ci` command family for broader compile/lint/test validation:
 
 ```bash
-xtask check --full
-xtask test
-xtask ci workspace
+xtask ci schema-only
+xtask ci postgres -- xtask ci workspace
 ```
 
-Use `xtask ci schema-only` when you want a schema-focused validation pass.
+`xtask ci workspace` currently does all of the following:
+
+- applies declarative schema
+- verifies the core contract tables exist
+- runs `cargo deny check`
+- runs `xtask check` and `xtask lint-forbidden` in parallel
+- fails if the workspace is left dirty by generated output
+- runs the `sinex-e2e-tests` package
+- runs the remainder of the test suite with `sinex-e2e-tests` excluded
+
+The GitHub Actions workflow runs the workspace gate through
+`xtask xtr ci postgres -- xtask xtr ci workspace`.
+
+Use `xtask ci schema-only` when you want the schema apply + readiness path without
+the broader compile/test stages.
 
 ## Contracts
 
@@ -46,4 +65,4 @@ Perf contracts are loaded from:
 
 - `config/verify/perf-contracts.toml`
 
-Reference `xtask test bench --help` for the current option surface.
+Reference `xtask test bench --help` for the current perf option surface.

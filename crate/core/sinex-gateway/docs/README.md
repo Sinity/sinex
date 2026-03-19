@@ -16,6 +16,7 @@ The Gateway serves as the **hardened external interface** for the Sinex platform
 - `architecture.md` – Service role, separation rationale, security posture
 - `overview.md` – High-level architecture and usage guidance
 - `rpc_server.md` – JSON-RPC methods, request/response schema, safety notes
+- `interaction_and_query.md` – query/read-path architecture, CLI boundary, and service-layer split
 
 ## Configuration
 
@@ -29,8 +30,9 @@ The Gateway serves as the **hardened external interface** for the Sinex platform
 - `replay_state_machine.md` – State machine lifecycle and transitions
 - `native_messaging.md` – Browser extension protocol and security
 - `rate_limit.md` – Per-token rate limiting strategy
+- `coordination.md` – gateway lifecycle, hot-reload, and distributed coordination
 
 ## See Also
 
-- Global security: `docs/current/security.md`
-- Global config: `docs/current/configuration/environment-variables.md`
+- Global security posture: `README.md#security`
+- Deployment config: `nixos/modules/README.md`

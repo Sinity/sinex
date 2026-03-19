@@ -120,7 +120,6 @@ impl<'ctx> TestCoreStack<'ctx> {
             tls_cert: cert_file.path().to_path_buf(),
             tls_key: key_file.path().to_path_buf(),
             rpc_token: Some(rpc_token.clone()),
-            replay_control_optional: false,
             rpc_rate_limit_disabled: true,
         };
         let gateway = start_test_gateway(gateway_config).await?;
