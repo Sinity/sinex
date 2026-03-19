@@ -1,0 +1,14 @@
+---
+source: xtask/tests/pty_snapshot_tests.rs
+expression: screen
+---
+╭──────────────────┬───────┬──────┬──────┬──────┬───────┬───────────╮
+│ WHEN             │ TIER  │ PASS │ FAIL │ SKIP │ DUR   │ STATUS    │
+├──────────────────┼───────┼──────┼──────┼──────┼───────┼───────────┤
+│ [FIXED_TIME] │ mixed │ 1    │ 1    │ 0    │ 12.5s │ ✗ failing │
+╰──────────────────┴───────┴──────┴──────┴──────┴───────┴───────────╯
+
+Failed exercises in run [FIXED_TIME]00Z:
+  ✗ t2.progress-render: progress snapshot mismatch
+✓ history (0.00s)
+1 exercise run(s) shown
