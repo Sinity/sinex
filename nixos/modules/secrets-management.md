@@ -1,6 +1,6 @@
 # Secrets Management with agenix
 
-**Status (2025-12-02)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and will refuse to start if the token file is missing.
+**Status (2026-03-19)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start if the token file is missing. The managed NATS surfaces also resolve conventional secret names automatically for local server TLS (`sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`) and the shared client TLS/auth path (`sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`).
 
 ## Overview
 
@@ -118,6 +118,7 @@ For secrets requiring periodic rotation:
 - agenix is included in the flake inputs and imported by the Sinex NixOS module.
 - `.age` files under `secret/` are decrypted to `/run/agenix/<name>` and exposed via `config.sinex.secrets.paths`.
 - Gateway requires `sinex-gateway-admin-token.age` (or `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start without it.
+- Managed local NATS TLS/auth surfaces resolve the conventional `sinex-nats-*` secret names automatically.
 
 ⚠️ Operator tasks (per deployment):
 - Generate age keys for host/user and encrypt secrets.

@@ -97,8 +97,14 @@
             pkgs.postgresql18Packages.pg_jsonschema
           ]);
 
-          # Filter source for Rust builds
-          src = craneLib.cleanCargoSource ./.;
+          # Filter source for Rust builds.
+          # Extends crane's default Rust filter to include .md files:
+          # many crates use `#![doc = include_str!("../docs/README.md")]` which
+          # requires .md files to be present at compile time.
+          src = pkgs.lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".md" path);
+          };
 
           # Common build arguments
           commonArgs = {
@@ -114,6 +120,7 @@
             nativeBuildInputs = with pkgs; [
               pkg-config
               protobuf
+              mold # .cargo/config.toml: link-arg=-fuse-ld=mold
             ];
 
           };
@@ -126,34 +133,24 @@
 
           # Ephemeral Postgres setup for SQLx query validation
           postgresPreBuild = ''
-            export PGDATA="$TMPDIR/pgdata"
-            mkdir -p "$PGDATA"
-            ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust
+                        export PGDATA="$TMPDIR/pgdata"
+                        mkdir -p "$PGDATA"
+                        ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres
 
-            export PGHOST="$TMPDIR"
-            export PGPORT=55433
-            echo "unix_socket_directories = '$TMPDIR'" >> "$PGDATA/postgresql.conf"
-            echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+                        export PGHOST="$TMPDIR"
+                        export PGPORT=55433
+                        echo "unix_socket_directories = '$TMPDIR'" >> "$PGDATA/postgresql.conf"
+                        echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+                        echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
 
-            ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
+                        ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
 
-            ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" sinex_dev || true
+                        ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev || true
 
-            ${postgresForSqlx}/bin/psql -h "$PGHOST" -p "$PGPORT" -d postgres -U postgres -v ON_ERROR_STOP=1 -c "DO \$\$
-            BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sinity') THEN
-                CREATE ROLE sinity LOGIN CREATEDB;
-              END IF;
-            END
-            \$\$;"
-
-            ${postgresForSqlx}/bin/psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -U postgres -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO sinity;"
-
-            export PGUSER="sinity"
-            export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST"
-
-            # Run migrations to create schema for SQLx query validation
-            cargo run --manifest-path crate/lib/sinex-schema/Cargo.toml --bin sinex-schema -- up
+            # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
+                        # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
+                        export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
+                        cargo run -p sinex-schema -- up
           '';
 
           postgresPostBuild = ''
@@ -166,15 +163,20 @@
           # SQLX_OFFLINE=false: preBuild starts an ephemeral Postgres and sets DATABASE_URL,
           # so sqlx::query! macros validate against a live schema (overrides the "true" in
           # cargoArtifacts/buildDepsOnly which only compiled external deps without project macros).
-          mkPackage = pname: craneLib.buildPackage (commonArgs // {
-            inherit cargoArtifacts pname;
-            cargoExtraArgs = "-p ${pname}";
-            doCheck = false;
-            SQLX_OFFLINE = "false";
+          mkPackage =
+            pname:
+            craneLib.buildPackage (
+              commonArgs
+              // {
+                inherit cargoArtifacts pname;
+                cargoExtraArgs = "-p ${pname}";
+                doCheck = false;
+                SQLX_OFFLINE = "false";
 
-            preBuild = postgresPreBuild;
-            postBuild = postgresPostBuild;
-          });
+                preBuild = postgresPreBuild;
+                postBuild = postgresPostBuild;
+              }
+            );
 
           # All packages built from Cargo.toml names
           sinexPackages = {
@@ -305,19 +307,21 @@
 
                 # Infrastructure services
                 nats-server
-                natscli      # nats CLI for stream inspection and admin
+                natscli # nats CLI for stream inspection and admin
                 postgresForSqlx
 
                 # Build/runtime dependencies
                 jq
                 openssl
                 pkg-config
-                dbus dbus.dev
+                dbus
+                dbus.dev
                 git-annex
                 nsc
 
                 # VM testing
-                qemu qemu_kvm
+                qemu
+                qemu_kvm
 
                 # Shell/Nix tooling
                 direnv
@@ -332,7 +336,9 @@
 
               shellHook = ''
                 export PATH="$PWD/scripts:$PWD/${stateDir}/target/debug:$PATH"
-                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export LD_LIBRARY_PATH="${
+                  pkgs.lib.makeLibraryPath [ pkgs.dbus ]
+                }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
@@ -555,7 +561,7 @@
           ];
         };
 
-        exampleRemoteSatellite = nixpkgs.lib.nixosSystem {
+        exampleRemoteNode = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -564,7 +570,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-remote-satellite.nix
+            ./nixos/example-remote-node.nix
             (
               { lib, ... }:
               {
@@ -615,22 +621,25 @@
       };
 
       # Unified overlay: pg_jsonschema + all sinex packages
-      overlays.default = nixpkgs.lib.composeExtensions pgJsonschemaOverlay (final: prev: {
-        inherit (self.packages.${final.system})
-          sinex
-          sinexctl
-          sinex-ingestd
-          sinex-gateway
-          sinex-fs-ingestor
-          sinex-terminal-ingestor
-          sinex-desktop-ingestor
-          sinex-system-ingestor
-          sinex-document-ingestor
-          sinex-terminal-command-canonicalizer
-          sinex-health-automaton
-          sinex-analytics-automaton
-          sinex-schema
-          sinex-node-sdk;
-      });
+      overlays.default = nixpkgs.lib.composeExtensions pgJsonschemaOverlay (
+        final: prev: {
+          inherit (self.packages.${final.system})
+            sinex
+            sinexctl
+            sinex-ingestd
+            sinex-gateway
+            sinex-fs-ingestor
+            sinex-terminal-ingestor
+            sinex-desktop-ingestor
+            sinex-system-ingestor
+            sinex-document-ingestor
+            sinex-terminal-command-canonicalizer
+            sinex-health-automaton
+            sinex-analytics-automaton
+            sinex-schema
+            sinex-node-sdk
+            ;
+        }
+      );
     };
 }

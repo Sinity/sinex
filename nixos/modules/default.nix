@@ -4,6 +4,8 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  inherit (systemdHardening) mkHelperServiceConfig;
 
   defaultSinexPackage =
     if pkgs ? sinex then
@@ -761,6 +763,8 @@ in
                         description = ''
                           CA bundle used to verify the NATS server certificate.
                           Exported as <literal>SINEX_NATS_CA_CERT</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-ca</literal> or <literal>nats-ca</literal>.
                         '';
                       };
                       clientCertFile = mkOption {
@@ -769,6 +773,9 @@ in
                         description = ''
                           Client certificate for NATS mutual TLS.
                           Exported as <literal>SINEX_NATS_CLIENT_CERT</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-client-cert</literal> or
+                          <literal>nats-client-cert</literal>.
                         '';
                       };
                       clientKeyFile = mkOption {
@@ -777,6 +784,9 @@ in
                         description = ''
                           Client private key for NATS mutual TLS.
                           Exported as <literal>SINEX_NATS_CLIENT_KEY</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-client-key</literal> or
+                          <literal>nats-client-key</literal>.
                         '';
                       };
                     };
@@ -794,6 +804,8 @@ in
                           Path to a file containing the shared NATS auth token.
                           Prefer this for simple file-backed secret deployment.
                           Exported as <literal>SINEX_NATS_TOKEN_FILE</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-token</literal> or <literal>nats-token</literal>.
                         '';
                       };
                       credsFile = mkOption {
@@ -803,6 +815,9 @@ in
                           Path to a NATS credentials file (`.creds`, JWT + seed).
                           Use this when the NATS deployment expects credentials-file auth.
                           Exported as <literal>SINEX_NATS_CREDS_FILE</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-client-creds</literal> or
+                          <literal>nats-client-creds</literal>.
                         '';
                       };
                       nkeySeedFile = mkOption {
@@ -812,6 +827,9 @@ in
                           Path to a file containing the NATS NKey seed.
                           Use this only when the deployment expects direct NKey auth.
                           Exported as <literal>SINEX_NATS_NKEY_SEED_FILE</literal>.
+                          If unset, managed deployments fall back to agenix secrets named
+                          <literal>sinex-nats-client-nkey</literal> or
+                          <literal>nats-client-nkey</literal>.
                         '';
                       };
                     };
@@ -1319,12 +1337,42 @@ in
       dbCfg = cfg.database;
       databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
       secretPaths = config.sinex.secrets.paths or {};
+      resolveSecretPath = explicit: names:
+        if explicit != null then explicit else
+        let
+          match = findFirst (name: builtins.hasAttr name secretPaths) null names;
+        in
+        if match == null then null else builtins.getAttr match secretPaths;
       gatewayAdminTokenFile =
         if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
         else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
         else null;
       natsTlsCfg = cfg.nodes.nats.tls;
       natsAuthCfg = cfg.nodes.nats.auth;
+      effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
+        "sinex-nats-ca"
+        "nats-ca"
+      ];
+      effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
+        "sinex-nats-client-cert"
+        "nats-client-cert"
+      ];
+      effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
+        "sinex-nats-client-key"
+        "nats-client-key"
+      ];
+      effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
+        "sinex-nats-token"
+        "nats-token"
+      ];
+      effectiveNatsCredsFile = resolveSecretPath natsAuthCfg.credsFile [
+        "sinex-nats-client-creds"
+        "nats-client-creds"
+      ];
+      effectiveNatsNkeySeedFile = resolveSecretPath natsAuthCfg.nkeySeedFile [
+        "sinex-nats-client-nkey"
+        "nats-client-nkey"
+      ];
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
@@ -1402,17 +1450,24 @@ in
             message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
           }
           {
-            assertion = (natsTlsCfg.clientCertFile == null) == (natsTlsCfg.clientKeyFile == null);
-            message = "NATS mutual TLS requires both services.sinex.nodes.nats.tls.clientCertFile and clientKeyFile.";
+            assertion = (effectiveNatsClientCertFile == null) == (effectiveNatsClientKeyFile == null);
+            message = "NATS mutual TLS requires both services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
           {
             assertion =
               length (filter (x: x != null) [
-                natsAuthCfg.tokenFile
-                natsAuthCfg.credsFile
-                natsAuthCfg.nkeySeedFile
+                effectiveNatsTokenFile
+                effectiveNatsCredsFile
+                effectiveNatsNkeySeedFile
               ]) <= 1;
             message = "Configure at most one NATS auth mode under services.sinex.nodes.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
+          }
+          {
+            assertion =
+              (!(cfg.nats.enable || cfg.nats.autoSetup))
+              || (!cfg.nats.tls.verifyClients && !cfg.nats.tls.verifyAndMap)
+              || (effectiveNatsClientCertFile != null && effectiveNatsClientKeyFile != null);
+            message = "Managed NATS client-certificate verification requires services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
         ];
         environment.systemPackages = mkAfter (
@@ -1509,9 +1564,6 @@ in
         systemd.services.sinex-dlq-cleanup = {
           description = "Sinex DLQ cleanup";
           serviceConfig = {
-            Type = "oneshot";
-            User = sinexUser;
-            Group = sinexUser;
             Environment = [
               "DATABASE_URL=${databaseUrl}"
               "SINEX_DLQ_PATH=${dlqDir}"
@@ -1521,6 +1573,10 @@ in
             # (e.g. gateway unavailable, transient I/O error).
             Restart = "on-failure";
             RestartSec = 300;
+          } // mkHelperServiceConfig {
+            user = sinexUser;
+            group = sinexUser;
+            readWritePaths = [ dlqDir ];
           };
         };
 
@@ -1536,7 +1592,7 @@ in
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
         services.sinex.nodes.nats.servers = mkDefault [
-          "nats://${cfg.nats.host}:${toString cfg.nats.port}"
+          "${if cfg.nats.tls.enable then "tls" else "nats"}://${cfg.nats.host}:${toString cfg.nats.port}"
         ];
       })
     ];

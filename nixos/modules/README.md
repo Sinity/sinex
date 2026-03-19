@@ -96,9 +96,17 @@ disabled (e.g. staging migrations).
 ### Transport Security
 - gateway TLS lives under `services.sinex.core.gateway.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`
 - non-loopback gateway binds require mTLS and a configured `tlsClientCAFile`
+- managed local NATS server TLS lives under `services.sinex.nats.tls.{enable,certFile,keyFile,caCertFile,verifyClients,verifyAndMap}`
+- managed local NATS subject-level authz for the current shared runtime identity lives under `services.sinex.nats.authorization.sharedClient.*`
 - shared NATS client transport lives under `services.sinex.nodes.nats.{servers,tls,auth}`
 - NATS mTLS uses `services.sinex.nodes.nats.tls.{caCertFile,clientCertFile,clientKeyFile}`
 - choose exactly one NATS auth mode under `services.sinex.nodes.nats.auth.{tokenFile,credsFile,nkeySeedFile}`
+
+### Secret Conventions
+- gateway admin token falls back to agenix secret `sinex-gateway-admin-token`
+- local NATS server TLS falls back to `sinex-nats-server-cert`, `sinex-nats-server-key`, and `sinex-nats-client-ca`
+- shared NATS client TLS/auth falls back to `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, and `sinex-nats-token`
+- compatibility aliases are also accepted for the shared NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`
 
 ### Environment Rendering
 - the module is the canonical config surface; emitted env vars are an implementation detail of the generated units

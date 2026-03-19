@@ -1,5 +1,6 @@
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -62,10 +63,14 @@ let
   # correct version. Falls back to postgresql18Packages if .pkgs is absent (custom package).
   postgresqlPackages = postgresqlPkgBase.pkgs or pkgs.postgresql18Packages;
 
-  # pg_jsonschema must be provided via the flake overlay
-  # The overlay adds it to the matching postgresql*Packages set.
+  # pg_jsonschema must be provided via the flake overlay.
+  # Prefer pkgs.postgresql18Packages.pg_jsonschema (overlay-aware top-level) because
+  # postgresql_18.pkgs may reference the pre-overlay postgresql18Packages — nixpkgs
+  # evaluates postgresql_18.pkgs eagerly, before overlays patch postgresql18Packages.
   pgJsonschema =
-    postgresqlPackages.pg_jsonschema or (throw ''
+    pkgs.postgresql18Packages.pg_jsonschema or
+    postgresqlPackages.pg_jsonschema or
+    (throw ''
       pg_jsonschema is not available for the configured PostgreSQL package.
       You must apply the sinex flake overlay to your pkgs:
 
@@ -185,10 +190,13 @@ let
 in
 {
   config = mkMerge [
-    (mkIf (db.enable && db.autoSetup) {
+    (mkIf (db.enable && db.autoSetup && !options.nixpkgs.pkgs.isDefined) {
       # Allow only the specific unfree packages Sinex requires (TimescaleDB, pg_jsonschema).
       # Using the predicate form rather than setting allowUnfree = true avoids accidentally
       # unblocking all unfree packages in the user's nixpkgs configuration.
+      # Guard: skip when nixpkgs is externally managed (e.g. flake VM tests pass pkgs
+      # directly via specialArgs — setting nixpkgs.config there would fail NixOS's
+      # "externally created instance" assertion and have no effect anyway).
       nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
     })
 

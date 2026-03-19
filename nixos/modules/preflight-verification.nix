@@ -3,6 +3,8 @@
 with lib;
 
 let
+  systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  inherit (systemdHardening) mkHelperServiceConfig;
   cfg = config.services.sinex;
   lifecycle = cfg.lifecycle;
   preflight = lifecycle.preflight;
@@ -228,9 +230,11 @@ in
       systemd.services.sinex-update = {
         description = "Sinex coordinated update";
         serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
           ExecStart = updateScript;
+        } // mkHelperServiceConfig {
+          user = "root";
+          group = "root";
+          remainAfterExit = true;
         };
       };
     })

@@ -3,6 +3,8 @@
 with lib;
 
 let
+  systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  inherit (systemdHardening) mkHelperServiceConfig;
   cfg = config.services.sinex;
   coreCfg = cfg.core;
   nodesCfg = cfg.nodes;
@@ -54,12 +56,42 @@ let
 
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or {};
+  resolveSecretPath = explicit: names:
+    if explicit != null then explicit else
+    let
+      match = findFirst (name: builtins.hasAttr name secretPaths) null names;
+    in
+    if match == null then null else builtins.getAttr match secretPaths;
   gatewayAdminTokenFile =
     if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
     else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
     else null;
   natsTlsCfg = nodesCfg.nats.tls;
   natsAuthCfg = nodesCfg.nats.auth;
+  effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
+    "sinex-nats-ca"
+    "nats-ca"
+  ];
+  effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
+    "sinex-nats-client-cert"
+    "nats-client-cert"
+  ];
+  effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
+    "sinex-nats-client-key"
+    "nats-client-key"
+  ];
+  effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
+    "sinex-nats-token"
+    "nats-token"
+  ];
+  effectiveNatsCredsFile = resolveSecretPath natsAuthCfg.credsFile [
+    "sinex-nats-client-creds"
+    "nats-client-creds"
+  ];
+  effectiveNatsNkeySeedFile = resolveSecretPath natsAuthCfg.nkeySeedFile [
+    "sinex-nats-client-nkey"
+    "nats-client-nkey"
+  ];
   inferredNatsTls =
     natsTlsCfg.requireTls
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
@@ -83,12 +115,12 @@ let
     "SINEX_ANNEX_PATH=${blobDir}"
   ]
     ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
-    ++ optional (natsTlsCfg.caCertFile != null) "SINEX_NATS_CA_CERT=${toString natsTlsCfg.caCertFile}"
-    ++ optional (natsTlsCfg.clientCertFile != null) "SINEX_NATS_CLIENT_CERT=${toString natsTlsCfg.clientCertFile}"
-    ++ optional (natsTlsCfg.clientKeyFile != null) "SINEX_NATS_CLIENT_KEY=${toString natsTlsCfg.clientKeyFile}"
-    ++ optional (natsAuthCfg.tokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString natsAuthCfg.tokenFile}"
-    ++ optional (natsAuthCfg.credsFile != null) "SINEX_NATS_CREDS_FILE=${toString natsAuthCfg.credsFile}"
-    ++ optional (natsAuthCfg.nkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString natsAuthCfg.nkeySeedFile}"
+    ++ optional (effectiveNatsCaCertFile != null) "SINEX_NATS_CA_CERT=${toString effectiveNatsCaCertFile}"
+    ++ optional (effectiveNatsClientCertFile != null) "SINEX_NATS_CLIENT_CERT=${toString effectiveNatsClientCertFile}"
+    ++ optional (effectiveNatsClientKeyFile != null) "SINEX_NATS_CLIENT_KEY=${toString effectiveNatsClientKeyFile}"
+    ++ optional (effectiveNatsTokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString effectiveNatsTokenFile}"
+    ++ optional (effectiveNatsCredsFile != null) "SINEX_NATS_CREDS_FILE=${toString effectiveNatsCredsFile}"
+    ++ optional (effectiveNatsNkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString effectiveNatsNkeySeedFile}"
     ++ toEnvList nodesCfg.defaults.env;
 
   coordinationEnv =
@@ -283,10 +315,13 @@ let
         wantedBy = [ "multi-user.target" ];
         before = [ "sinex-gateway.service" ];
         serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
           ExecStart = genTlsScript;
           # Runs as root; the script sets 640 on key/cert after generation.
+        } // mkHelperServiceConfig {
+          user = "root";
+          group = "root";
+          remainAfterExit = true;
+          readWritePaths = [ tlsDir ];
         };
       };
     };
