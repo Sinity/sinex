@@ -175,8 +175,6 @@ let
     host    all             all             ::/0                    reject
   '';
 
-  migrationPackage = if db.migration.package != null then db.migration.package else cfg.package;
-
   sinexAllowUnfreePredicate =
     pkg:
     let
@@ -242,10 +240,6 @@ in
           ensure_extension "$dbName" "pg_trgm"
         done
       '';
-    })
-
-    (mkIf (cfg.enable && db.migration.enable) {
-      environment.systemPackages = mkAfter [ migrationPackage ];
     })
   ];
 }

@@ -88,8 +88,7 @@ in
         dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
       in {
         Type = "oneshot";
-        Environment = [ "DATABASE_URL=${dbUrl}" ];
-        ExecStart = "${sinexPackage}/bin/sinex-schema up";
+        ExecStart = "${sinexPackage}/bin/xtask infra schema-apply --database-url ${lib.escapeShellArg dbUrl}";
       };
   };
 

@@ -247,34 +247,6 @@ in
             description = "Connection pool tuning for Sinex services.";
           };
 
-          migration = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption {
-                  type = bool;
-                  default = true;
-                  description = "Run database migrations automatically.";
-                };
-                binary = mkOption {
-                  type = str;
-                  default = "sinex-schema";
-                  description = "Migration binary name.";
-                };
-                package = mkOption {
-                  type = nullOr package;
-                  default = null;
-                  description = "Package that provides the migration binary (defaults to services.sinex.package).";
-                };
-                timeout = mkOption {
-                  type = positive;
-                  default = 300;
-                  description = "Migration timeout in seconds.";
-                };
-              };
-            };
-            default = {};
-            description = "Database migration configuration.";
-          };
         };
       };
       default = {};

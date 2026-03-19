@@ -150,7 +150,7 @@
             # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
                         # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
                         export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
-                        cargo run -p sinex-schema -- up
+                        cargo run -p xtask -- infra schema-apply --database-url "$DATABASE_URL"
           '';
 
           postgresPostBuild = ''
@@ -199,9 +199,6 @@
             sinex-health-automaton = mkPackage "sinex-health-automaton";
             sinex-analytics-automaton = mkPackage "sinex-analytics-automaton";
 
-            # Schema management CLI
-            sinex-schema = mkPackage "sinex-schema";
-
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
 
@@ -226,8 +223,8 @@
                 sinexPackages.sinex-terminal-command-canonicalizer
                 sinexPackages.sinex-health-automaton
                 sinexPackages.sinex-analytics-automaton
-                sinexPackages.sinex-schema
                 sinexPackages.sinex-node-sdk
+                sinexPackages.xtask
               ];
             };
 
@@ -636,7 +633,6 @@
             sinex-terminal-command-canonicalizer
             sinex-health-automaton
             sinex-analytics-automaton
-            sinex-schema
             sinex-node-sdk
             ;
         }
