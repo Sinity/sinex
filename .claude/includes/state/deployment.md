@@ -1,7 +1,7 @@
 ## Deployment Readiness
 
 **Current state:** `sinex.enable = false; provisionDatabase = false` on sinnix-prime. Zero production events.
-2.83M ActivityWatch events + 65K Atuin commands sit in parallel capture infrastructure, ready for import.
+2.83M ActivityWatch events + 65K Atuin commands sit in parallel capture infrastructure. Only `sinexctl import atuin` exists (pipeline-bypassing). No ActivityWatch import path exists at all. SDK SQLite adapter needed for proper ingestor-driven import.
 
 ### What Works Now
 
@@ -31,9 +31,9 @@ Phase 1: provisionDatabase = true → schema applied, DB ready
          Verify: psql sinex_prod -c "SELECT count(*) FROM core.events" → 0
 Phase 2: enable = true with ONLY ingestd + gateway + fs-ingestor + system-ingestor
          Verify: sinexctl status, create test event, query it back
-Phase 3: Historical import (hours of runtime)
-         sinexctl import atuin → 65K events
-         sinexctl import activitywatch → 2.83M events
+Phase 3: Historical import (limited — SDK adapter gap)
+         sinexctl import atuin → 65K events (bypasses pipeline, only existing import)
+         ActivityWatch: NO import path exists yet (needs SDK SQLite adapter or new CLI command)
          After: refresh all CAs manually
 Phase 4: Enable remaining nodes + automata (config changes only)
 Phase 5: Stabilize (monitor DLQ, batch latency, node health)

@@ -68,11 +68,11 @@ Implication: automaton-heavy workloads never hit the COPY fast path. COPY only b
 |-----------|-------|-----|
 | Event batch | 100 events or 1s | Latency vs throughput balance |
 | COPY threshold | 50 rows | Below: QueryBuilder faster. Above: COPY faster |
-| NATS semaphore | 100 permits | Flood protection (per-process, not per-publisher) |
+| NATS semaphore | 100 permits | Flood protection (per-publisher instance, `nats_publisher.rs:21`) |
 | Confirmation buffer | 10K events | Memory cap for provisional events |
 | Payload filter depth | 8 levels | Prevents pathological recursive JSONB queries |
 | Pagination max | 1000 rows | Prevents unbounded result sets |
 | SSE batch | 20ms / 32 IDs | Reduces DB fetches during burst |
 | Leadership TTL | 15s | Failover window if leader dies |
-| Cascade depth | 64 levels | Prevents runaway recursive replay expansion |
+| Cascade depth | 100 levels | Prevents runaway recursive replay expansion (`cascade_analyzer.rs:17`) |
 | Checkpoint interval | 1000 events | Durability vs overhead |

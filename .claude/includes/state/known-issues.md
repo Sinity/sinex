@@ -1,12 +1,45 @@
 ## Known Issues & Design Tensions
 
-### Confirmed Bugs
+### Confirmed Bugs (Critical)
 
-| Issue | Component | Severity | Notes |
-|-------|-----------|----------|-------|
-| `core.node_runs` table never populated | node SDK | Low | Schema exists, column on events exists, INSERT never called. `node_run_id` always NULL |
-| TimeSeries NULL ts_orig fallback | gateway query | Low | NULL ts_orig silently uses ts_coided (import time, not event time) |
-| Privacy engine unused by automata | all automata | Medium | Derived events inherit any ingestor privacy leaks. No per-automaton ProcessingContext |
+| Issue | Location | Notes |
+|-------|----------|-------|
+| `block_on()` in async runtime | `blob_manager.rs:503` | `futures::executor::block_on()` in sync method — will panic or deadlock from tokio context |
+| Gateway ingest produces provenance-less events | `handlers/ingest.rs:50-58` | `events.ingest` RPC lacks provenance → always fails XOR CHECK → DLQ. **Smoke test is broken.** |
+| `blocking_write()` on tokio RwLock from OS thread | `rpc_server.rs:279` | In file-watcher callback on std::thread::spawn |
+| MaterialReadySet unbounded memory | `material_ready_set.rs` | No eviction logic |
+
+### Confirmed Bugs (High)
+
+| Issue | Location | Notes |
+|-------|----------|-------|
+| Replay cascade restore silently discarded | `replay_control.rs:1561` | `let _ = restore_cascade(...)` — data loss on restore failure |
+| Events persisted but invisible on confirmation failure | `jetstream_consumer.rs:779-806` | DB commit succeeds but NAKs entire batch on any confirmation failure |
+| DLQ bypass when no transport | `derived_node/adapter.rs:322-324` | Events dropped if runtime is None |
+| Advisory lock on pooled connection | `state_machine.rs:1003` | Lock/unlock may hit different sessions |
+
+### Confirmed Bugs (Medium)
+
+| Issue | Location | Notes |
+|-------|----------|-------|
+| Privacy engine unused by automata | `derived_node/adapter.rs` | Zero privacy imports. Derived events inherit ingestor leaks |
+| `hard_delete_by_source` bypasses audit trigger | `persistence.rs:1647` | DELETE without operation_id |
+| Provenance corruption via default UUID | `adapter.rs:262` | `event.id` None → zero UUID as source_event_id |
+
+### Confirmed Bugs (Low)
+
+| Issue | Location | Notes |
+|-------|----------|-------|
+| `core.node_runs` table never populated | Schema | Zero INSERT calls |
+| TimeSeries COALESCE misleading | `composable_query.rs:306` | ts_orig NOT NULL, COALESCE never fires; real issue is ingestd fills now() |
+
+### Recently Fixed (verified 2026-03-23)
+
+| Issue | Fix |
+|-------|-----|
+| Replay state machine lacks FOR UPDATE | All transitions now use `SELECT ... FOR UPDATE` |
+| DashMap stale assembly entries | Cleanup task + remove on finalize |
+| std::sync::Mutex no poison recovery | `unwrap_or_else(poisoned.into_inner())` |
 
 ### Design Tensions (Both Sides Are Correct)
 
@@ -24,7 +57,7 @@
 
 | Fragility | Impact if hit | Mitigation exists? |
 |-----------|---------------|-------------------|
-| NatsPublisher 100-permit semaphore is per-process | Flood from one source starves all others | Partial (per-publisher work started) |
+| NatsPublisher 100-permit semaphore is per-publisher (`nats_publisher.rs:21`) | Starvation risk depends on publisher sharing | Per-publisher work already done |
 | COPY batch: one bad row kills entire batch | Up to 1000 events retried via NAK | HistoricalImporter has bisect-retry but ingestd doesn't use it |
 | Checkpoint save failure is silent (warn log only) | Crash -> re-process from stale position -> duplicates | DLQ should catch, but no e2e test (BLK-4) |
 | Advisory lock on pooled connections | Lock acquired on conn A, released when pool recycles A | Use dedicated non-pooled connection |

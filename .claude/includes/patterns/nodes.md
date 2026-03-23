@@ -63,8 +63,8 @@ impl TransducerNode for MyTransducer {
     type Output = JsonValue;
 
     fn name(&self) -> &'static str { "my-transducer" }
-    fn input_event_type(&self) -> &'static str { "shell.command" }
-    fn output_event_type(&self) -> &'static str { "shell.command.canonical" }
+    fn input_event_type(&self) -> &'static str { "command.executed" }
+    fn output_event_type(&self) -> &'static str { "command.canonical" }
 
     async fn process(&mut self, input: Self::Input, _ctx: &NodeEventContext)
         -> Result<Option<Self::Output>, NodeLogicError>
@@ -78,12 +78,13 @@ impl TransducerNode for MyTransducer {
 ### Derived Node Pattern (Windowed — Accumulate Then Emit)
 
 ```rust
-use sinex_node_sdk::{WindowedNode, DerivedNodeAdapter, NodeEventContext, NodeLogicError};
+use sinex_node_sdk::{WindowedNode, DerivedNodeAdapter, DerivedOutput, NodeLogicError};
+use sinex_node_sdk::automaton_node::DerivedTriggerContext;  // TODO: extract from deprecated module
 
 struct SessionDetector;
 
 impl WindowedNode for SessionDetector {
-    type State = SessionAccumulator;
+    type State = SessionState;
     type Input = JsonValue;
     type Output = JsonValue;
 
@@ -91,32 +92,31 @@ impl WindowedNode for SessionDetector {
     fn input_event_type(&self) -> &'static str { "*" }
     fn output_event_type(&self) -> &'static str { "activity.session.boundary" }
 
-    fn window_policy(&self) -> WindowPolicy {
-        WindowPolicy::EventCount(100)  // Or TimeBased, EventTriggered
-    }
-
+    // Accumulate events into the window state.
     async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
-        ctx: &NodeEventContext) -> Result<WindowAction, NodeLogicError>
+        ctx: &DerivedTriggerContext) -> Result<(), NodeLogicError>
     {
-        let ts = ctx.event_timestamp();
-        // Gap > 5 min = session boundary
-        if state.last_ts.map_or(false, |last| ts - last > Duration::minutes(5)) {
-            return Ok(WindowAction::CloseAndEmit);
-        }
         state.events.push(input);
-        state.last_ts = Some(ts);
-        Ok(WindowAction::Continue)
+        state.last_ts = Some(ctx.event_timestamp());
+        Ok(())
     }
 
-    async fn emit_window(&mut self, state: &mut Self::State)
-        -> Result<Option<Self::Output>, NodeLogicError>
+    // Check if the window should emit.
+    fn window_complete(&self, state: &Self::State) -> bool {
+        state.last_ts.map_or(false, |last| {
+            Timestamp::now() - last > Duration::minutes(5)
+        })
+    }
+
+    // Emit session boundary from accumulated state.
+    async fn emit(&mut self, state: &mut Self::State)
+        -> Result<Option<DerivedOutput>, NodeLogicError>
     {
-        Ok(Some(json!({
+        Ok(Some(DerivedOutput::windowed(json!({
             "start_time": state.start_ts,
             "end_time": state.last_ts,
             "event_count": state.events.len(),
-            "sources": state.unique_sources(),
-        })))
+        }))))
     }
 }
 ```

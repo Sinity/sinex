@@ -1,4 +1,4 @@
-## Workspace Map (22 Crates)
+## Workspace Map (21 Workspace Members)
 
 ### What to import from where
 
@@ -35,10 +35,14 @@ crate/
     sinex-desktop-ingestor/       window.focused/closed, clipboard.*
     sinex-system-ingestor/        systemd.*, device.*, login.*
     sinex-document-ingestor/      document.parsed, document.extracted
-    sinex-terminal-command-canonicalizer/  shell.command.canonical (Transducer)
-    sinex-analytics-automaton/    analytics.summary/trend (Windowed)
-    sinex-health-automaton/       health.check, health.alert (ScopeReconciler)
+    sinex-terminal-command-canonicalizer/  command.canonical (Transducer)
+    sinex-analytics-automaton/    analytics.insight (Windowed)
+    sinex-health-automaton/       health.aggregated_report (ScopeReconciler)
+    sinex-session-detector/       activity.session.boundary (Windowed, not deployed)
   cli/
     sinexctl               Unified CLI: query, trace, telemetry, context, report, import
-xtask/                     Build automation (63K lines, sandbox test infra)
+  tests/
+    vm-suite               NixOS VM test binary
+tests/e2e/                 End-to-end integration tests
+xtask/                     Build automation (64K lines, sandbox test infra)
 ```
