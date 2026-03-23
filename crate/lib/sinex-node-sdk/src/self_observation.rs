@@ -478,6 +478,7 @@ impl SelfObserver {
     }
 
     /// Emit ingestd batch processing statistics.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_ingestd_batch_stats(
         &self,
         batch_size: u32,
@@ -486,6 +487,12 @@ impl SelfObserver {
         events_failed: u32,
         had_synthesis: bool,
         insert_path: &str,
+        validation_valid: u64,
+        validation_skipped: u64,
+        validation_no_schema: u64,
+        validation_schema_not_found: u64,
+        validation_invalid: u64,
+        validation_coverage_pct: f64,
     ) -> Result<(), SelfObservationError> {
         self.publish(IngestdBatchStatsPayload {
             batch_size,
@@ -494,6 +501,12 @@ impl SelfObserver {
             events_failed,
             had_synthesis,
             insert_path: insert_path.to_string(),
+            validation_valid,
+            validation_skipped,
+            validation_no_schema,
+            validation_schema_not_found,
+            validation_invalid,
+            validation_coverage_pct,
         })
         .await
     }

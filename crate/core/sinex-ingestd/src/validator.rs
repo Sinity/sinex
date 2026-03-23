@@ -39,7 +39,7 @@ impl ValidationStats {
 
     fn record(&self, result: &ValidationResult) {
         match result {
-            ValidationResult::Valid => self.valid.fetch_add(1, Ordering::Relaxed),
+            ValidationResult::Valid { .. } => self.valid.fetch_add(1, Ordering::Relaxed),
             ValidationResult::Skipped => self.skipped.fetch_add(1, Ordering::Relaxed),
             ValidationResult::NoSchema => self.no_schema.fetch_add(1, Ordering::Relaxed),
             ValidationResult::SchemaNotFound { .. } => {
@@ -198,7 +198,7 @@ impl EventValidator {
     ) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate_payload_for(source, event_type, payload) {
-                SchemaValidationOutcome::Valid => ValidationResult::Valid,
+                SchemaValidationOutcome::Valid { schema_id } => ValidationResult::Valid { schema_id },
                 SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
                 SchemaValidationOutcome::SchemaNotFound { schema_id } => {
                     ValidationResult::SchemaNotFound { schema_id }
@@ -217,7 +217,15 @@ impl EventValidator {
     pub fn validate_event(&self, event: &sinex_db::models::Event<JsonValue>) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate(event) {
-                Ok(()) => ValidationResult::Valid,
+                Ok(()) => {
+                    // Carry the schema_id that matched so callers can persist it.
+                    // get_schema_id is an in-memory lookup — no I/O.
+                    let schema_id = self
+                        .inner
+                        .get_schema_id(&event.source, &event.event_type)
+                        .unwrap_or_else(Uuid::nil);
+                    ValidationResult::Valid { schema_id }
+                }
                 Err(err) => ValidationResult::Invalid {
                     errors: vec![err.to_string()],
                 },
@@ -290,8 +298,8 @@ impl EventValidator {
 /// Result of event validation.
 #[derive(Debug, Clone)]
 pub enum ValidationResult {
-    /// Event is valid
-    Valid,
+    /// Event is valid; carries the UUID of the schema that matched.
+    Valid { schema_id: Uuid },
     /// Validation was skipped (disabled)
     Skipped,
     /// No schema specified for the event
@@ -308,7 +316,7 @@ impl ValidationResult {
     pub fn should_accept(&self) -> bool {
         matches!(
             self,
-            ValidationResult::Valid
+            ValidationResult::Valid { .. }
                 | ValidationResult::Skipped
                 | ValidationResult::NoSchema
                 | ValidationResult::SchemaNotFound { .. }

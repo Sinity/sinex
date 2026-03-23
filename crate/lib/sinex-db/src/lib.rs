@@ -18,7 +18,6 @@ pub mod query_helpers;
 pub mod replay;
 pub mod repositories;
 pub mod schema_apply;
-pub mod security;
 pub mod validation;
 
 pub use error::{DbResult, db_error};

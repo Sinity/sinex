@@ -267,7 +267,7 @@ pub struct ReplayStatsPayload {
 /// Ingestd batch processing statistics
 ///
 /// Emitted after each batch is processed by the `JetStream` consumer.
-/// Captures throughput and latency data for batch processing.
+/// Captures throughput, latency, and schema validation coverage data for batch processing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex.ingestd", event_type = "batch.stats")]
 pub struct IngestdBatchStatsPayload {
@@ -283,6 +283,18 @@ pub struct IngestdBatchStatsPayload {
     pub had_synthesis: bool,
     /// Insert path used: "copy" or "`query_builder`"
     pub insert_path: String,
+    /// Cumulative count of events that passed schema validation
+    pub validation_valid: u64,
+    /// Cumulative count of events where validation was skipped (disabled)
+    pub validation_skipped: u64,
+    /// Cumulative count of events with no registered schema
+    pub validation_no_schema: u64,
+    /// Cumulative count of events whose schema was not found in the registry
+    pub validation_schema_not_found: u64,
+    /// Cumulative count of events that failed schema validation
+    pub validation_invalid: u64,
+    /// Schema coverage percentage: events with a schema / total validated (excluding skipped)
+    pub validation_coverage_pct: f64,
 }
 
 // Test helpers for external tests

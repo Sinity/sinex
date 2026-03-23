@@ -1316,6 +1316,11 @@ pub async fn spawn(
     let local_addr = listener.local_addr()?;
     info!("RPC server listening on TLS {}", local_addr);
 
+    // Notify systemd that we're ready to accept connections
+    if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
+        warn!("Failed to notify systemd ready state: {}", e);
+    }
+
     let handle = tokio::spawn(async move {
         // Run accept loop until shutdown signal
         RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await?;

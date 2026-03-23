@@ -68,11 +68,12 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
+    let pool = ctx.pool().clone();
     let (_annex_dir, services) =
         blob_test_services(ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
 
     let before: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-        .fetch_one(&ctx.pool)
+        .fetch_one(&pool)
         .await?;
 
     let params = serde_json::json!({
@@ -83,7 +84,7 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
     handle_store_blob(&services, params).await?;
 
     let after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-        .fetch_one(&ctx.pool)
+        .fetch_one(&pool)
         .await?;
 
     assert_eq!(

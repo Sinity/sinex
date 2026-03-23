@@ -1,0 +1,65 @@
+[[bin]]
+name = "sinex-session-detector"
+path = "src/main.rs"
+
+[package]
+name = "sinex-session-detector"
+
+[lib]
+doctest = false
+
+[dependencies]
+serde_json = "1.0"
+tracing = "0.1"
+human-panic = "2.0"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.tokio]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]
+
+[dependencies.clap]
+version = "4.0"
+features = ["derive", "env"]
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = ["testing"]
+
+[lints]
+workspace = true

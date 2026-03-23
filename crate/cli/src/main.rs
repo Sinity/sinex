@@ -1,10 +1,10 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DbCommands, DemoCommand,
-    DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands,
-    OpsCommands, QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TraceCommand,
-    TuiCommand, WatchCommand,
+    AuditCommand, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands, DbCommands,
+    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, ImportCommands,
+    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
+    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -117,6 +117,12 @@ enum Commands {
     /// Seed database with deterministic fake events for testing/demos
     Demo(DemoCommand),
 
+    /// Import historical data from external sources
+    Import {
+        #[command(subcommand)]
+        cmd: ImportCommands,
+    },
+
     /// Direct database access (bypasses gateway)
     Db {
         #[command(subcommand)]
@@ -135,6 +141,18 @@ enum Commands {
         cmd: GitOpsCommands,
     },
 
+    /// Telemetry data from continuous-aggregate views
+    Telemetry {
+        #[command(subcommand)]
+        cmd: TelemetryCommands,
+    },
+
+    /// Daily activity reports (today, yesterday)
+    Report {
+        #[command(subcommand)]
+        cmd: ReportCommands,
+    },
+
     // ===== Shortcut Commands =====
     /// Quick system status check
     Status(StatusCommand),
@@ -147,6 +165,9 @@ enum Commands {
 
     /// Watch events in real-time
     Watch(WatchCommand),
+
+    /// Show activity context for session resumption ("what was I doing?")
+    Context(ContextCommand),
 
     /// Generate shell completions
     Completions(CompletionsCommand),
@@ -186,6 +207,11 @@ async fn main() -> color_eyre::Result<()> {
 
     // Handle demo command early (connects directly to DB, no gateway needed)
     if let Commands::Demo(cmd) = cli.command {
+        return cmd.execute().await;
+    }
+
+    // Handle import command early (connects directly to DB, no gateway needed)
+    if let Commands::Import { cmd } = cli.command {
         return cmd.execute().await;
     }
 
@@ -235,12 +261,16 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Config { .. } => unreachable!("Config command handled above"),
         Commands::Db { .. } => unreachable!("Db command handled above"),
         Commands::Demo(_) => unreachable!("Demo command handled above"),
+        Commands::Import { .. } => unreachable!("Import command handled above"),
         Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
         Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
+        Commands::Telemetry { cmd } => cmd.execute(&client).await?,
+        Commands::Report { cmd } => cmd.execute(&client).await?,
         Commands::Status(cmd) => cmd.execute(&client).await?,
         Commands::Recent(cmd) => cmd.execute(&client).await?,
         Commands::Errors(cmd) => cmd.execute(&client).await?,
         Commands::Watch(cmd) => cmd.execute(&client).await?,
+        Commands::Context(cmd) => cmd.execute(&client).await?,
         Commands::Completions(_) => unreachable!("Completions command handled above"),
     }
 

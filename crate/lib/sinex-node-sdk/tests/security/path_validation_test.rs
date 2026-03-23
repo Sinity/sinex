@@ -4,7 +4,6 @@
 //! and migration code, ensuring protection against path traversal attacks.
 
 use camino::Utf8PathBuf;
-use sinex_db::security::{SecurityError, SecurityValidator};
 use sinex_node_sdk::annex::{
     AnnexConfig, BlobManager, VerifiedPath, blob_manager::BLOB_EVENT_CHANNEL_CAPACITY,
 };
@@ -41,14 +40,6 @@ async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> Tes
                 result.is_err(),
                 &format!("Path '{dangerous_path}' should be rejected"),
             )?;
-
-        // SecurityValidator should also reject these
-        let sanitize_result = SecurityValidator::sanitize_path(dangerous_path);
-        ctx.assert("security validator should reject dangerous paths")
-            .that(
-                sanitize_result.is_err(),
-                &format!("SecurityValidator should reject '{dangerous_path}'"),
-            )?;
     }
 
     Ok(())
@@ -77,14 +68,6 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
             .that(
                 result.is_ok(),
                 &format!("Path '{safe_path}' should be accepted"),
-            )?;
-
-        // SecurityValidator should also accept these
-        let sanitize_result = SecurityValidator::sanitize_path(safe_path);
-        ctx.assert("security validator should accept safe paths")
-            .that(
-                sanitize_result.is_ok(),
-                &format!("SecurityValidator should accept '{safe_path}'"),
             )?;
     }
 
@@ -233,17 +216,6 @@ async fn test_unicode_and_null_byte_handling() -> TestResult<()> {
                 "Path with null bytes should be rejected: '{dangerous_string:?}'"
             );
         }
-
-        // SecurityValidator should handle these
-        let sanitized = SecurityValidator::sanitize_unicode(dangerous_string);
-
-        if dangerous_string.contains('\0') {
-            // Null bytes should be removed
-            assert!(
-                !sanitized.contains('\0'),
-                "Null bytes should be removed from: '{dangerous_string:?}'"
-            );
-        }
     }
 
     Ok(())
@@ -262,45 +234,6 @@ async fn test_path_length_limits() -> TestResult<()> {
     let result = validate_path(reasonable_path);
 
     assert!(result.is_ok(), "Reasonable length path should be accepted");
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_security_validator_rejects_dangerous_paths() -> TestResult<()> {
-    let samples = vec![
-        "../../../etc/passwd",
-        "..\\..\\windows\\system32\\config\\sam",
-        "%2e%2e%2fetc%2fpasswd",
-        "%252e%252e%252f%252e%252e%252fetc%252fpasswd",
-    ];
-
-    for sample in samples {
-        let sanitized = SecurityValidator::sanitize_path(sample);
-        assert!(
-            matches!(sanitized, Err(SecurityError::PathTraversal(_))),
-            "SecurityValidator should reject dangerous input: {sample}"
-        );
-    }
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_security_validator_accepts_safe_paths() -> TestResult<()> {
-    let samples = vec![
-        "/opt/sinex/data/file.txt",
-        "relative/path/to/file.log",
-        "C:/sinex/watcher/history",
-    ];
-
-    for sample in samples {
-        let sanitized = SecurityValidator::sanitize_path(sample)?;
-        assert!(
-            !sanitized.contains(".."),
-            "sanitized path should not contain traversal sequences"
-        );
-    }
 
     Ok(())
 }

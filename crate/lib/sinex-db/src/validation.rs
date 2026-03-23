@@ -60,9 +60,13 @@ pub type ValidationResult = std::result::Result<(), ValidationError>;
 /// Outcome of schema validation used by ingestd for streaming pipelines.
 #[derive(Debug, Clone)]
 pub enum SchemaValidationOutcome {
-    Valid,
+    /// Payload passed validation; carries the schema UUID that matched.
+    Valid { schema_id: Uuid },
+    /// No schema registered for this source/event_type pair.
     NoSchema,
+    /// A schema ID was registered but the compiled schema is missing from the cache.
     SchemaNotFound { schema_id: Uuid },
+    /// Payload failed validation.
     Invalid { errors: Vec<String> },
 }
 impl SchemaValidationOutcome {
@@ -70,7 +74,7 @@ impl SchemaValidationOutcome {
     pub fn should_accept(&self) -> bool {
         matches!(
             self,
-            SchemaValidationOutcome::Valid
+            SchemaValidationOutcome::Valid { .. }
                 | SchemaValidationOutcome::NoSchema
                 | SchemaValidationOutcome::SchemaNotFound { .. }
         )
@@ -307,7 +311,8 @@ impl EventValidator {
         payload: &JsonValue,
     ) -> SchemaValidationOutcome {
         if !self.validation_enabled {
-            return SchemaValidationOutcome::Valid;
+            // Validation disabled: no schema was matched, so no schema_id to carry.
+            return SchemaValidationOutcome::NoSchema;
         }
         let source_key = Arc::new(source.to_string());
         let event_key = Arc::new(event_type.to_string());
@@ -326,7 +331,7 @@ impl EventValidator {
             .map(|err| err.to_string())
             .collect();
         if messages.is_empty() {
-            SchemaValidationOutcome::Valid
+            SchemaValidationOutcome::Valid { schema_id }
         } else {
             SchemaValidationOutcome::Invalid { errors: messages }
         }

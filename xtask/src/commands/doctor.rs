@@ -26,6 +26,10 @@ pub struct DoctorCommand {
     /// Check runtime health (ingestd heartbeat, consumer lag, batch latency)
     #[arg(long)]
     pub runtime: bool,
+
+    /// Check deployment readiness (schema, services, permissions)
+    #[arg(long)]
+    pub deployment_readiness: bool,
 }
 
 /// Doctor report structures
@@ -81,6 +85,10 @@ impl XtaskCommand for DoctorCommand {
 
         if self.runtime {
             execute_runtime_check(ctx).await?;
+        }
+
+        if self.deployment_readiness {
+            execute_deployment_readiness(ctx).await?;
         }
 
         if self.fix {
@@ -481,6 +489,277 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
                 style("✓").green()
             };
             println!("  {} Batch latency:      {:.0}ms", lat_icon, latency);
+        }
+    }
+
+    Ok(())
+}
+
+/// Result of a single deployment readiness check.
+#[derive(Debug, Serialize)]
+pub struct DeploymentReadinessItem {
+    pub name: String,
+    /// `"pass"`, `"fail"`, or `"skip"`
+    pub status: String,
+    pub description: String,
+}
+
+impl DeploymentReadinessItem {
+    fn pass(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "pass".into(),
+            description: description.into(),
+        }
+    }
+
+    fn fail(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "fail".into(),
+            description: description.into(),
+        }
+    }
+
+    fn skip(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "skip".into(),
+            description: description.into(),
+        }
+    }
+}
+
+/// Check 1: node binaries exist in PATH (proxy for sd_notify / service readiness).
+fn check_node_binaries() -> DeploymentReadinessItem {
+    let nodes = [
+        "sinex-fs-ingestor",
+        "sinex-terminal-ingestor",
+        "sinex-desktop-ingestor",
+        "sinex-system-ingestor",
+    ];
+    let missing: Vec<&str> = nodes
+        .iter()
+        .copied()
+        .filter(|bin| which::which(bin).is_err())
+        .collect();
+
+    if missing.is_empty() {
+        DeploymentReadinessItem::pass(
+            "node-binaries",
+            "All node binaries found on PATH",
+        )
+    } else {
+        DeploymentReadinessItem::fail(
+            "node-binaries",
+            format!("Missing node binaries: {}", missing.join(", ")),
+        )
+    }
+}
+
+/// Check 2: /realm is readable by the current user.
+fn check_realm_accessible() -> DeploymentReadinessItem {
+    let realm = std::path::Path::new("/realm");
+    if realm.exists() {
+        match std::fs::read_dir(realm) {
+            Ok(_) => DeploymentReadinessItem::pass(
+                "realm-accessible",
+                "/realm is accessible by the current user",
+            ),
+            Err(e) => DeploymentReadinessItem::fail(
+                "realm-accessible",
+                format!("/realm exists but is not readable: {e}"),
+            ),
+        }
+    } else {
+        DeploymentReadinessItem::fail("realm-accessible", "/realm does not exist")
+    }
+}
+
+/// Check 3: Hyprland socket exists at /run/user/1000/hypr/*/.
+fn check_hyprland_socket() -> DeploymentReadinessItem {
+    let hypr_dir = std::path::Path::new("/run/user/1000/hypr");
+    if !hypr_dir.exists() {
+        return DeploymentReadinessItem::skip(
+            "hyprland-socket",
+            "/run/user/1000/hypr does not exist (Hyprland not running or different UID)",
+        );
+    }
+    match std::fs::read_dir(hypr_dir) {
+        Ok(mut entries) => {
+            if entries.next().is_some() {
+                DeploymentReadinessItem::pass(
+                    "hyprland-socket",
+                    "Hyprland socket directory found under /run/user/1000/hypr/",
+                )
+            } else {
+                DeploymentReadinessItem::fail(
+                    "hyprland-socket",
+                    "/run/user/1000/hypr exists but contains no socket entries",
+                )
+            }
+        }
+        Err(e) => DeploymentReadinessItem::fail(
+            "hyprland-socket",
+            format!("Could not read /run/user/1000/hypr: {e}"),
+        ),
+    }
+}
+
+/// Check 4: git-annex is on PATH.
+fn check_git_annex() -> DeploymentReadinessItem {
+    match which::which("git-annex") {
+        Ok(path) => DeploymentReadinessItem::pass(
+            "git-annex",
+            format!("git-annex found at {}", path.display()),
+        ),
+        Err(_) => DeploymentReadinessItem::fail("git-annex", "git-annex not found on PATH"),
+    }
+}
+
+/// Check 5: schema-apply readiness — connect to DB and run a simple query.
+async fn check_schema_apply(database_url: Option<&str>) -> DeploymentReadinessItem {
+    let Some(url) = database_url else {
+        return DeploymentReadinessItem::skip(
+            "schema-apply",
+            "DATABASE_URL not set; skipping schema-apply check",
+        );
+    };
+
+    use sqlx::postgres::PgPoolOptions;
+    use sqlx::Row;
+
+    let pool = match PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(url)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return DeploymentReadinessItem::fail(
+                "schema-apply",
+                format!("Cannot connect to database: {e}"),
+            );
+        }
+    };
+
+    match sqlx::query("SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'core'")
+        .fetch_one(&pool)
+        .await
+    {
+        Ok(row) => {
+            let count: i64 = row.get(0);
+            if count > 0 {
+                DeploymentReadinessItem::pass(
+                    "schema-apply",
+                    "Database reachable and 'core' schema exists",
+                )
+            } else {
+                DeploymentReadinessItem::fail(
+                    "schema-apply",
+                    "Database reachable but 'core' schema is missing — schema-apply may not have run",
+                )
+            }
+        }
+        Err(e) => DeploymentReadinessItem::fail(
+            "schema-apply",
+            format!("Database query failed: {e}"),
+        ),
+    }
+}
+
+/// Check 6: NATS streams exist — connect and list streams.
+async fn check_nats_streams(nats_url: Option<&str>) -> DeploymentReadinessItem {
+    use futures::StreamExt;
+
+    let url = nats_url.unwrap_or("nats://127.0.0.1:4222");
+
+    let client = match async_nats::connect(url).await {
+        Ok(c) => c,
+        Err(e) => {
+            return DeploymentReadinessItem::fail(
+                "nats-streams",
+                format!("Cannot connect to NATS at {url}: {e}"),
+            );
+        }
+    };
+
+    let jetstream = async_nats::jetstream::new(client);
+    let mut streams = jetstream.streams();
+    let mut names: Vec<String> = Vec::new();
+    let mut list_error: Option<String> = None;
+    while let Some(result) = streams.next().await {
+        match result {
+            Ok(stream) => names.push(stream.config.name.clone()),
+            Err(e) => {
+                list_error = Some(format!("Error listing NATS streams: {e}"));
+                break;
+            }
+        }
+    }
+
+    if let Some(err) = list_error {
+        return DeploymentReadinessItem::fail("nats-streams", err);
+    }
+
+    if names.is_empty() {
+        DeploymentReadinessItem::fail(
+            "nats-streams",
+            format!("Connected to NATS at {url} but no JetStream streams found"),
+        )
+    } else {
+        DeploymentReadinessItem::pass(
+            "nats-streams",
+            format!(
+                "Connected to NATS at {url}; {} stream(s): {}",
+                names.len(),
+                names.join(", ")
+            ),
+        )
+    }
+}
+
+async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<()> {
+    let cfg = crate::config::config();
+
+    let items: Vec<DeploymentReadinessItem> = vec![
+        check_node_binaries(),
+        check_realm_accessible(),
+        check_hyprland_socket(),
+        check_git_annex(),
+        check_schema_apply(cfg.database_url.as_deref()).await,
+        check_nats_streams(cfg.nats_url.as_deref()).await,
+    ];
+
+    let overall_pass = items.iter().all(|i| i.status != "fail");
+
+    if ctx.is_human() {
+        println!("\n{}", style("Deployment Readiness:").bold());
+        for item in &items {
+            let (icon, styled_status) = match item.status.as_str() {
+                "pass" => (style("✓").green(), style("PASS").green()),
+                "fail" => (style("✗").red(), style("FAIL").red()),
+                _ => (style("–").dim(), style("SKIP").dim()),
+            };
+            println!(
+                "  {} [{styled_status}] {:<25} {}",
+                icon,
+                item.name,
+                style(&item.description).dim()
+            );
+        }
+        println!();
+        if overall_pass {
+            println!(
+                "{}",
+                style("✓ Deployment readiness: all checks passed or skipped").green()
+            );
+        } else {
+            println!(
+                "{}",
+                style("✗ Deployment readiness: some checks failed").red()
+            );
         }
     }
 

@@ -10,6 +10,7 @@ use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
+use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use sinex_node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
@@ -107,6 +108,69 @@ fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run the `StreamingCascadeAnalyzer` against a set of root event IDs and return the
+/// results as a JSON blob suitable for embedding in a preview response under
+/// `"safety_analysis"`.
+///
+/// This is best-effort: on error the result is `null` with a warning logged so that
+/// the preview remains useful even when the analyzer cannot complete (e.g., timeout,
+/// memory limit exceeded).
+async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_json::Value {
+    if root_ids.is_empty() {
+        return serde_json::json!({
+            "integrity_violations": [],
+            "circular_dependencies": [],
+            "warnings": [],
+        });
+    }
+
+    let config = CascadeAnalyzerConfig::from_env();
+    let analyzer = StreamingCascadeAnalyzer::with_config(pool.clone(), config);
+
+    match analyzer.analyze_cascades(root_ids).await {
+        Ok(analysis) => {
+            let critical_violation_count = analysis
+                .integrity_violations
+                .iter()
+                .filter(|v| matches!(v.severity, Severity::Critical))
+                .count();
+
+            let mut warnings: Vec<serde_json::Value> = Vec::new();
+            if critical_violation_count > 0 {
+                warnings.push(serde_json::json!({
+                    "level": "critical",
+                    "message": format!(
+                        "{} integrity violation(s) detected: live events reference events that \
+                        would be archived. Execution may leave dangling references.",
+                        critical_violation_count
+                    ),
+                }));
+            }
+            if !analysis.circular_dependencies.is_empty() {
+                warnings.push(serde_json::json!({
+                    "level": "warning",
+                    "message": format!(
+                        "{} circular dependency cycle(s) detected in the cascade graph.",
+                        analysis.circular_dependencies.len()
+                    ),
+                }));
+            }
+
+            serde_json::json!({
+                "integrity_violations": analysis.integrity_violations,
+                "circular_dependencies": analysis.circular_dependencies,
+                "max_depth": analysis.max_depth,
+                "total_affected": analysis.total_affected,
+                "warnings": warnings,
+            })
+        }
+        Err(e) => {
+            warn!(error = %e, "Cascade safety analysis failed; omitting from preview");
+            serde_json::Value::Null
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -538,7 +602,15 @@ impl ReplayControlServer {
             }
             ReplayControlRequest::Preview { operation_id } => {
                 let operation = replay.load_operation(operation_id).await?;
-                let preview = replay.generate_preview_summary(&operation.scope).await?;
+                let mut preview = replay.generate_preview_summary(&operation.scope).await?;
+
+                // Augment preview with cascade safety analysis (integrity violations, cycles).
+                let root_ids = replay.collect_scope_root_ids(&operation.scope).await?;
+                let safety = run_safety_analysis(replay.pool(), &root_ids).await;
+                if let serde_json::Value::Object(ref mut map) = preview {
+                    map.insert("safety_analysis".to_string(), safety);
+                }
+
                 replay.update_preview(operation_id, preview.clone()).await?;
                 let updated = replay.load_operation(operation_id).await?;
                 ReplayControlResponse::success(Some(updated), Some(preview), None)
@@ -565,7 +637,15 @@ impl ReplayControlServer {
                 if dry_run {
                     // Dry-run: compute cascade impact then cancel. No side effects.
                     let operation = replay.load_operation(operation_id).await?;
-                    let preview = replay.generate_preview_summary(&operation.scope).await?;
+                    let mut preview = replay.generate_preview_summary(&operation.scope).await?;
+
+                    // Augment preview with cascade safety analysis (integrity violations, cycles).
+                    let root_ids = replay.collect_scope_root_ids(&operation.scope).await?;
+                    let safety = run_safety_analysis(replay.pool(), &root_ids).await;
+                    if let serde_json::Value::Object(ref mut map) = preview {
+                        map.insert("safety_analysis".to_string(), safety);
+                    }
+
                     replay
                         .cancel(
                             operation_id,

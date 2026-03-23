@@ -1,133 +1,68 @@
 ## Extended Commands
 
-### Running Binaries
+### sinexctl (User-Facing CLI)
 
 ```bash
-xtask run ingestd                        # Run sinex-ingestd
-xtask run gateway                        # Run sinex-gateway
-xtask run node <NAME>                    # Run a specific node by name
-xtask run --watch ingestd                # Hot-reload on file changes
-xtask run --metrics ingestd              # Show periodic runtime metrics overlay (heartbeat, lag, latency)
-xtask run core                          # Run full core services (ingestd + gateway)
-xtask run all-ingestors                  # Run all ingestor nodes
-xtask run all-automatons                 # Run all automaton nodes
-xtask run tether                         # Connect to a remote environment via The Tether
-xtask run list                           # List available binaries
+# Context recovery ("what was I doing?")
+sinexctl context                         # Recent session summary by source
+sinexctl context --since 4h              # Wider time window
+sinexctl report today                    # Daily summary with hourly heatmap
+sinexctl report yesterday                # Yesterday's summary
+
+# Telemetry (reads continuous aggregates)
+sinexctl telemetry window-focus          # Window focus patterns
+sinexctl telemetry command-frequency     # Shell command frequency
+sinexctl telemetry file-activity         # Filesystem events
+sinexctl telemetry recent-activity       # Cross-source recent activity
+sinexctl telemetry system-state          # CPU, memory, systemd
+
+# Querying and tracing
+sinexctl query --source fs-watcher       # Events by source
+sinexctl query --text-search "cargo"     # Full-text search
+sinexctl trace <event-id>               # Provenance chain
+sinexctl trace <event-id> -f dot        # Graphviz output
+
+# Operations
+sinexctl gateway ingest --source test --event-type test.ping  # Smoke test
+sinexctl import atuin                    # Import Atuin history
+sinexctl import atuin --resume           # Resume interrupted import
+sinexctl watch                           # Live SSE event stream
+sinexctl tui                             # Interactive TUI dashboard
+sinexctl status                          # System health
+sinexctl recent                          # Last hour of events
+
+# Replay
+sinexctl replay plan --node <id>         # Plan replay
+sinexctl replay preview <op-id>          # Preview cascade (with safety analysis)
+sinexctl lifecycle archive <event-id>    # Archive events
 ```
-
-See `xtask run --help` for all flags.
-
-### Documentation
-
-```bash
-xtask docs build                         # Generate rustdoc
-xtask docs build --open                  # Generate and open in browser
-xtask docs build --private --all-features  # Include private items
-xtask docs serve                         # Serve docs at localhost:8080
-xtask docs serve --build                 # Build then serve
-xtask docs agents                        # Generate AGENTS.md from CLAUDE.md
-xtask docs snapshot                      # AI context snapshot (via repomix)
-xtask docs snapshot --output context.md  # Custom output path
-xtask docs snapshot --compress           # Tree-sitter structure extraction
-xtask docs snapshot --include "crate/lib/**"  # Filter by glob
-xtask docs snapshot --changed            # Include git-changed files
-xtask docs snapshot --context           # Inject xtask state block
-xtask docs snapshot --scope sinex-db    # Scope to crate + transitive deps
-```
-
-### Exercise (xtask Self-Validation)
-
-```bash
-xtask exercise --tier 1                  # Quick surface checks
-xtask exercise --tier 2                  # Infrastructure exercises
-xtask exercise --tier 3                  # Database + pipeline exercises
-xtask exercise --tier 4                  # Heavy/stress exercises
-xtask exercise --all                     # All tiers
-```
-
-See `xtask exercise --help` for all flags.
 
 ### VM Testing
 
 ```bash
-# NixOS compatibility gate via `xtask test vm` subcommand
-xtask test vm                            # Run smoke tests (fast, ~5-10min)
-xtask test vm --category smoke           # basic, basic-flow-unified, replay-smoke
-xtask test vm --category integration     # preflight, maintenance, node-matrix, multi-source,
-                                         #   failure-recovery, kitty-eventsource, mtls-enforcement,
-                                         #   sinexctl-e2e, hostile-host, migration-stress
-xtask test vm --category performance     # performance (icount-deterministic), production-scale
-xtask test vm --category chaos           # chaos-network-partition, chaos-process-restart,
-                                         #   chaos-clock-skew, xtask-concurrency
-xtask test vm --category all             # Full suite
-xtask test vm --parallel                 # Parallel execution
+xtask test vm --category smoke           # Fast (~5-10min): basic, flow, replay
+xtask test vm --category integration     # Full: preflight, nodes, failure-recovery, e2e
+xtask test vm --category performance     # icount-deterministic, production-scale
+xtask test vm --category chaos           # Network partition, process restart, clock skew
 xtask test vm --list                     # Show all tests by category
-
-# Performance bench: set CPU affinity for dedicated isolation (optional)
-SINEX_BENCH_CPU_AFFINITY=2,3 xtask test vm --category performance
-
-# VM lifecycle (infrastructure management)
-xtask infra vm start minimal             # Boot minimal NixOS VM
-xtask infra vm start standard --persistent  # Persistent standard VM
-xtask infra vm ssh                       # SSH into running VM
-xtask infra vm stop                      # Shut down VM
+xtask test vm --parallel                 # Parallel execution
 ```
 
-### Privacy Engine
+### Other xtask Commands
 
 ```bash
-xtask privacy catalog                    # List all privacy rules
-xtask privacy test "some text"           # Test text against privacy engine
-xtask privacy decrypt <TOKEN>            # Decrypt an encrypted privacy token
-xtask privacy key                        # Show privacy key information
-xtask privacy config                     # Show or generate privacy configuration
-```
+# Documentation
+xtask docs build --open                  # Generate and open rustdoc
+xtask docs snapshot --scope sinex-db     # AI context snapshot scoped to crate
 
-### Shell Completions
+# Privacy
+xtask privacy test "some text"           # Test against privacy engine
+xtask privacy catalog                    # List all rules
 
-```bash
-# Generate and install zsh completions (dynamic package/run-target values)
+# Self-validation
+xtask exercise --tier 1                  # Quick checks
+xtask exercise --all                     # All 65 exercises across 4 tiers
+
+# Completions
 xtask completions zsh > ~/.zsh/completions/_xtask
-compinit  # or restart your shell
-
-# Other shells
-xtask completions bash > ~/.bash_completion.d/xtask
-xtask completions fish > ~/.config/fish/completions/xtask.fish
-
-# The completion scripts use these hidden helpers at tab-complete time:
-xtask completions list-packages          # Workspace package names (one per line)
-xtask completions list-run-targets       # Run target names (one per line)
 ```
-
-### CI Pipelines
-
-```bash
-xtask ci workspace                       # Full validation (schema + lint + tests)
-xtask ci postgres -- CMD                 # Run CMD with ephemeral Postgres
-```
-
-**Note:** `xtask ci` requires the `sandbox` feature (used in CI environments, not default).
-See `xtask ci --help` for all subcommands.
-
----
-
-## Test Subcommands
-
-Specialized test modes are subcommands of `xtask test`, not flags:
-
-| Subcommand | What it runs | Purpose |
-|------------|-------------|---------|
-| `xtask test bench` | Benchmark sweeps (criterion via nextest) | Performance measurement |
-| `xtask test bench --contracts` | Bench + perf contract enforcement | Regression gating |
-| `xtask test fuzz` | libfuzzer targets | Security fuzzing |
-| `xtask test coverage` | cargo-llvm-cov | Code coverage reporting |
-| `xtask test mutants` | cargo-mutants | Mutation analysis |
-| `xtask test vm` | NixOS VM test runner | NixOS compatibility gate |
-
-Check-specific modes remain as flags on `xtask check`:
-
-| Flag | Purpose |
-|------|---------|
-| `xtask check --lint` | Clippy with project config |
-| `xtask check --forbidden` | AST-grep pattern enforcement |
-| `xtask check --nix` | Nix flake evaluation check |

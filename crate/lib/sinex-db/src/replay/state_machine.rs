@@ -282,6 +282,24 @@ impl ReplayStateMachine {
         Self { pool }
     }
 
+    /// Collect the root event IDs that match the given replay scope.
+    ///
+    /// These are the material-root events (non-derived, tied to a source material) that
+    /// the scope filter selects. The same set is used internally by `generate_preview_summary`
+    /// and by the execution engine. Callers can use this to run additional analysis (e.g.,
+    /// cascade integrity checks) against the same root set without re-specifying the query.
+    pub async fn collect_scope_root_ids(&self, scope: &ReplayScope) -> Result<Vec<Uuid>> {
+        let window = Self::resolve_time_window(scope);
+        let mut builder =
+            Self::build_filter_query(scope, window, "SELECT id::uuid FROM core.events");
+        let rows: Vec<(Uuid,)> = builder
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| SinexError::database(format!("collect scope root ids: {e}")))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// Create a new replay operation.
     ///
     /// Rejects the request if a non-terminal (running) operation already exists
@@ -1057,6 +1075,146 @@ impl ReplayStateMachine {
 
         debug!("Released lock for operation {}", operation_id);
         Ok(())
+    }
+
+    /// Recover operations stuck in Executing state, likely due to process crash.
+    /// Transitions operations older than `stale_threshold` from Executing to Failed
+    /// with a crash recovery reason. Returns the count of recovered operations.
+    pub async fn recover_stale_executing(
+        &self,
+        stale_threshold: std::time::Duration,
+    ) -> Result<usize> {
+        let threshold_secs = stale_threshold.as_secs_f64();
+
+        // Find all operations in executing state whose started_at is older than the threshold.
+        // started_at is stored in the preview_summary JSON blob under MetaJson.
+        // result_message = 'executing' uniquely identifies the Executing state row.
+        let stale_rows = sqlx::query!(
+            r#"
+            SELECT id::uuid AS "id!",
+                   (preview_summary->>'started_at') AS started_at_str
+            FROM core.operations_log
+            WHERE operation_type = 'replay'
+              AND result_status = 'running'
+              AND result_message = 'executing'
+              AND (preview_summary->>'started_at')::timestamptz
+                  < NOW() - make_interval(secs => $1)
+            "#,
+            threshold_secs,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to query for stale executing replay operations")
+                .with_source(e.to_string())
+                .with_operation("recover_stale_executing")
+        })?;
+
+        let mut recovered = 0usize;
+        for stale in stale_rows {
+            let operation_id = stale.id;
+
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                SinexError::database("Failed to begin recovery transaction")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
+
+            let row = sqlx::query!(
+                r#"
+                SELECT preview_summary
+                FROM core.operations_log
+                WHERE id = $1::uuid
+                FOR UPDATE
+                "#,
+                operation_id
+            )
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to lock stale operation row")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
+
+            let mut meta = Self::decode_meta_json(row.preview_summary)?;
+
+            // Re-check state after acquiring the row lock — another gateway instance
+            // may have recovered or completed this operation between our initial scan
+            // and this transaction.
+            if meta.state != ReplayState::Executing {
+                tx.rollback().await.ok();
+                continue;
+            }
+
+            let staleness = meta.started_at.map(|started| {
+                let now = sinex_primitives::temporal::now();
+                now - started
+            });
+
+            meta.state = ReplayState::Failed;
+            meta.finished_at = Some(sinex_primitives::temporal::now());
+            meta.outcome = Some(ReplayOutcome::Failed);
+            meta.error_details = Some(
+                "recovered from stale executing state (likely process crash)".to_string(),
+            );
+
+            let (status, msg) = Self::map_state_to_status(&meta.state);
+            let meta_json = serde_json::to_value(&meta).map_err(|e| {
+                SinexError::processing("Failed to serialize recovery meta")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
+
+            sqlx::query!(
+                r#"
+                UPDATE core.operations_log
+                SET result_status = $2,
+                    result_message = $3,
+                    preview_summary = $4
+                WHERE id = $1::uuid
+                "#,
+                operation_id,
+                status,
+                msg,
+                meta_json
+            )
+            .execute(tx.as_mut())
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to update stale operation to Failed")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
+
+            tx.commit().await.map_err(|e| {
+                SinexError::database("Failed to commit recovery transaction")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
+
+            let staleness_desc = staleness
+                .map(|d| {
+                    let total_secs = d.whole_seconds().unsigned_abs();
+                    format!("{}m{}s", total_secs / 60, total_secs % 60)
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+
+            warn!(
+                operation_id = %operation_id,
+                stale_for = %staleness_desc,
+                "Recovered stale executing replay operation (likely process crash)"
+            );
+
+            recovered += 1;
+        }
+
+        Ok(recovered)
     }
 
     /// List operations with optional filters.

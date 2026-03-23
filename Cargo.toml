@@ -26,6 +26,7 @@ members = [
   "crate/nodes/sinex-terminal-command-canonicalizer",
   "crate/nodes/sinex-health-automaton",
   "crate/nodes/sinex-analytics-automaton",
+  "crate/nodes/sinex-session-detector",
 
   # Developer tooling
   "xtask",

@@ -259,6 +259,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
+        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
             "RUST_LOG=${coreCfg.ingestd.logLevel}"
@@ -293,6 +294,7 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
+        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             # sinex-gateway does not emit sd_notify, so run it as a simple
@@ -366,6 +368,12 @@ let
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = {
+        # The terminal ingestor needs read access to the target user's shell history
+        # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
+        # so we use read-only mode to allow reading history files without write access.
+        ProtectHome = lib.mkForce "read-only";
+      };
     };
 
   mkDesktopUnits =

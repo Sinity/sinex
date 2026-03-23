@@ -9,6 +9,7 @@ tokio-rustls   = "0.25"
 rustls-pemfile = "1"
 shadow-rs      = "0.35"
 human-panic    = "2.0"
+sd-notify      = { workspace = true }
 humantime      = "2.1"
 sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }

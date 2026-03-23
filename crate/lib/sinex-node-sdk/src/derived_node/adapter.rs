@@ -350,6 +350,8 @@ where
             source_event_ids,
             operation_id: context.operation_id(),
         };
+        // Extract before moving provenance into the event struct.
+        let created_by_operation_id = provenance.operation_uuid();
 
         Ok(Event {
             id: Some(Id::new()),
@@ -366,7 +368,7 @@ where
             semantics_version: output.semantics_version,
             scope_key: output.scope_key,
             equivalence_key: output.equivalence_key,
-            created_by_operation_id: provenance.operation_uuid(),
+            created_by_operation_id,
             node_model: Some(self.node.node_model()),
         })
     }

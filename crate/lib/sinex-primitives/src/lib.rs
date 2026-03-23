@@ -1,5 +1,6 @@
 //! Core domain primitives for Sinex.
 #![feature(never_type)]
+#![allow(async_fn_in_trait)]
 
 extern crate self as sinex_primitives;
 
