@@ -41,11 +41,11 @@ sinexctl report today                            # Daily summary (top sources, t
 sinexctl report yesterday                        # Yesterday's summary
 
 # Import
-sinexctl import atuin                            # Import Atuin shell history
-sinexctl import activitywatch                    # Import ActivityWatch events
+sinexctl import atuin                            # Import Atuin shell history (bypasses pipeline)
+# sinexctl import activitywatch                  # DOES NOT EXIST — no AW import path
 
 # Operations
-sinexctl gateway ingest --source test --type test.ping --payload '{}'  # Smoke test
+sinexctl gateway ingest --source test --type test.ping --payload '{}'  # BROKEN: provenance-less → DLQ
 sinexctl status                                  # System health overview
 sinexctl node list                               # Active nodes
 ```
