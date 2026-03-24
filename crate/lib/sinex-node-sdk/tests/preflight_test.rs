@@ -19,6 +19,15 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn database_environment_name(database_url: &str) -> Option<String> {
+    database_url
+        .split('?')
+        .next()
+        .and_then(|url| url.rsplit('/').next())
+        .and_then(|database_name| database_name.rsplit_once('_'))
+        .map(|(_, suffix)| suffix.to_string())
+}
+
 async fn with_database_url<F, T>(database_url: &str, f: F) -> TestResult<T>
 where
     F: AsyncFnOnce() -> TestResult<T>,
@@ -27,12 +36,28 @@ where
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var("DATABASE_URL").ok();
+    let previous_environment = env::var("SINEX_ENVIRONMENT").ok();
+    let environment_name = database_environment_name(database_url);
+    let _environment_guard = environment_name
+        .as_deref()
+        .map(sinex_primitives::environment::override_environment_for_tests)
+        .transpose()?;
     unsafe { env::set_var("DATABASE_URL", database_url) };
+    unsafe {
+        match &environment_name {
+            Some(value) => env::set_var("SINEX_ENVIRONMENT", value),
+            None => env::remove_var("SINEX_ENVIRONMENT"),
+        }
+    }
     let result = f().await;
     unsafe {
         match previous {
             Some(value) => env::set_var("DATABASE_URL", value),
             None => env::remove_var("DATABASE_URL"),
+        }
+        match previous_environment {
+            Some(value) => env::set_var("SINEX_ENVIRONMENT", value),
+            None => env::remove_var("SINEX_ENVIRONMENT"),
         }
     }
     result
