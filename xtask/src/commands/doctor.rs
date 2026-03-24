@@ -1100,27 +1100,21 @@ fn resolve_target_identity(
         );
     }
 
-    let uid = if let Some(uid) = explicit_uid {
-        uid
-    } else if let Some((uid, _)) = passwd_entry.as_ref() {
-        *uid
-    } else if let Ok(uid) = std::env::var("UID") {
-        uid.parse::<u32>()
-            .wrap_err("failed to parse UID for deployment readiness")?
-    } else {
-        command_output("id", &["-u"], "deployment readiness target UID")?
-            .parse::<u32>()
-            .wrap_err("failed to parse `id -u` output")?
-    };
+    let uid = explicit_uid
+        .or_else(|| passwd_entry.as_ref().map(|(uid, _)| *uid))
+        .ok_or_else(|| {
+            eyre!(
+                "deployment target user '{user}' has no resolvable UID; declare target.uid explicitly"
+            )
+        })?;
 
-    let home = if let Some(home) = explicit_home {
-        home
-    } else {
-        passwd_entry
-            .as_ref()
-            .map(|(_, home)| home.clone())
-            .unwrap_or_else(|| PathBuf::from(format!("/home/{user}")))
-    };
+    let home = explicit_home
+        .or_else(|| passwd_entry.as_ref().map(|(_, home)| home.clone()))
+        .ok_or_else(|| {
+            eyre!(
+                "deployment target user '{user}' has no resolvable home; declare target.home explicitly"
+            )
+        })?;
 
     Ok(TargetIdentity { user, uid, home })
 }
@@ -1169,19 +1163,55 @@ fn runtime_dir_for_target(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> PathBuf {
-    descriptor
-        .and_then(|value| value.desktop.runtime_dir.clone())
-        .or_else(|| {
-            std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
-                .ok()
-                .map(PathBuf::from)
-        })
+    if let Some(descriptor) = descriptor {
+        return descriptor
+            .desktop
+            .runtime_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)));
+    }
+
+    std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+        .ok()
+        .map(PathBuf::from)
         .or_else(|| {
             current_process_uid()
                 .filter(|uid| *uid == target.uid)
                 .and_then(|_| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
         })
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
+}
+
+fn configured_hyprland_sockets(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    if let Some(descriptor) = descriptor {
+        return (
+            descriptor.desktop.hyprland_event_socket.clone(),
+            descriptor.desktop.hyprland_command_socket.clone(),
+        );
+    }
+
+    (
+        std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
+            .ok()
+            .map(PathBuf::from),
+        std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
+            .ok()
+            .map(PathBuf::from),
+    )
+}
+
+fn configured_hyprland_instance_signature(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> Option<String> {
+    if let Some(descriptor) = descriptor {
+        return descriptor.desktop.hyprland_instance_signature.clone();
+    }
+
+    std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
+        .ok()
+        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok())
 }
 
 fn current_process_uid() -> Option<u32> {
@@ -1314,22 +1344,45 @@ fn check_node_entrypoints(
     )
 }
 
-/// Check 2: /realm is readable by the current user.
-fn check_realm_accessible() -> DeploymentReadinessItem {
+/// Check 2: /realm is readable by the resolved deployment principal.
+fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
     let realm = std::path::Path::new("/realm");
-    if realm.exists() {
-        match std::fs::read_dir(realm) {
-            Ok(_) => DeploymentReadinessItem::pass(
-                "realm-accessible",
-                "/realm is accessible by the current user",
+    if !realm.exists() {
+        return DeploymentReadinessItem::fail("realm-accessible", "/realm does not exist");
+    }
+
+    let Some(current_uid) = current_process_uid() else {
+        return DeploymentReadinessItem::skip(
+            "realm-accessible",
+            format!(
+                "Could not determine the current principal; rerun as {} or root to validate /realm access honestly",
+                target.user
             ),
-            Err(e) => DeploymentReadinessItem::fail(
-                "realm-accessible",
-                format!("/realm exists but is not readable: {e}"),
+        );
+    };
+
+    if current_uid != target.uid && current_uid != 0 {
+        return DeploymentReadinessItem::skip(
+            "realm-accessible",
+            format!(
+                "Current principal uid {} differs from target uid {}; rerun as {} or root to validate /realm access",
+                current_uid, target.uid, target.user
             ),
-        }
-    } else {
-        DeploymentReadinessItem::fail("realm-accessible", "/realm does not exist")
+        );
+    }
+
+    match std::fs::read_dir(realm) {
+        Ok(_) => DeploymentReadinessItem::pass(
+            "realm-accessible",
+            format!("/realm is readable for deployment target {}", target.user),
+        ),
+        Err(error) => DeploymentReadinessItem::fail(
+            "realm-accessible",
+            format!(
+                "/realm exists but is not readable for deployment target {}: {error}",
+                target.user
+            ),
+        ),
     }
 }
 
@@ -1417,21 +1470,10 @@ fn check_hyprland_socket(
         );
     }
 
-    if let Some(event_socket) = descriptor
-        .and_then(|value| value.desktop.hyprland_event_socket.clone())
-        .or_else(|| {
-            std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
-                .ok()
-                .map(PathBuf::from)
-        })
-    {
-        let command_socket = descriptor
-            .and_then(|value| value.desktop.hyprland_command_socket.clone())
-            .or_else(|| {
-                std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
-                    .ok()
-                    .map(PathBuf::from)
-            });
+    let (configured_event_socket, configured_command_socket) =
+        configured_hyprland_sockets(descriptor);
+    if let Some(event_socket) = configured_event_socket {
+        let command_socket = configured_command_socket;
         if event_socket.exists() {
             return DeploymentReadinessItem::pass(
                 "hyprland-socket",
@@ -1464,11 +1506,7 @@ fn check_hyprland_socket(
         );
     }
 
-    if let Some(signature) = descriptor
-        .and_then(|value| value.desktop.hyprland_instance_signature.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE").ok())
-        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok())
-    {
+    if let Some(signature) = configured_hyprland_instance_signature(descriptor) {
         let base = hypr_dir.join(&signature);
         let event_socket = base.join(".socket2.sock");
         let command_socket = base.join(".socket.sock");
@@ -1648,6 +1686,13 @@ fn check_singleton_workstation_topology(
             "No deployment descriptor available for planned instance validation",
         );
     };
+
+    if descriptor.mode == DeploymentReadinessMode::Prepared && descriptor.target.is_none() {
+        return DeploymentReadinessItem::skip(
+            "singleton-workstation-topology",
+            "Prepared descriptor does not declare a workstation target yet; singleton defaults are not expected until target wiring exists",
+        );
+    }
 
     let surfaces = [
         ("filesystem", &descriptor.filesystem),
@@ -2274,11 +2319,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     let cfg = crate::config::config();
     let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![
-        descriptor_item,
-        check_node_entrypoints(descriptor.as_ref()),
-        check_realm_accessible(),
-    ];
+    let mut items = vec![descriptor_item, check_node_entrypoints(descriptor.as_ref())];
 
     match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
@@ -2297,6 +2338,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
                     descriptor_suffix
                 ),
             ));
+            items.push(check_realm_accessible(&target));
             items.push(check_terminal_sources(&target, descriptor.as_ref()));
             items.push(check_hyprland_socket(&target, descriptor.as_ref()));
             items.push(check_activitywatch_db(&target, descriptor.as_ref()));
@@ -2305,6 +2347,10 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             items.push(DeploymentReadinessItem::fail(
                 "target-identity",
                 format!("Could not resolve deployment target identity: {error}"),
+            ));
+            items.push(DeploymentReadinessItem::skip(
+                "realm-accessible",
+                "Skipped because target identity resolution failed",
             ));
             items.push(DeploymentReadinessItem::skip(
                 "terminal-sources",
@@ -3035,6 +3081,35 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_runtime_dir_for_target_ignores_ambient_env_when_descriptor_present()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_HYPRLAND_RUNTIME_DIR", "/tmp/ambient-runtime");
+        env.set("UID", "4242");
+        env.set("XDG_RUNTIME_DIR", "/run/user/4242");
+
+        let runtime_dir = runtime_dir_for_target(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: PathBuf::from("/home/probe-user"),
+            },
+            Some(&DeploymentReadinessDescriptor {
+                target: Some(sinex_primitives::DeploymentTarget {
+                    user: "probe-user".to_string(),
+                    uid: Some(1000),
+                    home: Some(PathBuf::from("/home/probe-user")),
+                }),
+                desktop: sinex_primitives::DesktopDeploymentSurface::default(),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(runtime_dir, PathBuf::from("/run/user/1000"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_hyprland_socket_fails_when_enabled_runtime_is_missing()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
@@ -3058,6 +3133,45 @@ mod tests {
                 ..Default::default()
             }),
         );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("Hyprland runtime is unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_hyprland_socket_ignores_ambient_env_when_descriptor_present()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let ambient_runtime = temp.path().join("ambient-runtime");
+        let ambient_socket = ambient_runtime.join("ambient/.socket2.sock");
+        std::fs::create_dir_all(ambient_socket.parent().expect("socket parent"))?;
+        std::fs::write(&ambient_socket, "")?;
+
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_HYPRLAND_EVENT_SOCKET",
+            ambient_socket.display().to_string(),
+        );
+
+        let item = check_hyprland_socket(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: temp.path().to_path_buf(),
+            },
+            Some(&DeploymentReadinessDescriptor {
+                desktop: sinex_primitives::DesktopDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    runtime_dir: Some(temp.path().join("missing-runtime")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Hyprland runtime is unavailable"));
         Ok(())
@@ -3326,6 +3440,26 @@ mod tests {
         let item = check_singleton_workstation_topology(Some(&descriptor));
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("filesystem=2"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_singleton_workstation_topology_skips_prepared_descriptor_without_target()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = check_singleton_workstation_topology(Some(&DeploymentReadinessDescriptor {
+            mode: DeploymentReadinessMode::Prepared,
+            filesystem: sinex_primitives::DeploymentSurface {
+                enabled: true,
+                instances: Some(2),
+            },
+            ..Default::default()
+        }));
+
+        assert_eq!(item.status, "skip");
+        assert!(
+            item.description
+                .contains("singleton defaults are not expected")
+        );
         Ok(())
     }
 
