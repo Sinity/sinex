@@ -1639,21 +1639,6 @@ impl<'a> EventRepository<'a> {
             .await
     }
 
-    /// Hard delete events from a specific source (ADMIN USE ONLY)
-    ///
-    /// This bypasses audit controls and permanently removes data.
-    /// Only use for test cleanup or administrative operations where
-    /// you need to actually reclaim disk space.
-    pub async fn hard_delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        // Perform the hard delete
-        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
-            .execute(self.pool)
-            .await;
-
-        let result = result.map_err(|e| db_error(e, "hard delete by source"))?;
-        Ok(result.rows_affected())
-    }
-
     // ========== Data Lifecycle Operations ==========
 
     /// Get status of all lifecycle tiers (live, archive, tombstone).
