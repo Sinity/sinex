@@ -1890,13 +1890,10 @@ impl TerminalNode {
                 "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
                     HistorySourceMode::FishSqlite
                 }
-                "fish" => {
-                    debug!(
-                        path = %source.path,
-                        "Fish history file is not SQLite format; will attempt text parsing"
-                    );
-                    HistorySourceMode::Text
-                }
+                "fish" => HistorySourceMode::ConfiguredError(format!(
+                    "configured Fish history source {} is not SQLite-backed; native Fish YAML history is not supported",
+                    source.path
+                )),
                 "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
                     Ok(()) => HistorySourceMode::AtuinSqlite,
                     Err(error) => HistorySourceMode::ConfiguredError(format!(
@@ -2509,7 +2506,10 @@ mod tests {
         };
         assert_eq!(
             material_uuid,
-            sinex_node_sdk::stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
+            Uuid::new_v5(
+                &Uuid::NAMESPACE_URL,
+                format!("{}#{}", watcher_ctx.path, entry.history_id).as_bytes()
+            )
         );
 
         ingest_handle.stop().await?;
@@ -2791,6 +2791,65 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scan_historical_reports_unsupported_fish_history_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-fish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("fish_history");
+        tokio::fs::write(&invalid_history, "- cmd: echo hello\n  when: 1234567890\n").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history.clone(),
+                shell: "fish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("fish:{invalid_history}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("native Fish YAML history is not supported"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn run_continuous_rejects_all_invalid_terminal_sources(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -2828,6 +2887,52 @@ mod tests {
             .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
             .await
             .expect_err("continuous mode should fail when no valid sources remain");
+        assert!(
+            error.to_string().contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_rejects_unsupported_fish_history(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-invalid-fish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("fish_history");
+        tokio::fs::write(&invalid_history, "- cmd: echo hello\n  when: 1234567890\n").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history,
+                shell: "fish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .await
+            .expect_err("continuous mode should fail when Fish history is unsupported");
         assert!(
             error.to_string().contains("no usable history sources"),
             "unexpected error: {error}"

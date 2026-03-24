@@ -81,8 +81,6 @@ pub mod exploration;
 pub mod health_reporter;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
-#[cfg(feature = "db")]
-pub mod historical_importer;
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
@@ -178,7 +176,7 @@ pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 pub use sqlite_source::stage_stable_material;
 pub use sqlite_source::{
     SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
-    read_rows_after, stable_material_id, stable_row_material_id,
+    read_rows_after,
 };
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
@@ -189,8 +187,6 @@ pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 // Re-export preflight utilities
 #[cfg(feature = "db")]
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
-#[cfg(feature = "db")]
-pub use historical_importer::{HistoricalImporter, ImportProgress};
 #[cfg(feature = "preflight")]
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 
