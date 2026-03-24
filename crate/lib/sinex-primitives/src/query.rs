@@ -628,25 +628,58 @@ fn json_cmp(a: Option<&JsonValue>, b: Option<&JsonValue>) -> Option<std::cmp::Or
 }
 
 /// Simple SQL LIKE pattern matching (`%` = any sequence, `_` = any single char).
+///
+/// This uses an iterative backtracking matcher so adversarial wildcard patterns
+/// stay linear in the haystack size instead of recursing exponentially.
 fn like_match(s: &str, pattern: &str) -> bool {
-    like_match_inner(s.as_bytes(), pattern.as_bytes())
-}
+    let s = s.as_bytes();
+    let pattern = pattern.as_bytes();
+    let mut s_idx = 0usize;
+    let mut p_idx = 0usize;
+    let mut wildcard_next = None;
+    let mut wildcard_match_end = 0usize;
 
-fn like_match_inner(s: &[u8], p: &[u8]) -> bool {
-    match (s.first(), p.first()) {
-        (_, Some(b'%')) => {
-            // '%' matches zero or more characters
-            like_match_inner(s, &p[1..]) || (!s.is_empty() && like_match_inner(&s[1..], p))
+    while s_idx < s.len() {
+        if p_idx < pattern.len() {
+            match pattern[p_idx] {
+                b'_' => {
+                    s_idx += 1;
+                    p_idx += 1;
+                    continue;
+                }
+                b'%' => {
+                    while p_idx < pattern.len() && pattern[p_idx] == b'%' {
+                        p_idx += 1;
+                    }
+                    wildcard_next = Some(p_idx);
+                    wildcard_match_end = s_idx;
+                    if p_idx == pattern.len() {
+                        return true;
+                    }
+                    continue;
+                }
+                ch if s[s_idx].eq_ignore_ascii_case(&ch) => {
+                    s_idx += 1;
+                    p_idx += 1;
+                    continue;
+                }
+                _ => {}
+            }
         }
-        (Some(sc), Some(b'_')) => {
-            // '_' matches exactly one character
-            let _ = sc;
-            like_match_inner(&s[1..], &p[1..])
-        }
-        (Some(sc), Some(pc)) => sc.eq_ignore_ascii_case(pc) && like_match_inner(&s[1..], &p[1..]),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
+
+        let Some(wildcard_resume) = wildcard_next else {
+            return false;
+        };
+        wildcard_match_end += 1;
+        s_idx = wildcard_match_end;
+        p_idx = wildcard_resume;
     }
+
+    while p_idx < pattern.len() && pattern[p_idx] == b'%' {
+        p_idx += 1;
+    }
+
+    p_idx == pattern.len()
 }
 
 /// Result from `events.lineage` — the root event plus its provenance graph.

@@ -13,10 +13,11 @@
 
 use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexError};
 use async_nats::jetstream::kv;
+use futures::StreamExt;
 
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 use tracing::info;
 use uuid::Uuid;
@@ -411,6 +412,11 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
 
 /// Verify service integration (NATS checkpoint KV)
 async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Value> {
+    let env = sinex_primitives::environment::SinexEnvironment::current().map_err(|error| {
+        SinexError::processing(format!(
+            "Failed to resolve SINEX_ENVIRONMENT for service integration verification: {error}"
+        ))
+    })?;
     let nats_url = resolve_nats_url()?;
     let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
     nats_config.url = nats_url;
@@ -420,10 +426,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         ))
     })?;
     let js = async_nats::jetstream::new(client);
-    let bucket = format!(
-        "KV_{}",
-        crate::checkpoint::checkpoint_bucket_name(Some("preflight"))
-    );
+    let bucket = crate::checkpoint::checkpoint_bucket_name(None);
     let kv_store = match js
         .create_key_value(kv::Config {
             bucket: bucket.clone(),
@@ -465,8 +468,45 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         .await
         .map_err(|e| SinexError::processing(format!("Failed to delete checkpoint from KV: {e}")))?;
 
+    let required_streams = vec![
+        env.nats_stream_name("SINEX_RAW_EVENTS"),
+        env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS"),
+        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+        env.nats_stream_name("SOURCE_MATERIAL_END"),
+    ];
+    let mut available_streams = BTreeSet::new();
+    let mut streams = js.streams();
+    while let Some(stream) = streams.next().await {
+        let stream = stream.map_err(|error| {
+            SinexError::processing(format!(
+                "Failed to list JetStream streams during service verification: {error}"
+            ))
+        })?;
+        available_streams.insert(stream.config.name.clone());
+    }
+
+    let missing_streams: Vec<String> = required_streams
+        .iter()
+        .filter(|stream| !available_streams.contains(stream.as_str()))
+        .cloned()
+        .collect();
+    if !missing_streams.is_empty() {
+        return Err(SinexError::processing(format!(
+            "Missing required JetStream streams: {}; present: {}",
+            missing_streams.join(", "),
+            if available_streams.is_empty() {
+                "<none>".to_string()
+            } else {
+                available_streams.iter().cloned().collect::<Vec<_>>().join(", ")
+            }
+        )));
+    }
+
     Ok(json!({
         "checkpoint_kv": true,
+        "checkpoint_bucket": bucket,
+        "required_streams": required_streams,
         "consumer_name": consumer_name
     }))
 }

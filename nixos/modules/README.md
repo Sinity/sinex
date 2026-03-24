@@ -90,6 +90,14 @@ disabled (e.g. staging migrations).
 - node defaults (`nodes.defaults`) cover instances, batching, and
   resource limits. Individual nodes can override by setting their field to
   `null` (inherit) or a concrete value.
+- When `users.target` is set, the module now derives sane workstation defaults
+  for terminal history sources and, when the target UID is known at evaluation
+  time, the desktop runtime directory. Terminal and desktop units also run a
+  root `ExecStartPre` bridge that grants the `sinex` service account the ACLs
+  it needs for shell-history files and live Wayland/Hyprland sockets.
+- `nodes.terminal.historySources` and `nodes.desktop.session.*` remain the
+  typed override surfaces when the target user layout is non-standard or a
+  deployment needs explicit socket/runtime wiring.
 - Automata use named profiles defined under `nodes.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
 - The module emits deterministic unit names (`sinex-filesystem-1`,

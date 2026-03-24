@@ -186,6 +186,56 @@ impl GatewayMetrics {
         }
     }
 
+    fn restore_from_snapshot(&self, snapshot: &MetricsSnapshot) {
+        self.total_requests
+            .fetch_add(snapshot.total_requests, Ordering::Relaxed);
+        self.successful_requests
+            .fetch_add(snapshot.successful_requests, Ordering::Relaxed);
+        self.rejected_requests
+            .fetch_add(snapshot.rejected_requests, Ordering::Relaxed);
+        self.rate_limited_requests
+            .fetch_add(snapshot.rate_limited_requests, Ordering::Relaxed);
+        self.latency_sum_us
+            .fetch_add(snapshot.latency_sum_us, Ordering::Relaxed);
+        self.latency_count
+            .fetch_add(snapshot.latency_count, Ordering::Relaxed);
+
+        if snapshot.latency_count > 0 {
+            self.restore_latency_min(snapshot.latency_min_us);
+            self.restore_latency_max(snapshot.latency_max_us);
+        }
+    }
+
+    fn restore_latency_min(&self, latency_us: u64) {
+        let mut current_min = self.latency_min_us.load(Ordering::Relaxed);
+        while latency_us < current_min {
+            match self.latency_min_us.compare_exchange_weak(
+                current_min,
+                latency_us,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current_min = actual,
+            }
+        }
+    }
+
+    fn restore_latency_max(&self, latency_us: u64) {
+        let mut current_max = self.latency_max_us.load(Ordering::Relaxed);
+        while latency_us > current_max {
+            match self.latency_max_us.compare_exchange_weak(
+                current_max,
+                latency_us,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current_max = actual,
+            }
+        }
+    }
+
     /// Emit current metrics to self-observation system
     async fn emit_metrics(&self) -> Result<(), SelfObservationError> {
         let snapshot = self.snapshot_and_reset();
@@ -202,7 +252,8 @@ impl GatewayMetrics {
         };
 
         // We don't have p99 without a histogram, so skip it
-        self.observer
+        if let Err(error) = self
+            .observer
             .emit_gateway_stats(
                 snapshot.total_requests,
                 snapshot.successful_requests,
@@ -213,6 +264,12 @@ impl GatewayMetrics {
                 snapshot.active_connections,
             )
             .await
+        {
+            self.restore_from_snapshot(&snapshot);
+            return Err(error);
+        }
+
+        Ok(())
     }
 
     /// Spawn background metrics emission task
@@ -307,6 +364,30 @@ mod tests {
         assert_eq!(snapshot.latency_min_us, 500);
         assert_eq!(snapshot.latency_max_us, 2000);
         assert_eq!(snapshot.latency_count, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_restore_snapshot_preserves_failed_interval_and_new_traffic() -> TestResult<()> {
+        let metrics = GatewayMetrics::disabled();
+
+        metrics.record_request_start();
+        metrics.record_request_success(500);
+
+        let failed_snapshot = metrics.snapshot_and_reset();
+
+        metrics.record_request_start();
+        metrics.record_request_success(2000);
+
+        metrics.restore_from_snapshot(&failed_snapshot);
+
+        let snapshot = metrics.snapshot_and_reset();
+        assert_eq!(snapshot.total_requests, 2);
+        assert_eq!(snapshot.successful_requests, 2);
+        assert_eq!(snapshot.latency_count, 2);
+        assert_eq!(snapshot.latency_sum_us, 2500);
+        assert_eq!(snapshot.latency_min_us, 500);
+        assert_eq!(snapshot.latency_max_us, 2000);
         Ok(())
     }
 }

@@ -210,14 +210,9 @@ impl IngestService {
 
         // Create shared MaterialReadySet for cross-consumer coordination.
         // This prevents FK violations when events arrive before their material's BEGIN
-        // message is processed (separate NATS streams, no cross-stream ordering).
-        //
-        // In test mode (namespace set), skip MaterialReadySet: tests pre-register source
-        // materials directly in the database via ensure_source_material() before publishing
-        // events. The MaterialReadySet only knows about materials that existed at startup
-        // or arrived via the MaterialAssembler NATS stream, so test-inserted materials
-        // would cause all events to be NAK'd and never persisted.
-        let ready_set = if self.config.nats_namespace.is_none() {
+        // message is processed (separate NATS streams, no cross-stream ordering) while
+        // still allowing externally-registered materials to be discovered via DB fallback.
+        let ready_set = if self.db_pool.is_some() {
             let set = MaterialReadySet::new();
             if let Some(pool) = &self.db_pool
                 && let Err(e) = set.seed_from_db(pool).await
@@ -227,11 +222,13 @@ impl IngestService {
             }
             Some(set)
         } else {
-            info!(
-                "MaterialReadySet disabled (test namespace mode — materials pre-registered in DB)"
-            );
             None
         };
+
+        if let Some(set) = ready_set.clone() {
+            let handle = self.start_material_ready_set_maintenance_task(set).await;
+            self.track_task(handle).await;
+        }
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let (js_handle, js_ready_rx) = match (&self.nats_client, &self.db_pool) {
@@ -667,6 +664,38 @@ impl IngestService {
         tokio::spawn(async move {
             let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag);
             service.run().await;
+        })
+    }
+
+    async fn start_material_ready_set_maintenance_task(
+        &self,
+        ready_set: MaterialReadySet,
+    ) -> JoinHandle<()> {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
+        let interval_duration = ready_set.maintenance_interval();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(interval_duration);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let removed = ready_set.purge_stale();
+                        if removed > 0 {
+                            debug!(
+                                removed,
+                                retained = ready_set.len(),
+                                "Evicted stale materials from MaterialReadySet background maintenance"
+                            );
+                        }
+                    }
+                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                        break;
+                    }
+                }
+            }
         })
     }
 

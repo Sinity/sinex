@@ -31,6 +31,15 @@ fn configured_log_dir() -> String {
     std::env::var("SINEX_LOG_DIR").unwrap_or_else(|_| format!("{}/logs", configured_state_dir()))
 }
 
+fn configured_work_dir() -> String {
+    std::env::var("SINEX_WORK_DIR").unwrap_or_else(|_| {
+        dirs::cache_dir()
+            .map(|dir| dir.join("sinex"))
+            .and_then(|dir| dir.into_os_string().into_string().ok())
+            .unwrap_or_else(|| "/tmp/sinex".to_string())
+    })
+}
+
 fn configured_tmp_dir() -> String {
     std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
 }
@@ -90,6 +99,13 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     // Filesystem permissions verification
     match verify_filesystem_permissions(&mut messages).await {
         Ok(fs_info) => {
+            if !fs_info
+                .get("meets_requirements")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+            {
+                has_failures = true;
+            }
             details.insert("filesystem", fs_info);
         }
         Err(e) => {
@@ -307,11 +323,18 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 }
 
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let directories_to_check = vec![
+    let mut directories_to_check = Vec::new();
+    for dir in [
         configured_state_dir(),
+        configured_data_dir(),
         configured_log_dir(),
         configured_tmp_dir(),
-    ];
+        configured_work_dir(),
+    ] {
+        if !directories_to_check.contains(&dir) {
+            directories_to_check.push(dir);
+        }
+    }
 
     let mut permissions_info = HashMap::new();
     let mut has_issues = false;
@@ -342,45 +365,66 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
         }
     }
 
-    if has_issues {
-        return Err(SinexError::processing(
-            "Insufficient filesystem permissions for required directories".to_string(),
-        ));
-    }
-
     Ok(json!({
-        "directories": permissions_info
+        "directories": permissions_info,
+        "meets_requirements": !has_issues
     }))
 }
 
 async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     let path = Utf8Path::new(dir_path);
+    let metadata = match tokio::fs::metadata(path.as_std_path()).await {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(json!({
+                "exists": false,
+                "is_directory": false,
+                "writable": false,
+                "readable": false,
+                "error": "directory does not exist"
+            }));
+        }
+        Err(e) => {
+            return Ok(json!({
+                "exists": path.exists(),
+                "is_directory": false,
+                "writable": false,
+                "readable": false,
+                "error": e.to_string()
+            }));
+        }
+    };
 
-    // Create directory if it doesn't exist
-    if !path.exists() {
-        tokio::fs::create_dir_all(path)
-            .await
-            .map_err(|e| SinexError::processing(format!("Error: {e}")))?;
+    if !metadata.is_dir() {
+        return Ok(json!({
+            "exists": true,
+            "is_directory": false,
+            "writable": false,
+            "readable": true,
+            "error": "path is not a directory"
+        }));
     }
 
     // Test write permissions by creating a temporary file
-    let test_file = path.join(".sinex_preflight_test");
+    let test_file = path.join(format!(".sinex_preflight_test_{}", std::process::id()));
 
-    match tokio::fs::write(&test_file, "test").await {
+    match tokio::fs::write(test_file.as_std_path(), "test").await {
         Ok(()) => {
             // Clean up test file
-            tokio::fs::remove_file(&test_file).await.ok();
+            tokio::fs::remove_file(test_file.as_std_path()).await.ok();
 
             Ok(json!({
                 "exists": true,
+                "is_directory": true,
                 "writable": true,
                 "readable": true
             }))
         }
         Err(e) => Ok(json!({
-            "exists": path.exists(),
+            "exists": true,
+            "is_directory": true,
             "writable": false,
-            "readable": path.metadata().is_ok(),
+            "readable": true,
             "error": e.to_string()
         })),
     }

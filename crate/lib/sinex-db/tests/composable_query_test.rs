@@ -471,6 +471,55 @@ async fn test_payload_filter_path_gt(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+/// Test: numeric payload-path comparisons ignore non-numeric JSON instead of erroring.
+#[sinex_test]
+async fn test_payload_filter_path_gt_ignores_non_numeric_values(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("path-gt-mixed-types")).await?;
+
+    let _string_value = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new("path-source-mixed", "test.type", json!({"size": "huge"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+
+    let _numeric_value = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new("path-source-mixed", "test.type", json!({"size": 2048}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("path-source-mixed")],
+            payload: Some(PayloadFilter::Path {
+                path: "size".to_string(),
+                op: PathOp::Gt(json!(1000)),
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    let events = match result {
+        EventQueryResult::Events { events, .. } => events,
+        _ => panic!("Expected Events result"),
+    };
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event.payload["size"], json!(2048));
+
+    Ok(())
+}
+
 // ============================================================================
 // PAYLOAD FILTER COMPOSITION TESTS
 // ============================================================================
@@ -780,6 +829,52 @@ async fn test_aggregation_count_by_payload_path(ctx: TestContext) -> TestResult<
 
             assert!(alpha.is_some() && alpha.unwrap().count >= 2);
             assert!(beta.is_some() && beta.unwrap().count >= 3);
+        }
+        _ => panic!("Expected GroupedCounts result"),
+    }
+
+    Ok(())
+}
+
+/// Test: CountBy PayloadPath binds odd JSON keys instead of formatting SQL.
+#[sinex_test]
+async fn test_aggregation_count_by_payload_path_with_quote_in_key(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("countby-path-quoted")).await?;
+    let quoted_key = "category' weird";
+
+    for _ in 0..2 {
+        let _event = ctx
+            .pool
+            .events()
+            .insert(
+                DynamicPayload::new(
+                    "path-source-quoted",
+                    "agg.type",
+                    json!({quoted_key: "alpha"}),
+                )
+                .from_material(material_id)
+                .build()?,
+            )
+            .await?;
+    }
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("path-source-quoted")],
+            aggregation: Some(AggregationMode::CountBy {
+                field: GroupByField::PayloadPath(quoted_key.to_string()),
+                limit: 10,
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    match result {
+        EventQueryResult::GroupedCounts { groups } => {
+            let alpha = groups.iter().find(|g| g.key == "alpha");
+            assert!(alpha.is_some() && alpha.unwrap().count >= 2);
         }
         _ => panic!("Expected GroupedCounts result"),
     }

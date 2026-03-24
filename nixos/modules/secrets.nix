@@ -19,6 +19,11 @@ let
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
   serviceUser = cfg.users.nodes;
+  targetUser = cfg.users.target;
+  targetUserHome =
+    if targetUser == null
+    then null
+    else attrByPath [ "users" "users" targetUser "home" ] "/home/${targetUser}" config;
   defaultOwner = serviceUser;
 
   mkSpec = filename: {
@@ -69,7 +74,9 @@ let
   exportScript = concatStringsSep "\n" (filter (s: s != "") (mapAttrsToList mkExport specs));
 
   defaultIdentities = [ "/etc/ssh/ssh_host_ed25519_key" ]
-    ++ optional (builtins.pathExists "/home/${defaultOwner}/.ssh/id_ed25519") "/home/${defaultOwner}/.ssh/id_ed25519";
+    ++ optional (
+      targetUserHome != null && builtins.pathExists "${targetUserHome}/.ssh/id_ed25519"
+    ) "${targetUserHome}/.ssh/id_ed25519";
 
   # Whether to actually configure agenix. Secret-backed provisioning paths such as
   # `sinnix.services.sinex.provisionDatabase` need the resolved secret files even

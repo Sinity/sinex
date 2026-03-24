@@ -6,6 +6,9 @@ use sinex_primitives::events::builder::Operation;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 
+use crate::NodeResult;
+use crate::SinexError;
+
 /// Rich trigger context passed to every derived-node processing call.
 ///
 /// Extends the old `NodeEventContext` with processing mode, trigger kind,
@@ -51,34 +54,49 @@ impl DerivedTriggerContext {
     }
 
     /// Create a context for live processing of a new event.
-    pub fn live(event: &Event<JsonValue>) -> Self {
-        Self {
-            trigger_event_id: event.id.unwrap_or_default(),
+    pub fn live(event: &Event<JsonValue>) -> NodeResult<Self> {
+        let trigger_event_id = event.id.ok_or_else(|| {
+            SinexError::validation("derived-node trigger event is missing an id")
+                .with_context("processing_mode", ProcessingMode::Live.to_string())
+                .with_context("event_type", event.event_type.as_ref())
+                .with_context("source", event.source.as_ref())
+        })?;
+        Ok(Self {
+            trigger_event_id,
             source: event.source.clone(),
             event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
-            ts_coided: event.id.map_or_else(Timestamp::now, |id| id.timestamp()),
+            ts_coided: trigger_event_id.timestamp(),
             processing_mode: ProcessingMode::Live,
             trigger_kind: TriggerKind::NewEvent,
             created_by_operation_id: event
                 .created_by_operation_id
                 .map(Id::<Operation>::from_uuid),
-        }
+        })
     }
 
     /// Create a context for historical replay processing.
-    pub fn historical(event: &Event<JsonValue>, operation_id: Option<Id<Operation>>) -> Self {
-        Self {
-            trigger_event_id: event.id.unwrap_or_default(),
+    pub fn historical(
+        event: &Event<JsonValue>,
+        operation_id: Option<Id<Operation>>,
+    ) -> NodeResult<Self> {
+        let trigger_event_id = event.id.ok_or_else(|| {
+            SinexError::validation("derived-node replay event is missing an id")
+                .with_context("processing_mode", ProcessingMode::Replay.to_string())
+                .with_context("event_type", event.event_type.as_ref())
+                .with_context("source", event.source.as_ref())
+        })?;
+        Ok(Self {
+            trigger_event_id,
             source: event.source.clone(),
             event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
-            ts_coided: event.id.map_or_else(Timestamp::now, |id| id.timestamp()),
+            ts_coided: trigger_event_id.timestamp(),
             processing_mode: ProcessingMode::Replay,
             trigger_kind: TriggerKind::ReplayRecompute,
             created_by_operation_id: operation_id.or_else(|| {
                 event.created_by_operation_id.map(Id::<Operation>::from_uuid)
             }),
-        }
+        })
     }
 }

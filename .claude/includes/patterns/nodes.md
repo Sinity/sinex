@@ -1,59 +1,49 @@
-## Ingestor Pattern (`IngestorNode`)
+## Node Patterns
+
+### Choosing Your Node Type
+
+| You're building... | Use | Key trait |
+|--------------------|-----|-----------|
+| Raw data capture from external source | `IngestorNode` + `IngestorNodeAdapter` | 3 scan modes + continuous |
+| 1:1 event transformation | `TransducerNode` + `DerivedNodeAdapter` | Stateless process() |
+| Accumulate-then-emit (sessions, summaries) | `WindowedNode` + `DerivedNodeAdapter` | accumulate() + emit_window() |
+| Per-scope state reconciliation | `ScopeReconcilerNode` + `DerivedNodeAdapter` | Per-scope state + reconcile() |
+
+All nodes use `node_entrypoint!` macro for CLI, lifecycle, sd_notify, heartbeat.
+
+### Ingestor Pattern
 
 ```rust
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter, IngestorState};
-use sinex_node_sdk::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon};
+use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter};
+use sinex_node_sdk::runtime::stream::*;
 use tokio::sync::watch;
 
 #[derive(Default, Serialize, Deserialize)]
-struct MyState { /* checkpoint state */ }
+struct MyState { /* checkpoint state — persisted automatically */ }
 
 #[derive(Default)]
 struct MyIngestor;
 
-#[async_trait]
 impl IngestorNode for MyIngestor {
     type Config = serde_json::Value;
     type State = MyState;
 
     fn name(&self) -> &str { "my-ingestor" }
 
-    async fn initialize(
-        &mut self,
-        state: &mut Self::State,
-        _config: Self::Config,
-        _runtime: &NodeRuntimeState,
-    ) -> sinex_node_sdk::NodeResult<()> {
-        let _ = state;
-        Ok(())
-    }
+    async fn initialize(&mut self, state: &mut Self::State, _config: Self::Config,
+        _runtime: &NodeRuntimeState) -> sinex_node_sdk::NodeResult<()> { Ok(()) }
 
-    async fn scan_snapshot(
-        &mut self,
-        _state: &mut Self::State,
-        _args: ScanArgs,
-    ) -> sinex_node_sdk::NodeResult<ScanReport> {
+    async fn scan_snapshot(&mut self, _state: &mut Self::State,
+        _args: ScanArgs) -> sinex_node_sdk::NodeResult<ScanReport> { Ok(ScanReport::empty()) }
+
+    async fn scan_historical(&mut self, _state: &mut Self::State, _from: Checkpoint,
+        _until: TimeHorizon, _args: ScanArgs) -> sinex_node_sdk::NodeResult<ScanReport> {
         Ok(ScanReport::empty())
     }
 
-    async fn scan_historical(
-        &mut self,
-        _state: &mut Self::State,
-        _from: Checkpoint,
-        _until: TimeHorizon,
-        _args: ScanArgs,
-    ) -> sinex_node_sdk::NodeResult<ScanReport> {
-        Ok(ScanReport::empty())
-    }
-
-    async fn run_continuous(
-        &mut self,
-        _state: &mut Self::State,
-        _from: Checkpoint,
-        _shutdown_rx: watch::Receiver<bool>,
-    ) -> sinex_node_sdk::NodeResult<ScanReport> {
+    async fn run_continuous(&mut self, _state: &mut Self::State, _from: Checkpoint,
+        _shutdown_rx: watch::Receiver<bool>) -> sinex_node_sdk::NodeResult<ScanReport> {
         Ok(ScanReport::empty())
     }
 }
@@ -61,51 +51,97 @@ impl IngestorNode for MyIngestor {
 pub type MyIngestorNode = IngestorNodeAdapter<MyIngestor>;
 ```
 
----
-
-## Automaton Pattern (`AutomatonNode` + `AutomatonNodeAdapter`)
+### Derived Node Pattern (Transducer — Stateless)
 
 ```rust
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{AutomatonNode, AutomatonNodeAdapter, NodeEventContext, NodeLogicError};
-use sinex_primitives::JsonValue;
+use sinex_node_sdk::{TransducerNode, DerivedNodeAdapter, NodeEventContext, NodeLogicError};
 
-#[derive(Default, Serialize, Deserialize)]
-struct MyState {
-    events_seen: u64,
-    // Checkpoint state — persisted automatically
-}
+struct MyTransducer;
 
-#[derive(Default)]
-struct MyAutomaton;
-
-#[async_trait]
-impl AutomatonNode for MyAutomaton {
-    type State = MyState;
+impl TransducerNode for MyTransducer {
     type Input = JsonValue;
     type Output = JsonValue;
 
-    fn name(&self) -> &'static str { "my-automaton" }
-    fn input_event_type(&self) -> &'static str { "*" }        // Subscribe pattern
-    fn output_event_type(&self) -> &'static str { "derived.insight" }
+    fn name(&self) -> &'static str { "my-transducer" }
+    fn input_event_type(&self) -> &'static str { "command.executed" }
+    fn output_event_type(&self) -> &'static str { "command.canonical" }
 
-    async fn process(
-        &mut self,
-        state: &mut Self::State,
-        input: Self::Input,
-        _context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
-        state.events_seen += 1;
+    async fn process(&mut self, input: Self::Input, _ctx: &NodeEventContext)
+        -> Result<Option<Self::Output>, NodeLogicError>
+    {
         // Return Some(output) to emit, None to filter
-        Ok(Some(input))
+        Ok(Some(transform(input)))
     }
 }
-
-pub type MyAutomatonNode = AutomatonNodeAdapter<MyAutomaton>;
 ```
 
-**Note:** `AutomatonFields<C>` remains shared infrastructure for lower-level automata,
-while most new nodes should use `AutomatonNodeAdapter`.
+### Derived Node Pattern (Windowed — Accumulate Then Emit)
+
+```rust
+use sinex_node_sdk::{WindowedNode, DerivedNodeAdapter, DerivedOutput, NodeLogicError};
+use sinex_node_sdk::automaton_node::DerivedTriggerContext;  // TODO: extract from deprecated module
+
+struct SessionDetector;
+
+impl WindowedNode for SessionDetector {
+    type State = SessionState;
+    type Input = JsonValue;
+    type Output = JsonValue;
+
+    fn name(&self) -> &'static str { "session-detector" }
+    fn input_event_type(&self) -> &'static str { "*" }
+    fn output_event_type(&self) -> &'static str { "activity.session.boundary" }
+
+    // Accumulate events into the window state.
+    async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
+        ctx: &DerivedTriggerContext) -> Result<(), NodeLogicError>
+    {
+        state.events.push(input);
+        state.last_ts = Some(ctx.event_timestamp());
+        Ok(())
+    }
+
+    // Check if the window should emit.
+    fn window_complete(&self, state: &Self::State) -> bool {
+        state.last_ts.map_or(false, |last| {
+            Timestamp::now() - last > Duration::minutes(5)
+        })
+    }
+
+    // Emit session boundary from accumulated state.
+    async fn emit(&mut self, state: &mut Self::State)
+        -> Result<Option<DerivedOutput>, NodeLogicError>
+    {
+        Ok(Some(DerivedOutput::windowed(json!({
+            "start_time": state.start_ts,
+            "end_time": state.last_ts,
+            "event_count": state.events.len(),
+        }))))
+    }
+}
+```
+
+### Node SDK Components Reference
+
+```rust
+use sinex_node_sdk::{
+    // Core node types
+    IngestorNode, IngestorNodeAdapter,
+    TransducerNode, WindowedNode, ScopeReconcilerNode,
+    DerivedNodeAdapter,
+    // Config + CLI
+    NodeConfig, NodeArgs, NodeCli, NodeCliRunner, node_entrypoint,
+    // Runtime
+    CheckpointManager, LifecycleManager, ServiceStatus,
+    NatsPublisher, HeartbeatEmitter, DlqRetryHandler,
+    NodeCoordination, InstanceMode,
+    SelfObserver, SelfObserverConfig,
+    ShutdownHandler, ShutdownSignal,
+    // Storage
+    AnnexConfig, GitAnnex, BlobManager,
+    // Health
+    HealthReporter, HealthMetrics,
+};
+```
 
 Reference: `crate/lib/sinex-node-sdk/docs/overview.md`

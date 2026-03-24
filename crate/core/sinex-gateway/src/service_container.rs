@@ -108,6 +108,28 @@ impl ServiceContainer {
         );
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
+
+        // Recover any operations left in Executing state from a previous process crash.
+        const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_secs(10 * 60);
+        match replay
+            .recover_stale_executing(STALE_EXECUTING_THRESHOLD)
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => {
+                warn!(
+                    recovered = n,
+                    "Recovered stale executing replay operations on startup"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to run startup recovery sweep for stale replay operations"
+                );
+            }
+        }
+
         let nats_config = config.nats_connection_config();
 
         let control_client = Some(

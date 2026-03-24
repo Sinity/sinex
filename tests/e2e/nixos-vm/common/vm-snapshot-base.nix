@@ -72,8 +72,8 @@
       echo "Sinex collector status: $(systemctl is-active sinex-ingestd || echo 'inactive')"
       
       if systemctl is-active postgresql > /dev/null; then
-        echo "Database connection: $(sudo -u postgres psql -d sinex -t -c 'SELECT 1' 2>/dev/null || echo 'failed')"
-        echo "Event count: $(sudo -u postgres psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events' 2>/dev/null || echo 'unknown')"
+        echo "Database connection: $(sudo -u postgres psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT 1' 2>/dev/null || echo 'failed')"
+        echo "Event count: $(sudo -u postgres psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT COUNT(*) FROM core.events' 2>/dev/null || echo 'unknown')"
       fi
       
       echo "=== Verification Complete ==="
@@ -91,7 +91,7 @@
       done
       
       echo "Waiting for database connection..."
-      while ! sudo -u postgres psql -d sinex -c 'SELECT 1' > /dev/null 2>&1; do
+      while ! sudo -u postgres psql -d ''${SINEX_TEST_DB_NAME:-sinex} -c 'SELECT 1' > /dev/null 2>&1; do
         sleep 1
       done
       

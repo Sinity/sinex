@@ -18,7 +18,7 @@
         echo "✅ PostgreSQL is running"
         
         # Check database connectivity
-        if ! su - postgres -c "psql -d sinex -c 'SELECT 1;'" >/dev/null 2>&1; then
+        if ! su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -c 'SELECT 1;'" >/dev/null 2>&1; then
           echo "❌ Cannot connect to sinex database"
           FAILED=1
         else
@@ -34,7 +34,7 @@
         echo "✅ Sinex collector is running"
         
         # Check if collector is processing events
-        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
+        EVENT_COUNT=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
         if [[ "$EVENT_COUNT" == "0" ]]; then
           echo "⚠️  No events captured yet"
         else
@@ -164,8 +164,8 @@
         
         echo ""
         echo "Events:"
-        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
-        RECENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
+        EVENT_COUNT=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
+        RECENT_COUNT=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
         echo "  Total: $EVENT_COUNT"
         echo "  Last minute: $RECENT_COUNT"
         

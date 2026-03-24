@@ -175,7 +175,7 @@ impl Events {
                     .default(Expr::current_timestamp()),
             )
             .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("UUID")))
-            .col(ColumnDef::new(Events::AnchorByte).big_integer())
+            .col(ColumnDef::new(Events::AnchorByte).big_integer().check(Expr::cust("anchor_byte IS NULL OR anchor_byte >= 0")))
             .col(ColumnDef::new(Events::OffsetStart).big_integer())
             .col(ColumnDef::new(Events::OffsetEnd).big_integer())
             .col(ColumnDef::new(Events::OffsetKind).text().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))

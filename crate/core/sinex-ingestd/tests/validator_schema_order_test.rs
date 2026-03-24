@@ -45,7 +45,7 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     );
 
     match result {
-        ValidationResult::Valid => Ok(()),
+        ValidationResult::Valid { .. } => Ok(()),
         other => Err(color_eyre::eyre::eyre!(
             "expected payload to validate with newest schema, got {:?}",
             other
@@ -109,7 +109,7 @@ async fn validator_handles_double_digit_versions(ctx: TestContext) -> color_eyre
     );
 
     match result {
-        ValidationResult::Valid => Ok(()),
+        ValidationResult::Valid { .. } => Ok(()),
         other => Err(color_eyre::eyre::eyre!(
             "expected payload to validate with double-digit version schema, got {:?}",
             other

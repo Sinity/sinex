@@ -73,10 +73,19 @@ fn matches_uuid_type(column_type: &ColumnType) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct EventCopyColumn {
     event: Events,
     copy_type: EventCopyColumnType,
+}
+
+impl std::fmt::Debug for EventCopyColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventCopyColumn")
+            .field("event", &self.event.to_string())
+            .field("copy_type", &self.copy_type)
+            .finish()
+    }
 }
 
 impl EventCopyColumn {
@@ -296,10 +305,12 @@ fn verify_event_copy_contract() {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn event_copy_column_count() -> usize {
     copy_columns().len()
 }
 
+#[cfg(test)]
 pub(crate) fn event_copy_column_index(event: Events) -> usize {
     let event_name = event.to_string();
     copy_columns()

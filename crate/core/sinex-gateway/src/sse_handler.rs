@@ -42,7 +42,7 @@ pub(crate) async fn handle_sse_stream(
     Query(params): Query<SseStreamParams>,
 ) -> Response {
     // ── Auth ──
-    let token = match state.auth.verify(&headers).await {
+    let token = match state.auth.verify(&headers) {
         Ok(t) => t,
         Err(_) => {
             log_access_audit(

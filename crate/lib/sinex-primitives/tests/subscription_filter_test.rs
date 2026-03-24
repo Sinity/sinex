@@ -213,6 +213,24 @@ async fn payload_path_like_filter() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn payload_path_like_filter_handles_many_wildcards() -> ::xtask::sandbox::TestResult<()> {
+    let repeated = "%a".repeat(48);
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::Path {
+            path: "name".to_string(),
+            op: PathOp::Like(format!("{repeated}b")),
+        }),
+        ..Default::default()
+    };
+    let event = test_event("x", "x", "h", json!({ "name": "a".repeat(48) }));
+    assert!(
+        !filter.matches(&event),
+        "path LIKE matching should stay bounded even for many '%' wildcards"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn payload_and_composition() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::And {

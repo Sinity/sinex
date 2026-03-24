@@ -52,9 +52,10 @@ let
     if ${preflightCommand}; then
       echo "Sinex pre-flight verification passed"
       exit 0
+    else
+      STATUS=$?
     fi
 
-    STATUS=$?
     echo "Sinex pre-flight verification failed (exit code: $STATUS)"
 
     case "${preflight.failureAction}" in
@@ -94,13 +95,8 @@ let
     fi
 
     echo "$(date): running Sinex coordinated update"
-    if ! systemctl start sinex-preflight.service; then
-      echo "ERROR: pre-flight verification failed to start" >&2
-      exit 1
-    fi
-
-    if ! systemctl is-active --quiet sinex-preflight.service; then
-      echo "ERROR: pre-flight verification did not complete" >&2
+    if ! systemctl start --wait sinex-preflight.service; then
+      echo "ERROR: pre-flight verification failed" >&2
       exit 1
     fi
 
@@ -181,8 +177,8 @@ let
     serviceConfig.ExecStartPre = mkAfter [ (pkgs.writeShellScript "sinex-preflight-guard-${sanitizeName unit}" ''
       set -euo pipefail
       UNIT="${unit}.service"
-      if ! systemctl is-active --quiet sinex-preflight.service; then
-        echo "ERROR: sinex-preflight.service has not run successfully; refusing to start $UNIT" >&2
+      if ! systemctl start --wait sinex-preflight.service; then
+        echo "ERROR: sinex-preflight verification failed; refusing to start $UNIT" >&2
         exit 1
       fi
     '') ];
@@ -195,6 +191,7 @@ in
       systemd.services.sinex-schema-apply = {
         description = "Apply Sinex declarative schema";
         wantedBy = [ "multi-user.target" ];
+        wants = [ "network-online.target" ];
         after = [ "network-online.target" ] ++ localPostgresUnits;
         requires = localPostgresUnits;
         serviceConfig = {
@@ -217,6 +214,7 @@ in
           sinex-preflight = {
             description = "Sinex pre-flight verification";
             wantedBy = [ "multi-user.target" ];
+            wants = [ "network-online.target" ];
             after = [ "network-online.target" ]
               ++ schemaApplyUnits
               ++ localPostgresUnits
@@ -227,7 +225,6 @@ in
               ++ optionals natsEnabled [ "nats.service" ];
             serviceConfig = {
               Type = "oneshot";
-              RemainAfterExit = true;
               TimeoutStartSec = preflight.timeoutSec;
               User = cfg.database.user;
               Group = cfg.database.user;

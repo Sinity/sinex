@@ -209,6 +209,7 @@ struct ConsumerStats {
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
+    suspicious_timestamps: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -223,6 +224,7 @@ impl ConsumerStats {
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
+            suspicious_timestamps = self.suspicious_timestamps.load(Ordering::Relaxed),
             "JetStream consumer stats"
         );
     }
@@ -580,6 +582,7 @@ impl JetStreamConsumer {
             } else {
                 "query_builder"
             };
+            let val_stats = self.validator.read().await.stats();
             let _ = observer
                 .emit_ingestd_batch_stats(
                     batch_size,
@@ -588,6 +591,12 @@ impl JetStreamConsumer {
                     events_failed,
                     had_synthesis,
                     insert_path,
+                    val_stats.valid,
+                    val_stats.skipped,
+                    val_stats.no_schema,
+                    val_stats.schema_not_found,
+                    val_stats.invalid,
+                    val_stats.coverage_pct(),
                 )
                 .await;
         }
@@ -616,12 +625,22 @@ impl JetStreamConsumer {
             }
         };
 
-        // Validate event using EventValidator
-        if let Err(e) = self.validate_event(&event).await {
-            warn!(event_id = ?event.id, "Event validation failed: {}", e);
-            self.route_validation_failure(&msg, format!("Validation failed: {e}"))
-                .await?;
-            return Ok(None);
+        // Validate event using EventValidator; capture the matched schema_id for persistence.
+        let validated_schema_id = match self.validate_event(&event).await {
+            Ok(schema_id) => schema_id,
+            Err(e) => {
+                warn!(event_id = ?event.id, "Event validation failed: {}", e);
+                self.route_validation_failure(&msg, format!("Validation failed: {e}"))
+                    .await?;
+                return Ok(None);
+            }
+        };
+
+        // Stamp the matched schema_id so it is persisted with the event row.
+        // Only overwrite if validation actually matched a schema (None means no schema / disabled).
+        let mut event = event;
+        if let Some(sid) = validated_schema_id {
+            event.payload_schema_id = Some(sid);
         }
 
         // The ID MUST be present for events coming from Ingestors
@@ -633,6 +652,23 @@ impl JetStreamConsumer {
                 .await?;
             return Ok(None);
         };
+
+        // Soft warning for suspicious timestamps — catches buggy timestamp parsing
+        // during historical imports. Does not reject the event.
+        if let Some(ts_orig) = &event.ts_orig {
+            let now = Timestamp::now();
+            let one_hour_future = now + ::time::Duration::hours(1);
+            if *ts_orig > one_hour_future {
+                warn!(
+                    event_id = ?event.id,
+                    ts_orig = %ts_orig,
+                    "Event ts_orig is more than 1 hour in the future — possible timestamp parsing error"
+                );
+                self.stats
+                    .suspicious_timestamps
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
 
         Ok(Some(PreparedEvent {
             event,
@@ -646,15 +682,26 @@ impl JetStreamConsumer {
         // Pre-filter: defer events whose source material isn't registered yet.
         // This prevents FK violations without relying on database error handling.
         let batch = if let Some(ref ready_set) = self.ready_set {
-            let (ready, not_ready): (Vec<&PreparedEvent>, Vec<&PreparedEvent>) =
-                batch.iter().partition(|prepared| {
-                    match &prepared.event.provenance {
-                        // Material provenance: check if the referenced material is registered
-                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_uuid()),
-                        // Synthesis provenance has no material FK — always ready
-                        Provenance::Synthesis { .. } => true,
+            let mut ready = Vec::with_capacity(batch.len());
+            let mut not_ready = Vec::new();
+
+            for prepared in batch {
+                let is_ready = match &prepared.event.provenance {
+                    // Material provenance: first consult the in-memory set, then fall back
+                    // to the registry so externally-registered materials are not deferred forever.
+                    Provenance::Material { id, .. } => {
+                        ready_set.ensure_ready(&self.pool, *id.as_uuid()).await?
                     }
-                });
+                    // Synthesis provenance has no material FK — always ready.
+                    Provenance::Synthesis { .. } => true,
+                };
+
+                if is_ready {
+                    ready.push(prepared);
+                } else {
+                    not_ready.push(prepared);
+                }
+            }
 
             if !not_ready.is_empty() {
                 debug!(
@@ -877,8 +924,14 @@ impl JetStreamConsumer {
         Ok(())
     }
 
-    /// Validate event against JSON schema
-    async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<()> {
+    /// Validate event against JSON schema.
+    ///
+    /// Returns the matched schema UUID on success (`None` when validation is disabled/no schema
+    /// registered), so the caller can stamp `payload_schema_id` on the event before persistence.
+    async fn validate_event(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> IngestdResult<Option<Uuid>> {
         // Domain type formats (EventSource, EventType) are validated at deserialization
         // time — if we hold them here, they're already valid.
 
@@ -888,7 +941,8 @@ impl JetStreamConsumer {
         let strict_mode = guard.is_strict_mode();
 
         match validation {
-            ValidationResult::Valid | ValidationResult::Skipped => Ok(()),
+            ValidationResult::Valid { schema_id } => Ok(Some(schema_id)),
+            ValidationResult::Skipped => Ok(None),
             ValidationResult::NoSchema => {
                 if strict_mode {
                     Err(SinexError::validation(format!(
@@ -898,7 +952,7 @@ impl JetStreamConsumer {
                     .with_operation("jetstream_consumer.validate_event")
                     .with_context("strict_mode", "enabled"))
                 } else {
-                    Ok(())
+                    Ok(None)
                 }
             }
             ValidationResult::SchemaNotFound { schema_id } => {

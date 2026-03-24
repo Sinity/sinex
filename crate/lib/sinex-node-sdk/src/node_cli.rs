@@ -963,13 +963,17 @@ macro_rules! node_entrypoint {
                     .clone()
                     .unwrap_or_else(|| "sinex-node".to_string());
 
+                let heartbeat_secs = std::env::var("SINEX_COORDINATION_HEARTBEAT")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(30);
                 let heartbeat_emitter = HeartbeatEmitter::new(
                     service_name.clone(),
-                    sinex_primitives::Seconds::from_secs(30),
+                    sinex_primitives::Seconds::from_secs(heartbeat_secs),
                 );
 
-                // Spawn heartbeat task concurrently
-                tokio::spawn(async move {
+                // Spawn heartbeat task concurrently; keep handle alive until main returns.
+                let _heartbeat_handle = tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
                 });
 
@@ -1000,12 +1004,17 @@ macro_rules! node_entrypoint {
                     .clone()
                     .unwrap_or_else(|| "sinex-node".to_string());
 
+                let heartbeat_secs = std::env::var("SINEX_COORDINATION_HEARTBEAT")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(30);
                 let heartbeat_emitter = HeartbeatEmitter::new(
                     service_name.clone(),
-                    sinex_primitives::Seconds::from_secs(30),
+                    sinex_primitives::Seconds::from_secs(heartbeat_secs),
                 );
 
-                tokio::spawn(async move {
+                // Keep handle alive until main returns.
+                let _heartbeat_handle = tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
                 });
             }

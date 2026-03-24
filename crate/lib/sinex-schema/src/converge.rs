@@ -329,6 +329,10 @@ pub fn convergible_tables() -> Vec<ConvergibleTable> {
             // are excluded here; they're set-and-forget at table creation.
             named_constraints: vec![
                 NamedConstraint {
+                    name: "events_anchor_byte_non_negative",
+                    expression: "anchor_byte IS NULL OR anchor_byte >= 0",
+                },
+                NamedConstraint {
                     name: "events_source_event_ids_non_empty",
                     expression: "source_event_ids IS NULL OR cardinality(source_event_ids) > 0",
                 },

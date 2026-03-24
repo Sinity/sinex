@@ -1,6 +1,6 @@
 # Secrets Management with agenix
 
-**Status (2026-03-19)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start if the token file is missing. The managed NATS surfaces also resolve conventional secret names automatically for local server TLS (`sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`) and the shared client TLS/auth path (`sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`).
+**Status (2026-03-23)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start if the token file is missing. The managed NATS surfaces also resolve conventional secret names automatically for local server TLS (`sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`) and the shared client TLS/auth path (`sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`). When `services.sinex.users.target` is known, the module now adds that user's `~/.ssh/id_ed25519` as an additional age identity alongside the host SSH key.
 
 ## Overview
 
@@ -82,9 +82,11 @@ services.postgresql.settings."pgsodium.getkey_script" =
 ## Key Management
 
 ### Host Keys
-For system services, encrypt to the host's SSH public key:
+For system services, encrypt to the host's SSH public key and, when practical, the
+interactive target user's SSH public key:
 - `/etc/ssh/ssh_host_ed25519_key.pub`
-- agenix uses the private key for decryption during activation
+- `~/.ssh/id_ed25519.pub`
+- agenix uses the matching private keys during activation
 
 ### User Keys
 Generate user-specific age keypair:

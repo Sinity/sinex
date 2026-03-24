@@ -45,6 +45,17 @@ path = "../lib/sinex-primitives"
 [dependencies.sinex-db]
 path = "../lib/sinex-db"
 
+[dependencies.sinex-node-sdk]
+path = "../lib/sinex-node-sdk"
+default-features = false
+features = ["db"]
+
+[dependencies.rusqlite]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
 [dependencies.sqlx]
 workspace = true
 features = ["runtime-tokio", "tls-rustls", "postgres"]

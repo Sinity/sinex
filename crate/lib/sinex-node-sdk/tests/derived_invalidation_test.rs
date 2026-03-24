@@ -316,7 +316,7 @@ async fn reconciler_live_processing_rejects_multiple_scope_keys() -> TestResult<
     assert!(
         matches!(
             err,
-            NodeLogicError::Processing(message)
+            NodeLogicError::Processing(ref message)
                 if message.contains("supports at most one scope per trigger")
         ),
         "unexpected error: {err:?}"

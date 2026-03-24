@@ -332,32 +332,6 @@ pub async fn run_cli() -> Result<()> {
     };
     let cli = Cli::from_arg_matches(&matches).map_err(|e| eyre!(e.to_string()))?;
 
-    // Initialize tracing subscriber with verbosity flags and history persistence layer.
-    // Done here (after arg parse) so -v flags influence the log level.
-    // try_init() is used to avoid panicking in test contexts where the subscriber may
-    // already be installed.
-    {
-        use tracing_subscriber::prelude::*;
-
-        let level_filter = match cli.global.verbosity {
-            0 => tracing_subscriber::filter::LevelFilter::OFF,
-            1 => tracing_subscriber::filter::LevelFilter::INFO,
-            2 => tracing_subscriber::filter::LevelFilter::DEBUG,
-            _ => tracing_subscriber::filter::LevelFilter::TRACE,
-        };
-        let history_layer = history::HistoryTracingLayer::new(config::config().history_db_path());
-        let _ = tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(
-                tracing_subscriber::EnvFilter::builder()
-                    .with_default_directive(level_filter.into())
-                    .with_env_var("SINEX_LOG")
-                    .from_env_lossy(),
-            )
-            .with(history_layer)
-            .try_init();
-    }
-
     let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
     if bg_job_dir.is_some() {
         // One-shot handoff: avoid leaking job control env vars to nested child
@@ -454,6 +428,12 @@ pub async fn run_cli() -> Result<()> {
     if let Some(id) = invocation_id {
         history::CURRENT_INVOCATION_ID.store(id, std::sync::atomic::Ordering::SeqCst);
     }
+
+    // Initialize tracing only after the primary history DB connection and
+    // invocation row exist. This prevents the background trace writer from
+    // racing `open_history_db()` on startup and spuriously reporting
+    // `database is locked` against the same SQLite file.
+    init_tracing(cli.global.verbosity);
 
     // Create context with invocation ID
     let ctx = CommandContext::new(
@@ -612,6 +592,28 @@ fn open_history_db() -> Result<HistoryDb> {
     cfg.ensure_state_dir()
         .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
+}
+
+fn init_tracing(verbosity: u8) {
+    use tracing_subscriber::prelude::*;
+
+    let level_filter = match verbosity {
+        0 => tracing_subscriber::filter::LevelFilter::OFF,
+        1 => tracing_subscriber::filter::LevelFilter::INFO,
+        2 => tracing_subscriber::filter::LevelFilter::DEBUG,
+        _ => tracing_subscriber::filter::LevelFilter::TRACE,
+    };
+    let history_layer = history::HistoryTracingLayer::new(config::config().history_db_path());
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(level_filter.into())
+                .with_env_var("SINEX_LOG")
+                .from_env_lossy(),
+        )
+        .with(history_layer)
+        .try_init();
 }
 
 /// List all available commands using clap introspection.
