@@ -1117,6 +1117,17 @@ impl StateRepository<'_> {
         i32::try_from(elapsed_ms).ok()
     }
 
+    fn tombstone_preview_summary_with_message(
+        preview_summary: Option<JsonValue>,
+        message: &str,
+    ) -> Option<JsonValue> {
+        let mut preview_summary = preview_summary?;
+        if let Some(object) = preview_summary.as_object_mut() {
+            object.insert("message".to_string(), JsonValue::String(message.to_string()));
+        }
+        Some(preview_summary)
+    }
+
     /// Create a new tombstone operation record.
     ///
     /// The full `TombstoneOperation` is serialized into the `scope` field,
@@ -1250,6 +1261,33 @@ impl StateRepository<'_> {
             })?;
 
         let mut operation = Self::parse_tombstone_scope(operation_id, record.scope.clone())?;
+        let now = Timestamp::now();
+        if !operation.state.is_terminal()
+            && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+            && now > expires_at
+        {
+            operation.state = TombstoneOperationState::Expired;
+            operation.phase = operation.state.into();
+            operation.finished_at = Some(now.format_rfc3339());
+            operation.error_details = Some("Expired before approval".to_string());
+
+            self.update_tombstone_operation(
+                operation_id,
+                OperationStatus::Cancelled,
+                serde_json::to_value(&operation)?,
+                Self::tombstone_preview_summary_with_message(
+                    record.preview_summary.clone(),
+                    "Tombstone operation expired",
+                ),
+                Some("Tombstone operation expired"),
+                Self::tombstone_operation_duration_ms(&operation, now),
+            )
+            .await?;
+
+            return Err(SinexError::invalid_state(format!(
+                "Tombstone operation {operation_id} has expired"
+            )));
+        }
         if !operation.state.is_cancellable() {
             return Err(SinexError::invalid_state(format!(
                 "Operation cannot be cancelled (state: {:?})",
@@ -1259,7 +1297,7 @@ impl StateRepository<'_> {
 
         operation.state = TombstoneOperationState::Cancelled;
         operation.phase = operation.state.into();
-        let finished_at = Timestamp::now();
+        let finished_at = now;
         operation.finished_at = Some(finished_at.format_rfc3339());
         operation.error_details = reason.map(|reason| format!("Cancelled: {reason}"));
 

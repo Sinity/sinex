@@ -366,3 +366,81 @@ async fn ops_cancel_tombstone_updates_scope_state(ctx: TestContext) -> TestResul
 
     Ok(())
 }
+
+#[sinex_test]
+async fn ops_cancel_tombstone_rejects_expired_operation(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let source = "test.ops.tombstone.expired";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event.id.expect("published event should have an id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare expired tombstone for ops cancel",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "expire before ops cancel",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(scope, '{expires_at}', to_jsonb($2::text), false)
+        WHERE id = $1::uuid
+        "#,
+        create.operation.operation_id.parse::<uuid::Uuid>()?,
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_ops_cancel(
+        ctx.pool(),
+        json!({
+            "operation_id": create.operation.operation_id,
+            "reason": "too late",
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("expired tombstone operation should reject ops.cancel");
+    assert!(
+        error.to_string().contains("has expired"),
+        "unexpected error: {error}"
+    );
+
+    let status: TombstoneStatusResponse = serde_json::from_value(
+        handle_tombstone_status(
+            ctx.pool(),
+            json!({ "operation_id": create.operation.operation_id }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(status.operation.state, TombstoneOperationState::Expired);
+    assert_eq!(
+        status.operation.error_details.as_deref(),
+        Some("Expired before approval")
+    );
+
+    Ok(())
+}

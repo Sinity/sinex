@@ -1072,6 +1072,19 @@ pub async fn handle_tombstone_cancel(
         })?;
 
     let mut operation = operation_record_to_tombstone(&record)?;
+    if reconcile_tombstone_expiry(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        record.preview_summary.clone(),
+    )
+    .await?
+    {
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} has expired",
+            request.operation_id
+        )));
+    }
 
     if !operation.state.is_cancellable() {
         return Err(SinexError::invalid_state(format!(

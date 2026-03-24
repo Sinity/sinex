@@ -352,6 +352,88 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
 }
 
 #[sinex_test]
+async fn tombstone_cancel_rejects_expired_operation_and_keeps_expired_state(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let source = "test.lifecycle.tombstone.cancel-expired";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare expired cancel",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "expire before cancel",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(scope, '{expires_at}', to_jsonb($2::text), false)
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_tombstone_cancel(
+        ctx.pool(),
+        json!({
+            "operation_id": created.operation.operation_id,
+            "reason": "too late",
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("expired tombstone operation should not be cancellable");
+    assert!(
+        error.to_string().contains("has expired"),
+        "unexpected error: {error}"
+    );
+
+    let status: TombstoneStatusResponse = serde_json::from_value(
+        handle_tombstone_status(
+            ctx.pool(),
+            json!({ "operation_id": created.operation.operation_id }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(status.operation.state, TombstoneOperationState::Expired);
+    assert_eq!(
+        status.operation.error_details.as_deref(),
+        Some("Expired before approval")
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn tombstone_list_state_filter_applies_before_limit(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.list";
