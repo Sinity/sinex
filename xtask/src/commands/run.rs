@@ -12,7 +12,7 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::style;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
@@ -44,6 +44,13 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
     } else if package.contains("gateway") {
         args.extend(["--".to_string(), "rpc-server".to_string()]);
     }
+}
+
+fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
+    dev_journal_path.map_or_else(
+        || "Inspect the process output above".to_string(),
+        |path| format!("Inspect the process output above or the dev journal at {}", path.display()),
+    )
 }
 
 /// Developer observability shim — writes pseudo-journald NDJSON to a log file.
@@ -83,10 +90,17 @@ impl DevJournal {
             use std::io::Write;
             let mut writer = std::io::BufWriter::new(file);
             while let Some(line) = rx.recv().await {
-                let _ = writer.write_all(line.as_bytes());
-                let _ = writer.write_all(b"\n");
+                if let Err(error) = writer
+                    .write_all(line.as_bytes())
+                    .and_then(|_| writer.write_all(b"\n"))
+                {
+                    eprintln!("[run] failed to write dev journal entry: {error}");
+                    break;
+                }
             }
-            let _ = writer.flush();
+            if let Err(error) = writer.flush() {
+                eprintln!("[run] failed to flush dev journal: {error}");
+            }
         });
 
         Ok(Self { tx, boot_id })
@@ -106,7 +120,9 @@ impl DevJournal {
             "__REALTIME_TIMESTAMP": ts_us.to_string(),
             "SYSLOG_IDENTIFIER": unit,
         });
-        let _ = self.tx.send(entry.to_string());
+        if self.tx.send(entry.to_string()).is_err() {
+            eprintln!("[run] failed to enqueue dev journal entry for {unit} (pid {pid})");
+        }
     }
 }
 
@@ -139,14 +155,28 @@ fn spawn_output_handlers(
             let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if show_prefix {
-                        println!("{prefix} {line}");
-                    } else {
-                        println!("{line}");
-                    }
-                    if let Some(ref j) = journal_clone {
-                        j.write_entry(&name_clone, pid, &line);
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if show_prefix {
+                                println!("{prefix} {line}");
+                            } else {
+                                println!("{line}");
+                            }
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &line);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            let message =
+                                format!("stdout stream read failed for {name_clone}: {error}");
+                            eprintln!("[run] {message}");
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &message);
+                            }
+                            break;
+                        }
                     }
                 }
             });
@@ -158,14 +188,28 @@ fn spawn_output_handlers(
             let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if show_prefix {
-                        eprintln!("{prefix} {line}");
-                    } else {
-                        eprintln!("{line}");
-                    }
-                    if let Some(ref j) = journal_clone {
-                        j.write_entry(&name_clone, pid, &line);
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if show_prefix {
+                                eprintln!("{prefix} {line}");
+                            } else {
+                                eprintln!("{line}");
+                            }
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &line);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            let message =
+                                format!("stderr stream read failed for {name_clone}: {error}");
+                            eprintln!("[run] {message}");
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &message);
+                            }
+                            break;
+                        }
                     }
                 }
             });
@@ -846,7 +890,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: xtask infra logs".to_string()),
+                suggestion: Some(local_run_failure_suggestion(None)),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
@@ -907,15 +951,15 @@ impl RunCommand {
             .map(|(n, _, _)| *n)
             .unwrap_or(binary);
 
-        let journal = if self.dev_journal {
-            let journal_path = config().state_dir.join("dev-journal.log");
+        let journal_path = self.dev_journal.then(|| config().state_dir.join("dev-journal.log"));
+        let journal = if let Some(journal_path) = journal_path.as_ref() {
             if ctx.is_human() {
                 println!(
                     "Dev journal: {} (sinex-system-ingestor will pick this up)",
                     journal_path.display()
                 );
             }
-            Some(DevJournal::new(&journal_path)?)
+            Some(DevJournal::new(journal_path)?)
         } else {
             None
         };
@@ -960,7 +1004,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: xtask infra logs".to_string()),
+                suggestion: Some(local_run_failure_suggestion(journal_path.as_deref())),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
@@ -1300,6 +1344,27 @@ mod tests {
             .validate_flag_compatibility(&ctx)
             .expect_err("metrics on tether must be rejected");
         assert!(err.to_string().contains("--metrics only supports local binary or bundle runs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_run_failure_suggestion_without_journal()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            local_run_failure_suggestion(None),
+            "Inspect the process output above"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_run_failure_suggestion_with_journal()
+    -> ::xtask::sandbox::TestResult<()> {
+        let path = Path::new("/tmp/dev-journal.log");
+        assert_eq!(
+            local_run_failure_suggestion(Some(path)),
+            "Inspect the process output above or the dev journal at /tmp/dev-journal.log"
+        );
         Ok(())
     }
 }

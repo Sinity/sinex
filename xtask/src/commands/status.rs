@@ -272,6 +272,13 @@ fn classify_summary_health(
     (health, indicator)
 }
 
+fn runtime_query_error_message(metrics: &RuntimeMetrics) -> Option<String> {
+    metrics
+        .query_error
+        .as_ref()
+        .map(|error| format!("Runtime metrics query failed: {error}"))
+}
+
 #[derive(Debug, Serialize)]
 struct VelocityTrendOutput {
     command: String,
@@ -1932,6 +1939,9 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                 ),
                 None => {}
             }
+            if let Some(message) = runtime_query_error_message(metrics) {
+                println!("  {} {}", style("✗").red(), message);
+            }
         } else if runtime_configured {
             println!(
                 "  {} Runtime metrics unavailable despite DATABASE_URL being set",
@@ -2359,6 +2369,25 @@ mod tests {
             classify_summary_health(true, true, true, 0, 1, false, false, false, false, true);
         assert_eq!(health, "degraded");
         assert_eq!(indicator, "warn");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_query_error_message_surfaces_full_detail()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Unknown,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: Some("permission denied".to_string()),
+        };
+        assert_eq!(
+            runtime_query_error_message(&metrics).as_deref(),
+            Some("Runtime metrics query failed: permission denied")
+        );
         Ok(())
     }
 
