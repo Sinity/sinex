@@ -27,38 +27,41 @@ async fn publish_event(
         .pool()
         .events()
         .insert(
-            DynamicPayload::new(
-                source,
-                "test.lifecycle",
-                json!({ "sequence": sequence }),
-            )
-            .from_material(material_id)
-            .build()?,
+            DynamicPayload::new(source, "test.lifecycle", json!({ "sequence": sequence }))
+                .from_material(material_id)
+                .build()?,
         )
         .await?)
 }
 
 async fn archived_count(ctx: &TestContext, event_id: &str) -> TestResult<i64> {
-    Ok(
-        sqlx::query_scalar!(r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_events WHERE id = $1::uuid"#, event_id.parse::<uuid::Uuid>()?)
-            .fetch_one(ctx.pool())
-            .await?,
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_events WHERE id = $1::uuid"#,
+        event_id.parse::<uuid::Uuid>()?
     )
+    .fetch_one(ctx.pool())
+    .await?)
 }
 
 async fn tombstone_count(ctx: &TestContext, event_id: &str) -> TestResult<i64> {
-    Ok(
-        sqlx::query_scalar!(r#"SELECT COUNT(*)::bigint as "count!" FROM core.event_tombstones WHERE id = $1::uuid"#, event_id.parse::<uuid::Uuid>()?)
-            .fetch_one(ctx.pool())
-            .await?,
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COUNT(*)::bigint as "count!" FROM core.event_tombstones WHERE id = $1::uuid"#,
+        event_id.parse::<uuid::Uuid>()?
     )
+    .fetch_one(ctx.pool())
+    .await?)
 }
 
 #[sinex_test]
-async fn archive_and_restore_operations_are_persisted_and_auditable(ctx: TestContext) -> TestResult<()> {
+async fn archive_and_restore_operations_are_persisted_and_auditable(
+    ctx: TestContext,
+) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let event = publish_event(&ctx, "test.lifecycle.archive", 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive_value = handle_lifecycle_archive(
         ctx.pool(),
@@ -115,7 +118,10 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone";
     let first = publish_event(&ctx, source, 1).await?;
-    let first_id = first.id.expect("published first event should have an id").to_string();
+    let first_id = first
+        .id
+        .expect("published first event should have an id")
+        .to_string();
 
     let archive_first: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -145,7 +151,10 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
     )?;
 
     let second = publish_event(&ctx, source, 2).await?;
-    let second_id = second.id.expect("published second event should have an id").to_string();
+    let second_id = second
+        .id
+        .expect("published second event should have an id")
+        .to_string();
     let archive_second: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
             ctx.pool(),
@@ -181,7 +190,10 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
         .await?,
     )?;
     assert_eq!(audit.event_count, 1);
-    assert_eq!(audit.audit_trail.affected_events[0].id.to_string(), first_id);
+    assert_eq!(
+        audit.audit_trail.affected_events[0].id.to_string(),
+        first_id
+    );
     assert_eq!(archived_count(&ctx, &first_id).await?, 0);
     assert_eq!(tombstone_count(&ctx, &first_id).await?, 1);
     assert_eq!(archived_count(&ctx, &second_id).await?, 1);
@@ -195,7 +207,10 @@ async fn tombstone_cancel_persists_terminal_metadata(ctx: TestContext) -> TestRe
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.cancel";
     let event = publish_event(&ctx, source, 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -267,7 +282,10 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.expiry";
     let event = publish_event(&ctx, source, 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -338,7 +356,10 @@ async fn tombstone_list_state_filter_applies_before_limit(ctx: TestContext) -> T
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.list";
     let event = publish_event(&ctx, source, 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -405,15 +426,39 @@ async fn tombstone_list_state_filter_applies_before_limit(ctx: TestContext) -> T
 
     assert_eq!(listed.operations.len(), 1);
     assert_eq!(
-        listed.operations[0].operation_id,
-        cancelled.operation.operation_id,
+        listed.operations[0].operation_id, cancelled.operation.operation_id,
         "state filter should be applied before the result limit"
     );
-    assert_eq!(listed.operations[0].state, TombstoneOperationState::Cancelled);
+    assert_eq!(
+        listed.operations[0].state,
+        TombstoneOperationState::Cancelled
+    );
     assert_ne!(
-        listed.operations[0].operation_id,
-        previewed.operation.operation_id,
+        listed.operations[0].operation_id, previewed.operation.operation_id,
         "newer previewed rows must not hide older cancelled rows"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_list_fails_on_malformed_persisted_scope(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    ctx.pool()
+        .state()
+        .start_operation(
+            "tombstone",
+            "tester",
+            json!({ "not": "a tombstone operation" }),
+        )
+        .await?;
+
+    let error = handle_tombstone_list(ctx.pool(), json!({ "limit": 10 }), &auth)
+        .await
+        .expect_err("malformed tombstone rows must fail loudly");
+    assert!(
+        error.to_string().contains("malformed scope"),
+        "unexpected error: {error}"
     );
 
     Ok(())
@@ -433,7 +478,11 @@ async fn lifecycle_archive_rejects_non_positive_limits(ctx: TestContext) -> Test
     )
     .await
     .expect_err("archive should reject non-positive limits");
-    assert!(error.to_string().contains("lifecycle.archive limit must be positive"));
+    assert!(
+        error
+            .to_string()
+            .contains("lifecycle.archive limit must be positive")
+    );
     Ok(())
 }
 

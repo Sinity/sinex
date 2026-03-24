@@ -4,6 +4,7 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::utils::ResourceGuard;
+use sinex_primitives::validation::query_validation::validate_time_range;
 use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::{HashMap, HashSet};
@@ -110,6 +111,15 @@ pub struct ReplayScopeFilters {
 }
 
 impl ReplayScope {
+    pub fn validate(&self) -> Result<()> {
+        if let Some((start, end)) = self.time_window {
+            validate_time_range(Some(start), Some(end)).map_err(|error| {
+                SinexError::validation("invalid replay time_window").with_std_error(&error)
+            })?;
+        }
+        Ok(())
+    }
+
     /// Normalize scope filters (drop empties, dedupe values) to keep preview/execute semantics aligned.
     #[must_use]
     pub fn normalized_filters(&self) -> ReplayScopeFilters {
@@ -222,6 +232,29 @@ pub struct ReplayStateMachine {
 }
 
 impl ReplayStateMachine {
+    fn state_json_label(state: ReplayState) -> &'static str {
+        match state {
+            ReplayState::Planning => "Planning",
+            ReplayState::Previewed => "Previewed",
+            ReplayState::Approved => "Approved",
+            ReplayState::Executing => "Executing",
+            ReplayState::Committing => "Committing",
+            ReplayState::Completed => "Completed",
+            ReplayState::Failed => "Failed",
+            ReplayState::Cancelled => "Cancelled",
+        }
+    }
+
+    fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i32 {
+        let elapsed_ms = (finished_at - created_at).whole_milliseconds();
+        elapsed_ms.clamp(0, i128::from(i32::MAX)) as i32
+    }
+
+    fn meta_duration_ms(meta: &MetaJson) -> Option<i32> {
+        meta.finished_at
+            .map(|finished_at| Self::duration_ms(meta.created_at, finished_at))
+    }
+
     /// Get a reference to the database pool
     #[must_use]
     pub fn pool(&self) -> &PgPool {
@@ -310,14 +343,14 @@ impl ReplayStateMachine {
             r#"SELECT pg_advisory_xact_lock(hashtext($1)::bigint) as "lock!""#,
             &scope.node_id
         )
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to acquire replay creation guard")
-                    .with_source(e.to_string())
-                    .with_context("node_id", &scope.node_id)
-                    .with_operation("create_replay_operation")
-            })?;
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to acquire replay creation guard")
+                .with_source(e.to_string())
+                .with_context("node_id", &scope.node_id)
+                .with_operation("create_replay_operation")
+        })?;
 
         // Idempotency guard: reject if an active operation exists for this node.
         // All non-terminal replay states map to result_status = 'running'.
@@ -527,18 +560,21 @@ impl ReplayStateMachine {
 
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
+        let duration_ms = Self::meta_duration_ms(&meta);
         sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET result_status = $2,
                 result_message = $3,
-                preview_summary = $4
+                preview_summary = $4,
+                duration_ms = COALESCE($5, duration_ms)
             WHERE id = $1::uuid
             "#,
             operation_id,
             status,
             msg,
-            meta_json
+            meta_json,
+            duration_ms,
         )
         .execute(tx.as_mut())
         .await?;
@@ -942,18 +978,21 @@ impl ReplayStateMachine {
         meta.error_details = Some(error.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
+        let duration_ms = Self::meta_duration_ms(&meta);
         sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET result_status = $2,
                 result_message = $3,
-                preview_summary = $4
+                preview_summary = $4,
+                duration_ms = COALESCE($5, duration_ms)
             WHERE id = $1::uuid
             "#,
             operation_id,
             status,
             msg,
-            meta_json
+            meta_json,
+            duration_ms,
         )
         .execute(tx.as_mut())
         .await?;
@@ -1000,18 +1039,21 @@ impl ReplayStateMachine {
         meta.error_details = Some(reason.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
+        let duration_ms = Self::meta_duration_ms(&meta);
         sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET result_status = $2,
                 result_message = $3,
-                preview_summary = $4
+                preview_summary = $4,
+                duration_ms = COALESCE($5, duration_ms)
             WHERE id = $1::uuid
             "#,
             operation_id,
             status,
             msg,
-            meta_json
+            meta_json,
+            duration_ms,
         )
         .execute(tx.as_mut())
         .await?;
@@ -1025,18 +1067,25 @@ impl ReplayStateMachine {
     pub async fn acquire_execution_lock(
         &self,
         operation_id: Uuid,
-        executor_node: NodeName,
     ) -> Result<Option<ResourceGuard<AdvisoryLock>>> {
         let lock_key = format!("replay-execution:{operation_id}");
         let Some(lock_guard) = AdvisoryLock::try_acquire(&self.pool, &lock_key).await? else {
             return Ok(None);
         };
 
+        Ok(Some(lock_guard))
+    }
+
+    /// Persist the executor node after execution has actually entered the Executing state.
+    pub async fn set_executor_node(
+        &self,
+        operation_id: Uuid,
+        executor_node: NodeName,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
         // read-modify-write. REPEATABLE READ causes spurious serialization
         // errors when the row was recently modified by a prior transaction.
-        // Update executor_node in meta JSON while the advisory lock is held.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -1049,6 +1098,14 @@ impl ReplayStateMachine {
         .fetch_one(tx.as_mut())
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        if meta.state != ReplayState::Executing {
+            return Err(SinexError::invalid_state(
+                "Cannot set replay executor node unless the operation is executing",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("set_replay_executor_node"));
+        }
         meta.executor_node = Some(executor_node.clone());
         let meta_json = serde_json::to_value(&meta)?;
         sqlx::query!(
@@ -1065,25 +1122,23 @@ impl ReplayStateMachine {
         tx.commit().await?;
 
         info!(
-            "Node {} acquired lock for operation {}",
+            "Node {} executing replay operation {}",
             executor_node, operation_id
         );
-
-        Ok(Some(lock_guard))
+        Ok(())
     }
 
-    /// Recover operations stuck in Executing state, likely due to process crash.
-    /// Transitions operations older than `stale_threshold` from Executing to Failed
-    /// with a crash recovery reason. Returns the count of recovered operations.
+    /// Recover operations stuck in Executing or Committing state, likely due to process crash.
+    /// Transitions operations older than `stale_threshold` to Failed with a crash
+    /// recovery reason. Returns the count of recovered operations.
     pub async fn recover_stale_executing(
         &self,
         stale_threshold: std::time::Duration,
     ) -> Result<usize> {
         let threshold_secs = stale_threshold.as_secs_f64();
 
-        // Find all operations in executing state whose started_at is older than the threshold.
+        // Find all running operations whose execution phase is stale.
         // started_at is stored in the preview_summary JSON blob under MetaJson.
-        // result_message = 'executing' uniquely identifies the Executing state row.
         let stale_rows = sqlx::query!(
             r#"
             SELECT id::uuid AS "id!",
@@ -1091,7 +1146,7 @@ impl ReplayStateMachine {
             FROM core.operations_log
             WHERE operation_type = 'replay'
               AND result_status = 'running'
-              AND result_message = 'executing'
+              AND result_message IN ('executing', 'committing')
               AND (preview_summary->>'started_at')::timestamptz
                   < NOW() - make_interval(secs => $1)
             "#,
@@ -1139,11 +1194,12 @@ impl ReplayStateMachine {
             // Re-check state after acquiring the row lock — another gateway instance
             // may have recovered or completed this operation between our initial scan
             // and this transaction.
-            if meta.state != ReplayState::Executing {
+            if !matches!(meta.state, ReplayState::Executing | ReplayState::Committing) {
                 tx.rollback().await.ok();
                 continue;
             }
 
+            let recovered_state = meta.state;
             let staleness = meta.started_at.map(|started| {
                 let now = sinex_primitives::temporal::now();
                 now - started
@@ -1153,9 +1209,10 @@ impl ReplayStateMachine {
             meta.finished_at = Some(sinex_primitives::temporal::now());
             meta.outcome = Some(ReplayOutcome::Failed);
             meta.executor_node = None;
-            meta.error_details = Some(
-                "recovered from stale executing state (likely process crash)".to_string(),
-            );
+            meta.error_details = Some(format!(
+                "recovered from stale {} state (likely process crash)",
+                Self::state_json_label(recovered_state).to_ascii_lowercase()
+            ));
 
             let (status, msg) = Self::map_state_to_status(&meta.state);
             let meta_json = serde_json::to_value(&meta).map_err(|e| {
@@ -1164,19 +1221,22 @@ impl ReplayStateMachine {
                     .with_id("operation_id", operation_id.to_string())
                     .with_operation("recover_stale_executing")
             })?;
+            let duration_ms = Self::meta_duration_ms(&meta);
 
             sqlx::query!(
                 r#"
                 UPDATE core.operations_log
                 SET result_status = $2,
                     result_message = $3,
-                    preview_summary = $4
+                    preview_summary = $4,
+                    duration_ms = COALESCE($5, duration_ms)
                 WHERE id = $1::uuid
                 "#,
                 operation_id,
                 status,
                 msg,
-                meta_json
+                meta_json,
+                duration_ms,
             )
             .execute(tx.as_mut())
             .await
@@ -1203,8 +1263,9 @@ impl ReplayStateMachine {
 
             warn!(
                 operation_id = %operation_id,
+                recovered_state = Self::state_json_label(recovered_state),
                 stale_for = %staleness_desc,
-                "Recovered stale executing replay operation (likely process crash)"
+                "Recovered stale replay operation (likely process crash)"
             );
 
             recovered += 1;
@@ -1230,6 +1291,11 @@ impl ReplayStateMachine {
             qb.push_bind(node.to_string());
         }
 
+        if let Some(state) = filter_state {
+            qb.push(" AND preview_summary->>'state' = ");
+            qb.push_bind(Self::state_json_label(state));
+        }
+
         qb.push(" ORDER BY id DESC");
 
         if let Some(lim) = limit {
@@ -1247,12 +1313,6 @@ impl ReplayStateMachine {
             let scope_val: serde_json::Value = row.try_get("scope")?;
             let preview: Option<serde_json::Value> = row.try_get("preview_summary")?;
             let meta = Self::decode_meta_json(preview)?;
-
-            if let Some(target) = filter_state
-                && meta.state != target
-            {
-                continue;
-            }
 
             let op = Self::decode_meta_to_operation(
                 operation_id,
@@ -1272,7 +1332,7 @@ impl ReplayStateMachine {
         match state {
             ReplayState::Completed => ("success", "completed"),
             ReplayState::Failed => ("failure", "failed"),
-            ReplayState::Cancelled => ("partial", "cancelled"),
+            ReplayState::Cancelled => ("cancelled", "cancelled"),
             ReplayState::Planning => ("running", "planning"),
             ReplayState::Previewed => ("running", "previewed"),
             ReplayState::Approved => ("running", "approved"),
