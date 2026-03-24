@@ -358,6 +358,11 @@ async fn ops_cancel_tombstone_updates_scope_state(ctx: TestContext) -> TestResul
         status.operation.error_details.as_deref(),
         Some("Cancelled: cancel tombstone from ops")
     );
+    let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
+    assert!(
+        persisted.operation.duration_ms.is_some(),
+        "ops.cancel tombstone path should persist duration_ms"
+    );
 
     Ok(())
 }

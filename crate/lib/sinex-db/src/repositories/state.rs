@@ -1108,6 +1108,15 @@ impl StateRepository<'_> {
         })
     }
 
+    fn tombstone_operation_duration_ms(
+        operation: &TombstoneOperation,
+        finished_at: Timestamp,
+    ) -> Option<i32> {
+        let created_at = Timestamp::parse_rfc3339(&operation.created_at).ok()?;
+        let elapsed_ms = (finished_at - created_at).whole_milliseconds();
+        i32::try_from(elapsed_ms).ok()
+    }
+
     /// Create a new tombstone operation record.
     ///
     /// The full `TombstoneOperation` is serialized into the `scope` field,
@@ -1250,7 +1259,8 @@ impl StateRepository<'_> {
 
         operation.state = TombstoneOperationState::Cancelled;
         operation.phase = operation.state.into();
-        operation.finished_at = Some(Timestamp::now().format_rfc3339());
+        let finished_at = Timestamp::now();
+        operation.finished_at = Some(finished_at.format_rfc3339());
         operation.error_details = reason.map(|reason| format!("Cancelled: {reason}"));
 
         self.update_tombstone_operation(
@@ -1259,7 +1269,7 @@ impl StateRepository<'_> {
             serde_json::to_value(&operation)?,
             record.preview_summary,
             Some("Tombstone operation cancelled"),
-            None,
+            Self::tombstone_operation_duration_ms(&operation, finished_at),
         )
         .await?;
 
