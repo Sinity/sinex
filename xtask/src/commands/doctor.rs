@@ -1160,10 +1160,6 @@ fn terminal_source_candidates(
             "atuin".to_string(),
             target.home.join(".local/share/atuin/history.db"),
         ),
-        (
-            "fish".to_string(),
-            target.home.join(".local/share/fish/fish_history"),
-        ),
     ]
 }
 
@@ -2844,6 +2840,32 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_check_terminal_sources_ignores_native_fish_history_when_not_configured()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join(".local/share/fish"))?;
+        std::fs::write(home.join(".bash_history"), "echo hello\n")?;
+        std::fs::write(
+            home.join(".local/share/fish/fish_history"),
+            "- cmd: echo fish\n  when: 1234567890\n",
+        )?;
+
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            None,
+        );
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("bash:"));
+        assert!(!item.description.contains("fish:"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_terminal_sources_fails_when_enabled_sources_are_missing()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
@@ -2911,6 +2933,78 @@ mod tests {
             item.description
                 .contains("terminal.history_sources is empty")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_terminal_sources_rejects_descriptor_declared_native_fish_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join(".local/share/fish"))?;
+        let fish_history = home.join(".local/share/fish/fish_history");
+        std::fs::write(&fish_history, "- cmd: echo fish\n  when: 1234567890\n")?;
+
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                terminal: sinex_primitives::TerminalDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    kitty_enabled: false,
+                    history_sources: vec![sinex_primitives::TerminalHistorySource {
+                        path: fish_history.clone(),
+                        shell: "fish".to_string(),
+                    }],
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("native Fish YAML history is unsupported"));
+        assert!(item.description.contains(&fish_history.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_terminal_sources_rejects_descriptor_declared_elvish_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join(".config/elvish"))?;
+        let elvish_db = home.join(".config/elvish/db");
+        std::fs::write(&elvish_db, "not-supported")?;
+
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                terminal: sinex_primitives::TerminalDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    kitty_enabled: false,
+                    history_sources: vec![sinex_primitives::TerminalHistorySource {
+                        path: elvish_db.clone(),
+                        shell: "elvish".to_string(),
+                    }],
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("native Elvish history database is unsupported"));
+        assert!(item.description.contains(&elvish_db.display().to_string()));
         Ok(())
     }
 

@@ -1122,6 +1122,81 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
     Ok(())
 }
 
+/// Test Phase 5: Descriptor-declared Fish history is rejected unless it is SQLite-backed.
+#[sinex_test]
+async fn test_phase5_configuration_event_sources_reject_native_fish_history(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let db_url = ctx.database_url().to_string();
+    let temp = tempfile::tempdir()?;
+    let configured_home = temp.path().join("configured-home");
+    fs::create_dir_all(configured_home.join(".local/share/fish"))?;
+    fs::write(
+        configured_home.join(".local/share/fish/fish_history"),
+        "- cmd: echo fish\n  when: 1234567890\n",
+    )?;
+
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "source": "test",
+            "terminal": {
+                "enabled": true,
+                "instances": 1,
+                "kitty_enabled": false,
+                "history_sources": [
+                    {
+                        "path": configured_home.join(".local/share/fish/fish_history"),
+                        "shell": "fish"
+                    }
+                ]
+            }
+        }))?,
+    )?;
+
+    with_env_vars(
+        &[
+            ("DATABASE_URL", db_url),
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+        ],
+        || async {
+            let (_status, details, _messages) =
+                configuration::verify_configuration_generation().await?;
+
+            let terminal = details
+                .get("event_sources")
+                .and_then(|value| value.get("sources"))
+                .and_then(|value| value.get("terminal"))
+                .expect("terminal source details should be present");
+
+            assert_eq!(
+                terminal.get("configured").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                terminal.get("available").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert!(
+                terminal
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.contains("native Fish YAML history is unsupported"))
+            );
+
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
 // ====== PHASE 6: SERVICE DEPENDENCIES TESTS ======
 
 /// Test Phase 6: Service dependencies verification

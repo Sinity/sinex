@@ -293,72 +293,46 @@ pub fn validate_readable_file(path: &Path) -> NodeResult<()> {
     })
 }
 
-pub fn validate_atuin_history_db(path: &Path) -> NodeResult<()> {
+fn validate_sqlite_tables(path: &Path, label: &str, tables: &[&str]) -> NodeResult<()> {
     use rusqlite::{Connection, OpenFlags};
 
     let conn =
         Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| {
-            SinexError::processing("failed to open configured Atuin history database")
+            SinexError::processing(format!("failed to open configured {label} database"))
                 .with_context("path", path.display().to_string())
                 .with_std_error(&error)
         })?;
-    let has_history_table: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='history')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| {
-            SinexError::processing("failed to inspect configured Atuin history database")
+
+    let mut missing_tables = Vec::new();
+    for table in tables {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [*table],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                SinexError::processing(format!(
+                    "failed to inspect configured {label} database table `{table}`"
+                ))
                 .with_context("path", path.display().to_string())
                 .with_std_error(&error)
-        })?;
-    if !has_history_table {
-        return Err(SinexError::processing(
-            "configured Atuin history database is missing the `history` table",
-        )
-        .with_context("path", path.display().to_string()));
+            })?;
+        if !exists {
+            missing_tables.push(*table);
+        }
     }
 
-    Ok(())
-}
-
-pub fn validate_activitywatch_db(path: &Path) -> NodeResult<()> {
-    use rusqlite::{Connection, OpenFlags};
-
-    let conn =
-        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| {
-            SinexError::processing("failed to open configured ActivityWatch history database")
-                .with_context("path", path.display().to_string())
-                .with_std_error(&error)
-        })?;
-    let has_events_table: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='events')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| {
-            SinexError::processing("failed to inspect configured ActivityWatch events table")
-                .with_context("path", path.display().to_string())
-                .with_std_error(&error)
-        })?;
-    let has_buckets_table: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='buckets')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| {
-            SinexError::processing("failed to inspect configured ActivityWatch buckets table")
-                .with_context("path", path.display().to_string())
-                .with_std_error(&error)
-        })?;
-    if !has_events_table || !has_buckets_table {
+    if !missing_tables.is_empty() {
+        let missing = missing_tables
+            .iter()
+            .map(|table| format!("`{table}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(
-            SinexError::processing(
-                "configured ActivityWatch history database is missing the `events` and/or `buckets` tables",
-            )
+            SinexError::processing(format!(
+                "configured {label} database is missing required table(s): {missing}"
+            ))
             .with_context("path", path.display().to_string()),
         );
     }
@@ -366,9 +340,35 @@ pub fn validate_activitywatch_db(path: &Path) -> NodeResult<()> {
     Ok(())
 }
 
+pub fn validate_atuin_history_db(path: &Path) -> NodeResult<()> {
+    validate_sqlite_tables(path, "Atuin history", &["history"])
+}
+
+pub fn validate_fish_history_db(path: &Path) -> NodeResult<()> {
+    validate_sqlite_tables(path, "Fish history", &["history"])
+}
+
+pub fn validate_activitywatch_db(path: &Path) -> NodeResult<()> {
+    validate_sqlite_tables(path, "ActivityWatch history", &["events", "buckets"])
+}
+
 pub fn validate_terminal_history_source(shell: &str, path: &Path) -> NodeResult<()> {
     match shell {
         "atuin" => validate_atuin_history_db(path),
+        "fish" => validate_fish_history_db(path).map_err(|error| {
+            SinexError::configuration(
+                "native Fish YAML history is unsupported; configure a SQLite-backed Fish history source"
+                    .to_string(),
+            )
+            .with_context("path", path.display().to_string())
+            .with_std_error(&error)
+        }),
+        "elvish" => Err(
+            SinexError::configuration(
+                "native Elvish history database is unsupported".to_string(),
+            )
+            .with_context("path", path.display().to_string()),
+        ),
         _ => validate_readable_file(path),
     }
 }
