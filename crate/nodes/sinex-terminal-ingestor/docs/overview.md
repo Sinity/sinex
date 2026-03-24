@@ -34,5 +34,6 @@ All events have `Provenance::Material` with references to Source Material:
 Earlier direct-emission modules have been removed. The live terminal node now
 captures shell-history materials first and emits events from that staged input.
 
-Atuin import still exists as a separate `sinexctl import atuin` path. Kitty,
-recording, and richer terminal-session capture are not wired through this node yet.
+Atuin historical import now belongs to the terminal node path itself rather than a
+separate direct-write CLI. Kitty, recording, and richer terminal-session capture
+are not wired through this node yet.
