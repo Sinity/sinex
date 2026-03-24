@@ -2176,26 +2176,11 @@ impl ExplorationProvider for TerminalNode {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(Timestamp, Timestamp)>,
+        _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
-        let time_range = time_range.unwrap_or_else(|| {
-            let now = Timestamp::now();
-            let one_hour_ago = Timestamp::now() - time::Duration::hours(1);
-            (one_hour_ago, now)
-        });
-
-        Ok(CoverageAnalysis {
-            time_range,
-            coverage_percentage: 1.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            source_total: self.config.history_sources.len() as u64,
-            sinex_total: 0,
-            missing_samples: Vec::new(),
-            recommendations: vec![
-                "Ensure history files are readable by the terminal ingestor".to_string(),
-            ],
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for terminal history sources",
+        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -2848,6 +2833,15 @@ mod tests {
             "unexpected error: {error}"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
+        let node = TerminalNode::new();
+        let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
+            .expect_err("terminal node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 

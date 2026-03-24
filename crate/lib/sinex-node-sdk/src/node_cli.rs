@@ -339,7 +339,16 @@ pub struct NodeCliRunner<T: crate::runtime::stream::Node + ExplorationProvider +
     node_factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
+fn unavailable_section(label: &str, error: &str) -> String {
+    format!("{label}:\n  Unavailable: {error}")
+}
+
+fn print_unavailable_section(label: &str, error: &crate::SinexError) {
+    println!("{}", unavailable_section(label, &error.to_string()));
+}
+
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
+
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
         Self::new_with_factory(node, Arc::new(T::default))
@@ -762,6 +771,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     }
                 }
                 Err(e) => {
+                    print_unavailable_section("Source State", &e);
                     warn!(error = %e, "Failed to get source state");
                 }
             }
@@ -800,6 +810,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     }
                 }
                 Err(e) => {
+                    print_unavailable_section("Ingestion History", &e);
                     warn!(error = %e, "Failed to get ingestion history");
                 }
             }
@@ -853,6 +864,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     }
                 }
                 Err(e) => {
+                    print_unavailable_section("Coverage Analysis", &e);
                     warn!(error = %e, "Failed to get coverage analysis");
                 }
             }
@@ -934,6 +946,20 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         );
 
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unavailable_section;
+
+    // Inline test is appropriate because this exercises private CLI formatting only.
+    #[test]
+    fn unavailable_section_is_explicit() {
+        assert_eq!(
+            unavailable_section("Coverage Analysis", "coverage analysis is not implemented"),
+            "Coverage Analysis:\n  Unavailable: coverage analysis is not implemented"
+        );
     }
 }
 

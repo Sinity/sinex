@@ -450,16 +450,9 @@ impl ExplorationProvider for DocumentNode {
         &self,
         _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
-        Ok(CoverageAnalysis {
-            time_range: (Timestamp::now() - time::Duration::days(7), Timestamp::now()),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 0.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            missing_samples: Vec::new(),
-            recommendations: Vec::new(),
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for document ingestor sources",
+        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {

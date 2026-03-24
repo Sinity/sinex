@@ -982,19 +982,9 @@ impl IngestorNode for SystemNode {
         _state: &Self::State,
         _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
     ) -> NodeResult<sinex_node_sdk::exploration::CoverageAnalysis> {
-        Ok(sinex_node_sdk::exploration::CoverageAnalysis {
-            time_range: (
-                sinex_primitives::Timestamp::now(),
-                sinex_primitives::Timestamp::now(),
-            ),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 100.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            missing_samples: vec![],
-            recommendations: vec![],
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for system watcher sources",
+        )
     }
 }
 
@@ -1143,6 +1133,15 @@ mod tests {
                 "mock: udev watcher not supported in this test",
             ))
         }
+    }
+
+    #[sinex_test]
+    async fn system_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
+        let node = SystemNode::new();
+        let error = IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
+            .expect_err("system node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
+        Ok(())
     }
 
     #[sinex_test]

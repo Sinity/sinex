@@ -11,6 +11,7 @@
 
 use sinex_desktop_ingestor::unified_node::DesktopConfig;
 use sinex_desktop_ingestor::{DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerType};
+use sinex_node_sdk::IngestorNode;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
@@ -200,6 +201,19 @@ async fn desktop_monitor_health_serde_roundtrip() -> TestResult<()> {
 async fn desktop_node_creation() -> TestResult<()> {
     // DesktopNode::new() should succeed without any OS resources
     let _node = DesktopNode::new();
+    Ok(())
+}
+
+#[sinex_test]
+async fn desktop_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
+    let node = DesktopNode::new();
+    let error = IngestorNode::get_coverage_analysis(
+        &node,
+        &sinex_desktop_ingestor::unified_node::DesktopPersistentState::default(),
+        None,
+    )
+        .expect_err("desktop node should not fabricate coverage analysis");
+    assert!(error.to_string().contains("not implemented"));
     Ok(())
 }
 
