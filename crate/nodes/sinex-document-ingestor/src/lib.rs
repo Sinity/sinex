@@ -125,6 +125,21 @@ impl DocumentNode {
         }
     }
 
+    fn dry_run_report(target_count: usize) -> ScanReport {
+        ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            node_stats: HashMap::new(),
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: vec![format!(
+                "Dry-run mode enabled; skipped {target_count} document target(s)"
+            )],
+        }
+    }
+
     fn is_allowed_path(&self, target: &str) -> NodeResult<bool> {
         for root in &self.config.allowed_roots {
             if validate_path_within_root(target, root).is_ok() {
@@ -149,7 +164,6 @@ impl DocumentNode {
                 }
                 Ok(None) => {
                     warnings.push(format!("Skipped target {target} (no events emitted)"));
-                    successful_targets.push(target.clone());
                 }
                 Err(err) => {
                     error!(path = %target, error = %err, "Failed to ingest document");
@@ -220,7 +234,9 @@ impl DocumentNode {
         if !self.config.supported_mime_types.is_empty()
             && !self.config.supported_mime_types.iter().any(|m| m == &mime)
         {
-            warn!(mime = %mime, path = %utf8_path, "Unsupported MIME type");
+            return Err(SinexError::processing(format!(
+                "Unsupported MIME type '{mime}' for document path {target}"
+            )));
         }
 
         let encoding = self
@@ -374,16 +390,7 @@ impl IngestorNode for DocumentNode {
     ) -> NodeResult<ScanReport> {
         if args.dry_run {
             info!(targets = args.targets.len(), "Dry-run document ingestion");
-            Ok(ScanReport {
-                events_processed: 0,
-                duration: std::time::Duration::from_millis(0),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                node_stats: HashMap::new(),
-                successful_targets: Vec::new(),
-                failed_targets: Vec::new(),
-                warnings: vec!["Dry-run mode enabled".to_string()],
-            })
+            Ok(Self::dry_run_report(args.targets.len()))
         } else {
             self.ingest_targets(&args.targets).await
         }
@@ -396,8 +403,13 @@ impl IngestorNode for DocumentNode {
         _until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        // Historical scan for files is effectively the same as snapshot for specific targets
-        self.ingest_targets(&args.targets).await
+        // Historical scan for files is effectively the same as snapshot for specific targets.
+        if args.dry_run {
+            info!(targets = args.targets.len(), "Dry-run historical document ingestion");
+            Ok(Self::dry_run_report(args.targets.len()))
+        } else {
+            self.ingest_targets(&args.targets).await
+        }
     }
 
     async fn run_continuous(
