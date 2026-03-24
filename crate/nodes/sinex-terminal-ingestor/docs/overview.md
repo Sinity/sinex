@@ -4,7 +4,10 @@ This node currently captures shell-history data through the Stage-as-you-go pipe
 
 - Bash history files
 - Zsh history files
-- Fish history, including the SQLite-backed fish store when present
+- Atuin SQLite history
+- Explicitly configured SQLite-backed Fish history
+
+Native Fish YAML history and Elvish's native database are not ingested.
 
 ## Architecture: Stage-as-you-go Capture
 
@@ -18,16 +21,16 @@ The live terminal node path flows through the Stage-as-you-go material pipeline:
 ### Capture Integration
 
 - **AppendStream-style staging** for:
-  - Shell history files (`.bash_history`, `.zsh_history`, `fish_history`)
-  - Fish SQLite history when the configured `fish_history` path is actually a SQLite store
+  - Shell history files (`.bash_history`, `.zsh_history`)
+  - Atuin SQLite (`~/.local/share/atuin/history.db`)
+  - SQLite-backed Fish history when a configured `fish_history` path is actually a SQLite store
 
 ### Event Types Generated
 
 All events have `Provenance::Material` with references to Source Material:
 
-- `terminal.bash_historical_command` - commands from bash history
-- `terminal.zsh_historical_command` - commands from zsh history
-- `terminal.fish_historical_command` - commands from fish history
+- `source = shell.history`, `event_type = command.imported` for line-oriented Bash/Zsh/Fish-SQLite history rows
+- `source = shell.atuin`, `event_type = command.executed` for Atuin command rows with working directory, exit code, and timing
 
 ## Scope Notes
 
