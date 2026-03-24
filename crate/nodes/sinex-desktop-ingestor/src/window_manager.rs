@@ -16,7 +16,12 @@ use sinex_primitives::events::payloads::{
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Uuid};
-use std::{fmt, str::FromStr, time::SystemTime};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::SystemTime,
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::watch;
@@ -73,6 +78,99 @@ const ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE: &str =
 
 fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node_sdk::SinexError {
     sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HyprlandSocketPaths {
+    event_socket: String,
+    command_socket: String,
+}
+
+fn resolve_hyprland_runtime_dir() -> NodeResult<PathBuf> {
+    std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(dirs::runtime_dir)
+        .ok_or_else(|| {
+            platform_error(
+                "No Hyprland runtime dir found. Set SINEX_HYPRLAND_RUNTIME_DIR or XDG_RUNTIME_DIR.",
+                ERROR_CLASS_XDG_RUNTIME_MISSING,
+            )
+        })
+}
+
+fn derive_hyprland_command_socket(event_socket: &str) -> String {
+    Path::new(event_socket)
+        .parent()
+        .map(|parent| parent.join(".socket.sock").to_string_lossy().into_owned())
+        .unwrap_or_else(|| event_socket.replacen(".socket2.sock", ".socket.sock", 1))
+}
+
+fn select_hyprland_base_path(
+    runtime_dir: &Path,
+    explicit_signature: Option<String>,
+) -> NodeResult<PathBuf> {
+    let hypr_dir = runtime_dir.join("hypr");
+
+    if let Some(signature) = explicit_signature {
+        return Ok(hypr_dir.join(signature));
+    }
+
+    let entries = std::fs::read_dir(&hypr_dir).map_err(|error| {
+        platform_error(
+            format!(
+                "Cannot read Hyprland runtime directory {}: {error}",
+                hypr_dir.display()
+            ),
+            ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+        )
+    })?;
+
+    let candidates: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|value| value.path()))
+        .filter(|path| path.join(".socket2.sock").exists())
+        .collect();
+
+    match candidates.as_slice() {
+        [candidate] => Ok(candidate.clone()),
+        [] => Err(platform_error(
+            format!(
+                "No Hyprland event sockets found under {}",
+                hypr_dir.display()
+            ),
+            ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+        )),
+        _ => Err(platform_error(
+            format!(
+                "Multiple Hyprland instances found under {}; set SINEX_HYPRLAND_INSTANCE_SIGNATURE or SINEX_HYPRLAND_EVENT_SOCKET",
+                hypr_dir.display()
+            ),
+            ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING,
+        )),
+    }
+}
+
+fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
+    if let Ok(event_socket) = std::env::var("SINEX_HYPRLAND_EVENT_SOCKET") {
+        let command_socket = std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
+            .unwrap_or_else(|_| derive_hyprland_command_socket(&event_socket));
+        return Ok(HyprlandSocketPaths {
+            event_socket,
+            command_socket,
+        });
+    }
+
+    let runtime_dir = resolve_hyprland_runtime_dir()?;
+    let explicit_signature = std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
+        .ok()
+        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok());
+    let base_path = select_hyprland_base_path(&runtime_dir, explicit_signature)?;
+
+    Ok(HyprlandSocketPaths {
+        event_socket: base_path.join(".socket2.sock").to_string_lossy().into_owned(),
+        command_socket: base_path.join(".socket.sock").to_string_lossy().into_owned(),
+    })
 }
 
 impl fmt::Display for WindowManagerType {
@@ -184,44 +282,30 @@ impl WindowManagerWatcher {
 
     /// Discover Hyprland socket paths (both event and command)
     async fn discover_hyprland_sockets(&mut self) -> NodeResult<()> {
-        // Get Hyprland instance signature
-        let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
-            platform_error(
-                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?",
-                ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING,
-            )
-        })?;
-
-        // Get XDG_RUNTIME_DIR
-        let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
-            platform_error("XDG_RUNTIME_DIR not set", ERROR_CLASS_XDG_RUNTIME_MISSING)
-        })?;
-
-        // Build socket paths
-        // Sockets are inside the instance directory with leading dot
-        let base_path = format!("{xdg_runtime}/hypr/{hyprland_instance_sig}");
-        let event_socket = format!("{base_path}/.socket2.sock");
-        let command_socket = format!("{base_path}/.socket.sock");
+        let sockets = resolve_hyprland_socket_paths()?;
 
         // Test event socket connection
-        if UnixStream::connect(&event_socket).await.is_ok() {
-            self.socket_path = Some(event_socket.clone());
-            info!("Found Hyprland event socket at: {}", event_socket);
+        if UnixStream::connect(&sockets.event_socket).await.is_ok() {
+            self.socket_path = Some(sockets.event_socket.clone());
+            info!("Found Hyprland event socket at: {}", sockets.event_socket);
         } else {
             return Err(platform_error(
-                format!("Cannot connect to Hyprland event socket: {event_socket}"),
+                format!(
+                    "Cannot connect to Hyprland event socket: {}",
+                    sockets.event_socket
+                ),
                 ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
             ));
         }
 
         // Test command socket connection
-        if UnixStream::connect(&command_socket).await.is_ok() {
-            self.command_socket_path = Some(command_socket.clone());
-            info!("Found Hyprland command socket at: {}", command_socket);
+        if UnixStream::connect(&sockets.command_socket).await.is_ok() {
+            self.command_socket_path = Some(sockets.command_socket.clone());
+            info!("Found Hyprland command socket at: {}", sockets.command_socket);
         } else {
             warn!(
                 "Cannot connect to Hyprland command socket: {}",
-                command_socket
+                sockets.command_socket
             );
         }
 
@@ -1066,6 +1150,7 @@ impl WindowManagerWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -1108,6 +1193,47 @@ mod tests {
             reset_first, first,
             "resetting the backoff should restart the sequence"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn derive_command_socket_uses_same_instance_dir() -> TestResult<()> {
+        let command_socket =
+            derive_hyprland_command_socket("/run/user/1000/hypr/test/.socket2.sock");
+        assert_eq!(command_socket, "/run/user/1000/hypr/test/.socket.sock");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn select_hyprland_base_path_discovers_single_socket_dir() -> TestResult<()> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-wm-{}", Uuid::now_v7()));
+        let candidate = runtime_dir.join("hypr").join("instance-a");
+        std::fs::create_dir_all(&candidate)?;
+        std::fs::write(candidate.join(".socket2.sock"), b"stub")?;
+
+        let selected = select_hyprland_base_path(&runtime_dir, None)?;
+        assert_eq!(selected, candidate);
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn select_hyprland_base_path_requires_override_for_multiple_instances() -> TestResult<()> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-wm-{}", Uuid::now_v7()));
+        let first = runtime_dir.join("hypr").join("instance-a");
+        let second = runtime_dir.join("hypr").join("instance-b");
+        std::fs::create_dir_all(&first)?;
+        std::fs::create_dir_all(&second)?;
+        std::fs::write(first.join(".socket2.sock"), b"stub")?;
+        std::fs::write(second.join(".socket2.sock"), b"stub")?;
+
+        let error = select_hyprland_base_path(&runtime_dir, None).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("SINEX_HYPRLAND_INSTANCE_SIGNATURE"));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
 }

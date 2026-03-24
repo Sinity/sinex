@@ -22,9 +22,9 @@
       autoSetup = true;
       host = "127.0.0.1";
       port = 5432;
-      name = "sinex";
+      name = "sinex_prod";
       user = "sinex";
-      passwordFile = config.sinex.secrets.paths."sinex-local-db";
+      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "prod"; # REQUIRED for production; use "dev" for local testing only
@@ -73,4 +73,5 @@
   };
 
   environment.etc."sinex/gateway-admin-token".text = "example-admin:admin";
+  environment.etc."sinex/db-password".text = "example-db-password";
 }

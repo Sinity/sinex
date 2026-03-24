@@ -98,7 +98,7 @@ let
             )
             try:
                 result = self.machine.succeed(
-                    "su - postgres -c \"psql -d sinex -At -c \\\"%s\\\"\"" % sql.replace('"', '\\"')
+                    "su - postgres -c \"psql -d ''${SINEX_TEST_DB_NAME:-sinex} -At -c \\\"%s\\\"\"" % sql.replace('"', '\\"')
                 ).strip()
                 return int(result or "0")
             except Exception:
@@ -194,7 +194,7 @@ let
     
     # Function to check database connectivity
     check_db() {
-      su - postgres -c "psql -d sinex -c 'SELECT 1;'" >/dev/null 2>&1
+      su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -c 'SELECT 1;'" >/dev/null 2>&1
     }
     
     # Export functions for use

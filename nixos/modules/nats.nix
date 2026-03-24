@@ -453,6 +453,7 @@ in
 
     systemd.services.sinex-nats-bootstrap = mkIf (cfg.bootstrapStreams.enable && natsCli != null) {
       description = "Sinex NATS JetStream bootstrap";
+      requires = [ "nats.service" ];
       wants = [ "nats.service" ];
       after = [ "nats.service" ];
       wantedBy = [ "multi-user.target" ];

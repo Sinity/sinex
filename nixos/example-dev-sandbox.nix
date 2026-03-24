@@ -25,7 +25,7 @@
       host = "127.0.0.1";
       name = "sinex_dev";
       user = "sinex";
-      passwordFile = config.sinex.secrets.paths."sinex-local-db";
+      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "dev";
@@ -127,6 +127,7 @@
   };
 
   environment.etc."sinex/gateway-admin-token".text = "example-dev-sandbox-admin:admin";
+  environment.etc."sinex/db-password".text = "example-db-password";
 
   users.users.developer = {
     isNormalUser = true;

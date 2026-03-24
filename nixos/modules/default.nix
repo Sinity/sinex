@@ -88,6 +88,30 @@ in
     envModule = attrsOf str;
     strList = listOf str;
     pathList = listOf path;
+    bindReadOnlyPathModule = submodule {
+      options = {
+        source = mkOption {
+          type = str;
+          description = "Source path exposed into the service namespace.";
+        };
+        destination = mkOption {
+          type = str;
+          description = "Destination path inside the service namespace.";
+        };
+      };
+    };
+    terminalHistorySourceModule = submodule {
+      options = {
+        path = mkOption {
+          type = str;
+          description = "Absolute path to a shell history source.";
+        };
+        shell = mkOption {
+          type = str;
+          description = "Shell identifier (`bash`, `zsh`, `fish`, etc.).";
+        };
+      };
+    };
   in {
     enable = mkEnableOption "Sinex Exocortex event capture system";
 
@@ -898,6 +922,32 @@ in
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                historySources = mkOption {
+                  type = listOf terminalHistorySourceModule;
+                  default = [];
+                  description = ''
+                    Structured history sources passed to the terminal node through
+                    <literal>--node-config</literal>. When empty, the node falls back to its
+                    built-in defaults (the service user's home directory), which is usually not
+                    what workstation deployments want.
+                  '';
+                };
+                access = mkOption {
+                  type = submodule {
+                    options = {
+                      bindReadOnlyPaths = mkOption {
+                        type = listOf bindReadOnlyPathModule;
+                        default = [];
+                        description = ''
+                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                          target-user history files into the service namespace.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Terminal node host-access configuration.";
+                };
                 env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
               };
@@ -913,6 +963,59 @@ in
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                session = mkOption {
+                  type = submodule {
+                    options = {
+                      runtimeDir = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = ''
+                          Runtime directory presented to the desktop node. When set, the module
+                          exports both <literal>SINEX_HYPRLAND_RUNTIME_DIR</literal> and
+                          <literal>XDG_RUNTIME_DIR</literal>.
+                        '';
+                      };
+                      waylandDisplay = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = "Explicit `WAYLAND_DISPLAY` value for clipboard access.";
+                      };
+                      hyprlandInstanceSignature = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = "Explicit Hyprland instance signature for socket discovery.";
+                      };
+                      hyprlandEventSocket = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = "Explicit path to the Hyprland event socket (.socket2.sock).";
+                      };
+                      hyprlandCommandSocket = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = "Explicit path to the Hyprland command socket (.socket.sock).";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Desktop node session/runtime wiring.";
+                };
+                access = mkOption {
+                  type = submodule {
+                    options = {
+                      bindReadOnlyPaths = mkOption {
+                        type = listOf bindReadOnlyPathModule;
+                        default = [];
+                        description = ''
+                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                          user-runtime sockets (Hyprland, Wayland) into the service namespace.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Desktop node host-access configuration.";
+                };
                 env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
                 clipboard = mkOption {
@@ -1311,6 +1414,12 @@ in
       blobDir = cfg.storage.blob.repositoryPath;
       sinexUser = cfg.users.nodes;
       targetUser = cfg.users.target;
+      targetHome =
+        if targetUser == null then null
+        else lib.attrByPath [ "users" "users" targetUser "home" ] "/home/${targetUser}" config;
+      targetUid =
+        if targetUser == null then null
+        else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
       databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
@@ -1535,8 +1644,34 @@ in
       # mkDefault ensures explicit watchPaths override this fallback.
       (mkIf (cfg.enable && cfg.users.target != null) {
         services.sinex.nodes.filesystem.watchPaths = mkDefault [
-          "/home/${cfg.users.target}"
+          targetHome
         ];
+      })
+
+      (mkIf (cfg.enable && targetHome != null) {
+        services.sinex.nodes.terminal.historySources = mkDefault [
+          {
+            path = "${targetHome}/.bash_history";
+            shell = "bash";
+          }
+          {
+            path = "${targetHome}/.zsh_history";
+            shell = "zsh";
+          }
+          {
+            path = "${targetHome}/.local/share/atuin/history.db";
+            shell = "atuin";
+          }
+          {
+            path = "${targetHome}/.local/share/fish/fish_history";
+            shell = "fish";
+          }
+        ];
+      })
+
+      (mkIf (cfg.enable && targetUid != null) {
+        services.sinex.nodes.desktop.session.runtimeDir =
+          mkDefault "/run/user/${toString targetUid}";
       })
 
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {

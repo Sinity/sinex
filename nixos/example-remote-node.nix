@@ -22,7 +22,7 @@
       autoSetup = false;
       host = "db.example.net";
       port = 5432;
-      name = "sinex";
+      name = "sinex_prod";
       user = "sinex_agent";
       passwordFile = config.environment.etc."sinex/remote-db-password".source;
     };

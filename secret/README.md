@@ -8,7 +8,7 @@ Mirror of the Sinnix host layout.
 ```
 agenix -e secret/sinex-local-db.age \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDwD8IB2eVfw6X7z9AqBBGjrqOIOCJ4tden1we7mCqOy sinity@sinnix-prime" \
-  -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA8aHYDIVHK5J4pkbtIPq8AbWH3Jc2HW28UHfGBrg50P root@sinnix-prime" \
+  -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILrplBDI4Rrb1hyzqYO7f8/2pmFWupC7C2+hYkBAkOdF root@sinnix-prime" \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEsBMzW1MeF+qcxatMh4nvrQSl3jjAMQyMa+h7egmQyT root@sinnix-ethereal"
 ```
 
@@ -29,13 +29,14 @@ Generate a random token and encrypt it:
 head -c 32 /dev/urandom | base64 | tr -d '=' > /tmp/gateway-token
 agenix -e secret/sinex-gateway-admin-token.age \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDwD8IB2eVfw6X7z9AqBBGjrqOIOCJ4tden1we7mCqOy sinity@sinnix-prime" \
-  -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA8aHYDIVHK5J4pkbtIPq8AbWH3Jc2HW28UHfGBrg50P root@sinnix-prime" \
+  -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILrplBDI4Rrb1hyzqYO7f8/2pmFWupC7C2+hYkBAkOdF root@sinnix-prime" \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEsBMzW1MeF+qcxatMh4nvrQSl3jjAMQyMa+h7egmQyT root@sinnix-ethereal" < /tmp/gateway-token
 rm /tmp/gateway-token
 ```
 
-Decrypt locally for debugging with:
+Decrypt locally for debugging with the target-user SSH key (the NixOS module now also
+adds this identity alongside the host key when available):
 
 ```
-AGEIDENTITY=/etc/ssh/ssh_host_ed25519_key agenix -d secret/<name>.age
+nix shell nixpkgs#rage -c rage -d -i ~/.ssh/id_ed25519 secret/<name>.age
 ```

@@ -14,6 +14,7 @@ let
   sinexCliPackage = sinexCli;
   stateDir = config.services.sinex.stateRoot;
   workDir = "${stateDir}/.cache/sinex/ingestd-dev";
+  databaseName = "sinex_dev";
   sinexConfigBase = {
     enable = true;
     package = sinexPackage;
@@ -21,7 +22,8 @@ let
 
     database = {
       autoSetup = lib.mkDefault true;
-      name = lib.mkDefault "sinex";
+      name = lib.mkDefault databaseName;
+      extraDatabases = lib.mkDefault [ "sinex" ];
       user = lib.mkDefault "sinex";
     };
 
@@ -75,6 +77,7 @@ in
 
   # Provide dummy secrets expected by the gateway.
   environment.etc."sinex/gateway-admin-token".text = "test-admin-token";
+  environment.variables.SINEX_TEST_DB_NAME = databaseName;
 
   # Run migrations before starting Sinex services.
   systemd.services.sinex-migrations = {
@@ -140,9 +143,11 @@ host    all             all             ::1/128                 trust
       import subprocess
       import sys
       import re
+
+      DB_NAME = "${databaseName}"
       
       def query_events(limit=10):
-          cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided FROM core.events ORDER BY ts_coided DESC LIMIT {limit};\""
+          cmd = f"psql -d {DB_NAME} -t -c \"SELECT id, source, event_type, ts_coided FROM core.events ORDER BY ts_coided DESC LIMIT {limit};\""
           result = subprocess.run([
               "su", "-", "postgres", "-c", cmd
           ], capture_output=True, text=True)
@@ -159,7 +164,7 @@ host    all             all             ::1/128                 trust
               print(f"Query failed: {result.stderr}")
       
       def stats():
-          cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
+          cmd = f"psql -d {DB_NAME} -t -c 'SELECT COUNT(*) FROM core.events;'"
           result = subprocess.run([
               "su", "-", "postgres", "-c", cmd
           ], capture_output=True, text=True)

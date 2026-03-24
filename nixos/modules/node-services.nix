@@ -24,9 +24,9 @@ let
   blobDir = cfg.storage.blob.repositoryPath;
   tlsDir = "${stateRoot}/tls";
   tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
-  # Soft-dependency flags: used to express ordering without hard requires.
-  # nats-bootstrap creates JetStream streams; ingestd must wait for streams to exist.
-  # blob-init initialises the git-annex repo; both gateway and ingestd use it.
+  # Ancillary service flags.
+  # JetStream bootstrap is a hard requirement when enabled because ingestd and
+  # gateway assume the streams already exist at startup. Blob init remains soft.
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
@@ -101,6 +101,8 @@ let
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
+  renderBindReadOnlyPaths = mounts:
+    map (mount: "${mount.source}:${mount.destination}") mounts;
 
   baseEnv = [
     "DATABASE_URL=${databaseUrl}"
@@ -160,6 +162,10 @@ let
   ];
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
+  targetUser = cfg.users.target;
+  targetHome =
+    if targetUser == null then null
+    else lib.attrByPath [ "users" "users" targetUser "home" ] "/home/${targetUser}" config;
 
   mkBaseServiceConfig = resources: env: extra:
     {
@@ -241,14 +247,15 @@ let
       );
       # Ordering for core services.
       # Base: hard infrastructure that both services depend on.
-      coreRequires = postgresServiceUnits ++ schemaApplyUnits ++ optionals natsEnabled [ "nats.service" ];
-      # After adds soft ordering units that should complete first but aren't fatal if absent.
-      coreAfter = coreRequires
-        ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ]
-        ++ optionals blobInitEnabled      [ "sinex-blob-init.service" ];
-      coreWants =
-          optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ]
-        ++ optionals blobInitEnabled      [ "sinex-blob-init.service" ];
+      coreRequires =
+        postgresServiceUnits
+        ++ schemaApplyUnits
+        ++ optionals natsEnabled [ "nats.service" ]
+        ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ];
+      # Core services should not start before stream bootstrap has succeeded when
+      # the managed bootstrap path is enabled.
+      coreAfter = coreRequires ++ optionals blobInitEnabled [ "sinex-blob-init.service" ];
+      coreWants = optionals blobInitEnabled [ "sinex-blob-init.service" ];
       gatewayAfter = coreAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
     in
     if !coreEnabled then {} else
@@ -297,9 +304,8 @@ let
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
-            # sinex-gateway does not emit sd_notify, so run it as a simple
-            # service to avoid start timeouts in VM tests and CI.
-            Type = lib.mkForce "simple";
+            Type = lib.mkForce "notify";
+            NotifyAccess = "main";
             ExecStart = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
           }
           // optionalAttrs (gatewayAdminTokenFile != null) {
@@ -360,19 +366,89 @@ let
       instances = resolveInstances sat.instances;
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
+      effectiveHistorySources =
+        if sat.historySources != [] then sat.historySources
+        else if targetHome == null then []
+        else [
+          {
+            path = "${targetHome}/.bash_history";
+            shell = "bash";
+          }
+          {
+            path = "${targetHome}/.zsh_history";
+            shell = "zsh";
+          }
+          {
+            path = "${targetHome}/.local/share/atuin/history.db";
+            shell = "atuin";
+          }
+          {
+            path = "${targetHome}/.local/share/fish/fish_history";
+            shell = "fish";
+          }
+        ];
+      nodeConfig = builtins.toJSON {
+        history_sources = map (source: {
+          path = source.path;
+          shell = source.shell;
+        }) effectiveHistorySources;
+      };
+      derivedArgs =
+        optional (effectiveHistorySources != []) "--node-config ${escapeShellArg nodeConfig}";
+      accessAclPaths =
+        unique (
+          (map (source: source.path) effectiveHistorySources)
+          ++ optionals (targetHome != null) [ "${targetHome}/.local/share/atuin/history.db" ]
+        );
+      accessSetupScript =
+        if accessAclPaths == [] then null else pkgs.writeShellScript "sinex-terminal-target-access" ''
+          set -euo pipefail
+
+          SERVICE_USER=${escapeShellArg serviceUser}
+          SETFACL=${pkgs.acl}/bin/setfacl
+          DIRNAME=${pkgs.coreutils}/bin/dirname
+
+          grant_parent_dirs() {
+            local path="$1"
+            local dir
+            dir="$("$DIRNAME" "$path")"
+            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+              if [ -d "$dir" ]; then
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+              fi
+              dir="$("$DIRNAME" "$dir")"
+            done
+          }
+
+          grant_file_read() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || true
+            fi
+          }
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+            grant_file_read ${escapeShellArg path}
+          '') accessAclPaths)}
+        '';
     in
     mkNodeUnits {
       name = "terminal";
       binary = "terminal-ingestor";
       description = "Terminal node";
       inherit instances batch resources;
-      extraArgs = sat.extraArgs;
+      extraArgs = derivedArgs ++ sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
       serviceConfig = {
         # The terminal ingestor needs read access to the target user's shell history
         # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
         # so we use read-only mode to allow reading history files without write access.
         ProtectHome = lib.mkForce "read-only";
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != []) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
       };
     };
 
@@ -383,6 +459,145 @@ let
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then [ "SINEX_CLIPBOARD=1" ] else [ "SINEX_CLIPBOARD=0" ];
+      bridgeEnvFile = "${runtimeDir}/desktop-target.env";
+      sessionEnv =
+        optional (sat.session.runtimeDir != null) "SINEX_HYPRLAND_RUNTIME_DIR=${sat.session.runtimeDir}"
+        ++ optional (sat.session.runtimeDir != null) "XDG_RUNTIME_DIR=${sat.session.runtimeDir}"
+        ++ optional (sat.session.waylandDisplay != null) "WAYLAND_DISPLAY=${sat.session.waylandDisplay}"
+        ++ optional (sat.session.hyprlandInstanceSignature != null) "SINEX_HYPRLAND_INSTANCE_SIGNATURE=${sat.session.hyprlandInstanceSignature}"
+        ++ optional (sat.session.hyprlandEventSocket != null) "SINEX_HYPRLAND_EVENT_SOCKET=${sat.session.hyprlandEventSocket}"
+        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}";
+      accessSetupScript =
+        if targetUser == null then null else pkgs.writeShellScript "sinex-desktop-target-access" ''
+          set -euo pipefail
+
+          SERVICE_USER=${escapeShellArg serviceUser}
+          TARGET_USER=${escapeShellArg targetUser}
+          CONFIGURED_RUNTIME_DIR=${escapeShellArg (if sat.session.runtimeDir != null then sat.session.runtimeDir else "")}
+          CONFIGURED_WAYLAND_DISPLAY=${escapeShellArg (if sat.session.waylandDisplay != null then sat.session.waylandDisplay else "")}
+          CONFIGURED_HYPRLAND_SIGNATURE=${escapeShellArg (if sat.session.hyprlandInstanceSignature != null then sat.session.hyprlandInstanceSignature else "")}
+          ENV_FILE=${escapeShellArg bridgeEnvFile}
+          SETFACL=${pkgs.acl}/bin/setfacl
+          ID=${pkgs.coreutils}/bin/id
+          INSTALL=${pkgs.coreutils}/bin/install
+          CHOWN=${pkgs.coreutils}/bin/chown
+          CHMOD=${pkgs.coreutils}/bin/chmod
+          RM=${pkgs.coreutils}/bin/rm
+          FIND=${pkgs.findutils}/bin/find
+          SORT=${pkgs.coreutils}/bin/sort
+          BASENAME=${pkgs.coreutils}/bin/basename
+          DIRNAME=${pkgs.coreutils}/bin/dirname
+
+          grant_parent_dirs() {
+            local path="$1"
+            local dir
+            dir="$path"
+            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+              if [ -d "$dir" ]; then
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+              fi
+              dir="$("$DIRNAME" "$dir")"
+            done
+          }
+
+          grant_dir_defaults() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || true
+            fi
+          }
+
+          grant_socket_access() {
+            local path="$1"
+            if [ -S "$path" ]; then
+              grant_parent_dirs "$("$DIRNAME" "$path")"
+              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || true
+            fi
+          }
+
+          OWNER="$SERVICE_USER"
+          "$INSTALL" -d -m0755 -o "$OWNER" -g "$OWNER" ${escapeShellArg runtimeDir}
+          "$RM" -f "$ENV_FILE"
+          : > "$ENV_FILE"
+
+          if [ -n "$CONFIGURED_RUNTIME_DIR" ]; then
+            RUNTIME_ROOT="$CONFIGURED_RUNTIME_DIR"
+          else
+            if ! TARGET_UID="$("$ID" -u "$TARGET_USER" 2>/dev/null)"; then
+              "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
+              "$CHMOD" 0640 "$ENV_FILE"
+              exit 0
+            fi
+            RUNTIME_ROOT="/run/user/$TARGET_UID"
+          fi
+
+          if [ ! -d "$RUNTIME_ROOT" ]; then
+            "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
+            "$CHMOD" 0640 "$ENV_FILE"
+            exit 0
+          fi
+
+          grant_parent_dirs "$RUNTIME_ROOT"
+          grant_dir_defaults "$RUNTIME_ROOT"
+
+          WAYLAND_DISPLAY_NAME="$CONFIGURED_WAYLAND_DISPLAY"
+          if [ -z "$WAYLAND_DISPLAY_NAME" ]; then
+            while IFS= read -r socket_path; do
+              [ -n "$socket_path" ] || continue
+              grant_socket_access "$socket_path"
+              if [ -z "$WAYLAND_DISPLAY_NAME" ]; then
+                WAYLAND_DISPLAY_NAME="$("$BASENAME" "$socket_path")"
+              fi
+            done < <("$FIND" "$RUNTIME_ROOT" -maxdepth 1 -type s -name 'wayland-*' | "$SORT")
+          fi
+
+          HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
+          if [ -d "$RUNTIME_ROOT/hypr" ]; then
+            grant_parent_dirs "$RUNTIME_ROOT/hypr"
+            grant_dir_defaults "$RUNTIME_ROOT/hypr"
+
+            while IFS= read -r instance_dir; do
+              [ -n "$instance_dir" ] || continue
+              grant_parent_dirs "$instance_dir"
+              grant_dir_defaults "$instance_dir"
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 1 -maxdepth 1 -type d | "$SORT")
+
+            while IFS= read -r socket_path; do
+              [ -n "$socket_path" ] || continue
+              grant_socket_access "$socket_path"
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket.sock' | "$SORT")
+
+            HYPRLAND_EVENT_SOCKET_COUNT=0
+            while IFS= read -r socket_path; do
+              [ -n "$socket_path" ] || continue
+              grant_socket_access "$socket_path"
+              HYPRLAND_EVENT_SOCKET_COUNT=$((HYPRLAND_EVENT_SOCKET_COUNT + 1))
+              if [ -z "$HYPRLAND_SIGNATURE" ]; then
+                HYPRLAND_SIGNATURE="$("$BASENAME" "$("$DIRNAME" "$socket_path")")"
+              fi
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket2.sock' | "$SORT")
+
+            if [ -n "$CONFIGURED_HYPRLAND_SIGNATURE" ]; then
+              HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
+            elif [ "$HYPRLAND_EVENT_SOCKET_COUNT" -ne 1 ]; then
+              HYPRLAND_SIGNATURE=""
+            fi
+          fi
+
+          {
+            echo "XDG_RUNTIME_DIR=$RUNTIME_ROOT"
+            echo "SINEX_HYPRLAND_RUNTIME_DIR=$RUNTIME_ROOT"
+            if [ -n "$WAYLAND_DISPLAY_NAME" ]; then
+              echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY_NAME"
+            fi
+            if [ -n "$HYPRLAND_SIGNATURE" ]; then
+              echo "SINEX_HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
+            fi
+          } > "$ENV_FILE"
+
+          "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
+          "$CHMOD" 0640 "$ENV_FILE"
+        '';
     in
     mkNodeUnits {
       name = "desktop";
@@ -390,7 +605,13 @@ let
       description = "Desktop node";
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
-      env = clipboardEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = optionalAttrs (sat.access.bindReadOnlyPaths != []) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        EnvironmentFile = [ "-${bridgeEnvFile}" ];
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+      };
     };
 
   mkSystemUnits =
