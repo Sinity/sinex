@@ -1506,6 +1506,7 @@ in
         terminal =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
           // {
+            kitty_enabled = cfg.shell.kitty.enable;
             history_sources = map (source: {
               path = source.path;
               shell = source.shell;
@@ -1514,6 +1515,7 @@ in
         desktop =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.desktop.enable) cfg.nodes.desktop.instances)
           // {
+            clipboard_enabled = cfg.nodes.desktop.clipboard.enable;
             activitywatch_db_path = cfg.nodes.desktop.history.activitywatchDbPath;
             runtime_dir = cfg.nodes.desktop.session.runtimeDir;
             wayland_display = cfg.nodes.desktop.session.waylandDisplay;

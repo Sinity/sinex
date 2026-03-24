@@ -52,6 +52,16 @@ pub async fn verify_configuration_generation()
     // Event source configuration validation
     match verify_event_source_configuration(&mut messages).await {
         Ok(event_config) => {
+            if !event_config
+                .get("deployment_descriptor_loaded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                messages.push(
+                    "⚠ Deployment descriptor is missing; configuration readiness is reporting unconfigured sources instead of deployed intent".to_string(),
+                );
+                has_warnings = true;
+            }
             details.insert("event_sources", event_config);
         }
         Err(e) => {
@@ -211,7 +221,9 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     let mut event_sources = HashMap::new();
     let descriptor = load_deployment_descriptor();
 
-    // Default event sources that Sinex supports
+    // Deployment readiness is config-derived: source availability follows the
+    // staged descriptor, not whichever binaries or dotfiles happen to exist in
+    // the invoking shell session.
     let available_sources = vec![
         ("filesystem", "File system change monitoring"),
         ("terminal", "Terminal activity monitoring"),
@@ -223,15 +235,21 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     ];
 
     for (source_name, description) in available_sources {
-        let config_info =
-            verify_event_source_config(source_name, description, descriptor.as_ref()).await?;
+        let config_info = verify_event_source_config(source_name, description, descriptor.as_ref());
         let is_available = config_info["available"].as_bool().unwrap_or(false);
+        let is_configured = config_info["configured"].as_bool().unwrap_or(false);
         event_sources.insert(source_name.to_string(), config_info);
 
         if is_available {
             messages.push(format!("✓ Event source '{source_name}' is available"));
+        } else if is_configured {
+            messages.push(format!(
+                "ℹ Event source '{source_name}' is configured but not currently available"
+            ));
         } else {
-            messages.push(format!("ℹ Event source '{source_name}' is not available"));
+            messages.push(format!(
+                "ℹ Event source '{source_name}' is not configured by the deployment descriptor"
+            ));
         }
     }
 
@@ -244,33 +262,74 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     }))
 }
 
-async fn verify_event_source_config(
+fn verify_event_source_config(
     source_name: &str,
     description: &str,
     descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> NodeResult<Value> {
-    // Check if the event source dependencies are available
-    let available = match source_name {
-        "filesystem" => true, // Always available
-        "terminal" => check_terminal_availability(descriptor).await,
-        "clipboard" => check_clipboard_availability().await,
-        "kitty" => check_kitty_availability().await,
-        "hyprland" => check_hyprland_availability(descriptor).await,
-        "activitywatch" => check_activitywatch_availability(descriptor).await,
-        "atuin" => check_atuin_availability(descriptor).await,
-        _ => false,
+) -> Value {
+    let probe = match source_name {
+        "filesystem" => probe_filesystem_source(descriptor),
+        "terminal" => probe_terminal_source(descriptor),
+        "clipboard" => probe_clipboard_source(descriptor),
+        "kitty" => probe_kitty_source(descriptor),
+        "hyprland" => probe_hyprland_source(descriptor),
+        "activitywatch" => probe_activitywatch_source(descriptor),
+        "atuin" => probe_atuin_source(descriptor),
+        _ => EventSourceProbe::not_configured("Unknown event source"),
     };
 
-    Ok(json!({
-        "description": description,
-        "available": available,
-        "dependencies_met": available
-    }))
+    probe.into_json(description)
 }
 
-async fn check_clipboard_availability() -> bool {
-    super::command_succeeds("which", &["xclip"]).await
-        || super::command_succeeds("which", &["wl-clipboard"]).await
+#[derive(Debug)]
+struct EventSourceProbe {
+    configured: bool,
+    available: bool,
+    reason: String,
+    evidence_paths: Vec<PathBuf>,
+}
+
+impl EventSourceProbe {
+    fn available(reason: impl Into<String>, evidence_paths: Vec<PathBuf>) -> Self {
+        Self {
+            configured: true,
+            available: true,
+            reason: reason.into(),
+            evidence_paths,
+        }
+    }
+
+    fn unavailable(reason: impl Into<String>, evidence_paths: Vec<PathBuf>) -> Self {
+        Self {
+            configured: true,
+            available: false,
+            reason: reason.into(),
+            evidence_paths,
+        }
+    }
+
+    fn not_configured(reason: impl Into<String>) -> Self {
+        Self {
+            configured: false,
+            available: false,
+            reason: reason.into(),
+            evidence_paths: Vec::new(),
+        }
+    }
+
+    fn into_json(self, description: &str) -> Value {
+        json!({
+            "description": description,
+            "configured": self.configured,
+            "available": self.available,
+            "dependencies_met": self.available,
+            "reason": self.reason,
+            "evidence_paths": self.evidence_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        })
+    }
 }
 
 fn load_deployment_descriptor() -> Option<DeploymentReadinessDescriptor> {
@@ -283,120 +342,243 @@ fn load_deployment_descriptor() -> Option<DeploymentReadinessDescriptor> {
     }
 }
 
-fn default_terminal_source_candidates(
-    descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> Vec<PathBuf> {
-    if let Some(descriptor) = descriptor
-        && !descriptor.terminal.history_sources.is_empty()
-    {
-        return descriptor
-            .terminal
-            .history_sources
-            .iter()
-            .map(|source| source.path.clone())
-            .collect();
+fn probe_filesystem_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    match descriptor {
+        Some(descriptor) if descriptor.filesystem.enabled => EventSourceProbe::available(
+            "Filesystem capture is enabled in the deployment descriptor",
+            Vec::new(),
+        ),
+        Some(_) => EventSourceProbe::not_configured(
+            "Filesystem capture is disabled in the deployment descriptor",
+        ),
+        None => EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; filesystem readiness is not config-derived",
+        ),
     }
+}
 
-    let Some(home) = dirs::home_dir() else {
-        return Vec::new();
+fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; terminal readiness is not config-derived",
+        );
     };
 
-    vec![
-        home.join(".bash_history"),
-        home.join(".zsh_history"),
-        home.join(".local/share/atuin/history.db"),
-        home.join(".local/share/fish/fish_history"),
-    ]
-}
-
-async fn check_terminal_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
-    default_terminal_source_candidates(descriptor)
-        .iter()
-        .any(|path| path.is_file())
-}
-
-async fn check_kitty_availability() -> bool {
-    std::env::var("KITTY_LISTEN_ON").is_ok() || super::command_succeeds("which", &["kitty"]).await
-}
-
-async fn check_hyprland_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
-    if let Some(event_socket) = descriptor
-        .and_then(|value| value.desktop.hyprland_event_socket.as_ref())
-        .cloned()
-        .or_else(|| {
-            std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
-                .ok()
-                .map(PathBuf::from)
-        })
-    {
-        return event_socket.exists();
+    if !descriptor.terminal.surface.enabled {
+        return EventSourceProbe::not_configured(
+            "Terminal capture is disabled in the deployment descriptor",
+        );
     }
 
-    let Some(runtime_dir) = descriptor
-        .and_then(|value| value.desktop.runtime_dir.clone())
-        .or_else(|| {
-            std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
-                .ok()
-                .map(PathBuf::from)
-        })
-        .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
-        .or_else(dirs::runtime_dir)
-    else {
-        return false;
+    let evidence_paths: Vec<PathBuf> = descriptor
+        .terminal
+        .history_sources
+        .iter()
+        .map(|source| source.path.clone())
+        .collect();
+    if evidence_paths.is_empty() {
+        return EventSourceProbe::unavailable(
+            "Terminal capture is enabled but no history sources are configured",
+            evidence_paths,
+        );
+    }
+
+    let readable_count = evidence_paths.iter().filter(|path| path.is_file()).count();
+    if readable_count > 0 {
+        EventSourceProbe::available(
+            format!("{readable_count} configured terminal source(s) are present"),
+            evidence_paths,
+        )
+    } else {
+        EventSourceProbe::unavailable(
+            "Configured terminal history sources are not present on disk",
+            evidence_paths,
+        )
+    }
+}
+
+fn probe_clipboard_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; clipboard readiness is not config-derived",
+        );
+    };
+
+    if !(descriptor.desktop.surface.enabled && descriptor.desktop.clipboard_enabled) {
+        return EventSourceProbe::not_configured(
+            "Clipboard capture is disabled in the deployment descriptor",
+        );
+    }
+
+    EventSourceProbe::available(
+        "Clipboard capture is enabled in the deployment descriptor",
+        Vec::new(),
+    )
+}
+
+fn probe_kitty_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; Kitty readiness is not config-derived",
+        );
+    };
+
+    if !descriptor.terminal.kitty_enabled {
+        return EventSourceProbe::not_configured(
+            "Kitty integration is disabled in the deployment descriptor",
+        );
+    }
+
+    EventSourceProbe::available(
+        "Kitty integration is enabled in the deployment descriptor",
+        Vec::new(),
+    )
+}
+
+fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; Hyprland readiness is not config-derived",
+        );
+    };
+
+    if !descriptor.desktop.surface.enabled {
+        return EventSourceProbe::not_configured(
+            "Desktop capture is disabled in the deployment descriptor",
+        );
+    }
+
+    if let Some(event_socket) = descriptor.desktop.hyprland_event_socket.clone() {
+        return if event_socket.exists() {
+            EventSourceProbe::available(
+                "Configured Hyprland event socket is present",
+                vec![event_socket],
+            )
+        } else {
+            EventSourceProbe::unavailable(
+                "Configured Hyprland event socket is missing",
+                vec![event_socket],
+            )
+        };
+    }
+
+    let Some(runtime_dir) = descriptor.desktop.runtime_dir.clone() else {
+        return EventSourceProbe::unavailable(
+            "Desktop capture is enabled but no runtime_dir is declared",
+            Vec::new(),
+        );
     };
 
     let hypr_dir = runtime_dir.join("hypr");
-    let explicit_signature = descriptor
-        .and_then(|value| value.desktop.hyprland_instance_signature.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE").ok())
-        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok());
-
-    if let Some(signature) = explicit_signature {
-        return hypr_dir.join(signature).join(".socket2.sock").exists();
+    if let Some(signature) = descriptor.desktop.hyprland_instance_signature.clone() {
+        let event_socket = hypr_dir.join(signature).join(".socket2.sock");
+        return if event_socket.exists() {
+            EventSourceProbe::available(
+                "Configured Hyprland instance socket is present",
+                vec![event_socket],
+            )
+        } else {
+            EventSourceProbe::unavailable(
+                "Configured Hyprland instance socket is missing",
+                vec![event_socket],
+            )
+        };
     }
 
-    let Ok(entries) = std::fs::read_dir(hypr_dir) else {
-        return false;
+    let Ok(entries) = std::fs::read_dir(&hypr_dir) else {
+        return EventSourceProbe::unavailable(
+            "Hyprland runtime directory is missing or unreadable",
+            vec![hypr_dir],
+        );
     };
 
-    entries
+    let sockets: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok().map(|value| value.path()))
-        .filter(|path| path.join(".socket2.sock").exists())
-        .take(2)
-        .count()
-        == 1
+        .map(|path| path.join(".socket2.sock"))
+        .filter(|path| path.exists())
+        .collect();
+
+    match sockets.as_slice() {
+        [socket] => EventSourceProbe::available(
+            "Resolved a single Hyprland event socket from the configured runtime directory",
+            vec![socket.clone()],
+        ),
+        [] => EventSourceProbe::unavailable(
+            "Configured Hyprland runtime directory contains no event socket",
+            vec![hypr_dir],
+        ),
+        _ => EventSourceProbe::unavailable(
+            "Configured Hyprland runtime directory contains multiple instances; set hyprland_instance_signature or hyprland_event_socket explicitly",
+            sockets,
+        ),
+    }
 }
 
-async fn check_atuin_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
-    if let Some(descriptor) = descriptor
-        && let Some(path) = descriptor
-            .terminal
-            .history_sources
-            .iter()
-            .find(|source| source.shell == "atuin")
-            .map(|source| source.path.clone())
-    {
-        return path.is_file();
+fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; Atuin readiness is not config-derived",
+        );
+    };
+
+    if !descriptor.terminal.surface.enabled {
+        return EventSourceProbe::not_configured(
+            "Terminal capture is disabled in the deployment descriptor",
+        );
     }
 
-    dirs::home_dir()
-        .map(|home| home.join(".local/share/atuin/history.db").is_file())
-        .unwrap_or(false)
+    let Some(path) = descriptor
+        .terminal
+        .history_sources
+        .iter()
+        .find(|source| source.shell == "atuin")
+        .map(|source| source.path.clone())
+    else {
+        return EventSourceProbe::not_configured(
+            "No Atuin history source is configured in the deployment descriptor",
+        );
+    };
+
+    if path.is_file() {
+        EventSourceProbe::available("Configured Atuin history database is present", vec![path])
+    } else {
+        EventSourceProbe::unavailable("Configured Atuin history database is missing", vec![path])
+    }
 }
 
-async fn check_activitywatch_availability(
+fn probe_activitywatch_source(
     descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> bool {
-    if let Some(path) = descriptor.and_then(|value| value.desktop.activitywatch_db_path.clone()) {
-        return path.is_file();
+) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; ActivityWatch readiness is not config-derived",
+        );
+    };
+
+    if !descriptor.desktop.surface.enabled {
+        return EventSourceProbe::not_configured(
+            "Desktop capture is disabled in the deployment descriptor",
+        );
     }
 
-    dirs::home_dir()
-        .map(|home| {
-            home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")
-                .is_file()
-        })
-        .unwrap_or(false)
+    let Some(path) = descriptor.desktop.activitywatch_db_path.clone() else {
+        return EventSourceProbe::unavailable(
+            "Desktop capture is enabled but no ActivityWatch database path is configured",
+            Vec::new(),
+        );
+    };
+
+    if path.is_file() {
+        EventSourceProbe::available(
+            "Configured ActivityWatch history database is present",
+            vec![path],
+        )
+    } else {
+        EventSourceProbe::unavailable(
+            "Configured ActivityWatch history database is missing",
+            vec![path],
+        )
+    }
 }
 
 async fn verify_service_environment(messages: &mut Vec<String>) -> NodeResult<Value> {

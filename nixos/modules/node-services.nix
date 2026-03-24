@@ -160,6 +160,10 @@ let
     dlqPath
     blobDir
   ];
+  restartRateLimits = {
+    StartLimitIntervalSec = 300;
+    StartLimitBurst = 5;
+  };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
   targetUser = cfg.users.target;
@@ -266,6 +270,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
+        unitConfig = restartRateLimits;
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
@@ -301,6 +306,7 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
+        unitConfig = restartRateLimits;
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -691,6 +697,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
+        unitConfig = restartRateLimits;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
           WorkingDirectory = stateRoot;
@@ -725,6 +732,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
+      unitConfig = restartRateLimits;
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
         WorkingDirectory = stateRoot;

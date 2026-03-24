@@ -742,9 +742,9 @@ fn load_deployment_descriptor() -> (
         }
         Ok(None) => (
             None,
-            DeploymentReadinessItem::skip(
+            DeploymentReadinessItem::fail(
                 "deployment-descriptor",
-                "No deployment readiness descriptor found; using environment fallbacks",
+                "No deployment readiness descriptor found; deployment readiness requires a config-derived descriptor from /etc/sinex/deployment-readiness.json or SINEX_DEPLOYMENT_READINESS_CONFIG",
             ),
         ),
         Err(error) => (
@@ -974,78 +974,108 @@ fn runtime_dir_for_target(
 fn check_node_entrypoints(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if let Some(descriptor) = descriptor
-        && !descriptor.managed_units.is_empty()
-    {
-        let units = &descriptor.managed_units;
+    let Some(descriptor) = descriptor else {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            "Deployment readiness requires a descriptor-declared managed unit set",
+        );
+    };
+    let units = &descriptor.managed_units;
 
-        if units.is_empty() {
-            return DeploymentReadinessItem::fail(
-                "node-entrypoints",
-                "Deployment descriptor does not declare managed units",
-            );
+    if units.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            "Deployment descriptor does not declare managed units",
+        );
+    }
+
+    let mut unavailable = Vec::new();
+    let mut notify_contract_violations = Vec::new();
+
+    for unit in units {
+        let output = match std::process::Command::new("systemctl")
+            .args(["show", unit, "--property=LoadState,Type,NotifyAccess"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                return DeploymentReadinessItem::fail(
+                    "node-entrypoints",
+                    format!("Could not query systemd for {unit}: {error}"),
+                );
+            }
+        };
+
+        let properties = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            unavailable.push(unit.clone());
+            continue;
         }
 
-        let mut unavailable = Vec::new();
-
-        for unit in units {
-            let output = match std::process::Command::new("systemctl")
-                .args(["show", unit, "--property=LoadState", "--value"])
-                .output()
-            {
-                Ok(output) => output,
-                Err(error) => {
-                    return DeploymentReadinessItem::fail(
-                        "node-entrypoints",
-                        format!("Could not query systemd for {unit}: {error}"),
-                    );
+        let mut load_state = None;
+        let mut unit_type = None;
+        let mut notify_access = None;
+        for line in properties.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                match key {
+                    "LoadState" => load_state = Some(value.to_string()),
+                    "Type" => unit_type = Some(value.to_string()),
+                    "NotifyAccess" => notify_access = Some(value.to_string()),
+                    _ => {}
                 }
-            };
-
-            let load_state = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !output.status.success() || load_state == "not-found" || load_state.is_empty() {
-                unavailable.push(unit.clone());
             }
         }
 
-        return if unavailable.is_empty() {
-            DeploymentReadinessItem::pass(
-                "node-entrypoints",
-                format!("Managed Sinex units are present in systemd: {}", units.join(", ")),
+        if load_state.as_deref().is_none_or(|value| value == "not-found" || value.is_empty()) {
+            unavailable.push(unit.clone());
+            continue;
+        }
+
+        if descriptor.mode == DeploymentReadinessMode::Enabled {
+            let type_value = unit_type.as_deref().unwrap_or("<unset>");
+            if type_value != "notify" {
+                notify_contract_violations.push(format!("{unit} type={type_value}"));
+            }
+
+            let notify_access_value = notify_access.as_deref().unwrap_or("<unset>");
+            if notify_access_value != "main" {
+                notify_contract_violations
+                    .push(format!("{unit} notify_access={notify_access_value}"));
+            }
+        }
+    }
+
+    if !unavailable.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            format!(
+                "Managed Sinex units are missing or not loaded: {}",
+                unavailable.join(", ")
+            ),
+        );
+    }
+
+    if !notify_contract_violations.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            format!(
+                "Managed units violate the notify service contract: {}",
+                notify_contract_violations.join(", ")
+            ),
+        );
+    }
+
+    DeploymentReadinessItem::pass(
+        "node-entrypoints",
+        if descriptor.mode == DeploymentReadinessMode::Enabled {
+            format!(
+                "Managed Sinex units are present in systemd with notify contract intact: {}",
+                units.join(", ")
             )
         } else {
-            DeploymentReadinessItem::fail(
-                "node-entrypoints",
-                format!(
-                    "Managed Sinex units are missing or not loaded: {}",
-                    unavailable.join(", ")
-                ),
-            )
-        };
-    }
-
-    let nodes = [
-        "sinex-ingestd",
-        "sinex-gateway",
-        "sinex-fs-ingestor",
-        "sinex-terminal-ingestor",
-        "sinex-desktop-ingestor",
-        "sinex-system-ingestor",
-    ];
-    let missing: Vec<&str> = nodes
-        .iter()
-        .copied()
-        .filter(|bin| which::which(bin).is_err())
-        .collect();
-
-    if missing.is_empty() {
-        DeploymentReadinessItem::pass("node-entrypoints", "All node binaries found on PATH")
-    } else {
-        DeploymentReadinessItem::fail(
-            "node-entrypoints",
-            format!("Missing node binaries: {}", missing.join(", ")),
-        )
-    }
+            format!("Managed Sinex units are present in systemd: {}", units.join(", "))
+        },
+    )
 }
 
 /// Check 2: /realm is readable by the current user.
@@ -2300,6 +2330,7 @@ mod tests {
                         enabled: true,
                         instances: Some(1),
                     },
+                    kitty_enabled: false,
                     history_sources: vec![sinex_primitives::TerminalHistorySource {
                         path: PathBuf::from("/tmp/probe-home/.bash_history"),
                         shell: "bash".to_string(),
@@ -2549,6 +2580,7 @@ mod tests {
                     enabled: true,
                     instances: Some(1),
                 },
+                kitty_enabled: false,
                 history_sources: Vec::new(),
             },
             ..Default::default()

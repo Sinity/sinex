@@ -69,6 +69,8 @@ pub struct TerminalDeploymentSurface {
     #[serde(flatten)]
     pub surface: DeploymentSurface,
     #[serde(default)]
+    pub kitty_enabled: bool,
+    #[serde(default)]
     pub history_sources: Vec<TerminalHistorySource>,
 }
 
@@ -76,6 +78,8 @@ pub struct TerminalDeploymentSurface {
 pub struct DesktopDeploymentSurface {
     #[serde(flatten)]
     pub surface: DeploymentSurface,
+    #[serde(default)]
+    pub clipboard_enabled: bool,
     #[serde(default)]
     pub activitywatch_db_path: Option<PathBuf>,
     #[serde(default)]

@@ -456,6 +456,36 @@ async fn test_phase5_configuration_success(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+/// Test Phase 5: Missing deployment descriptor downgrades configuration readiness to warning
+#[sinex_test]
+async fn test_phase5_configuration_warns_without_deployment_descriptor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let db_url = ctx.database_url().to_string();
+    with_database_url(&db_url, || async {
+        let (status, details, messages) = configuration::verify_configuration_generation().await?;
+
+        assert_eq!(status, VerificationStatus::Warning);
+        assert_eq!(
+            details
+                .get("event_sources")
+                .and_then(|value| value.get("deployment_descriptor_loaded"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("Deployment descriptor is missing"))
+        );
+
+        Ok(())
+    })
+    .await?;
+
+    Ok(())
+}
+
 /// Test Phase 5: Configuration with missing environment variables
 #[sinex_test]
 async fn test_phase5_configuration_missing_env() -> TestResult<()> {
@@ -504,9 +534,9 @@ async fn test_phase5_config_format_validation() -> TestResult<()> {
     Ok(())
 }
 
-/// Test Phase 5: Terminal/Atuin availability follows actual configured home contents
+/// Test Phase 5: Event-source readiness now requires a deployment descriptor
 #[sinex_test]
-async fn test_phase5_configuration_event_sources_follow_home_contents(
+async fn test_phase5_configuration_event_sources_require_deployment_descriptor(
     ctx: TestContext,
 ) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
@@ -539,23 +569,44 @@ async fn test_phase5_configuration_event_sources_follow_home_contents(
             assert_eq!(
                 sources
                     .get("terminal")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("terminal")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
-                Some(true)
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("atuin")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(false)
             );
             assert_eq!(
                 sources
                     .get("atuin")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
-                Some(true)
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(false)
             );
             assert_eq!(
                 sources
                     .get("activitywatch")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
-                Some(true)
+                Some(false)
             );
 
             Ok(())
@@ -566,20 +617,53 @@ async fn test_phase5_configuration_event_sources_follow_home_contents(
     Ok(())
 }
 
-/// Test Phase 5: Terminal/Atuin availability no longer defaults to true on empty homes
+/// Test Phase 5: Configured sources report missing paths honestly
 #[sinex_test]
-async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
+async fn test_phase5_configuration_event_sources_report_missing_configured_paths(
     ctx: TestContext,
 ) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     let temp = tempfile::tempdir()?;
-    let home = temp.path().join("home-empty");
-    fs::create_dir_all(&home)?;
+    let configured_home = temp.path().join("configured-home");
+    fs::create_dir_all(&configured_home)?;
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "source": "test",
+            "terminal": {
+                "enabled": true,
+                "instances": 1,
+                "kitty_enabled": false,
+                "history_sources": [
+                    {
+                        "path": configured_home.join(".bash_history"),
+                        "shell": "bash"
+                    },
+                    {
+                        "path": configured_home.join(".local/share/atuin/history.db"),
+                        "shell": "atuin"
+                    }
+                ]
+            },
+            "desktop": {
+                "enabled": true,
+                "instances": 1,
+                "clipboard_enabled": false,
+                "activitywatch_db_path": configured_home.join(".local/share/activitywatch/aw-server-rust/sqlite.db"),
+                "runtime_dir": configured_home.join("runtime")
+            }
+        }))?,
+    )?;
 
     with_env_vars(
         &[
             ("DATABASE_URL", db_url),
-            ("HOME", home.display().to_string()),
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
         ],
         || async {
             let (_status, details, _messages) =
@@ -594,9 +678,23 @@ async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
             assert_eq!(
                 sources
                     .get("terminal")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("terminal")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("atuin")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
             );
             assert_eq!(
                 sources
@@ -608,6 +706,27 @@ async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
             assert_eq!(
                 sources
                     .get("activitywatch")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("hyprland")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("hyprland")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(false)
@@ -649,6 +768,7 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
             "terminal": {
                 "enabled": true,
                 "instances": 1,
+                "kitty_enabled": true,
                 "history_sources": [
                     {
                         "path": configured_home.join(".bash_history"),
@@ -663,6 +783,7 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
             "desktop": {
                 "enabled": true,
                 "instances": 1,
+                "clipboard_enabled": true,
                 "activitywatch_db_path": configured_home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")
             }
         }))?,
@@ -690,7 +811,21 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
             assert_eq!(
                 sources
                     .get("terminal")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("terminal")
                     .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("atuin")
+                    .and_then(|value| value.get("configured"))
                     .and_then(Value::as_bool),
                 Some(true)
             );
@@ -704,6 +839,41 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
             assert_eq!(
                 sources
                     .get("activitywatch")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("kitty")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("kitty")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("clipboard")
+                    .and_then(|value| value.get("configured"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("clipboard")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(true)
@@ -725,6 +895,11 @@ async fn test_phase6_service_dependencies() -> TestResult<()> {
     let (_status, details, messages) = services::verify_service_dependencies().await?;
 
     assert!(!messages.is_empty());
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Deployment descriptor is missing"))
+    );
 
     let details = details.as_object().expect("details should be an object");
     if let Some(binaries) = details.get("binaries") {
