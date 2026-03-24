@@ -82,6 +82,16 @@ pub enum InstanceMode {
     Transitioning,
 }
 
+enum CoordinationLoopDirective {
+    Continue,
+    Exit,
+}
+
+enum LeaderLoopOutcome {
+    LeadershipLost,
+    Exit,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,6 +527,54 @@ mod tests {
         let _ = run_handle.await;
         Ok(())
     }
+
+    #[sinex_test]
+    async fn run_coordination_loop_unregisters_instance_after_clean_exit(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-clean-exit").await?;
+        let mut coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let instance_id = coordination.instance.instance_id.clone();
+        let kv_client = coordination.kv_client.clone();
+
+        coordination
+            .run_coordination_loop(|| async { Ok::<(), SinexError>(()) })
+            .await?;
+
+        assert!(
+            kv_client.get_instance(&instance_id).await?.is_none(),
+            "clean loop exit must remove the instance registration"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_coordination_loop_propagates_leader_failures_and_unregisters(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-fatal-exit").await?;
+        let mut coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let instance_id = coordination.instance.instance_id.clone();
+        let kv_client = coordination.kv_client.clone();
+
+        let error = coordination
+            .run_coordination_loop(|| async {
+                Err::<(), _>(SinexError::service("fatal leader failure"))
+            })
+            .await
+            .expect_err("fatal leader failure must terminate the coordination loop");
+        assert!(
+            error.to_string().contains("fatal leader failure"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            kv_client.get_instance(&instance_id).await?.is_none(),
+            "fatal loop exit must remove the instance registration"
+        );
+        Ok(())
+    }
 }
 
 /// Handoff request from newer version
@@ -832,16 +890,23 @@ impl NodeCoordination {
             };
 
             // Send heartbeat regardless of mode
-            if let Err(e) = self
-                .kv_client
-                .heartbeat(&self.instance.instance_id, &self.current_metadata())
-                .await
-            {
+            if let Err(e) = self.kv_client.heartbeat(&self.current_metadata()).await {
                 warn!("Failed to send heartbeat: {}", e);
             }
 
-            self.apply_mode_transition(desired_mode, &process_events)
-                .await;
+            match self.apply_mode_transition(desired_mode, &process_events).await {
+                Ok(CoordinationLoopDirective::Continue) => {}
+                Ok(CoordinationLoopDirective::Exit) => {
+                    self.unregister_current_instance("coordination loop exited")
+                        .await;
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.unregister_current_instance("coordination loop failed")
+                        .await;
+                    return Err(error);
+                }
+            }
         }
     }
 
@@ -850,7 +915,8 @@ impl NodeCoordination {
         &mut self,
         desired_mode: InstanceMode,
         process_events: &F,
-    ) where
+    ) -> Result<CoordinationLoopDirective>
+    where
         F: Fn() -> Fut + Send + Sync,
         Fut: Future<Output = Result<()>> + Send,
     {
@@ -866,9 +932,19 @@ impl NodeCoordination {
                 );
                 self.current_mode = InstanceMode::Leader;
 
-                if let Err(e) = self.run_as_leader_with_maintenance(process_events).await {
-                    error!("Error running as leader: {}", e);
-                    self.current_mode = InstanceMode::Standby;
+                match self.run_as_leader_with_maintenance(process_events).await {
+                    Ok(LeaderLoopOutcome::LeadershipLost) => {
+                        self.current_mode = InstanceMode::Standby;
+                    }
+                    Ok(LeaderLoopOutcome::Exit) => {
+                        self.current_mode = InstanceMode::Standby;
+                        return Ok(CoordinationLoopDirective::Exit);
+                    }
+                    Err(e) => {
+                        error!("Error running as leader: {}", e);
+                        self.current_mode = InstanceMode::Standby;
+                        return Err(e);
+                    }
                 }
             }
             InstanceMode::Leader => {} // already leader, no-op
@@ -893,9 +969,13 @@ impl NodeCoordination {
                 self.current_mode = InstanceMode::Standby;
             }
         }
+        Ok(CoordinationLoopDirective::Continue)
     }
 
-    async fn run_as_leader_with_maintenance<F, Fut>(&mut self, process_events: &F) -> Result<()>
+    async fn run_as_leader_with_maintenance<F, Fut>(
+        &mut self,
+        process_events: &F,
+    ) -> Result<LeaderLoopOutcome>
     where
         F: Fn() -> Fut + Send,
         Fut: Future<Output = Result<()>> + Send,
@@ -957,9 +1037,9 @@ impl NodeCoordination {
         let kv_client = self.kv_client.clone();
         let instance_id = self.instance.instance_id.clone();
         let instance = self.instance.clone();
-        let handoff_rx = self
+        let mut handoff_rx = self
             .handoff_receiver
-            .as_mut()
+            .take()
             .ok_or(SinexError::invalid_state("No handoff receiver"))?;
 
         loop {
@@ -974,7 +1054,7 @@ impl NodeCoordination {
                        }
                        Ok(false) => {
                            error!("Lost leadership to another instance");
-                           return Ok(()); // Clean exit to degrade
+                           return Ok(LeaderLoopOutcome::LeadershipLost);
                        }
                        Err(e) => {
                            error!("Failed to maintain leadership: {}", e);
@@ -985,27 +1065,31 @@ impl NodeCoordination {
                        &instance,
                        Some(sinex_primitives::temporal::Timestamp::now().unix_timestamp()),
                    );
-                   let _ = kv_client.heartbeat(&instance_id, &heartbeat_metadata).await;
+                   if let Err(error) = kv_client.heartbeat(&heartbeat_metadata).await {
+                       self.record_coordination_failure("leader_instance_heartbeat", &error);
+                   }
                }
 
                // Process Events
                result = process_events() => {
                    match result {
-                       Ok(()) => info!("Event processing completed normally"),
+                       Ok(()) => {
+                           info!("Leader event processing completed; exiting coordination loop");
+                           return Ok(LeaderLoopOutcome::Exit);
+                       }
                        Err(e) => {
                            error!("Critical failure in event processing: {}", e);
                            self.signal_critical_failure(&e.to_string()).await?;
                            return Err(e);
                        }
                    }
-                   return Ok(());
                }
 
                // Handoffs
                Some(request) = handoff_rx.recv() => {
                    info!("Received handoff request");
                    self.handle_graceful_handoff(request).await?;
-                   return Ok(()); // Exit after handoff
+                   return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
                }
             }
         }
@@ -1468,6 +1552,23 @@ impl NodeCoordination {
             context,
             error = %error,
             "Coordination lease operation failed"
+        );
+    }
+
+    async fn unregister_current_instance(&self, reason: &str) {
+        if let Err(error) = self
+            .kv_client
+            .unregister_instance(&self.instance.instance_id)
+            .await
+        {
+            self.record_coordination_failure("unregister_instance", &error);
+            return;
+        }
+        info!(
+            service = %self.instance.service_name,
+            instance_id = %self.instance.instance_id,
+            reason,
+            "Removed coordination instance registration"
         );
     }
 }

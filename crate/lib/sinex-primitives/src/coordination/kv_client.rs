@@ -4,7 +4,7 @@ use async_nats::jetstream::{Context, kv::Store};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
 const INSTANCE_STALE_SECS: Seconds = Seconds::from_secs(20);
@@ -37,6 +37,31 @@ pub struct InstanceMetadata {
 }
 
 impl CoordinationKvClient {
+    async fn put_instance_metadata(
+        &self,
+        metadata: &InstanceMetadata,
+        event_label: &'static str,
+    ) -> Result<(), SinexError> {
+        let bucket = self.instances_bucket().await?;
+        let key = format!("{}.{}", self.service_name, metadata.instance_id);
+        let value = serde_json::to_vec(metadata).map_err(|e| {
+            SinexError::serialization(format!("Failed to serialize instance metadata: {e}"))
+        })?;
+
+        bucket
+            .put(key, value.into())
+            .await
+            .map_err(|e| SinexError::kv(format!("Failed to persist instance metadata: {e}")))?;
+
+        debug!(
+            service = %self.service_name,
+            instance = %metadata.instance_id,
+            event = event_label,
+            "Persisted coordination instance metadata"
+        );
+        Ok(())
+    }
+
     #[must_use]
     pub fn new(js: Context, service_name: String) -> Self {
         let env = crate::environment::environment();
@@ -97,16 +122,7 @@ impl CoordinationKvClient {
     /// Register a node instance in the KV store.
     /// Key: `{service}.{instance}`
     pub async fn register_instance(&self, metadata: &InstanceMetadata) -> Result<(), SinexError> {
-        let bucket = self.instances_bucket().await?;
-        let key = format!("{}.{}", self.service_name, metadata.instance_id);
-        let value = serde_json::to_vec(metadata).map_err(|e| {
-            SinexError::serialization(format!("Failed to serialize instance metadata: {e}"))
-        })?;
-
-        bucket
-            .put(key, value.into())
-            .await
-            .map_err(|e| SinexError::kv(format!("Failed to register instance: {e}")))?;
+        self.put_instance_metadata(metadata, "register").await?;
 
         info!(
             service = %self.service_name,
@@ -117,12 +133,24 @@ impl CoordinationKvClient {
     }
 
     /// Update heartbeat for the instance.
-    pub async fn heartbeat(
-        &self,
-        _instance_id: &str,
-        metadata: &InstanceMetadata,
-    ) -> Result<(), SinexError> {
-        self.register_instance(metadata).await
+    pub async fn heartbeat(&self, metadata: &InstanceMetadata) -> Result<(), SinexError> {
+        self.put_instance_metadata(metadata, "heartbeat").await
+    }
+
+    /// Remove instance metadata from KV on graceful exit.
+    pub async fn unregister_instance(&self, instance_id: &str) -> Result<(), SinexError> {
+        let bucket = self.instances_bucket().await?;
+        let key = format!("{}.{}", self.service_name, instance_id);
+        bucket
+            .delete(key)
+            .await
+            .map_err(|e| SinexError::kv(format!("Failed to unregister instance: {e}")))?;
+        info!(
+            service = %self.service_name,
+            instance = %instance_id,
+            "Unregistered instance from KV"
+        );
+        Ok(())
     }
 
     /// Attempt to acquire leadership for the service.
@@ -272,21 +300,46 @@ impl CoordinationKvClient {
             .map_err(|e| SinexError::kv(format!("Failed to list instance keys: {e}")))?;
 
         while let Some(key_result) = keys.next().await {
-            if let Ok(key) = key_result
-                && key.starts_with(&prefix)
-                && let Ok(Some(entry)) = bucket.get(&key).await
-                && let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry)
-            {
-                if self.instance_is_fresh(&metadata) {
-                    instances.push(metadata);
-                } else {
+            let key = match key_result {
+                Ok(key) => key,
+                Err(error) => {
                     warn!(
                         service = %self.service_name,
-                        instance = %metadata.instance_id,
-                        last_heartbeat = metadata.last_heartbeat,
-                        "Ignoring stale coordination instance metadata"
+                        error = %error,
+                        "Failed to iterate coordination instance key"
                     );
+                    continue;
                 }
+            };
+            if !key.starts_with(&prefix) {
+                continue;
+            }
+            let Some(entry) = bucket.get(&key).await.map_err(|e| {
+                SinexError::kv(format!("Failed to read instance metadata for {key}: {e}"))
+            })? else {
+                continue;
+            };
+            let metadata = match serde_json::from_slice::<InstanceMetadata>(&entry) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    warn!(
+                        service = %self.service_name,
+                        key,
+                        error = %error,
+                        "Ignoring malformed coordination instance metadata"
+                    );
+                    continue;
+                }
+            };
+            if self.instance_is_fresh(&metadata) {
+                instances.push(metadata);
+            } else {
+                warn!(
+                    service = %self.service_name,
+                    instance = %metadata.instance_id,
+                    last_heartbeat = metadata.last_heartbeat,
+                    "Ignoring stale coordination instance metadata"
+                );
             }
         }
 

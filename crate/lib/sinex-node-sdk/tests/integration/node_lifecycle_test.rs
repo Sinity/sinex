@@ -58,9 +58,8 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
     let leader_flag = became_leader.clone();
     let process_count = processing_count.clone();
 
-    // The coordination loop is infinite — it runs process_events() once per
-    // leadership cycle and then waits for the next 5-second tick.  We give it
-    // enough time for one full cycle and then let the timeout cancel it.
+    // Timeout bounds the coordination window; a clean loop exit after leader work
+    // is also valid now.
     let _lifecycle_result = timeout(
         Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
@@ -188,8 +187,7 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     let rec_count = recovery_count.clone();
     let success_count = successful_ops.clone();
 
-    // The coordination loop processes events once per leadership cycle.
-    // We let it run and then the timeout cancels the infinite outer loop.
+    // Timeout bounds the test; a clean coordination exit is also valid.
     let _recovery_result = timeout(
         Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
@@ -285,7 +283,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
     )
     .await;
 
-    // Verify transitions occurred (timeout cancels the infinite loop, that's expected)
+    // Verify transitions occurred; timeout only bounds the test window.
     assert!(
         became_leader.load(Ordering::SeqCst),
         "Should have transitioned to leader"
@@ -418,7 +416,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
     )
     .await;
 
-    // Verify operations ran (timeout cancels the infinite coordination loop)
+    // Verify operations ran; timeout only bounds the coordination window.
     assert!(
         operations_completed.load(Ordering::SeqCst) > 0,
         "Should have completed some operations"
@@ -496,7 +494,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
             )
             .await;
 
-            // The loop is infinite; timeout is expected. What matters is side effects.
+            // Timeout only bounds the test; clean loop exit is also acceptable.
             Ok::<bool, color_eyre::Report>(true)
         });
 
