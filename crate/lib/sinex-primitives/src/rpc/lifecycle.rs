@@ -28,11 +28,7 @@ pub struct TierStatus {
 
 /// Request: lifecycle.status
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LifecycleStatusRequest {
-    /// If true, include per-source breakdown
-    #[serde(default)]
-    pub by_source: bool,
-}
+pub struct LifecycleStatusRequest {}
 
 /// Response: lifecycle.status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,8 +227,6 @@ pub struct TombstoneCascadeAnalysis {
     pub cascade_total: usize,
     /// Maximum depth of cascade chain
     pub cascade_depth: usize,
-    /// Event counts by source
-    pub by_source: std::collections::HashMap<String, usize>,
     /// Sample event IDs for inspection (first 10)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sample_ids: Vec<String>,
@@ -339,10 +333,10 @@ pub struct TombstoneCreateRequest {
     /// Tombstone archived events older than this duration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
-    /// Filter by source
+    /// Filter by source. Mutually exclusive with `event_ids`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<EventSource>,
-    /// Tombstone specific archived event IDs
+    /// Tombstone specific archived event IDs. Mutually exclusive with `source` and `before`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_ids: Option<Vec<String>>,
     /// Maximum events to tombstone
