@@ -1901,6 +1901,10 @@ impl TerminalNode {
                         source.path
                     )),
                 },
+                "elvish" => HistorySourceMode::ConfiguredError(format!(
+                    "configured Elvish history source {} uses Elvish's native database format, which is not supported",
+                    source.path
+                )),
                 _ => HistorySourceMode::Text,
             };
 
@@ -2933,6 +2937,111 @@ mod tests {
             .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
             .await
             .expect_err("continuous mode should fail when Fish history is unsupported");
+        assert!(
+            error.to_string().contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_reports_unsupported_elvish_history_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-elvish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("elvish.db");
+        tokio::fs::write(&invalid_history, "sqlite-like-or-binary-does-not-matter").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Elvish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history.clone(),
+                shell: "elvish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("elvish:{invalid_history}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("native database format, which is not supported"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_rejects_unsupported_elvish_history(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-invalid-elvish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("elvish.db");
+        tokio::fs::write(&invalid_history, "sqlite-like-or-binary-does-not-matter").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Elvish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history,
+                shell: "elvish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .await
+            .expect_err("continuous mode should fail when Elvish history is unsupported");
         assert!(
             error.to_string().contains("no usable history sources"),
             "unexpected error: {error}"
