@@ -1,33 +1,110 @@
 #[cfg(feature = "messaging")]
 use crate::{NodeResult, acquisition_manager::AcquisitionManager};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row};
 #[cfg(feature = "messaging")]
 use serde_json::Value as JsonValue;
 use sinex_primitives::Uuid;
 use std::path::Path;
+use std::{error::Error, fmt};
 
 fn open_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
     Connection::open_with_flags(Path::new(path.as_str()), OpenFlags::SQLITE_OPEN_READ_ONLY)
 }
 
-pub fn is_sqlite_with_tables(path: &Utf8Path, tables: &[&str]) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SqliteTableCheckError {
+    MissingPath {
+        path: Utf8PathBuf,
+    },
+    OpenFailed {
+        path: Utf8PathBuf,
+        error: String,
+    },
+    MetadataQueryFailed {
+        path: Utf8PathBuf,
+        table: String,
+        error: String,
+    },
+    MissingTables {
+        path: Utf8PathBuf,
+        tables: Vec<String>,
+    },
+}
+
+impl fmt::Display for SqliteTableCheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPath { path } => {
+                write!(f, "SQLite path does not exist: {path}")
+            }
+            Self::OpenFailed { path, error } => {
+                write!(f, "failed to open SQLite database {path}: {error}")
+            }
+            Self::MetadataQueryFailed { path, table, error } => {
+                write!(
+                    f,
+                    "failed to inspect SQLite schema for table {table} in {path}: {error}"
+                )
+            }
+            Self::MissingTables { path, tables } => {
+                write!(
+                    f,
+                    "SQLite database {path} is missing required tables: {}",
+                    tables.join(", ")
+                )
+            }
+        }
+    }
+}
+
+impl Error for SqliteTableCheckError {}
+
+pub fn ensure_sqlite_with_tables(
+    path: &Utf8Path,
+    tables: &[&str],
+) -> Result<(), SqliteTableCheckError> {
     if !Path::new(path.as_str()).exists() {
-        return false;
+        return Err(SqliteTableCheckError::MissingPath {
+            path: path.to_path_buf(),
+        });
     }
 
-    let Ok(conn) = open_read_only(path) else {
-        return false;
-    };
+    let conn = open_read_only(path).map_err(|error| SqliteTableCheckError::OpenFailed {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
 
-    tables.iter().all(|table| {
-        conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1)",
-            [table],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap_or(false)
-    })
+    let mut missing_tables = Vec::new();
+    for table in tables {
+        let exists = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1)",
+                [table],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| SqliteTableCheckError::MetadataQueryFailed {
+                path: path.to_path_buf(),
+                table: (*table).to_string(),
+                error: error.to_string(),
+            })?;
+        if !exists {
+            missing_tables.push((*table).to_string());
+        }
+    }
+
+    if missing_tables.is_empty() {
+        Ok(())
+    } else {
+        Err(SqliteTableCheckError::MissingTables {
+            path: path.to_path_buf(),
+            tables: missing_tables,
+        })
+    }
+}
+
+pub fn is_sqlite_with_tables(path: &Utf8Path, tables: &[&str]) -> bool {
+    ensure_sqlite_with_tables(path, tables).is_ok()
 }
 
 pub fn read_rows_after<T, F>(

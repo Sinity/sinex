@@ -114,9 +114,7 @@ pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
 };
 #[cfg(feature = "messaging")]
-pub use automaton_base::{
-    ActivityEntry, IngestionHistoryEntry,
-};
+pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};
 #[cfg(feature = "messaging")]
 pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
@@ -175,13 +173,13 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
-pub use shutdown::{ShutdownConfig, ShutdownHandler, ShutdownSignal, default_checkpoint_path};
-pub use sqlite_source::{
-    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, stable_material_id,
-    stable_row_material_id,
-};
+pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use sqlite_source::stage_stable_material;
+pub use sqlite_source::{
+    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
+    read_rows_after, stable_material_id, stable_row_material_id,
+};
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
@@ -194,7 +192,7 @@ pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
 #[cfg(feature = "db")]
 pub use historical_importer::{HistoricalImporter, ImportProgress};
 #[cfg(feature = "preflight")]
-pub use preflight::{VerificationStatus, run_preflight_checks, verify_service_dependencies};
+pub use preflight::{VerificationStatus, verify_service_dependencies};
 
 /// Version information for node components
 #[derive(Debug, Clone)]

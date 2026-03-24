@@ -1,11 +1,15 @@
-//! ActivityWatch SQLite historical reader for the desktop ingestor.
+//! `ActivityWatch` `SQLite` historical reader for the desktop ingestor.
 //!
 //! Kept crate-private because it is an implementation detail of the desktop node.
 
 use camino::Utf8PathBuf;
+use rusqlite::types::Type;
 use serde_json::{Value as JsonValue, json};
-use sinex_node_sdk::{is_sqlite_with_tables, read_rows_after};
+use sinex_node_sdk::{
+    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, read_rows_after,
+};
 use sinex_primitives::Timestamp;
+use std::io::{Error as IoError, ErrorKind};
 
 const WINDOW_BUCKET_PREFIX: &str = "aw-watcher-window_";
 const WEB_BUCKET_PREFIX: &str = "aw-watcher-web_";
@@ -65,9 +69,14 @@ impl ActivityWatchHistoryEntry {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[must_use]
 pub fn is_activitywatch_sqlite(path: &Utf8PathBuf) -> bool {
     is_sqlite_with_tables(path, &["events", "buckets"])
+}
+
+pub fn ensure_activitywatch_sqlite(path: &Utf8PathBuf) -> Result<(), SqliteTableCheckError> {
+    ensure_sqlite_with_tables(path, &["events", "buckets"])
 }
 
 pub fn read_activitywatch_history(
@@ -93,24 +102,24 @@ pub fn read_activitywatch_history(
          ORDER BY e.ROWID ASC",
         from_row_id,
         |row| {
+            let row_id: i64 = row.get(0)?;
             let bucket_id: String = row.get(1)?;
             let (kind, host) = classify_bucket(&bucket_id);
             let start_ns: i64 = row.get(2)?;
             let end_ns: i64 = row.get(3)?;
-            let started_at = Timestamp::from_unix_timestamp_nanos(i128::from(start_ns))
-                .unwrap_or(Timestamp::UNIX_EPOCH);
-            let ended_at =
-                Timestamp::from_unix_timestamp_nanos(i128::from(end_ns)).unwrap_or(started_at);
+            let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
+            let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
             let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
             let duration_ms = u64::try_from(duration_ns / 1_000_000).unwrap_or(0);
 
             let payload = row
                 .get::<_, Option<String>>(4)?
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or(JsonValue::Object(Default::default()));
+                .map(|value| parse_activitywatch_payload(row_id, &value))
+                .transpose()?
+                .unwrap_or(JsonValue::Null);
 
             Ok(ActivityWatchHistoryEntry {
-                row_id: row.get(0)?,
+                row_id,
                 bucket_id,
                 kind,
                 host,
@@ -141,6 +150,40 @@ fn classify_bucket(bucket_id: &str) -> (ActivityWatchEntryKind, String) {
         return (ActivityWatchEntryKind::Afk, host.to_string());
     }
     (ActivityWatchEntryKind::Window, bucket_id.to_string())
+}
+
+fn parse_timestamp_ns(
+    row_id: i64,
+    field: &'static str,
+    column_index: usize,
+    raw_ns: i64,
+) -> Result<Timestamp, rusqlite::Error> {
+    Timestamp::from_unix_timestamp_nanos(i128::from(raw_ns)).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column_index,
+            Type::Integer,
+            Box::new(IoError::new(
+                ErrorKind::InvalidData,
+                format!("ActivityWatch row {row_id} has invalid {field} nanoseconds: {raw_ns}"),
+            )),
+        )
+    })
+}
+
+fn parse_activitywatch_payload(
+    row_id: i64,
+    raw_payload: &str,
+) -> Result<JsonValue, rusqlite::Error> {
+    serde_json::from_str(raw_payload).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            Type::Text,
+            Box::new(IoError::new(
+                ErrorKind::InvalidData,
+                format!("ActivityWatch row {row_id} has invalid JSON payload: {error}"),
+            )),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -224,6 +267,42 @@ mod tests {
         assert_eq!(entries[0].row_id, 2);
         assert_eq!(last_row_id, 3);
         assert_eq!(get_max_row_id(&path)?, 3);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_history_reader_rejects_invalid_json_rows() -> TestResult<()> {
+        let path = fixture_db()?;
+        let conn = Connection::open(path.as_std_path())?;
+        conn.execute(
+            "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
+            (1, 20_000_000_000_i64, 21_000_000_000_i64, "{\"app\":"),
+        )?;
+
+        let error = read_activitywatch_history(&path, 3).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid JSON payload"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_history_reader_rejects_invalid_timestamp_rows() -> TestResult<()> {
+        let path = fixture_db()?;
+        let conn = Connection::open(path.as_std_path())?;
+        conn.execute(
+            "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
+            (1, "not-a-timestamp", 21_000_000_000_i64, "{\"app\":\"kitty\"}"),
+        )?;
+
+        let error = read_activitywatch_history(&path, 3).unwrap_err();
+        assert!(
+            error.to_string().contains("starttime"),
+            "unexpected error: {error}"
+        );
 
         Ok(())
     }

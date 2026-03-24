@@ -6,7 +6,10 @@
 //! node pipeline instead of the separate CLI import path.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::{is_sqlite_with_tables, max_row_id_for_query, read_rows_after};
+use sinex_node_sdk::{
+    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
+    read_rows_after,
+};
 
 /// Represents a single command from Atuin history.
 #[derive(Debug, Clone)]
@@ -26,6 +29,10 @@ pub struct AtuinHistoryEntry {
 #[must_use]
 pub fn is_atuin_sqlite_history(path: &Utf8PathBuf) -> bool {
     is_sqlite_with_tables(path, &["history"])
+}
+
+pub fn ensure_atuin_sqlite_history(path: &Utf8PathBuf) -> Result<(), SqliteTableCheckError> {
+    ensure_sqlite_with_tables(path, &["history"])
 }
 
 /// Read Atuin history entries starting from a given row offset.

@@ -14,7 +14,7 @@ use crate::common::{
 use crate::{
     ClipboardWatcher, WindowManagerWatcher,
     activitywatch_history::{
-        ActivityWatchEntryKind, ActivityWatchHistoryEntry, is_activitywatch_sqlite,
+        ActivityWatchEntryKind, ActivityWatchHistoryEntry, ensure_activitywatch_sqlite,
         read_activitywatch_history,
     },
     window_manager::WindowManagerType,
@@ -26,8 +26,8 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
-    stage_stable_material,
     stage_as_you_go::StageAsYouGoContext,
+    stage_stable_material,
     watcher_handle::WatcherHandle,
 };
 use sinex_primitives::{
@@ -59,7 +59,7 @@ pub struct DesktopConfig {
     pub clipboard_poll_interval_secs: Seconds,
     /// Require Hyprland to be present (if false, runs in degraded mode)
     pub require_hyprland: bool,
-    /// Optional ActivityWatch SQLite database path used for truthful historical imports.
+    /// Optional `ActivityWatch` `SQLite` database path used for truthful historical imports.
     pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
@@ -601,19 +601,17 @@ impl IngestorNode for DesktopNode {
             });
         };
 
-        if !is_activitywatch_sqlite(&db_path) {
-            return Err(SinexError::configuration(format!(
-                "ActivityWatch database at {} is missing the expected events/buckets schema",
-                db_path
-            )));
-        }
+        ensure_activitywatch_sqlite(&db_path).map_err(|error| {
+            SinexError::configuration(format!(
+                "ActivityWatch database at {db_path} is unusable: {error}"
+            ))
+        })?;
 
         let start_row_id = Self::historical_activitywatch_start_row(state, &from);
         let (entries, last_row_id) =
             read_activitywatch_history(&db_path, start_row_id).map_err(|error| {
                 SinexError::io(format!(
-                    "Failed to read ActivityWatch history from {}: {error}",
-                    db_path
+                    "Failed to read ActivityWatch history from {db_path}: {error}"
                 ))
             })?;
 
@@ -858,8 +856,7 @@ mod tests {
 
     #[sinex_test]
     async fn activitywatch_historical_start_row_prefers_checkpoint_when_present()
-    -> xtask::sandbox::TestResult<()>
-    {
+    -> xtask::sandbox::TestResult<()> {
         let state = DesktopPersistentState {
             activitywatch_last_row_id: 42,
             ..DesktopPersistentState::default()
