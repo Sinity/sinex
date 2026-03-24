@@ -76,6 +76,37 @@ enum ServiceRunStatus {
     Stopped,
 }
 
+const CORE_SERVICE_NAMES: [&str; 2] = ["sinex-gateway", "sinex-ingestd"];
+
+fn probe_service_status(service_name: &str) -> ServiceStatus {
+    let output = std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg(service_name)
+        .output();
+
+    let (status, pid) = match output {
+        Ok(output) if !output.stdout.is_empty() => {
+            let pid_str = String::from_utf8_lossy(&output.stdout);
+            let pid = pid_str.lines().next().and_then(|line| line.trim().parse().ok());
+            (ServiceRunStatus::Running, pid)
+        }
+        _ => (ServiceRunStatus::Stopped, None),
+    };
+
+    ServiceStatus {
+        name: service_name.to_string(),
+        status,
+        pid,
+    }
+}
+
+fn collect_core_service_statuses() -> Vec<ServiceStatus> {
+    CORE_SERVICE_NAMES
+        .iter()
+        .map(|service_name| probe_service_status(service_name))
+        .collect()
+}
+
 #[derive(Debug, Serialize)]
 struct JobsStatus {
     active: usize,
@@ -307,28 +338,7 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 .is_ok_and(|s| s.success());
             let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
 
-            let services = ["sinex-gateway", "sinex-ingestd"]
-                .iter()
-                .map(|svc| {
-                    let output = std::process::Command::new("pgrep")
-                        .arg("-f")
-                        .arg(svc)
-                        .output();
-                    let (status, pid) = match output {
-                        Ok(o) if !o.stdout.is_empty() => {
-                            let pid_str = String::from_utf8_lossy(&o.stdout);
-                            let pid = pid_str.lines().next().and_then(|l| l.trim().parse().ok());
-                            (ServiceRunStatus::Running, pid)
-                        }
-                        _ => (ServiceRunStatus::Stopped, None),
-                    };
-                    ServiceStatus {
-                        name: svc.to_string(),
-                        status,
-                        pid,
-                    }
-                })
-                .collect();
+            let services = collect_core_service_statuses();
 
             (pg, nats, services)
         });
@@ -747,29 +757,8 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         } else {
             None
         },
-        runtime: data.runtime_metrics.as_ref().and_then(|m| {
-            if matches!(
-                m.ingestd_status,
-                IngestdStatus::Healthy | IngestdStatus::Stale
-            ) {
-                Some(m.clone())
-            } else {
-                None
-            }
-        }),
-        services: {
-            let running: Vec<_> = data
-                .services
-                .iter()
-                .filter(|s| matches!(s.status, ServiceRunStatus::Running))
-                .cloned()
-                .collect();
-            if running.is_empty() {
-                None
-            } else {
-                Some(running)
-            }
-        },
+        runtime: data.runtime_metrics.clone(),
+        services: (!data.services.is_empty()).then(|| data.services.clone()),
         last_commit: data.git.last_commit_hash.as_ref().map(|hash| CommitInfo {
             hash: hash.clone(),
             message: data.git.last_commit_message.clone().unwrap_or_default(),
@@ -919,32 +908,30 @@ impl<'a> MotdRenderer<'a> {
         let label = style("  infra").dim();
 
         let pg = if self.data.pg_ready {
-            style("pg:ok").green().to_string()
+            style("pg:ready").green().to_string()
         } else {
             style("pg:offline").red().bold().to_string()
         };
 
         let nats = if self.data.nats_ready {
-            style("nats:ok").green().to_string()
+            style("nats:reachable").green().to_string()
         } else {
             style("nats:offline").red().bold().to_string()
         };
 
-        let running_services: Vec<_> = self
-            .data
-            .services
-            .iter()
-            .filter(|s| matches!(s.status, ServiceRunStatus::Running))
-            .collect();
-
-        if running_services.is_empty() {
+        if self.data.services.is_empty() {
             println!("{label}    {pg}  {nats}");
         } else {
-            let svc_parts: Vec<String> = running_services
+            let svc_parts: Vec<String> = self
+                .data
+                .services
                 .iter()
                 .map(|s| {
                     let short = s.name.strip_prefix("sinex-").unwrap_or(&s.name);
-                    style(format!("{short}:up")).green().to_string()
+                    match s.status {
+                        ServiceRunStatus::Running => style(format!("{short}:up")).green().to_string(),
+                        ServiceRunStatus::Stopped => style(format!("{short}:down")).red().to_string(),
+                    }
                 })
                 .collect();
             println!(
@@ -1143,22 +1130,20 @@ impl<'a> MotdRenderer<'a> {
     // ─── Runtime ────────────────────────────────────────────────────────
 
     fn render_runtime(&self) {
-        let metrics = match &self.data.runtime_metrics {
-            Some(m)
-                if matches!(
-                    m.ingestd_status,
-                    IngestdStatus::Healthy | IngestdStatus::Stale
-                ) =>
-            {
-                m
-            }
-            _ => return,
+        let Some(metrics) = &self.data.runtime_metrics else {
+            return;
         };
 
         let label = style("  runtime").dim();
+        let status = match metrics.ingestd_status {
+            IngestdStatus::Healthy => style("ingestd ok").green().to_string(),
+            IngestdStatus::Stale => style("ingestd stale").yellow().to_string(),
+            IngestdStatus::Down => style("ingestd down").red().to_string(),
+            IngestdStatus::Unknown => style("ingestd unknown").dim().to_string(),
+        };
 
         let lag = metrics
-            .consumer_lag_pending
+            .fresh_consumer_lag_pending()
             .map(|v| {
                 let s = format!("{v:.0}");
                 let colored = if v < 10.0 {
@@ -1170,11 +1155,23 @@ impl<'a> MotdRenderer<'a> {
                 };
                 format!("lag {colored}")
             })
+            .or_else(|| {
+                metrics
+                    .consumer_lag_age_secs
+                    .filter(|_| metrics.consumer_lag_is_stale())
+                    .map(|age| style(format!("lag stale ({age}s)")).yellow().to_string())
+            })
             .unwrap_or_default();
 
         let batch = metrics
-            .last_batch_latency_ms
+            .fresh_batch_latency_ms()
             .map(|v| format!("batch {}ms", v as u64))
+            .or_else(|| {
+                metrics
+                    .last_batch_latency_age_secs
+                    .filter(|_| metrics.batch_latency_is_stale())
+                    .map(|age| style(format!("batch stale ({age}s)")).yellow().to_string())
+            })
             .unwrap_or_default();
 
         let heartbeat = metrics
@@ -1192,12 +1189,12 @@ impl<'a> MotdRenderer<'a> {
             .unwrap_or_default();
 
         let sep = style("·").dim();
-        let parts: Vec<&str> = [lag.as_str(), batch.as_str(), heartbeat.as_str()]
+        let parts: Vec<&str> = [status.as_str(), lag.as_str(), batch.as_str(), heartbeat.as_str()]
             .into_iter()
             .filter(|s| !s.is_empty())
             .collect();
 
-        println!("{label}  ingestd: {}", parts.join(&format!(" {sep} ")));
+        println!("{label}  {}", parts.join(&format!(" {sep} ")));
     }
 
     // ─── Active Jobs ────────────────────────────────────────────────────
@@ -1351,32 +1348,7 @@ fn collect_status_data(ctx: &CommandContext) -> (
                 let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
                 let nats_lat = nats_start.elapsed().as_millis() as u64;
 
-                let service_names = ["sinex-gateway", "sinex-ingestd"];
-                let svcs: Vec<ServiceStatus> = service_names
-                    .iter()
-                    .map(|svc| {
-                        let output = std::process::Command::new("pgrep")
-                            .arg("-f")
-                            .arg(svc)
-                            .output();
-
-                        let (status, pid) = match output {
-                            Ok(o) if !o.stdout.is_empty() => {
-                                let pid_str = String::from_utf8_lossy(&o.stdout);
-                                let pid =
-                                    pid_str.lines().next().and_then(|s| s.trim().parse().ok());
-                                (ServiceRunStatus::Running, pid)
-                            }
-                            _ => (ServiceRunStatus::Stopped, None),
-                        };
-
-                        ServiceStatus {
-                            name: svc.to_string(),
-                            status,
-                            pid,
-                        }
-                    })
-                    .collect();
+                let svcs = collect_core_service_statuses();
 
                 (pg, pg_lat, nats, nats_lat, svcs)
             });
@@ -1564,12 +1536,12 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
             let output = StatusOutput {
                 infrastructure: InfrastructureStatus {
                     postgres: ComponentStatus {
-                        status: if pg_ready { "healthy" } else { "offline" }.to_string(),
+                        status: if pg_ready { "ready" } else { "offline" }.to_string(),
                         latency_ms: Some(pg_latency),
                         port: None,
                     },
                     nats: ComponentStatus {
-                        status: if nats_ready { "healthy" } else { "offline" }.to_string(),
+                        status: if nats_ready { "reachable" } else { "offline" }.to_string(),
                         latency_ms: Some(nats_latency),
                         port: Some(nats_port),
                     },
@@ -1660,12 +1632,12 @@ mod tests {
         let output = StatusOutput {
             infrastructure: InfrastructureStatus {
                 postgres: ComponentStatus {
-                    status: "healthy".into(),
+                    status: "ready".into(),
                     latency_ms: Some(5),
                     port: None,
                 },
                 nats: ComponentStatus {
-                    status: "healthy".into(),
+                    status: "reachable".into(),
                     latency_ms: Some(2),
                     port: Some(4222),
                 },
@@ -1767,11 +1739,18 @@ mod tests {
                 description: "3 auto-fixable".into(),
                 action: "xtask fix --smart".into(),
             }]),
-            runtime: None,
+            runtime: Some(RuntimeMetrics {
+                ingestd_status: IngestdStatus::Down,
+                last_heartbeat_age_secs: Some(240),
+                consumer_lag_pending: Some(42.0),
+                consumer_lag_age_secs: Some(240),
+                last_batch_latency_ms: Some(125.0),
+                last_batch_latency_age_secs: Some(240),
+            }),
             services: Some(vec![ServiceStatus {
                 name: "sinex-ingestd".into(),
-                status: ServiceRunStatus::Running,
-                pid: Some(9999),
+                status: ServiceRunStatus::Stopped,
+                pid: None,
             }]),
             last_commit: Some(CommitInfo {
                 hash: "aafd524".into(),
@@ -1814,8 +1793,12 @@ mod tests {
         assert!(json["recommendations"].is_array());
         assert_eq!(json["recommendations"][0]["severity"], "warning");
         assert_eq!(json["recommendations"][0]["action"], "xtask fix --smart");
+        assert_eq!(json["runtime"]["ingestd_status"], "down");
+        assert_eq!(json["runtime"]["consumer_lag_age_secs"], 240);
         assert!(json["services"].is_array());
         assert_eq!(json["services"][0]["name"], "sinex-ingestd");
+        assert_eq!(json["services"][0]["status"], "stopped");
+        assert!(json["services"][0]["pid"].is_null());
         assert_eq!(json["last_commit"]["hash"], "aafd524");
         assert_eq!(json["last_commit"]["age_mins"], 32);
         assert_eq!(json["files_changed"], "2 files changed");
