@@ -4,6 +4,7 @@ use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_ingestd::material_ready_set::MaterialReadySet;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, error::SinexError, temporal};
@@ -195,6 +196,70 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
 }
 
 #[sinex_test]
+async fn consumer_accepts_db_registered_material_outside_ready_set(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    let validator = EventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
+        ctx.pipeline_namespace().consumer_name("ingestd-ready-set"),
+        Some(&namespace),
+    );
+    let events_stream = topology.events_stream.clone();
+
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    )
+    .with_ready_set(MaterialReadySet::new());
+    let consumer_handle = tokio::spawn(async move { consumer.run().await });
+
+    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
+        .await?;
+
+    let material_id = Uuid::now_v7();
+    ctx.ensure_specific_material(material_id, Some("gateway-inline"))
+        .await?;
+
+    let event_id = Uuid::now_v7();
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "gateway",
+        "event_type": "inline.persisted",
+        "payload": { "value": "ok" },
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": material_id.to_string(),
+        "anchor_byte": 0,
+    });
+
+    let subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.gateway.inline_persisted");
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
+#[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
@@ -353,6 +418,69 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
         Some("byte"),
         "expected persisted events to record an offset kind"
     );
+
+    consumer_handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn consumer_loads_externally_registered_materials_via_db_fallback(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    use sinex_primitives::{DynamicPayload, Id};
+
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    let validator = EventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let nats = ctx.nats_handle()?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
+        ctx.pipeline_namespace().consumer_name("ingestd-db-fallback"),
+        Some(&namespace),
+    );
+    let events_stream = topology.events_stream.clone();
+
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    )
+    .with_ready_set(MaterialReadySet::new());
+    let consumer_handle = tokio::spawn(async move { consumer.run().await });
+
+    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
+        .await?;
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            "gateway-inline",
+            Some("sinex-gateway://events.ingest/test"),
+            json!({"test": true}),
+        )
+        .await?;
+
+    let event_uuid = Uuid::now_v7();
+    let mut event = DynamicPayload::new("fallback-test", "material.ready", json!({"ok": true}))
+        .from_material_at(material_record.id, 0)
+        .build()?;
+    event.id = Some(Id::from_uuid(event_uuid));
+
+    let subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.fallback_test.material_ready");
+    let event_json = serde_json::to_vec(&event)?;
+    nats_client.publish(subject, event_json.into()).await?;
+    nats_client.flush().await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_uuid.into(), Timeouts::SHORT).await?;
 
     consumer_handle.abort();
     Ok(())

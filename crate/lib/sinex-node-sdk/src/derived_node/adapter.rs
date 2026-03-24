@@ -121,6 +121,34 @@ impl<N> DerivedNodeAdapter<N>
 where
     N: DerivedNodeImpl,
 {
+    async fn send_to_dlq_or_fail(
+        &self,
+        event: &Event<JsonValue>,
+        error: &crate::NodeLogicError,
+    ) -> NodeResult<()> {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Err(
+                SinexError::lifecycle("derived-node requested DLQ but no transport runtime is available")
+                    .with_context("node", self.node.name())
+                    .with_context("event_type", event.event_type.as_ref())
+                    .with_context("source", event.source.as_ref())
+                    .with_context("reason", error.to_string()),
+            );
+        };
+        let transport = runtime.handles().transport();
+        transport
+            .send_to_dlq(event, &error.to_string(), self.node.name())
+            .await
+            .map_err(|dlq_err| {
+                SinexError::processing("failed to send derived-node event to DLQ")
+                    .with_context("node", self.node.name())
+                    .with_context("event_type", event.event_type.as_ref())
+                    .with_context("source", event.source.as_ref())
+                    .with_context("reason", error.to_string())
+                    .with_std_error(&dlq_err)
+            })
+    }
+
     // ── Checkpoint Management ──────────────────────────────────────────
 
     async fn load_state(&mut self) -> NodeResult<()> {
@@ -258,8 +286,8 @@ where
         &mut self,
         event: Event<JsonValue>,
     ) -> NodeResult<Option<Event<JsonValue>>> {
-        let context = DerivedTriggerContext::live(&event);
-        let source_event_id = event.id.unwrap_or_default();
+        let context = DerivedTriggerContext::live(&event)?;
+        let source_event_id = context.trigger_event_id;
 
         let result = self
             .node
@@ -277,9 +305,7 @@ where
                 }
             }
 
-            if self.persisted_state.events_processed.is_multiple_of(100)
-                && let Err(e) = reporter.check_and_emit().await
-            {
+            if let Err(e) = reporter.check_and_emit().await {
                 warn!(node = %self.node.name(), error = %e, "Failed to emit health status");
             }
         }
@@ -306,22 +332,7 @@ where
                         Ok(None)
                     }
                     ErrorAction::SendToDLQ => {
-                        if let Some(ref runtime) = self.runtime {
-                            let transport = runtime.handles().transport();
-                            if let Err(dlq_err) = transport
-                                .send_to_dlq(&event, &e.to_string(), self.node.name())
-                                .await
-                            {
-                                error!(
-                                    node = %self.node.name(),
-                                    error = %e,
-                                    dlq_error = %dlq_err,
-                                    "Failed to send event to DLQ"
-                                );
-                            }
-                        } else {
-                            warn!(node = %self.node.name(), error = %e, "Would send to DLQ but no transport");
-                        }
+                        self.send_to_dlq_or_fail(&event, &e).await?;
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
                         Ok(None)
@@ -993,7 +1004,7 @@ where
             }
 
             for query_event in &events {
-                let ctx = DerivedTriggerContext::historical(&query_event.event, operation_id);
+                let ctx = DerivedTriggerContext::historical(&query_event.event, operation_id)?;
 
                 match self
                     .node
@@ -1005,8 +1016,8 @@ where
                     .await
                 {
                     Ok(Some(output)) => {
-                        let source_id = query_event.event.id.unwrap_or_default();
-                        let output_event = self.build_output_event(output, source_id, &ctx)?;
+                        let output_event =
+                            self.build_output_event(output, ctx.trigger_event_id, &ctx)?;
                         if let Some(ref sender) = self.event_sender {
                             sender.send(output_event).await.map_err(|_| {
                                 SinexError::lifecycle("Event channel closed during replay")

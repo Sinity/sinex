@@ -682,15 +682,26 @@ impl JetStreamConsumer {
         // Pre-filter: defer events whose source material isn't registered yet.
         // This prevents FK violations without relying on database error handling.
         let batch = if let Some(ref ready_set) = self.ready_set {
-            let (ready, not_ready): (Vec<&PreparedEvent>, Vec<&PreparedEvent>) =
-                batch.iter().partition(|prepared| {
-                    match &prepared.event.provenance {
-                        // Material provenance: check if the referenced material is registered
-                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_uuid()),
-                        // Synthesis provenance has no material FK — always ready
-                        Provenance::Synthesis { .. } => true,
+            let mut ready = Vec::with_capacity(batch.len());
+            let mut not_ready = Vec::new();
+
+            for prepared in batch {
+                let is_ready = match &prepared.event.provenance {
+                    // Material provenance: first consult the in-memory set, then fall back
+                    // to the registry so externally-registered materials are not deferred forever.
+                    Provenance::Material { id, .. } => {
+                        ready_set.ensure_ready(&self.pool, *id.as_uuid()).await?
                     }
-                });
+                    // Synthesis provenance has no material FK — always ready.
+                    Provenance::Synthesis { .. } => true,
+                };
+
+                if is_ready {
+                    ready.push(prepared);
+                } else {
+                    not_ready.push(prepared);
+                }
+            }
 
             if !not_ready.is_empty() {
                 debug!(

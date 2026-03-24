@@ -317,17 +317,16 @@ impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
     type Table = SourceMaterialRegistry;
 }
 impl SourceMaterialRepository<'_> {
-    /// Register a new source material
-    pub async fn register_material(
+    async fn insert_material_with_id(
         &self,
+        id: Id<SourceMaterial>,
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
         use crate::query_helpers::{
             IdempotentTransaction, RetryConfig, set_repeatable_read,
             with_retry_transaction_idempotent,
         };
-        let id = Id::<SourceMaterial>::new();
-        // Clone material for retry closure
+
         let material = material.clone();
         with_retry_transaction_idempotent(
             self.pool,
@@ -401,6 +400,28 @@ impl SourceMaterialRepository<'_> {
             },
         )
         .await
+    }
+
+    /// Register a new source material
+    pub async fn register_material(
+        &self,
+        material: SourceMaterial,
+    ) -> DbResult<SourceMaterialRecord> {
+        let id = Id::<SourceMaterial>::new();
+        self.insert_material_with_id(id, material).await
+    }
+
+    /// Register a completed source material with a caller-provided identifier.
+    ///
+    /// This is used by ingress surfaces that must choose the material ID before
+    /// the event is published so provenance can reference an already-registered row.
+    pub async fn register_external_material(
+        &self,
+        material_id: uuid::Uuid,
+        material: SourceMaterial,
+    ) -> DbResult<SourceMaterialRecord> {
+        self.insert_material_with_id(Id::<SourceMaterial>::from_uuid(material_id), material)
+            .await
     }
     /// Get source material by ID
     pub async fn get_by_id(

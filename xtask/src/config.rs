@@ -69,6 +69,8 @@ pub struct Config {
     pub database_url: Option<String>,
     /// NATS server URL
     pub nats_url: Option<String>,
+    /// Gateway base URL (without `/rpc`) for HTTP readiness checks
+    pub gateway_url: Option<String>,
     /// State directory for persistent data (history, jobs)
     pub state_dir: PathBuf,
     /// Cache directory for temporary data
@@ -100,6 +102,14 @@ impl Config {
         Self {
             database_url: env::var("DATABASE_URL").ok(),
             nats_url: env::var("SINEX_NATS_URL").ok(),
+            gateway_url: env::var("SINEX_GATEWAY_URL")
+                .ok()
+                .or_else(|| env::var("SINEX_RPC_URL").ok())
+                .or_else(|| {
+                    env::var("SINEX_GATEWAY_TCP_LISTEN")
+                        .ok()
+                        .map(|listen| format!("https://{listen}"))
+                }),
             state_dir,
             cache_dir,
             test_results_dir: env::var("SINEX_TEST_RESULTS_DIR").map(PathBuf::from).ok(),
