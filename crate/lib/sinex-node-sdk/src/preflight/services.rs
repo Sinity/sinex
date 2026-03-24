@@ -107,7 +107,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
         }
     }
 
-    if runtime_database_expected() {
+    if runtime_database_expected()? {
         match verify_postgresql_service(&mut messages).await {
             Ok(postgres_info) => {
                 details.insert("postgresql", postgres_info);
@@ -176,7 +176,7 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     let require_service_binaries = descriptor.is_none();
 
     let mut required_binaries = vec![("systemctl", "SystemD control", true)];
-    if runtime_database_expected() {
+    if runtime_database_expected()? {
         required_binaries.push(("psql", "PostgreSQL client", true));
     }
     if require_service_binaries {

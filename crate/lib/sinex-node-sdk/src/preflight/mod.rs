@@ -13,7 +13,6 @@ use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::constants::timeouts;
 use sinex_primitives::environment::environment;
 use std::process::Output;
-use tracing::debug;
 
 /// Run an external command with a timeout to prevent indefinite hangs during preflight.
 pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> NodeResult<Output> {
@@ -45,29 +44,20 @@ pub(crate) fn deployment_descriptor_result(
     DeploymentReadinessDescriptor::load()
 }
 
-pub(crate) fn deployment_descriptor(log_context: &str) -> Option<DeploymentReadinessDescriptor> {
-    match deployment_descriptor_result(log_context) {
-        Ok(Some(descriptor)) => Some(descriptor),
-        Ok(None) => None,
-        Err(error) => {
-            debug!("Ignoring deployment descriptor for {log_context}: {error}");
-            None
-        }
-    }
-}
-
 pub(crate) fn edge_mode_enabled() -> bool {
     std::env::var_os("SINEX_EDGE_MODE").is_some()
 }
 
-pub(crate) fn runtime_database_expected() -> bool {
+pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
     if edge_mode_enabled() {
-        return false;
+        return Ok(false);
     }
 
-    deployment_descriptor("preflight runtime expectation")
-        .map(|descriptor| descriptor.expectations.schema_apply)
-        .unwrap_or(true)
+    Ok(
+        deployment_descriptor_result("preflight runtime expectation")?
+            .map(|descriptor| descriptor.expectations.schema_apply)
+            .unwrap_or(true),
+    )
 }
 
 pub fn resolve_database_url() -> NodeResult<String> {

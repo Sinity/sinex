@@ -1291,14 +1291,14 @@ async fn test_phase6_service_dependencies_fail_on_malformed_descriptor() -> Test
             descriptor_path.display().to_string(),
         )],
         || async {
-            let (status, _details, messages) = services::verify_service_dependencies().await?;
-
-            assert_eq!(status, VerificationStatus::Fail);
+            let error = services::verify_service_dependencies()
+                .await
+                .expect_err("malformed descriptor should abort service verification");
             assert!(
-                messages.iter().any(|message| {
-                    message.contains("failed to parse deployment readiness descriptor")
-                }),
-                "expected malformed descriptor to fail service verification, got {messages:#?}"
+                error
+                    .to_string()
+                    .contains("failed to parse deployment readiness descriptor"),
+                "expected malformed descriptor parse failure, got {error:?}"
             );
             Ok(())
         },

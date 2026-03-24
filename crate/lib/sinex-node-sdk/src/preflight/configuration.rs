@@ -108,7 +108,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     let mut env_vars = HashMap::new();
     let mut missing_vars = Vec::new();
     let mut has_issues = false;
-    let database_expected = runtime_database_expected();
+    let database_expected = runtime_database_expected()?;
 
     // Required environment variables for Sinex
     let required_vars = vec![

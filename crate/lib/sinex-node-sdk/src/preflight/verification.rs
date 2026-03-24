@@ -35,7 +35,7 @@ pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, 
     let mut details = HashMap::new();
     let mut has_warnings = false;
     let mut has_failures = false;
-    let database_expected = runtime_database_expected();
+    let database_expected = runtime_database_expected()?;
 
     info!("Starting end-to-end integration verification");
 
@@ -546,7 +546,7 @@ async fn get_test_pool() -> NodeResult<PgPool> {
 /// Verify performance baseline using read-only queries
 pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
-    if !runtime_database_expected() {
+    if !runtime_database_expected()? {
         messages.push(
             "ℹ Performance baseline skipped: deployment is running without a runtime PostgreSQL dependency"
                 .to_string(),
