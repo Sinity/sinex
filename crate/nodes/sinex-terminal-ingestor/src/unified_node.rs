@@ -1575,13 +1575,13 @@ async fn process_command(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = Uuid::now_v7();
     let mut handle = ctx
         .acquisition
         .build_material(ctx.path.as_str())
         .begin()
         .await
         .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
+    let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, &bytes)
@@ -2253,6 +2253,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2279,9 +2280,14 @@ mod tests {
         // Wait for MaterialAssembler consumers before publishing
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2352,10 +2358,10 @@ mod tests {
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        "SELECT MAX(offset_end) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'realtime_capture'",
                     )
                     .bind(material_uuid)
-                    .fetch_optional(&pool)
+                    .fetch_one(&pool)
                     .await
                     .map_err(|e| color_eyre::eyre::eyre!("database error: {e}"))?;
                     Ok::<bool, color_eyre::eyre::Report>(
@@ -2376,10 +2382,10 @@ mod tests {
         assert_eq!(record.status.as_str(), "completed");
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+            "SELECT MAX(offset_end) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'realtime_capture'",
         )
         .bind(material_uuid)
-        .fetch_optional(&ctx.pool)
+        .fetch_one(&ctx.pool)
         .await?;
 
         assert_eq!(total_bytes.unwrap_or_default(), expected_bytes);
@@ -2423,6 +2429,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2448,9 +2455,14 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2521,6 +2533,7 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_watcher_tails_incrementally(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime { runtime, nats, .. } =
             TestRuntimeBuilder::new(&ctx, "terminal-watcher-incremental")
                 .with_dry_run(false)
@@ -2648,6 +2661,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_atuin_entry_rejects_invalid_duration(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2673,9 +2687,14 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2918,6 +2937,7 @@ mod tests {
     /// binary data or corrupted history entries, not shell commands.
     #[sinex_test]
     async fn history_rejects_null_byte_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "null-byte-filter", 4096).await?;
         tokio::fs::write(&fix.history_path, "echo hello\necho\x00null\ngit status\n").await?;
 
@@ -2959,6 +2979,7 @@ mod tests {
     /// escape sequences that were erroneously written to the history file.
     #[sinex_test]
     async fn history_rejects_ansi_escape_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "ansi-escape-filter", 4096).await?;
         // \x1b = ESC (start of ANSI escape sequence like \x1b[A = cursor up)
         tokio::fs::write(
@@ -3000,6 +3021,7 @@ mod tests {
     /// exactly one captured event — the dedup window prevents duplicate ingestion.
     #[sinex_test]
     async fn history_deduplicates_repeated_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "dedup-filter", 4096).await?;
         tokio::fs::write(&fix.history_path, "git status\ngit diff\ngit status\n").await?;
 
@@ -3037,6 +3059,7 @@ mod tests {
     /// This prevents capturing half-written commands that are still being typed.
     #[sinex_test]
     async fn history_withholds_incomplete_trailing_line(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "incomplete-line", 4096).await?;
         // "echo complete" has a newline; "echo incomplete" does not
         tokio::fs::write(&fix.history_path, "echo complete\necho incomplete").await?;
@@ -3101,6 +3124,7 @@ mod tests {
     /// entirely — the ingestor does not truncate silently, it skips and logs.
     #[sinex_test]
     async fn history_rejects_oversized_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let max_bytes = 64u64;
         let mut fix = make_watcher(&ctx, "oversized-cmd", max_bytes).await?;
 

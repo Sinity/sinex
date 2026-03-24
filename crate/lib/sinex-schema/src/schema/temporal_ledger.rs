@@ -95,13 +95,15 @@ impl TemporalLedger {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // Unique constraint on material and offset
+            // Allow multiple temporal facts for the same offset range so fallback
+            // `staged_at` rows can coexist with the precise `realtime_capture` row.
             Index::create()
                 .if_not_exists()
-                .name("uk_temporal_ledger_material_offset")
+                .name("uk_temporal_ledger_material_offset_source_type")
                 .table(Self::table_iden())
                 .col(TemporalLedger::SourceMaterialId)
                 .col(TemporalLedger::OffsetStart)
+                .col(TemporalLedger::SourceType)
                 .unique()
                 .to_owned(),
             // The primary query pattern for ingestors is to look up the capture time for a given byte range.
