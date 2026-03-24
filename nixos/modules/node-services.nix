@@ -407,6 +407,13 @@ let
           SERVICE_USER=${escapeShellArg serviceUser}
           SETFACL=${pkgs.acl}/bin/setfacl
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-terminal-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
 
           grant_parent_dirs() {
             local path="$1"
@@ -414,7 +421,7 @@ let
             dir="$("$DIRNAME" "$path")"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -423,7 +430,7 @@ let
           grant_file_read() {
             local path="$1"
             if [ -f "$path" ]; then
-              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || true
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -431,6 +438,10 @@ let
             grant_parent_dirs ${escapeShellArg path}
             grant_file_read ${escapeShellArg path}
           '') accessAclPaths)}
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
         '';
     in
     mkNodeUnits {
@@ -489,6 +500,13 @@ let
           SORT=${pkgs.coreutils}/bin/sort
           BASENAME=${pkgs.coreutils}/bin/basename
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-desktop-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
 
           grant_parent_dirs() {
             local path="$1"
@@ -496,7 +514,7 @@ let
             dir="$path"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -505,7 +523,7 @@ let
           grant_dir_defaults() {
             local path="$1"
             if [ -d "$path" ]; then
-              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || true
+              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -513,7 +531,7 @@ let
             local path="$1"
             if [ -S "$path" ]; then
               grant_parent_dirs "$("$DIRNAME" "$path")"
-              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || true
+              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -521,7 +539,7 @@ let
             local path="$1"
             if [ -f "$path" ]; then
               grant_parent_dirs "$path"
-              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || true
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -611,6 +629,10 @@ let
 
           "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
           "$CHMOD" 0640 "$ENV_FILE"
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
         '';
     in
     mkNodeUnits {
