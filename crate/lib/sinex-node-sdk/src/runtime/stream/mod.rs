@@ -51,6 +51,7 @@ use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
+use sd_notify::NotifyState;
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaBroadcastCache {
@@ -992,6 +993,13 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         }
         self.lifecycle = RunnerLifecycle::Running;
+
+        // Notify systemd that initialization is complete and the node is ready to serve.
+        // NixOS modules use Type=notify for node services; without this the service manager
+        // times out and restarts the process in a loop.
+        if let Err(e) = sd_notify::notify(true, &[NotifyState::Ready]) {
+            warn!("Failed to notify systemd ready state: {}", e);
+        }
 
         let node_type = self.node.node_type();
         info!(

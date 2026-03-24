@@ -495,22 +495,6 @@ impl BlobManager {
     }
 
     /// Get blob metadata by annex key
-    pub fn get_blob_metadata_sync(&self, annex_key: &str) -> NodeResult<Blob> {
-        let (backend, size, hash_fragment) = Blob::parse_annex_key(annex_key).ok_or_else(|| {
-            SinexError::processing(format!("Invalid annex key format: {annex_key}"))
-        })?;
-
-        futures::executor::block_on(self.db_pool.blobs().get_by_content(
-            &backend,
-            &hash_fragment,
-            size,
-        ))?
-        .ok_or_else(|| {
-            SinexError::processing(format!("Blob not found in database for key: {annex_key}"))
-        })
-    }
-
-    /// Get blob metadata by annex key
     pub async fn get_blob_metadata(&self, annex_key: &str) -> NodeResult<Blob> {
         let (backend, size, hash_fragment) = Blob::parse_annex_key(annex_key).ok_or_else(|| {
             SinexError::processing(format!("Invalid annex key format: {annex_key}"))

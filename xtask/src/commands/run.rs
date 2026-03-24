@@ -269,6 +269,11 @@ static BINARIES: &[(&str, &str, &str)] = &[
         "sinex-health-automaton",
         "sinex-health-automaton",
     ),
+    (
+        "session-detector",
+        "sinex-session-detector",
+        "sinex-session-detector",
+    ),
     // Processors
     (
         "terminal-canonicalizer",

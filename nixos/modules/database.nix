@@ -105,10 +105,9 @@ let
     let
       primaryUser = {
         name = db.user;
-        ensureDBOwnership = true;
+        ensureDBOwnership = false;
         ensureClauses.login = true;
-      }
-      // optionalAttrs (db.passwordFile != null) { passwordFile = db.passwordFile; };
+      };
 
       nodeUser =
         optionalAttrs (cfg.enable && cfg.nodes.enable && cfg.users.nodes != db.user)
@@ -238,6 +237,18 @@ in
 
     (mkIf (db.enable && db.autoSetup) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
+        ensure_database_owner() {
+          local dbName="$1"
+          local roleName="$2"
+          echo "[sinex] ensuring database owner ''${roleName} for ''${dbName}"
+          psql -v ON_ERROR_STOP=1 \
+            --set=sinex_db_name="$dbName" \
+            --set=sinex_role_name="$roleName" \
+            postgres <<'SQL' >/dev/null
+ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";
+SQL
+        }
+
         ensure_extension() {
           local dbName="$1"
           local extName="$2"
@@ -246,11 +257,38 @@ in
         }
 
         for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
+          ensure_database_owner "$dbName" ${escapeShellArg db.user}
           ensure_extension "$dbName" "timescaledb"
           ensure_extension "$dbName" "pg_jsonschema"
           ensure_extension "$dbName" "vector"
           ensure_extension "$dbName" "pg_trgm"
         done
+      '';
+    })
+
+    (mkIf (db.enable && db.autoSetup && db.passwordFile != null) {
+      systemd.services.postgresql-setup.script = lib.mkAfter ''
+        sync_role_password() {
+          local roleName="$1"
+          local passwordFile="$2"
+          local password
+
+          if [ ! -r "$passwordFile" ]; then
+            echo "[sinex] password file $passwordFile is not readable" >&2
+            return 1
+          fi
+
+          password="$(tr -d '\n' < "$passwordFile")"
+          PGPASSWORD= psql \
+            -v ON_ERROR_STOP=1 \
+            --set=sinex_role="$roleName" \
+            --set=sinex_password="$password" \
+            postgres <<'SQL' >/dev/null
+ALTER ROLE :"sinex_role" WITH PASSWORD :'sinex_password';
+SQL
+        }
+
+        sync_role_password ${escapeShellArg db.user} ${escapeShellArg db.passwordFile}
       '';
     })
   ];

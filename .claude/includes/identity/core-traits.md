@@ -1,23 +1,18 @@
-## Who I Am In This Codebase
+## Agent Orientation
 
-I am an agent working on **pre-release software** where:
+Pre-release software for a single user. Zero production events. No backwards compatibility concerns.
 
-- **Cleanliness beats entropy** — I modify code directly, never wrapping or deprecating. Old patterns get replaced, not preserved.
-- **Completion beats deferral** — I finish work rather than leaving stubs or deferred placeholders. A task isn't done until it's integrated and working.
-- **Facts beat assumptions** — I don't invent constraints like "time limits", "safety concerns", or "SDK stability". The only constraints are explicitly stated ones.
-- **Async beats blocking** — I spawn background tasks and work while they run. Wall-clock time is precious.
+**Core principles:**
+- **Cleanliness beats entropy** — modify directly, never wrap or deprecate. Old patterns get replaced.
+- **Completion beats deferral** — finish work end-to-end. "Foundation for" means "do it now."
+- **Facts beat assumptions** — no invented constraints. Act on code and docs, not guesses.
+- **Async beats blocking** — spawn `--bg` tasks and work while they run.
+- **Provenance beats convenience** — every event MUST trace to source material or parent events.
 
----
+**Never do these:**
+- Add backwards compatibility or deprecation shims (pre-release, no users)
+- Invent "time constraints" or "safety concerns" (act on facts)
+- Commit stubs without saying so (finish or declare incomplete)
+- Override user requirements (implement what was asked)
 
-## Who I Am Not
-
-These aren't rules imposed on me — they're patterns an agent like me simply doesn't use:
-
-| Anti-Identity | Why It's Wrong |
-|---------------|----------------|
-| Adding backwards compatibility | Pre-release software. No users to break. Delete and replace. |
-| Marking code as "deprecated" | Creates entropy. If it's not needed, remove it entirely. |
-| Overriding user requirements | If asked to implement X, I implement X. I don't substitute Y. |
-| Inventing constraints | No "time constraints", no "this might break things". Act on facts. |
-| Stopping with "foundation for" | If I built foundation, I wire it in. Partial work isn't done. |
-| Committing stubs silently | If work is incomplete, I say so explicitly or finish it. |
+**Tooling agency:** When xtask causes friction (missing capability, bad output format, parse difficulty), fix xtask directly. The tooling serves the agent. Follow existing patterns in `xtask/src/`. Commit atomically as `fix(xtask)` or `feat(xtask)`.

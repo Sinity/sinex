@@ -1,132 +1,63 @@
-## Testing Configuration
+## Configuration & Agent Patterns
 
-**xtask test flags:**
-
-| Flag | Effect |
-|------|--------|
-| (default) | Multi-threaded with retries |
-| `--debug` | Single-threaded, full output |
-| `--heavy` | Include `#[ignore]` tests |
-| `--prime` | Prime database before testing |
-| `--affected` | Only changed packages |
-| `--bg` | Run in background, return job ID |
-
-**Note:** Performance/stress/external tests are marked `#[ignore]` and skipped by default. Run them with `xtask test --heavy`.
-
----
-
-## Agent Decision Patterns
-
-### When to Use --json
-
-| Situation | Use --json? | Reason |
-|-----------|-------------|--------|
-| Checking success/failure | Yes | Parse `.status` field programmatically |
-| Extracting specific data | Yes | Structured access to fields |
-| Debugging interactively | No | Human output more readable |
-| Logging for later review | Either | JSON for parsing, human for reading |
-
-### When to Use --bg
-
-| Situation | Use --bg? | Reason |
-|-----------|-----------|--------|
-| Operation > 10 seconds | Yes | Continue working while it runs |
-| Need result immediately | No | Blocking is simpler |
-| Multiple independent tasks | Yes | Spawn all in parallel |
-| Interactive debugging | No | Need real-time output |
-
-### Chaining Pattern
+### JSON Output (Always For Agents)
 
 ```bash
-# Spawn, extract ID, continue working, later check result
-JOB=$(xtask test --bg --json -p PKG | jq -r '.data.job_id')
-# ... do other work ...
-xtask jobs status "$JOB" --json | jq '.data.status'
-```
-
-### Conditional Execution
-
-```bash
-# Check if tests pass before proceeding
-if xtask test --json 2>&1 | jq -e '.status == "success"' > /dev/null; then
-    echo "Tests passed, proceeding..."
-else
-    echo "Tests failed, investigating..."
-    xtask test --json 2>&1 | jq -r '.errors[].message'
-fi
-```
-
----
-
-## xtask JSON Output
-
-> **AI AGENTS: Always use `--json` for machine-readable output.** This eliminates parsing human text.
-
-```bash
-# Get structured output from any command
-xtask check --json
-xtask test --json
-xtask doctor --json
-
-# Parse with jq
 xtask check --json | jq '.status'           # "success" or "failed"
-xtask test --json | jq '.duration_secs'     # timing info
-xtask deps unused --json | jq '.data.unused' # unused deps
+xtask test --json | jq '.duration_secs'
+xtask doctor --json
 ```
 
----
+### Test Filtering
 
-## Test Filtering (First-Class Flags)
-
-`-p` and `-E` are first-class flags — do NOT use `--` passthrough for them.
+`-p` and `-E` are first-class flags. Do NOT use `--` passthrough.
 
 ```bash
-# Run specific package
-xtask test -p sinex-primitives
-
-# Run specific test by name (debug mode for full output)
-xtask test --debug -E 'test(my_test_name)'
-
-# Run tests matching filter expression
-xtask test -E 'package(sinex-primitives) & test(unit::)'
-
-# Run single package with debug
-xtask test --debug -p sinex-node-sdk -E 'test(unit::)'
+xtask test -p sinex-primitives                           # Single package
+xtask test --debug -E 'test(my_test_name)'               # Specific test, full output
+xtask test -E 'package(sinex-primitives) & test(unit::)' # Filter expression
+xtask test --heavy                                        # Include #[ignore] tests
+xtask test --update-snapshots                             # Insta snapshot updates
 ```
 
----
-
-## Advanced Commands
+### sinexctl CLI Commands
 
 ```bash
-# Benchmark test performance
-xtask test bench
-xtask test bench --contracts    # Enforce perf budgets
+# Querying
+sinexctl query --source fs-watcher --limit 10    # Event search
+sinexctl trace <event-id>                        # Provenance chain walk
+sinexctl trace <event-id> --format dot           # Graphviz output
 
-# CI ephemeral Postgres (requires sandbox feature)
-xtask ci postgres -- xtask test
+# Telemetry (reads continuous aggregates)
+sinexctl telemetry window-focus                  # Desktop focus tracking
+sinexctl telemetry command-frequency             # Shell command frequency
+sinexctl telemetry file-activity                 # Filesystem event counts
+sinexctl telemetry recent-activity               # Cross-source recent activity
+sinexctl telemetry system-state                  # CPU/memory/disk/systemd
 
-# Codebase snapshot for AI context
-xtask docs snapshot --output context.md
+# Context & Reports
+sinexctl context                                 # "What was I doing?" — last session summary
+sinexctl report today                            # Daily summary (top sources, types, heatmap)
+sinexctl report yesterday                        # Yesterday's summary
+
+# Import
+sinexctl import atuin                            # Import Atuin shell history (bypasses pipeline)
+# sinexctl import activitywatch                  # DOES NOT EXIST — no AW import path
+
+# Operations
+sinexctl gateway ingest --source test --type test.ping --payload '{}'  # BROKEN: provenance-less → DLQ
+sinexctl status                                  # System health overview
+sinexctl node list                               # Active nodes
 ```
 
-**Full Documentation:** `xtask/docs/README.md`
+### Runtime Configuration
 
----
-
-## Runtime Configuration
+NixOS modules are the canonical deployment surface. Binaries read env/CLI into typed config:
 
 ```rust
-// NixOS modules are the canonical deployment surface.
-// Runtime binaries then read env/CLI into typed config objects.
-let ingestd = IngestdConfig::from_args(...);
-let node = NodeConfig::load_from_env("my-node");
-let gateway = GatewayConfig::load();
+let ingestd = IngestdConfig::from_args(..);           // CLI/env construction
+let node = NodeConfig::load_from_env("my-node");      // Env-first typed config
+let gateway = GatewayConfig::load();                   // Env-first typed config
 ```
 
-Notes:
-- `sinex-ingestd` uses CLI/env construction (`IngestdConfig::from_args`).
-- `sinex-node-sdk` uses env-first typed config (`NodeConfig::load_from_env`, `EventSourceConfig::load_from_env`, `AutomatonConfig::load_from_env`).
-- `sinex-gateway` now follows the same env-first typed-config model; NixOS remains the canonical deployment surface and env is the process-boundary transport.
-
-Deployment configuration lives in `nixos/modules/README.md`; direct-run environment variables live in the owning crate docs.
+Deployment config: `nixos/modules/README.md`. Per-binary env vars: owning crate `docs/`.

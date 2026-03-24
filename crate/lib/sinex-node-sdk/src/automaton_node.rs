@@ -399,6 +399,34 @@ impl<P> AutomatonNodeAdapter<P>
 where
     P: AutomatonNode,
 {
+    async fn send_to_dlq_or_fail(
+        &self,
+        event: &Event<JsonValue>,
+        error: &NodeLogicError,
+    ) -> NodeResult<()> {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Err(
+                SinexError::lifecycle("automaton requested DLQ but no transport runtime is available")
+                    .with_context("node", self.node.name())
+                    .with_context("event_type", event.event_type.as_ref())
+                    .with_context("source", event.source.as_ref())
+                    .with_context("reason", error.to_string()),
+            );
+        };
+        let transport = runtime.handles().transport();
+        transport
+            .send_to_dlq(event, &error.to_string(), self.node.name())
+            .await
+            .map_err(|dlq_err| {
+                SinexError::processing("failed to send automaton event to DLQ")
+                    .with_context("node", self.node.name())
+                    .with_context("event_type", event.event_type.as_ref())
+                    .with_context("source", event.source.as_ref())
+                    .with_context("reason", error.to_string())
+                    .with_std_error(&dlq_err)
+            })
+    }
+
     /// Load state from checkpoint.
     ///
     /// Priority order:
@@ -565,7 +593,11 @@ where
         })?;
 
         // Get source event ID for provenance (clone to avoid partial move)
-        let source_event_id = event.id.unwrap_or_default();
+        let source_event_id = event.id.ok_or_else(|| {
+            SinexError::validation("automaton trigger event is missing an id")
+                .with_context("event_type", event.event_type.as_ref())
+                .with_context("source", event.source.as_ref())
+        })?;
 
         // Build context
         let context = NodeEventContext {
@@ -593,10 +625,7 @@ where
                 }
             }
 
-            // Periodic health check (every 100 events)
-            if self.persisted_state.events_processed.is_multiple_of(100)
-                && let Err(e) = reporter.check_and_emit().await
-            {
+            if let Err(e) = reporter.check_and_emit().await {
                 warn!(
                     node = %self.node.name(),
                     error = %e,
@@ -670,28 +699,7 @@ where
                         Ok(None)
                     }
                     ErrorAction::SendToDLQ => {
-                        // Send to DLQ via transport if available
-                        if let Some(ref runtime) = self.runtime {
-                            let transport = runtime.handles().transport();
-                            if let Err(dlq_err) = transport
-                                .send_to_dlq(&event, &e.to_string(), self.node.name())
-                                .await
-                            {
-                                error!(
-                                    node = %self.node.name(),
-                                    error = %e,
-                                    dlq_error = %dlq_err,
-                                    "Failed to send event to DLQ"
-                                );
-                            }
-                        } else {
-                            // No runtime available (e.g., during testing) - just log
-                            warn!(
-                                node = %self.node.name(),
-                                error = %e,
-                                "Event would be sent to DLQ but no transport available"
-                            );
-                        }
+                        self.send_to_dlq_or_fail(&event, &e).await?;
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
                         Ok(None)

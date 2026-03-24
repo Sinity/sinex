@@ -35,6 +35,7 @@ use sinex_primitives::events::payloads::{
     StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, EventId, Provenance};
+use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -148,6 +149,67 @@ impl SelfObserver {
         Provenance::from_synthesis_safe(EventId::from_uuid(Uuid::now_v7()), Vec::new())
     }
 
+    fn metric_identity_key(event_type: &str, payload: &JsonValue) -> String {
+        let mut parts = vec![event_type.to_string()];
+
+        let Some(payload) = payload.as_object() else {
+            return parts.join("|");
+        };
+
+        for key in ["component", "name", "stream", "pool", "node_type", "method", "token_prefix"] {
+            if let Some(value) = payload.get(key) {
+                let value = value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), ToString::to_string);
+                parts.push(format!("{key}={value}"));
+            }
+        }
+
+        if let Some(labels) = payload.get("labels").and_then(JsonValue::as_object)
+            && !labels.is_empty()
+        {
+            let mut entries: Vec<_> = labels.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let labels = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    let value = value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), ToString::to_string);
+                    format!("{key}={value}")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            parts.push(format!("labels={labels}"));
+        }
+
+        parts.join("|")
+    }
+
+    async fn reserve_metric_slot(&self, metric_key: &str) -> bool {
+        let now = Instant::now();
+        let mut emissions = self.metric_emissions.write().await;
+
+        emissions.retain(|_, last| now.duration_since(*last) < self.min_interval);
+
+        if let Some(last) = emissions.get(metric_key)
+            && now.duration_since(*last) < self.min_interval
+        {
+            debug!(
+                metric_key = %metric_key,
+                "Self-observation rate limited for this metric, skipping emission"
+            );
+            return false;
+        }
+
+        emissions.insert(metric_key.to_string(), now);
+        true
+    }
+
+    async fn release_metric_slot(&self, metric_key: &str) {
+        self.metric_emissions.write().await.remove(metric_key);
+    }
+
     /// Publish a self-observation event to NATS (internal method)
     async fn publish<P: sinex_primitives::events::EventPayload>(
         &self,
@@ -161,26 +223,9 @@ impl SelfObserver {
             .to_json_event()
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
 
-        let metric_key = event.event_type.to_string();
-
-        // Per-metric rate limiting check
-        {
-            let emissions = self.metric_emissions.read().await;
-            if let Some(last) = emissions.get(&metric_key)
-                && last.elapsed() < self.min_interval
-            {
-                debug!(
-                    event_type = %metric_key,
-                    "Self-observation rate limited for this metric, skipping emission"
-                );
-                return Ok(());
-            }
-        }
-
-        // Update last emission time for this metric
-        {
-            let mut emissions = self.metric_emissions.write().await;
-            emissions.insert(metric_key.clone(), Instant::now());
+        let metric_key = Self::metric_identity_key(&event.event_type.to_string(), &event.payload);
+        if !self.reserve_metric_slot(&metric_key).await {
+            return Ok(());
         }
 
         let subject = format!("{}.{}", self.subject_prefix, self.component);
@@ -193,6 +238,7 @@ impl SelfObserver {
         };
 
         if let Err(e) = nats_client.publish(subject.clone(), data.into()).await {
+            self.release_metric_slot(&metric_key).await;
             warn!(
                 component = %self.component,
                 subject = %subject,
@@ -478,6 +524,7 @@ impl SelfObserver {
     }
 
     /// Emit ingestd batch processing statistics.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_ingestd_batch_stats(
         &self,
         batch_size: u32,
@@ -486,6 +533,12 @@ impl SelfObserver {
         events_failed: u32,
         had_synthesis: bool,
         insert_path: &str,
+        validation_valid: u64,
+        validation_skipped: u64,
+        validation_no_schema: u64,
+        validation_schema_not_found: u64,
+        validation_invalid: u64,
+        validation_coverage_pct: f64,
     ) -> Result<(), SelfObservationError> {
         self.publish(IngestdBatchStatsPayload {
             batch_size,
@@ -494,6 +547,12 @@ impl SelfObserver {
             events_failed,
             had_synthesis,
             insert_path: insert_path.to_string(),
+            validation_valid,
+            validation_skipped,
+            validation_no_schema,
+            validation_schema_not_found,
+            validation_invalid,
+            validation_coverage_pct,
         })
         .await
     }
@@ -553,5 +612,82 @@ impl SelfObservationTask {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    fn test_observer() -> SelfObserver {
+        SelfObserver {
+            nats_client: None,
+            component: "test-component".to_string(),
+            subject_prefix: "sinex.telemetry".to_string(),
+            enabled: true,
+            metric_emissions: Arc::new(RwLock::new(HashMap::new())),
+            min_interval: Duration::from_secs(1),
+        }
+    }
+
+    #[sinex_test]
+    async fn test_metric_identity_key_distinguishes_name_and_labels() -> TestResult<()> {
+        let first = JsonValue::Object(
+            serde_json::json!({
+                "component": "ingestd",
+                "name": "ingestd.consumer.lag.pending",
+                "labels": { "consumer": "alpha" },
+                "value": 1.0
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+        let second = JsonValue::Object(
+            serde_json::json!({
+                "component": "ingestd",
+                "name": "ingestd.consumer.lag.ack_pending",
+                "labels": { "consumer": "alpha" },
+                "value": 1.0
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+
+        let first_key = SelfObserver::metric_identity_key("metric.gauge", &first);
+        let second_key = SelfObserver::metric_identity_key("metric.gauge", &second);
+
+        assert_ne!(first_key, second_key);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_metric_reservations_are_per_metric_identity() -> TestResult<()> {
+        let observer = test_observer();
+
+        assert!(observer
+            .reserve_metric_slot("metric.counter|name=assembly_started")
+            .await);
+        assert!(observer
+            .reserve_metric_slot("metric.counter|name=assembly_completed")
+            .await);
+        assert!(!observer
+            .reserve_metric_slot("metric.counter|name=assembly_started")
+            .await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_release_metric_slot_clears_failed_publish_reservation(
+    ) -> TestResult<()> {
+        let observer = test_observer();
+        let key = "metric.counter|name=assembly_completed";
+
+        assert!(observer.reserve_metric_slot(key).await);
+        observer.release_metric_slot(key).await;
+        assert!(observer.reserve_metric_slot(key).await);
+        Ok(())
     }
 }

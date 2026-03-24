@@ -478,7 +478,7 @@ impl Provenance {
     /// Get the operation UUID used by event persistence, if any.
     #[must_use]
     pub fn operation_uuid(&self) -> Option<Uuid> {
-        self.operation_id().map(Id::to_uuid)
+        self.operation_id().map(|id| id.to_uuid())
     }
 }
 

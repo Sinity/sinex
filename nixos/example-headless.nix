@@ -16,9 +16,9 @@
     database = {
       autoSetup = true;
       host = "127.0.0.1";
-      name = "sinex_server";
+      name = "sinex_server_prod";
       user = "sinex";
-      passwordFile = config.sinex.secrets.paths."sinex-local-db";
+      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "prod";
@@ -71,4 +71,5 @@
   };
 
   environment.etc."sinex/gateway-admin-token".text = "example-headless-admin:admin";
+  environment.etc."sinex/db-password".text = "example-db-password";
 }

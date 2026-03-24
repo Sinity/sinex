@@ -6,7 +6,6 @@ use crate::{
     confirmation_handler::ConfirmationBuffer,
     coordination::NodeCoordination,
     heartbeat::HeartbeatEmitter,
-    lifecycle::LifecycleManager,
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
@@ -126,11 +125,6 @@ impl NodeRuntimeState {
     #[must_use]
     pub fn heartbeat_emitter(&self, interval_seconds: Seconds) -> HeartbeatEmitter {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
-    }
-
-    #[must_use]
-    pub fn lifecycle_manager(&self) -> LifecycleManager {
-        LifecycleManager::from_runtime(self)
     }
 
     pub async fn coordination(

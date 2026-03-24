@@ -1,129 +1,55 @@
-## Diagnostics
+## Diagnostics & History
+
+### Quick Status
 
 ```bash
 xtask doctor                   # Health check (Postgres, NATS, tools, TLS)
-xtask doctor --json            # Structured JSON health check output
-xtask doctor --pipelines       # Health check + pipeline smoke tests
-xtask doctor --fix             # Auto-remediate: start missing infra, invalidate stale cache
-xtask doctor --runtime         # Check runtime health (ingestd heartbeat, consumer lag, batch latency)
-xtask status --summary         # Compact one-line status (MOTD style)
-xtask status --watch           # Live-updating status display
-xtask check --json             # Compile check (JSON output)
-xtask check --full --json      # Full lint + forbidden (JSON output)
-xtask jobs list --active       # Show running background jobs
-xtask jobs list                # List recent jobs
+xtask doctor --fix             # Auto-remediate: start infra, invalidate stale cache
+xtask doctor --runtime         # Runtime health (ingestd heartbeat, consumer lag)
+xtask status --summary         # One-line status (MOTD style)
+xtask analytics workspace-health  # Composite health score (0-100)
+xtask analytics recommend      # Actionable recommendations
 ```
 
-**Note:** `xtask status --doctor` no longer exists — use `xtask doctor` instead.
-
----
-
-## Agent Debugging Workflow (Poll-Based)
+### After a Failed Check
 
 ```bash
-# After editing code — schedule, continue working, poll:
-xtask check --bg
-# ... continue working ...
-xtask status --summary --json    # Poll: did it pass?
-xtask jobs list --json           # Or: check all recent jobs
-
-# After a failed check:
-xtask history list --first --command check --json
-xtask history diagnostics --command check --level error    # Current errors (package-scoped)
-xtask history diagnostics --fixable                        # Auto-fixable diagnostics only
-xtask history diagnostics --package sinex-primitives       # Filter by package
-xtask history diagnostics --scope latest --command check   # Diagnostics from the latest check run
-xtask history diagnostics --emit gcc                       # GCC format (file:line:col: level: msg)
-xtask history diagnostics --trend                          # Diagnostic count trend over invocations
-xtask history diagnostics --trend --window 30              # Trend with custom window
-
-# After a failed test run:
-xtask history tests analyze                # Overview: buckets, timeouts, failures by package
-xtask history tests failures --output      # Failing tests with captured stdout/stderr (+ NATS context if recorded)
-xtask history tests output test_name       # Get output for any test (pass or fail)
-xtask test --json | jq '.data.failures'    # Structured failure data
-
-# Progress and ETA:
-xtask history progress                     # Show progress for the most recent invocation
-xtask history progress --invocation-id N   # Show progress for a specific invocation
-xtask history eta check --phase compile    # ETA estimate for 'check compile' phase
-xtask history eta test                     # All ETA estimates for 'test' command
-
-# Performance investigation:
-xtask history tests slowest                # Slowest passing tests by avg duration
-xtask history tests getting-slower         # Tests regressing in speed
-xtask history tests flaky                  # Tests that pass on retry
-xtask history stats --command check --days 7  # Check command stats over time
+xtask history diagnostics --level error              # Current errors (package-scoped)
+xtask history diagnostics --fixable                   # Auto-fixable only
+xtask history diagnostics --package sinex-primitives  # Filter by package
+xtask history diagnostics --emit gcc                  # file:line:col: level: msg
+xtask history diagnostics --trend                     # Error count trend
 ```
 
----
-
-## History (Execution Tracking)
-
-### Top-Level Subcommands
+### After a Failed Test
 
 ```bash
-xtask history list [--limit N] [--command CMD]     # Recent invocations
-xtask history list --first --command CMD            # Last invocation for a command (replaces `history last`)
-xtask history list --no-limit                       # Export all invocations as JSON (replaces `history export`)
-xtask history stats --command CMD [--days N]        # Command statistics (success rate, avg time)
-xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
-xtask history progress [--invocation-id N]          # Show live/final progress for an invocation
-xtask history eta <command> [--phase P] [--window N] # ETA estimates from recorded phase timings
-xtask history tests <subcommand>                    # Test result queries (see below)
-xtask history diagnostics [--level LEVEL] [--package PKG] [--fixable]  # Current diagnostics (package-scoped)
-xtask history diagnostics --scope all [--limit N]                      # Raw accumulated (all invocations)
-xtask history diagnostics --scope latest [--command CMD]               # Latest invocation for a command
-xtask history diagnostics --scope <ID> [--command CMD]                 # Specific invocation
-xtask history diagnostics --trend [--window N]                         # Diagnostic count trend
-xtask history diagnostics --emit gcc                                   # GCC format output
+xtask history tests analyze              # Overview: buckets, timeouts, failures
+xtask history tests failures --output    # Failures with stdout/stderr
+xtask history tests output test_name     # Output for any test (pass or fail)
+xtask history tests slowest              # Slowest passing tests
+xtask history tests flaky                # Tests that pass on retry
+xtask history tests getting-slower       # Speed regressions
 ```
 
-### Test History Subcommands
+### History & Analytics
 
 ```bash
-xtask history tests failures [--limit N] [--output] # Failing tests from most recent run
-xtask history tests analyze                          # Comprehensive analysis (buckets, timeouts, failures)
-xtask history tests output <pattern>                 # Show captured output for matching tests (pass or fail)
-xtask history tests slowest [--limit N]              # Slowest tests by avg duration (excludes timeouts)
-xtask history tests flaky [--limit N]                # Flaky tests (fail→pass on retry)
-xtask history tests getting-slower [--threshold-pct N] [--window N]  # Tests regressing in speed
-xtask history tests trends [--pattern X] [--package P] [--runs N]    # Duration trends over time
-xtask history tests eta                              # Estimated test suite runtime
+xtask history list [--command CMD]       # Recent invocations
+xtask history stats --command CMD        # Success rate, avg time
+xtask history progress                   # Live/final progress
+xtask history eta check --phase compile  # ETA estimate
+
+xtask analytics hotspots                 # Recurring diagnostics
+xtask analytics reliability              # Test pass rates per package
+xtask analytics velocity                 # Build/test time trends
 ```
 
-**Note:** `slowest`, `getting-slower`, and `eta` only count passing tests — failed/timed-out tests
-would inflate durations with timeout ceilings rather than reflecting real execution time.
-
-**Note:** ALL test output (pass and fail) is stored in the history DB. Use `output` to retrieve it.
-
-See `xtask history --help` and `xtask history tests --help` for all subcommands.
-
----
-
-## Analytics (Developer Intelligence)
+### Dependency Analysis
 
 ```bash
-xtask analytics workspace-health         # Composite health score (0-100)
-xtask analytics hotspots                  # Most active recurring diagnostics
-xtask analytics reliability              # Test pass rates and flakiness per package
-xtask analytics velocity                  # Build and test time trends
-xtask analytics recommend                 # Actionable heuristic recommendations
-xtask analytics resources                 # CPU/memory usage trends across invocations
-xtask analytics stages                    # Stage-level timing breakdowns
-```
-
----
-
-## Dependency Analysis
-
-```bash
-xtask deps list                # List workspace packages
-xtask deps tree [PACKAGE]      # Show dependency tree
-xtask deps duplicates          # Find duplicate versions
-xtask deps unused --json       # Detect unused dependencies
-xtask deps timings --json      # Analyze build times
+xtask deps tree [PACKAGE]      # Dependency tree
+xtask deps unused --json       # Unused dependencies
 xtask deps impact [PACKAGE]    # Rebuild impact analysis
-xtask deps graph               # Visualize dependency graph
 ```
 

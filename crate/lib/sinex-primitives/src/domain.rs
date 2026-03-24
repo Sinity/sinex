@@ -1484,7 +1484,6 @@ impl std::str::FromStr for HealthStatus {
 }
 
 /// Common trait for components that can be health-checked.
-#[async_trait::async_trait]
 pub trait HealthCheck: Send + Sync {
     async fn check_health(&self) -> Result<HealthStatus, crate::error::SinexError>;
 }

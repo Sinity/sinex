@@ -22,7 +22,15 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::{
-    Bytes, Seconds, domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path,
+    Bytes, Seconds,
+    domain::{HostName, RecordedPath, SanitizedPath},
+    events::{
+        EventPayload,
+        payloads::shell::{AtuinCommandExecutedPayload, HistoryCommandImportedPayload},
+    },
+    temporal::Timestamp,
+    units::{ExitCode, Nanoseconds},
+    validate_path,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -95,6 +103,10 @@ impl Default for TerminalConfig {
                 path: home.join(".zsh_history"),
                 shell: "zsh".to_string(),
             },
+            HistorySourceConfig {
+                path: home.join(".local/share/atuin/history.db"),
+                shell: "atuin".to_string(),
+            },
         ];
 
         // Allow polling interval override via environment variable
@@ -165,13 +177,20 @@ struct HistoryState {
     /// Inode of the file when last processed (Unix only, used to detect rotation vs truncation)
     #[cfg(unix)]
     inode: Option<u64>,
-    /// For Fish `SQLite` history: last processed ROWID
-    fish_row_id: Option<i64>,
+    /// For `SQLite`-backed history sources: last processed ROWID
+    sqlite_row_id: Option<i64>,
     /// Rolling window of command content hashes for deduplication across file rotation/truncation.
     /// When a history file is rotated (new inode), old commands may reappear; this set prevents
     /// duplicate events from being emitted.
     #[serde(default)]
     recent_hashes: VecDeque<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistorySourceMode {
+    Text,
+    FishSqlite,
+    AtuinSqlite,
 }
 
 #[derive(Clone)]
@@ -186,8 +205,7 @@ struct HistoryWatcherContext {
     state_path: Option<PathBuf>,
     shutdown_rx: watch::Receiver<bool>,
     processed_commands: Option<Arc<Mutex<Vec<String>>>>,
-    /// True if this is a Fish `SQLite` history database
-    is_fish_sqlite: bool,
+    source_mode: HistorySourceMode,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -449,10 +467,10 @@ impl HistoryWatcherContext {
     }
 
     async fn monitor(self) {
-        if self.is_fish_sqlite {
-            self.monitor_fish_sqlite().await;
-        } else {
-            self.monitor_text_history().await;
+        match self.source_mode {
+            HistorySourceMode::Text => self.monitor_text_history().await,
+            HistorySourceMode::FishSqlite => self.monitor_fish_sqlite().await,
+            HistorySourceMode::AtuinSqlite => self.monitor_atuin_sqlite().await,
         }
     }
 
@@ -518,16 +536,16 @@ impl HistoryWatcherContext {
     }
 
     async fn monitor_fish_sqlite(self) {
-        let mut fish_row_id: i64 = 0;
+        let mut sqlite_row_id: i64 = 0;
         let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
-            fish_row_id = state.fish_row_id.unwrap_or(0);
+            sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
             recent_hashes = state.recent_hashes;
             debug!(
                 path = %self.path,
-                fish_row_id,
+                sqlite_row_id,
                 dedup_hashes = recent_hashes.len(),
                 "Restored Fish history watcher state"
             );
@@ -540,7 +558,7 @@ impl HistoryWatcherContext {
             }
 
             let _ = self
-                .poll_fish_history_once(&mut fish_row_id, &mut recent_hashes)
+                .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
                 .await;
 
             tokio::select! {
@@ -548,6 +566,44 @@ impl HistoryWatcherContext {
                 shutdown_result = shutdown_rx.changed() => {
                     if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(path = %self.path, "Fish history watcher shutdown requested");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn monitor_atuin_sqlite(self) {
+        let mut sqlite_row_id: i64 = 0;
+        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
+        let mut shutdown_rx = self.shutdown_rx.clone();
+
+        if let Some(state) = self.load_state().await {
+            sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+            recent_hashes = state.recent_hashes;
+            debug!(
+                path = %self.path,
+                sqlite_row_id,
+                dedup_hashes = recent_hashes.len(),
+                "Restored Atuin history watcher state"
+            );
+        }
+
+        loop {
+            if *shutdown_rx.borrow() {
+                info!(path = %self.path, "Atuin history watcher shutdown requested");
+                break;
+            }
+
+            let _ = self
+                .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                .await;
+
+            tokio::select! {
+                () = tokio::time::sleep(self.polling_interval) => {},
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
+                        info!(path = %self.path, "Atuin history watcher shutdown requested");
                         break;
                     }
                 }
@@ -583,8 +639,8 @@ impl HistoryWatcherContext {
             .await;
     }
 
-    async fn persist_fish_state(&self, fish_row_id: i64, recent_hashes: &VecDeque<u64>) {
-        self.persist_state_full(0, 0, Some(fish_row_id), recent_hashes)
+    async fn persist_sqlite_state(&self, sqlite_row_id: i64, recent_hashes: &VecDeque<u64>) {
+        self.persist_state_full(0, 0, Some(sqlite_row_id), recent_hashes)
             .await;
     }
 
@@ -592,7 +648,7 @@ impl HistoryWatcherContext {
         &self,
         offset_bytes: u64,
         line_number: u64,
-        fish_row_id: Option<i64>,
+        sqlite_row_id: Option<i64>,
         recent_hashes: &VecDeque<u64>,
     ) {
         let Some(path) = &self.state_path else {
@@ -613,7 +669,7 @@ impl HistoryWatcherContext {
             line_number,
             #[cfg(unix)]
             inode: current_inode,
-            fish_row_id,
+            sqlite_row_id,
             recent_hashes: recent_hashes.clone(),
         };
 
@@ -918,55 +974,70 @@ impl HistoryWatcherContext {
     }
 
     async fn scan_history_once(&self) -> usize {
-        if self.is_fish_sqlite {
-            let mut fish_row_id = 0i64;
-            let mut recent_hashes: VecDeque<u64> = VecDeque::new();
+        match self.source_mode {
+            HistorySourceMode::FishSqlite => {
+                let mut sqlite_row_id = 0i64;
+                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
 
-            if let Some(state) = self.load_state().await {
-                fish_row_id = state.fish_row_id.unwrap_or(0);
-                recent_hashes = state.recent_hashes;
+                if let Some(state) = self.load_state().await {
+                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                    recent_hashes = state.recent_hashes;
+                }
+
+                self.poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                    .await
             }
+            HistorySourceMode::AtuinSqlite => {
+                let mut sqlite_row_id = 0i64;
+                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
 
-            self.poll_fish_history_once(&mut fish_row_id, &mut recent_hashes)
-                .await
-        } else {
-            let mut offset_bytes = 0u64;
-            let mut line_number = 0u64;
-            let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-            #[cfg(unix)]
-            let mut last_inode: Option<u64> = None;
+                if let Some(state) = self.load_state().await {
+                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                    recent_hashes = state.recent_hashes;
+                }
 
-            if let Some(state) = self.load_state().await {
-                offset_bytes = state.offset_bytes;
-                line_number = state.line_number;
-                recent_hashes = state.recent_hashes;
+                self.poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                    .await
+            }
+            HistorySourceMode::Text => {
+                let mut offset_bytes = 0u64;
+                let mut line_number = 0u64;
+                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
+                #[cfg(unix)]
+                let mut last_inode: Option<u64> = None;
+
+                if let Some(state) = self.load_state().await {
+                    offset_bytes = state.offset_bytes;
+                    line_number = state.line_number;
+                    recent_hashes = state.recent_hashes;
+                    #[cfg(unix)]
+                    {
+                        last_inode = state.inode;
+                    }
+                }
+
                 #[cfg(unix)]
                 {
-                    last_inode = state.inode;
-                }
-            }
-
-            #[cfg(unix)]
-            {
-                self.poll_history_once(
-                    &mut offset_bytes,
-                    &mut line_number,
-                    &mut last_inode,
-                    &mut recent_hashes,
-                )
-                .await
-            }
-            #[cfg(not(unix))]
-            {
-                self.poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+                    self.poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut last_inode,
+                        &mut recent_hashes,
+                    )
                     .await
+                }
+                #[cfg(not(unix))]
+                {
+                    self.poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+                        .await
+                }
             }
         }
     }
 
     async fn poll_fish_history_once(
         &self,
-        fish_row_id: &mut i64,
+        sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
     ) -> usize {
         use crate::fish_history;
@@ -978,7 +1049,7 @@ impl HistoryWatcherContext {
             .map(|metadata| metadata.len())
             .unwrap_or_default();
 
-        match fish_history::read_fish_history(&self.path, *fish_row_id) {
+        match fish_history::read_fish_history(&self.path, *sqlite_row_id) {
             Ok((entries, last_row_id)) => {
                 for entry in entries {
                     if entry.command.trim().is_empty() {
@@ -1001,9 +1072,10 @@ impl HistoryWatcherContext {
                     }
                 }
 
-                if last_row_id > *fish_row_id {
-                    *fish_row_id = last_row_id;
-                    self.persist_fish_state(*fish_row_id, recent_hashes).await;
+                if last_row_id > *sqlite_row_id {
+                    *sqlite_row_id = last_row_id;
+                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                        .await;
                 }
             }
             Err(e) => {
@@ -1015,15 +1087,62 @@ impl HistoryWatcherContext {
         self.record_poll(poll_started_at, file_size, processed);
         processed
     }
+
+    async fn poll_atuin_history_once(
+        &self,
+        sqlite_row_id: &mut i64,
+        recent_hashes: &mut VecDeque<u64>,
+    ) -> usize {
+        use crate::atuin_history;
+
+        let poll_started_at = Instant::now();
+        let mut processed = 0usize;
+        let file_size = fs::metadata(&self.path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+
+        match atuin_history::read_atuin_history(&self.path, *sqlite_row_id) {
+            Ok((entries, last_row_id)) => {
+                for entry in entries {
+                    if entry.command.trim().is_empty() {
+                        continue;
+                    }
+
+                    match process_atuin_entry(self, &entry, recent_hashes).await {
+                        Ok(()) => {
+                            processed += 1;
+                        }
+                        Err(e) => {
+                            self.record_error("process_atuin_entry", &e.to_string());
+                            warn!("Failed to process Atuin history entry from {}: {}", self.path, e);
+                        }
+                    }
+                }
+
+                if last_row_id > *sqlite_row_id {
+                    *sqlite_row_id = last_row_id;
+                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                        .await;
+                }
+            }
+            Err(e) => {
+                self.record_error("read_atuin_history", &e.to_string());
+                warn!("Atuin history watcher unable to read {}: {}", self.path, e);
+            }
+        }
+
+        self.record_poll(poll_started_at, file_size, processed);
+        processed
+    }
 }
 
-async fn process_command(
+fn prepare_command_for_capture(
     ctx: &HistoryWatcherContext,
     command: &str,
     line_number: u64,
-    recent_hashes: &mut VecDeque<u64>,
-) -> NodeResult<()> {
-    // Validate command is valid UTF-8 and reject binary data
+    recent_hashes: Option<&mut VecDeque<u64>>,
+) -> NodeResult<Option<String>> {
     if command.contains('\0') {
         ctx.metrics.record_skip(
             &ctx.shell,
@@ -1037,10 +1156,9 @@ async fn process_command(
             line_number,
             "Skipping command with null bytes (binary data)"
         );
-        return Ok(());
+        return Ok(None);
     }
 
-    // Check for non-printable control characters that indicate binary data
     let has_binary = command
         .chars()
         .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r');
@@ -1057,40 +1175,40 @@ async fn process_command(
             line_number,
             "Skipping command with binary/control characters"
         );
-        return Ok(());
+        return Ok(None);
     }
 
-    // Deduplication: hash command text and check against recent history.
-    // This prevents duplicate events when history files are rotated or truncated.
-    use std::hash::{Hash, Hasher};
-    let command_hash = {
-        let mut hasher = std::hash::DefaultHasher::new();
-        command.hash(&mut hasher);
-        hasher.finish()
-    };
-    if recent_hashes.contains(&command_hash) {
-        ctx.metrics.record_skip(
-            &ctx.shell,
-            &ctx.path,
-            "duplicate",
-            line_number,
-            Some(command.len()),
-        );
-        debug!(
-            path = %ctx.path,
-            line_number,
-            "Skipping duplicate command (hash match)"
-        );
-        return Ok(());
-    }
-    // Add hash to dedup set after we've decided to emit.
-    // Bounded to prevent unbounded memory growth.
-    if recent_hashes.len() >= DEDUP_HASH_CAPACITY {
-        recent_hashes.pop_front();
-    }
-    recent_hashes.push_back(command_hash);
+    if let Some(recent_hashes) = recent_hashes {
+        use std::hash::{Hash, Hasher};
 
-    // Redact sensitive information
+        let command_hash = {
+            let mut hasher = std::hash::DefaultHasher::new();
+            command.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        if recent_hashes.contains(&command_hash) {
+            ctx.metrics.record_skip(
+                &ctx.shell,
+                &ctx.path,
+                "duplicate",
+                line_number,
+                Some(command.len()),
+            );
+            debug!(
+                path = %ctx.path,
+                line_number,
+                "Skipping duplicate command (hash match)"
+            );
+            return Ok(None);
+        }
+
+        if recent_hashes.len() >= DEDUP_HASH_CAPACITY {
+            recent_hashes.pop_front();
+        }
+        recent_hashes.push_back(command_hash);
+    }
+
     let processed = privacy::engine().process(command, ProcessingContext::Command);
     if processed.any_matched() {
         tracing::info!(
@@ -1099,28 +1217,50 @@ async fn process_command(
             "Privacy rules matched in command"
         );
     }
-    let final_command = processed.text.as_ref();
-    let bytes = final_command.as_bytes();
+    let final_command = processed.text.into_owned();
 
-    if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
+    if final_command.len() as u64 > ctx.max_capture_bytes.as_u64() {
         ctx.metrics.record_skip(
             &ctx.shell,
             &ctx.path,
             "too_large",
             line_number,
-            Some(bytes.len()),
+            Some(final_command.len()),
         );
         warn!(
             "Skipping command exceeding capture limit ({} bytes > {} limit)",
-            bytes.len(),
+            final_command.len(),
             ctx.max_capture_bytes.as_u64()
         );
-        return Ok(());
+        return Ok(None);
     }
 
+    Ok(Some(final_command))
+}
+
+async fn record_processed_command_for_test(
+    ctx: &HistoryWatcherContext,
+    command: &str,
+) {
     if let Some(commands) = &ctx.processed_commands {
-        commands.lock().await.push(final_command.to_string());
+        commands.lock().await.push(command.to_string());
     }
+}
+
+async fn process_command(
+    ctx: &HistoryWatcherContext,
+    command: &str,
+    line_number: u64,
+    recent_hashes: &mut VecDeque<u64>,
+) -> NodeResult<()> {
+    let Some(final_command) =
+        prepare_command_for_capture(ctx, command, line_number, Some(recent_hashes))?
+    else {
+        return Ok(());
+    };
+    let bytes = final_command.as_bytes().to_vec();
+
+    record_processed_command_for_test(ctx, &final_command).await;
 
     let mut handle = ctx
         .acquisition
@@ -1130,7 +1270,7 @@ async fn process_command(
     let material_id = handle.material_id;
 
     ctx.acquisition
-        .append_slice(&mut handle, bytes)
+        .append_slice(&mut handle, &bytes)
         .await
         .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
 
@@ -1139,12 +1279,12 @@ async fn process_command(
         .await
         .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
 
-    let payload = sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload {
-        command: final_command.to_string(),
+    let payload = HistoryCommandImportedPayload {
+        command: final_command,
         timestamp: Some(Timestamp::now()),
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
-        line_number: Some(line_number as u32),
+        line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
     };
 
     let event = payload
@@ -1156,13 +1296,94 @@ async fn process_command(
         .build()
         .map_err(|e| SinexError::service(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| SinexError::serialization("Failed to convert event to JSON").with_source(e))?;
+        .map_err(|e| {
+            SinexError::serialization("Failed to convert event to JSON").with_source(e)
+        })?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
         .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
+
+    ctx.metrics
+        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
+
+    Ok(())
+}
+
+async fn process_atuin_entry(
+    ctx: &HistoryWatcherContext,
+    entry: &crate::atuin_history::AtuinHistoryEntry,
+    _recent_hashes: &mut VecDeque<u64>,
+) -> NodeResult<()> {
+    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let Some(final_command) = prepare_command_for_capture(ctx, &entry.command, line_number, None)?
+    else {
+        return Ok(());
+    };
+    let bytes = final_command.as_bytes().to_vec();
+
+    record_processed_command_for_test(ctx, &final_command).await;
+
+    let mut handle = ctx
+        .acquisition
+        .begin_material(ctx.path.as_str())
+        .await
+        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
+    let material_id = handle.material_id;
+
+    ctx.acquisition
+        .append_slice(&mut handle, &bytes)
+        .await
+        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
+
+    ctx.acquisition
+        .finalize(handle, MATERIAL_REASON_HISTORY)
+        .await
+        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
+
+    let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(entry.timestamp_ns))
+        .unwrap_or(Timestamp::UNIX_EPOCH);
+    let duration_ns = entry.duration_ns.max(0);
+    let ts_end_orig = Timestamp::from_unix_timestamp_nanos(
+        i128::from(entry.timestamp_ns) + i128::from(duration_ns),
+    )
+    .unwrap_or(ts_start_orig);
+    let exit_code = i32::try_from(entry.exit_code).unwrap_or(i32::MAX);
+
+    let payload = AtuinCommandExecutedPayload {
+        command_string: final_command.into(),
+        cwd: RecordedPath::from(entry.cwd.clone()),
+        exit_code: ExitCode::from_raw(exit_code),
+        duration_ns: Nanoseconds::from_nanos(duration_ns),
+        atuin_history_id: entry.history_id.clone(),
+        atuin_session_id: entry.session_id.clone(),
+        timestamp: entry.timestamp_ns,
+        ts_start_orig,
+        ts_end_orig,
+        hostname: HostName::new(entry.hostname.clone()),
+        terminal_session_uuid: None,
+    };
+
+    let event = payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
+        .with_offset_end(bytes.len() as i64)
+        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
+        .build()
+        .map_err(|e| SinexError::service(format!("Failed to build Atuin event: {e}")))?
+        .to_json_event()
+        .map_err(|e| {
+            SinexError::serialization("Failed to convert Atuin event to JSON").with_source(e)
+        })?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| SinexError::messaging("Failed to emit Atuin event").with_source(e))?;
 
     ctx.metrics
         .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
@@ -1299,16 +1520,29 @@ impl TerminalNode {
                 .clone()
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
-            // Detect if this is a Fish SQLite history database
-            let is_fish_sqlite = source.shell.to_lowercase() == "fish"
-                && crate::fish_history::is_fish_sqlite_history(&source.path);
-
-            if source.shell.to_lowercase() == "fish" && !is_fish_sqlite {
-                debug!(
-                    path = %source.path,
-                    "Fish history file is not SQLite format; will attempt text parsing"
-                );
-            }
+            let source_mode = match source.shell.to_lowercase().as_str() {
+                "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
+                    HistorySourceMode::FishSqlite
+                }
+                "fish" => {
+                    debug!(
+                        path = %source.path,
+                        "Fish history file is not SQLite format; will attempt text parsing"
+                    );
+                    HistorySourceMode::Text
+                }
+                "atuin" if crate::atuin_history::is_atuin_sqlite_history(&source.path) => {
+                    HistorySourceMode::AtuinSqlite
+                }
+                "atuin" => {
+                    debug!(
+                        path = %source.path,
+                        "Atuin history file is not SQLite format; will attempt text parsing"
+                    );
+                    HistorySourceMode::Text
+                }
+                _ => HistorySourceMode::Text,
+            };
 
             contexts.push(HistoryWatcherContext {
                 acquisition,
@@ -1321,7 +1555,7 @@ impl TerminalNode {
                 state_path,
                 shutdown_rx: shutdown_rx.clone(),
                 processed_commands: None,
-                is_fish_sqlite,
+                source_mode,
             });
         }
 
@@ -1629,7 +1863,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
-            is_fish_sqlite: false,
+            source_mode: HistorySourceMode::Text,
         };
 
         let command = "echo 'hello world'";
@@ -1722,6 +1956,92 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-atuin-test")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let work_dir = tempfile::tempdir()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
+            .await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/atuin/history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "atuin".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/atuin/history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::AtuinSqlite,
+        };
+
+        let entry = crate::atuin_history::AtuinHistoryEntry {
+            row_id: 42,
+            history_id: "h1".to_string(),
+            timestamp_ns: 1_700_000_000_000_000_000,
+            duration_ns: 50_000_000,
+            exit_code: 0,
+            command: "echo 'hello from atuin'".to_string(),
+            cwd: "/realm/project/sinex".to_string(),
+            session_id: "session-1".to_string(),
+            hostname: "test-host".to_string(),
+        };
+        let mut recent_hashes = VecDeque::new();
+        process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes).await?;
+
+        let event = timeout(Duration::from_secs(5), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("Atuin event not emitted"))?;
+
+        assert_eq!(event.source.as_str(), "shell.atuin");
+        assert_eq!(event.event_type.as_str(), "command.executed");
+        assert_eq!(
+            event
+                .payload
+                .get("command_string")
+                .and_then(|value| value.as_str()),
+            Some("echo 'hello from atuin'")
+        );
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn terminal_watcher_tails_incrementally(ctx: TestContext) -> TestResult<()> {
         let TestRuntime { runtime, nats, .. } =
             TestRuntimeBuilder::new(&ctx, "terminal-watcher-incremental")
@@ -1770,7 +2090,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
-            is_fish_sqlite: false,
+            source_mode: HistorySourceMode::Text,
         };
 
         #[cfg(test)]
@@ -1901,7 +2221,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
-            is_fish_sqlite: false,
+            source_mode: HistorySourceMode::Text,
         };
 
         let commands = Arc::new(Mutex::new(Vec::new()));

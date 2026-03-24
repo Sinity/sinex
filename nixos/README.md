@@ -180,6 +180,53 @@ services.sinex.shell = {
 
 Disabling `kitty.autoConfigure` keeps the helper scripts available without touching your existing Kitty configuration.
 
+### User-Session Node Wiring
+
+Terminal and desktop capture now default to the interactive target user more
+honestly. When `services.sinex.users.target` is set, the module:
+
+- derives terminal history sources from that user's home directory
+- derives the desktop runtime dir when the target UID is known at evaluation time
+- runs a root `ExecStartPre` bridge that grants the `sinex` service account ACL
+  access to shell-history files and live Wayland/Hyprland sockets
+
+That means a typical workstation usually only needs the target user:
+
+```nix
+services.sinex = {
+  enable = true;
+  users.target = "myuser";
+};
+```
+
+Override the typed session surfaces only when the layout is non-standard or you
+need to pin a specific runtime/socket mapping:
+
+```nix
+services.sinex.nodes = {
+  terminal = {
+    historySources = [
+      {
+        path = "/srv/history/zsh_history";
+        shell = "zsh";
+      }
+    ];
+  };
+
+  desktop = {
+    session = {
+      runtimeDir = "/run/user/1001";
+      waylandDisplay = "wayland-1";
+      hyprlandInstanceSignature = "abc123def456";
+    };
+  };
+};
+```
+
+`nodes.terminal.access.bindReadOnlyPaths` and
+`nodes.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
+they are no longer the primary workstation path.
+
 ### Production Setup with Hot Standby
 
 For production deployments with zero-downtime upgrades and automatic failover:
@@ -602,8 +649,8 @@ nats --server nats://127.0.0.1:4222 server report jetstream
 # Check gRPC socket
 ls -la /run/sinex/ingest.sock
 
-# Test event ingestion
-curl -X POST http://localhost:8080/health
+# Test gateway readiness
+curl -k https://127.0.0.1:9999/ready
 
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
@@ -612,8 +659,8 @@ sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
 **Service health endpoints:**
 ```bash
 # Gateway health
-curl http://localhost:8080/health
-curl http://localhost:8080/ready
+curl -k https://127.0.0.1:9999/health
+curl -k https://127.0.0.1:9999/ready
 
 # Check service startup
 journalctl -u sinex-ingestd --since "5 minutes ago"
@@ -667,7 +714,7 @@ services.sinex.resources.ingestd = {
 **Services won't start:**
 ```bash
 # Check for port conflicts
-sudo netstat -tulpn | grep -E ':(8080|5432|6379)'
+sudo netstat -tulpn | grep -E ':(9999|5432|4222)'
 
 # Verify database is running
 systemctl status postgresql

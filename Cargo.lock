@@ -5742,6 +5742,7 @@ dependencies = [
  "async-nats",
  "axum",
  "base64 0.22.1",
+ "blake3",
  "camino",
  "clap",
  "color-eyre",
@@ -5759,6 +5760,7 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.24",
  "rustls-pemfile 1.0.4",
+ "sd-notify",
  "serde",
  "serde_json",
  "shadow-rs",
@@ -5923,7 +5925,6 @@ name = "sinex-primitives"
 version = "0.1.0"
 dependencies = [
  "async-nats",
- "async-trait",
  "base64 0.22.1",
  "blake3",
  "bon",
@@ -6014,6 +6015,24 @@ dependencies = [
  "which 5.0.0",
  "xtask",
  "xtask-macros",
+]
+
+[[package]]
+name = "sinex-session-detector"
+version = "0.4.2"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "human-panic",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xtask",
 ]
 
 [[package]]
@@ -6169,6 +6188,7 @@ dependencies = [
  "console",
  "crossterm 0.29.0",
  "directories",
+ "dirs",
  "futures",
  "humantime",
  "indicatif",
@@ -6179,6 +6199,7 @@ dependencies = [
  "rand 0.10.0",
  "ratatui",
  "reqwest 0.12.24",
+ "rusqlite",
  "rustls 0.22.4",
  "rustls-native-certs 0.8.3",
  "rustls-pemfile 2.2.0",
@@ -6187,6 +6208,7 @@ dependencies = [
  "serde_yaml",
  "serial_test",
  "sinex-db",
+ "sinex-node-sdk",
  "sinex-primitives",
  "sqlx",
  "syntect",

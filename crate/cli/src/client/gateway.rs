@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
     JsonRpcError,
+    ingest::{EventIngestRequest, EventIngestResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -38,6 +39,14 @@ use sinex_primitives::rpc::{
         ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
     },
     system::{SystemHealthRequest, SystemHealthResponse},
+    telemetry::{
+        CommandFrequencyEntry, FileActivityEntry, RecentActivityEntry, SystemStateBucket,
+        TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
+        TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryRecentActivityRequest,
+        TelemetryRecentActivityResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
+        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
+        WindowFocusBucket,
+    },
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -388,6 +397,14 @@ impl GatewayClient {
     pub async fn version(&self) -> Result<String> {
         let result = self.call_rpc("version", json!({})).await?;
         Ok(result.as_str().unwrap_or("unknown").to_string())
+    }
+
+    /// Publish a single event through the gateway's events.ingest RPC endpoint.
+    pub async fn ingest_event(&self, req: EventIngestRequest) -> Result<EventIngestResponse> {
+        let result = self
+            .call_rpc(methods::EVENTS_INGEST, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     // ==================== Core Commands ====================
@@ -1014,6 +1031,108 @@ impl GatewayClient {
             )
             .await?;
         serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== Telemetry Commands ====================
+
+    /// Query window focus telemetry aggregates.
+    pub async fn telemetry_window_focus(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<WindowFocusBucket>> {
+        let req = TelemetryWindowFocusRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_WINDOW_FOCUS,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryWindowFocusResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query command frequency telemetry aggregates.
+    pub async fn telemetry_command_frequency(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<CommandFrequencyEntry>> {
+        let req = TelemetryCommandFrequencyRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_COMMAND_FREQUENCY,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryCommandFrequencyResponse = serde_json::from_value(result)?;
+        Ok(response.entries)
+    }
+
+    /// Query file activity telemetry aggregates.
+    pub async fn telemetry_file_activity(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<FileActivityEntry>> {
+        let req = TelemetryFileActivityRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_FILE_ACTIVITY,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryFileActivityResponse = serde_json::from_value(result)?;
+        Ok(response.entries)
+    }
+
+    /// Query recent activity summary (hardcoded lookback window, no time params).
+    pub async fn telemetry_recent_activity(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<RecentActivityEntry>> {
+        let req = TelemetryRecentActivityRequest { limit };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_RECENT_ACTIVITY,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryRecentActivityResponse = serde_json::from_value(result)?;
+        Ok(response.entries)
+    }
+
+    /// Query system state telemetry aggregates.
+    pub async fn telemetry_system_state(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<SystemStateBucket>> {
+        let req = TelemetrySystemStateRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_SYSTEM_STATE,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
     }
 
     // ==================== SSE Event Stream ====================

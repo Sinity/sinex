@@ -9,8 +9,10 @@
  */
 
 use crate::{NodeResult, SinexError};
+use sinex_primitives::DeploymentReadinessDescriptor;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing::{debug, info};
 
 use super::VerificationStatus;
@@ -207,6 +209,7 @@ async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> No
 
 async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
+    let descriptor = load_deployment_descriptor();
 
     // Default event sources that Sinex supports
     let available_sources = vec![
@@ -219,7 +222,7 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     ];
 
     for (source_name, description) in available_sources {
-        let config_info = verify_event_source_config(source_name, description).await?;
+        let config_info = verify_event_source_config(source_name, description, descriptor.as_ref()).await?;
         let is_available = config_info["available"].as_bool().unwrap_or(false);
         event_sources.insert(source_name.to_string(), config_info);
 
@@ -231,6 +234,7 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     }
 
     Ok(json!({
+        "deployment_descriptor_loaded": descriptor.is_some(),
         "sources": event_sources,
         "total_available": event_sources.values()
             .filter(|v| v["available"].as_bool().unwrap_or(false))
@@ -238,15 +242,19 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     }))
 }
 
-async fn verify_event_source_config(source_name: &str, description: &str) -> NodeResult<Value> {
+async fn verify_event_source_config(
+    source_name: &str,
+    description: &str,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> NodeResult<Value> {
     // Check if the event source dependencies are available
     let available = match source_name {
         "filesystem" => true, // Always available
-        "terminal" => true,   // Always available
+        "terminal" => check_terminal_availability(descriptor).await,
         "clipboard" => check_clipboard_availability().await,
         "kitty" => check_kitty_availability().await,
-        "hyprland" => check_hyprland_availability().await,
-        "atuin" => check_atuin_availability().await,
+        "hyprland" => check_hyprland_availability(descriptor).await,
+        "atuin" => check_atuin_availability(descriptor).await,
         _ => false,
     };
 
@@ -262,17 +270,113 @@ async fn check_clipboard_availability() -> bool {
         || super::command_succeeds("which", &["wl-clipboard"]).await
 }
 
+fn load_deployment_descriptor() -> Option<DeploymentReadinessDescriptor> {
+    match DeploymentReadinessDescriptor::load() {
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            debug!("Ignoring deployment descriptor for preflight configuration checks: {error}");
+            None
+        }
+    }
+}
+
+fn default_terminal_source_candidates(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> Vec<PathBuf> {
+    if let Some(descriptor) = descriptor
+        && !descriptor.terminal.history_sources.is_empty()
+    {
+        return descriptor
+            .terminal
+            .history_sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect();
+    }
+
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+
+    vec![
+        home.join(".bash_history"),
+        home.join(".zsh_history"),
+        home.join(".local/share/atuin/history.db"),
+        home.join(".local/share/fish/fish_history"),
+    ]
+}
+
+async fn check_terminal_availability(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> bool {
+    default_terminal_source_candidates(descriptor)
+        .iter()
+        .any(|path| path.is_file())
+}
+
 async fn check_kitty_availability() -> bool {
     std::env::var("KITTY_LISTEN_ON").is_ok() || super::command_succeeds("which", &["kitty"]).await
 }
 
-async fn check_hyprland_availability() -> bool {
-    std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || super::command_succeeds("hyprctl", &["version"]).await
+async fn check_hyprland_availability(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> bool {
+    if let Some(event_socket) = descriptor
+        .and_then(|value| value.desktop.hyprland_event_socket.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("SINEX_HYPRLAND_EVENT_SOCKET").ok().map(PathBuf::from))
+    {
+        return event_socket.exists();
+    }
+
+    let Some(runtime_dir) = descriptor
+        .and_then(|value| value.desktop.runtime_dir.clone())
+        .or_else(|| std::env::var("SINEX_HYPRLAND_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(dirs::runtime_dir)
+    else {
+        return false;
+    };
+
+    let hypr_dir = runtime_dir.join("hypr");
+    let explicit_signature = descriptor
+        .and_then(|value| value.desktop.hyprland_instance_signature.clone())
+        .or_else(|| std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE").ok())
+        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok());
+
+    if let Some(signature) = explicit_signature {
+        return hypr_dir.join(signature).join(".socket2.sock").exists();
+    }
+
+    let Ok(entries) = std::fs::read_dir(hypr_dir) else {
+        return false;
+    };
+
+    entries
+        .filter_map(|entry| entry.ok().map(|value| value.path()))
+        .filter(|path| path.join(".socket2.sock").exists())
+        .take(2)
+        .count()
+        == 1
 }
 
-async fn check_atuin_availability() -> bool {
-    super::command_succeeds("which", &["atuin"]).await
+async fn check_atuin_availability(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> bool {
+    if let Some(descriptor) = descriptor
+        && let Some(path) = descriptor
+            .terminal
+            .history_sources
+            .iter()
+            .find(|source| source.shell == "atuin")
+            .map(|source| source.path.clone())
+    {
+        return path.is_file();
+    }
+
+    dirs::home_dir()
+        .map(|home| home.join(".local/share/atuin/history.db").is_file())
+        .unwrap_or(false)
 }
 
 async fn verify_service_environment(messages: &mut Vec<String>) -> NodeResult<Value> {

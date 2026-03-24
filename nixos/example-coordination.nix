@@ -19,7 +19,7 @@
       host = "127.0.0.1";
       name = "sinex_prod";
       user = "sinex";
-      passwordFile = config.sinex.secrets.paths."sinex-local-db";
+      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     lifecycle.maintenance.enable = true;
@@ -120,6 +120,7 @@
 
   # Ensure the monitored operator account exists
   environment.etc."sinex/gateway-admin-token".text = "example-coordination-admin:admin";
+  environment.etc."sinex/db-password".text = "example-db-password";
 
   users.users."sinex-prod" = {
     isNormalUser = true;

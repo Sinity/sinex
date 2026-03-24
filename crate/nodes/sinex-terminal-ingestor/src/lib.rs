@@ -6,6 +6,9 @@
 
 pub mod shell_detection;
 
+// Atuin shell history SQLite parser
+pub mod atuin_history;
+
 // Fish shell history SQLite parser
 pub mod fish_history;
 

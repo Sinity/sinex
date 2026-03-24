@@ -112,13 +112,8 @@ The system automatically emits `health.status` events when status changes:
 
 ## Future Enhancement: Auto-Integration
 
-Phase 3 will add automatic integration in `sinex-node-sdk` where HealthReporter is created automatically for all service-mode nodes.
-
-```rust
-// Future: Automatic in node runtime
-// let health_reporter = lifecycle.health_reporter().unwrap();
-// Automatically wired into process loop
-```
+Phase 3 will add automatic integration in `sinex-node-sdk` where health monitoring setup is
+centralized instead of being recreated inside each adapter.
 
 ## See Also
 

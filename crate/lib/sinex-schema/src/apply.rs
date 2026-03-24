@@ -1120,7 +1120,13 @@ SELECT
     SUM((payload->>'events_deferred')::int) AS total_deferred,
     SUM((payload->>'events_failed')::int) AS total_failed,
     COUNT(*) FILTER (WHERE (payload->>'had_synthesis')::boolean) AS synthesis_batches,
-    COUNT(*) AS batch_count
+    COUNT(*) AS batch_count,
+    MAX((payload->>'validation_valid')::bigint) AS validation_valid,
+    MAX((payload->>'validation_skipped')::bigint) AS validation_skipped,
+    MAX((payload->>'validation_no_schema')::bigint) AS validation_no_schema,
+    MAX((payload->>'validation_schema_not_found')::bigint) AS validation_schema_not_found,
+    MAX((payload->>'validation_invalid')::bigint) AS validation_invalid,
+    AVG((payload->>'validation_coverage_pct')::float) AS avg_validation_coverage_pct
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'batch.stats'

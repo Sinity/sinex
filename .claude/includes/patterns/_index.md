@@ -1,7 +1,6 @@
-# Patterns
+# Code Patterns
 
-@./infrastructure.md
+@./code.md
 @./testing.md
-@./do-dont.md
 @./nodes.md
 @./toolchain.md

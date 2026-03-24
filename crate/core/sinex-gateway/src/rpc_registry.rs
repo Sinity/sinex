@@ -479,11 +479,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
         // Event ingest (Write - publishes to JetStream)
-        .nats_rpc(
-            "events.ingest",
-            Role::Write,
-            boxed!(handle_events_ingest, 3),
-        )
+        .register("events.ingest", Role::Write, |params, services, _auth| {
+            Box::pin(async move { handle_events_ingest(services, params).await })
+        })
         // PKM methods (Write)
         .register("pkm.create_note", Role::Write, |params, services, _auth| {
             Box::pin(async move { handle_create_note(services.pkm.as_ref(), params).await })

@@ -130,9 +130,9 @@ print(f'Generated {count} clipboard operations')
       # Output system metrics in JSON format
       
       # Calculate ingestion rate
-      EVENTS_1=$(su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
+      EVENTS_1=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
       sleep 5
-      EVENTS_2=$(su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
+      EVENTS_2=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
       DIFF=$(( EVENTS_2 - EVENTS_1 ))
       if [ "$DIFF" -lt 0 ]; then
         DIFF=0
@@ -147,7 +147,7 @@ print(f'Generated {count} clipboard operations')
       
       # Database query latency (simplified)
       LATENCY_START=$(date +%s%N)
-      su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events LIMIT 1;\"" >/dev/null 2>&1 || true
+      su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -At -c \"SELECT COUNT(*) FROM core.events LIMIT 1;\"" >/dev/null 2>&1 || true
       LATENCY_END=$(date +%s%N)
       LATENCY_MS=$(( (LATENCY_END - LATENCY_START) / 1000000 ))
       
