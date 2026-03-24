@@ -119,7 +119,7 @@ impl GatewayMetrics {
 
     /// Record a rate-limited request
     #[inline]
-    pub fn record_rate_limited(&self, _token_prefix: &str) {
+    pub fn record_rate_limited(&self) {
         self.rate_limited_requests.fetch_add(1, Ordering::Relaxed);
         self.rejected_requests.fetch_add(1, Ordering::Relaxed);
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
@@ -297,8 +297,9 @@ impl GatewayMetrics {
                         if *cancel.borrow() {
                             debug!("Gateway metrics emission task cancelled");
                             // Final emission before shutdown
-                            if self.observer.is_enabled() {
-                                let _ = self.emit_metrics().await;
+                            if self.observer.is_enabled()
+                                && let Err(error) = self.emit_metrics().await {
+                                    warn!("Failed to emit gateway metrics during shutdown: {}", error);
                             }
                             break;
                         }

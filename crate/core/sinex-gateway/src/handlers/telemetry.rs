@@ -3,7 +3,7 @@
 //! Queries the `sinex_telemetry.*` continuous-aggregate views and returns
 //! structured responses for the `telemetry.*` RPC method namespace.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use serde_json::Value;
 use sinex_primitives::rpc::telemetry::{
     CommandFrequencyEntry, FileActivityEntry, RecentActivityEntry, SystemStateBucket,
@@ -45,7 +45,20 @@ fn resolve_time_range(
         Some(s) => parse_rfc3339(s)?,
         None => resolved_to - time::Duration::hours(default_hours),
     };
+    if resolved_from > resolved_to {
+        return Err(eyre!(
+            "invalid telemetry time range: 'from' must be earlier than or equal to 'to'"
+        ));
+    }
     Ok((resolved_from, resolved_to))
+}
+
+fn resolve_positive_limit(limit: Option<i64>) -> Result<i64> {
+    let limit = limit.unwrap_or(50);
+    if limit <= 0 {
+        return Err(eyre!("telemetry limit must be positive, got {limit}"));
+    }
+    Ok(limit)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -116,7 +129,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
 
     let (from, to) =
         resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 3)?;
-    let limit = req.limit.unwrap_or(50);
+    let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, WindowFocusRow>(
         r#"
@@ -168,7 +181,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
 
     let (from, to) =
         resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 24)?;
-    let limit = req.limit.unwrap_or(50);
+    let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CommandFrequencyRow>(
         r#"
@@ -219,7 +232,7 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
 
     let (from, to) =
         resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 24)?;
-    let limit = req.limit.unwrap_or(50);
+    let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, FileActivityRow>(
         r#"
@@ -265,7 +278,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
     let req: TelemetryRecentActivityRequest = super::parse_default_on_null(params)
         .wrap_err("failed to parse telemetry.recent_activity request")?;
 
-    let limit = req.limit.unwrap_or(50);
+    let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, RecentActivityRow>(
         r#"
@@ -307,7 +320,7 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
 
     let (from, to) =
         resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 3)?;
-    let limit = req.limit.unwrap_or(50);
+    let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, SystemStateRow>(
         r#"
