@@ -55,8 +55,6 @@ pub mod annex;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
 #[cfg(feature = "messaging")]
-pub mod automaton_event_handler;
-#[cfg(feature = "messaging")]
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
@@ -91,8 +89,6 @@ pub mod ingestor_node;
 #[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
 #[cfg(feature = "messaging")]
-pub mod lifecycle;
-#[cfg(feature = "messaging")]
 pub mod nats_publisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub mod node_cli;
@@ -106,6 +102,7 @@ pub mod schema_validator;
 #[cfg(feature = "messaging")]
 pub mod self_observation;
 pub mod shutdown;
+pub mod sqlite_source;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
 pub mod version;
@@ -117,12 +114,7 @@ pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
 };
 #[cfg(feature = "messaging")]
-pub use automaton_base::{
-    ActivityEntry, AutomatonFields, AutomatonStats, ChannelConfirmedEventHandler,
-    DEFAULT_CHANNEL_CAPACITY, DEFAULT_MAX_HISTORY_ENTRIES, IngestionHistoryEntry,
-};
-#[cfg(feature = "messaging")]
-pub use automaton_event_handler::AutomatonEventHandler;
+pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};
 #[cfg(feature = "messaging")]
 pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
@@ -165,8 +157,6 @@ pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_eve
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 #[cfg(feature = "messaging")]
-pub use lifecycle::{LifecycleManager, ServiceStatus};
-#[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{
@@ -183,7 +173,13 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
-pub use shutdown::{ShutdownConfig, ShutdownHandler, ShutdownSignal, default_checkpoint_path};
+pub use shutdown::{ShutdownConfig, default_checkpoint_path};
+#[cfg(feature = "messaging")]
+pub use sqlite_source::stage_stable_material;
+pub use sqlite_source::{
+    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
+    read_rows_after, stable_material_id, stable_row_material_id,
+};
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
@@ -196,7 +192,7 @@ pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
 #[cfg(feature = "db")]
 pub use historical_importer::{HistoricalImporter, ImportProgress};
 #[cfg(feature = "preflight")]
-pub use preflight::{VerificationStatus, run_preflight_checks, verify_service_dependencies};
+pub use preflight::{VerificationStatus, verify_service_dependencies};
 
 /// Version information for node components
 #[derive(Debug, Clone)]

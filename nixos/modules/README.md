@@ -95,6 +95,10 @@ disabled (e.g. staging migrations).
   time, the desktop runtime directory. Terminal and desktop units also run a
   root `ExecStartPre` bridge that grants the `sinex` service account the ACLs
   it needs for shell-history files and live Wayland/Hyprland sockets.
+- When the module is enabled, workstation-facing collectors (`filesystem`,
+  `terminal`, `desktop`, `system`) default to singleton startup
+  (`instances = 1`) so the first live host enable does not double-run capture
+  nodes before coordination is intentionally introduced.
 - `nodes.terminal.historySources` and `nodes.desktop.session.*` remain the
   typed override surfaces when the target user layout is non-standard or a
   deployment needs explicit socket/runtime wiring.
@@ -141,6 +145,9 @@ disabled (e.g. staging migrations).
 - The module now wires a first-boot `sinex-schema-apply` oneshot before guarded
   services and before `sinex-preflight`, so schema creation is part of the real
   deployment path instead of a VM-only convention.
+- The module also emits `/etc/sinex/deployment-readiness.json`, the canonical
+  descriptor consumed by `xtask doctor --deployment-readiness` and the
+  config-derived preflight configuration checks.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back

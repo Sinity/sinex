@@ -978,17 +978,9 @@ impl DatabasePool {
                         slot = slot.name,
                         reason = reason
                     );
-                    release_slot(slot, pool, &mut lock_conn, lock_id).await;
-                    if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
-                        slog!(
-                            Level::Error,
-                            "slot_recreate_failed",
-                            slot = slot.name,
-                            error = recreate_err
-                        );
-                        slot.quarantined.store(true, Ordering::SeqCst);
-                    }
-                    return Err(());
+                    return self
+                        .recreate_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
+                        .await;
                 }
                 // Metadata drift only: heal metadata and force one cleanup pass.
                 Ok(None) => {
@@ -1088,6 +1080,83 @@ impl DatabasePool {
         // Clean the slot before use
         self.clean_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
             .await
+    }
+
+    /// Recreate a drifted slot and reuse it immediately instead of skipping the acquisition cycle.
+    async fn recreate_and_acquire_slot(
+        &self,
+        slot: &Arc<DatabaseSlot>,
+        pool: &sinex_db::DbPool,
+        mut lock_conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+        lock_id: i64,
+        pid: u32,
+        start_time: std::time::Instant,
+    ) -> std::result::Result<TestDatabase, ()> {
+        release_slot(slot, pool, &mut lock_conn, lock_id).await;
+
+        if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
+            slog!(
+                Level::Error,
+                "slot_recreate_failed",
+                slot = slot.name,
+                error = recreate_err
+            );
+            slot.quarantined.store(true, Ordering::SeqCst);
+            return Err(());
+        }
+
+        slot.schema_verified.store(true, Ordering::SeqCst);
+
+        let Some(pool) = try_connect_to_slot(slot, self.slot_max_connections).await else {
+            return Err(());
+        };
+        let Some(mut lock_conn) = try_advisory_lock_slot(&pool, slot).await else {
+            return Err(());
+        };
+
+        slot.in_use.store(true, Ordering::SeqCst);
+        {
+            let mut pool_opt = slot.pool.lock();
+            *pool_opt = Some(pool.clone());
+        }
+
+        let dirty_meta = PoolMeta {
+            fingerprint: self.expected_fingerprint.clone(),
+            extensions: self.expected_extensions.clone(),
+            dirty: true,
+            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
+            last_error: None,
+        };
+        if let Err(err) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
+            slog!(
+                Level::Warn,
+                "meta_persist_failed",
+                slot = slot.name,
+                error = err
+            );
+        }
+
+        let acq_time = start_time.elapsed();
+        POOL_METRICS.record_acquisition(acq_time);
+        slog!(
+            Level::Info,
+            "slot_acquired",
+            slot = slot.name,
+            duration_ms = acq_time.as_millis(),
+            pid = pid,
+            clean = true,
+            recreated = true
+        );
+
+        Ok(TestDatabase {
+            name: slot.name.clone(),
+            pool,
+            slot: slot.clone(),
+            lock_id: advisory_lock_key(&slot.name),
+            lock_conn: Some(lock_conn),
+            acquired_at: Instant::now(),
+            acquisition_process_id: pid,
+        })
     }
 
     /// Clean a dirty slot and return a `TestDatabase`, or release on failure.

@@ -42,12 +42,18 @@ pub struct TelemetryWindowFocusRequest {
 pub struct WindowFocusBucket {
     /// Bucket start timestamp (RFC 3339).
     pub bucket: String,
-    /// Application/window title that held focus.
-    pub app_name: Option<String>,
+    /// Workspace associated with the focus bucket.
+    pub workspace: Option<String>,
+    /// Most recently focused window class in this bucket.
+    pub window_class: Option<String>,
+    /// Most recently focused window title in this bucket.
+    pub window_title: Option<String>,
+    /// Most recently focused compositor/window identifier.
+    pub window_id: Option<String>,
+    /// Timestamp of the latest focus event in this bucket.
+    pub last_focus_time: Option<String>,
     /// Total number of focus events in this bucket.
-    pub focus_count: i64,
-    /// Cumulative focus duration in seconds.
-    pub total_duration_secs: Option<f64>,
+    pub focus_event_count: i64,
 }
 
 /// Response: `telemetry.window_focus`
@@ -73,12 +79,18 @@ pub struct TelemetryCommandFrequencyRequest {
 /// A single command-frequency aggregate entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandFrequencyEntry {
-    /// The shell command (first token).
+    /// The recorded shell command.
     pub command: String,
+    /// Shell/runtime that emitted the command.
+    pub shell: Option<String>,
     /// Total invocation count across the requested window.
-    pub total_count: i64,
-    /// Number of distinct hourly buckets in which the command appeared.
-    pub bucket_count: i64,
+    pub total_executions: i64,
+    /// Successful invocation count (`exit_code = 0`) across the requested window.
+    pub successful_executions: i64,
+    /// Failed invocation count (`exit_code != 0`) across the requested window.
+    pub failed_executions: i64,
+    /// Average duration in milliseconds when present in the source events.
+    pub avg_duration_ms: Option<f64>,
 }
 
 /// Response: `telemetry.command_frequency`
@@ -108,8 +120,12 @@ pub struct FileActivityEntry {
     pub bucket: String,
     /// Directory path that saw activity.
     pub directory: Option<String>,
+    /// Filesystem event type aggregated into this bucket.
+    pub event_type: String,
     /// Total filesystem event count in this bucket.
-    pub event_count: i64,
+    pub total_events: i64,
+    /// Distinct files observed in this bucket.
+    pub unique_files: i64,
 }
 
 /// Response: `telemetry.file_activity`
@@ -135,10 +151,12 @@ pub struct TelemetryRecentActivityRequest {
 pub struct RecentActivityEntry {
     /// Activity category (e.g. `"focus"`, `"command"`, `"system"`).
     pub activity_type: String,
-    /// Human-readable summary of the activity.
-    pub summary: Option<String>,
+    /// Secondary grouping or subsystem context.
+    pub context: Option<String>,
+    /// Human-readable activity detail.
+    pub detail: Option<String>,
     /// When this activity was recorded (RFC 3339).
-    pub recorded_at: Option<String>,
+    pub timestamp: Option<String>,
 }
 
 /// Response: `telemetry.recent_activity`
@@ -166,12 +184,20 @@ pub struct TelemetrySystemStateRequest {
 pub struct SystemStateBucket {
     /// Bucket start timestamp (RFC 3339).
     pub bucket: String,
-    /// Average CPU usage across this bucket (0–100).
-    pub avg_cpu_pct: Option<f64>,
-    /// Average memory usage in bytes.
-    pub avg_memory_bytes: Option<f64>,
-    /// Average disk I/O in bytes per second.
-    pub avg_disk_io_bps: Option<f64>,
+    /// Average CPU usage percentage across this bucket (0–100).
+    pub avg_cpu_percent: Option<f64>,
+    /// Maximum CPU usage percentage across this bucket (0–100).
+    pub max_cpu_percent: Option<f64>,
+    /// Average memory usage percentage across this bucket (0–100).
+    pub avg_memory_percent: Option<f64>,
+    /// Maximum memory usage percentage across this bucket (0–100).
+    pub max_memory_percent: Option<f64>,
+    /// Average disk usage percentage across this bucket (0–100).
+    pub avg_disk_percent: Option<f64>,
+    /// Latest active systemd unit count emitted in this bucket.
+    pub current_active_units: Option<i64>,
+    /// Number of source samples aggregated into the bucket.
+    pub sample_count: i64,
 }
 
 /// Response: `telemetry.system_state`

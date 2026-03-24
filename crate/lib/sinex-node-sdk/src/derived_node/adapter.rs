@@ -127,13 +127,13 @@ where
         error: &crate::NodeLogicError,
     ) -> NodeResult<()> {
         let Some(runtime) = self.runtime.as_ref() else {
-            return Err(
-                SinexError::lifecycle("derived-node requested DLQ but no transport runtime is available")
-                    .with_context("node", self.node.name())
-                    .with_context("event_type", event.event_type.as_ref())
-                    .with_context("source", event.source.as_ref())
-                    .with_context("reason", error.to_string()),
-            );
+            return Err(SinexError::lifecycle(
+                "derived-node requested DLQ but no transport runtime is available",
+            )
+            .with_context("node", self.node.name())
+            .with_context("event_type", event.event_type.as_ref())
+            .with_context("source", event.source.as_ref())
+            .with_context("reason", error.to_string()));
         };
         let transport = runtime.handles().transport();
         transport

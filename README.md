@@ -145,6 +145,7 @@ Common operator entrypoints:
 
 ```bash
 xtask doctor
+xtask doctor --deployment-readiness
 xtask status --summary
 xtask infra status
 journalctl -u sinex-gateway -u sinex-ingestd -f

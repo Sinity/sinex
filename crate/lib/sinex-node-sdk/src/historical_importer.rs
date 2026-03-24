@@ -3,10 +3,10 @@
 //! Handles source material registration, provenance validation, batch error isolation,
 //! and progress tracking — the mechanical parts that every historical importer needs.
 
-use sinex_db::{DbPool, DbPoolExt, Id, SourceMaterialRecord, repositories::StreamBatchRow};
-use sinex_db::repositories::StreamBatchInsertResult;
-use sinex_primitives::prelude::*;
 use serde::{Deserialize, Serialize};
+use sinex_db::repositories::StreamBatchInsertResult;
+use sinex_db::{DbPool, DbPoolExt, Id, SourceMaterialRecord, repositories::StreamBatchRow};
+use sinex_primitives::prelude::*;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -115,6 +115,17 @@ impl HistoricalImporter {
         self.rows_quarantined
     }
 
+    /// Record a caller-side quarantine decision for a single source row.
+    pub fn quarantine_row(&mut self, anchor_byte: Option<i64>, reason: &str) {
+        warn!(
+            material_id = %self.material_id,
+            anchor_byte = ?anchor_byte,
+            reason,
+            "Quarantined historical import row before batch insert"
+        );
+        self.rows_quarantined += 1;
+    }
+
     /// Validate that all rows in a batch have correct provenance XOR.
     ///
     /// Returns indices of invalid rows (rows where both or neither provenance fields are set).
@@ -191,10 +202,7 @@ impl HistoricalImporter {
             .events()
             .insert_stream_batch(batch)
             .await
-            .map_err(|e| {
-                SinexError::database("batch insert failed")
-                    .with_std_error(&e)
-            })
+            .map_err(|e| SinexError::database("batch insert failed").with_std_error(&e))
     }
 
     /// Bisect-retry: split batch in half, retry each half.
@@ -272,7 +280,7 @@ impl HistoricalImporter {
     }
 
     /// Finalize the import — mark source material as completed.
-    pub async fn finalize(self, total_bytes: Option<i64>) -> Result<()> {
+    pub async fn finalize(&self, total_bytes: Option<i64>) -> Result<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(self.material_id);
         self.pool
             .source_materials()
@@ -295,7 +303,7 @@ impl HistoricalImporter {
     }
 
     /// Mark the import as failed.
-    pub async fn fail(self, reason: &str) -> Result<()> {
+    pub async fn fail(&self, reason: &str) -> Result<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(self.material_id);
         self.pool
             .source_materials()

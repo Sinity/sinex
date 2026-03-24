@@ -62,6 +62,9 @@ workspace = true
 [dependencies.dirs]
 workspace = true
 
+[dependencies.rusqlite]
+workspace = true
+
 [dependencies.tokio-retry]
 workspace = true
 
@@ -85,6 +88,9 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[dev-dependencies.tempfile]
+workspace = true
 
 [lints]
 workspace = true

@@ -104,6 +104,49 @@ async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestR
     Ok(())
 }
 
+#[sinex_test]
+async fn register_external_in_flight_resets_terminal_status_to_sensing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-restart-{forced_id}");
+    let started_at = Timestamp::now();
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "first registration"}),
+            started_at,
+        )
+        .await?;
+    ctx.pool
+        .source_materials()
+        .mark_as_failed(
+            Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id),
+            "synthetic failure",
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    assert_eq!(restarted.status, "sensing");
+    assert!(restarted.end_time.is_none());
+    Ok(())
+}
+
 // =============================================================================
 // SYNTHETIC METADATA ROUNDTRIP TESTS (Slice 3)
 // =============================================================================

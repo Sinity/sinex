@@ -221,7 +221,7 @@ impl PostgresManager {
     }
 
     /// Check if PostgreSQL is accepting connections via pg_isready.
-    fn is_accepting_connections(&self) -> bool {
+    pub fn is_accepting_connections(&self) -> bool {
         self.pg_command("pg_isready")
             .args([
                 "-h",

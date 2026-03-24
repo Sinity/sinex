@@ -39,6 +39,33 @@ pub struct WindowManagerHistoricalPayload {
     pub note: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "activitywatch", event_type = "window.active")]
+pub struct ActivityWatchWindowActivePayload {
+    pub app: String,
+    pub title: String,
+    pub duration_ms: u64,
+    pub bucket_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "activitywatch", event_type = "browser.tab.active")]
+pub struct ActivityWatchBrowserTabActivePayload {
+    pub browser: String,
+    pub title: String,
+    pub url: String,
+    pub duration_ms: u64,
+    pub bucket_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "activitywatch", event_type = "afk.changed")]
+pub struct ActivityWatchAfkChangedPayload {
+    pub status: String,
+    pub duration_ms: u64,
+    pub bucket_id: String,
+}
+
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl DesktopMonitoringStartedPayload {

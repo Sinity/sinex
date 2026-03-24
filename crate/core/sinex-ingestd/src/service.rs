@@ -287,7 +287,10 @@ impl IngestService {
                 Err(e) => {
                     // May fail if already registered (unique constraint) - update heartbeat instead
                     debug!("Node registration failed (may already exist): {e}");
-                    let _ = pool.state().update_node_heartbeat(&node_name).await;
+                    let _ = pool
+                        .state()
+                        .update_node_heartbeat_for_version(&node_name, env!("CARGO_PKG_VERSION"))
+                        .await;
                 }
             }
 
@@ -309,7 +312,10 @@ impl IngestService {
                     () = emitter.start_periodic_heartbeat(None) => {}
                     () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                         let node_name = NodeName::new("sinex-ingestd");
-                        let _ = heartbeat_pool.state().mark_node_inactive(&node_name).await;
+                        let _ = heartbeat_pool
+                            .state()
+                            .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
+                            .await;
                     }
                 }
             });

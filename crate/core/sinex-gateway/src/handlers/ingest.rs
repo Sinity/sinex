@@ -8,7 +8,9 @@ use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::{Value, Value as JsonValue, json};
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
-use sinex_db::repositories::source_materials::{SourceMaterial, TemporalLedgerEntry};
+use sinex_db::repositories::source_materials::{
+    SourceMaterial, TemporalLedgerEntry, status as material_status,
+};
 use sinex_primitives::{
     Id, Uuid,
     domain::{EventSource, EventType, HostName},
@@ -60,6 +62,25 @@ async fn publish_event_envelope(
     Ok(ack.sequence)
 }
 
+async fn mark_events_ingest_material_failed(
+    services: &ServiceContainer,
+    material_id: Id<SourceMaterialRecord>,
+    error_reason: &str,
+) {
+    if let Err(mark_err) = services
+        .pool()
+        .source_materials()
+        .mark_as_failed(material_id, error_reason)
+        .await
+    {
+        warn!(
+            material_id = %material_id.to_uuid(),
+            error = %mark_err,
+            "Failed to mark gateway-ingested source material as failed"
+        );
+    }
+}
+
 /// Handle `events.ingest`
 ///
 /// Validates the request, registers a backing source-material row so the
@@ -99,6 +120,7 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
     let payload = req.payload;
 
     let material = SourceMaterial::stream(format!("gateway://events.ingest/{event_id}"))
+        .with_status(material_status::SENSING)
         .with_metadata(json!({
             "gateway_surface": "events.ingest",
             "event_source": source.as_str(),
@@ -107,7 +129,6 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
             "inline_payload": true,
         }))
         .with_start_time(ts_orig)
-        .with_end_time(ts_orig)
         .with_staged_by("sinex-gateway")
         .with_staged_on_host(gateway_host);
 
@@ -117,60 +138,63 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
         .register_external_material(material_id, material)
         .await
         .wrap_err("failed to register inline source material for events.ingest")?;
-    services
-        .pool()
-        .source_materials()
-        .append_temporal_ledger(TemporalLedgerEntry::staged_at(
-            material_id,
-            payload_size_bytes,
-            ts_orig,
-        ))
-        .await
-        .wrap_err("failed to append temporal ledger for events.ingest material")?;
+    let material_record_id = Id::<SourceMaterialRecord>::from_uuid(material_record.id);
 
-    let mut envelope = Event::new_json(
-        source.as_str(),
-        event_type.as_str(),
-        payload,
-        Provenance::from_material(Id::<EventSourceMaterial>::from_uuid(material_id), 0, None, None),
-    )
-    .with_timestamp(ts_orig)
-    .with_host(event_host);
-    envelope.id = Some(Id::from_uuid(event_id));
-
-    let publish_result = publish_event_envelope(
+    let publish_result: Result<u64> = async {
         services
-            .nats_client()
-            .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?,
-        services.environment(),
-        source.as_str(),
-        event_type.as_str(),
-        event_id,
-        envelope,
-    )
+            .pool()
+            .source_materials()
+            .append_temporal_ledger(TemporalLedgerEntry::staged_at(
+                material_id,
+                payload_size_bytes,
+                ts_orig,
+            ))
+            .await
+            .wrap_err("failed to append temporal ledger for events.ingest material")?;
+
+        let mut envelope = Event::new_json(
+            source.as_str(),
+            event_type.as_str(),
+            payload,
+            Provenance::from_material(
+                Id::<EventSourceMaterial>::from_uuid(material_id),
+                0,
+                None,
+                None,
+            ),
+        )
+        .with_timestamp(ts_orig)
+        .with_host(event_host);
+        envelope.id = Some(Id::from_uuid(event_id));
+
+        publish_event_envelope(
+            services
+                .nats_client()
+                .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?,
+            services.environment(),
+            source.as_str(),
+            event_type.as_str(),
+            event_id,
+            envelope,
+        )
+        .await
+    }
     .await;
 
     let sequence = match publish_result {
         Ok(sequence) => sequence,
         Err(err) => {
-            if let Err(mark_err) = services
-                .pool()
-                .source_materials()
-                .mark_as_failed(
-                    Id::<SourceMaterialRecord>::from_uuid(material_record.id),
-                    &err.to_string(),
-                )
-                .await
-            {
-                warn!(
-                    material_id = %material_record.id,
-                    error = %mark_err,
-                    "Failed to mark gateway-ingested source material as failed after publish error"
-                );
-            }
+            mark_events_ingest_material_failed(services, material_record_id, &err.to_string()).await;
             return Err(err);
         }
     };
+
+    services
+        .pool()
+        .source_materials()
+        .finalize_in_flight(material_record_id, None, None, None, None)
+        .await
+        .wrap_err("failed to finalize events.ingest source material after publish")?;
 
     Ok(serde_json::to_value(EventIngestResponse {
         event_id: event_id.to_string(),

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState,
+    SourceState, stage_stable_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -23,13 +23,12 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::{
     Bytes, Seconds,
-    domain::{HostName, RecordedPath, SanitizedPath},
+    domain::{RecordedPath, SanitizedPath},
     events::{
         EventPayload,
         payloads::shell::{AtuinCommandExecutedPayload, HistoryCommandImportedPayload},
     },
     temporal::Timestamp,
-    units::{ExitCode, Nanoseconds},
     validate_path,
 };
 use std::{
@@ -170,7 +169,7 @@ pub struct TerminalState {
 /// Covers ~10K most recent commands, which is sufficient to handle history rotation/truncation.
 const DEDUP_HASH_CAPACITY: usize = 10_000;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
@@ -186,11 +185,26 @@ struct HistoryState {
     recent_hashes: VecDeque<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TerminalHistoryCheckpoint {
+    #[serde(default)]
+    sources: HashMap<String, HistoryState>,
+}
+
+#[derive(Debug, Clone)]
+struct HistoryScanOutcome {
+    processed: usize,
+    state: HistoryState,
+    warnings: Vec<String>,
+    failure: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum HistorySourceMode {
     Text,
     FishSqlite,
     AtuinSqlite,
+    ConfiguredError(String),
 }
 
 #[derive(Clone)]
@@ -451,6 +465,10 @@ impl TerminalMetrics {
 }
 
 impl HistoryWatcherContext {
+    fn checkpoint_key(&self) -> String {
+        format!("{}:{}", self.shell, self.path)
+    }
+
     fn record_poll(&self, started_at: Instant, file_size: u64, processed: usize) {
         self.metrics.record_poll(
             &self.shell,
@@ -467,10 +485,48 @@ impl HistoryWatcherContext {
     }
 
     async fn monitor(self) {
-        match self.source_mode {
+        match &self.source_mode {
             HistorySourceMode::Text => self.monitor_text_history().await,
             HistorySourceMode::FishSqlite => self.monitor_fish_sqlite().await,
             HistorySourceMode::AtuinSqlite => self.monitor_atuin_sqlite().await,
+            HistorySourceMode::ConfiguredError(error) => {
+                self.record_error("configure_history_source", error);
+                warn!(shell = %self.shell, path = %self.path, %error, "Terminal source disabled");
+            }
+        }
+    }
+
+    fn strict_warning(&self, detail: impl Into<String>) -> String {
+        format!("{}: {}", self.checkpoint_key(), detail.into())
+    }
+
+    fn success_outcome(
+        &self,
+        processed: usize,
+        state: HistoryState,
+        warnings: Vec<String>,
+    ) -> HistoryScanOutcome {
+        HistoryScanOutcome {
+            processed,
+            state,
+            warnings,
+            failure: None,
+        }
+    }
+
+    fn failed_outcome(
+        &self,
+        stage: &'static str,
+        error: impl std::fmt::Display,
+        state: HistoryState,
+    ) -> HistoryScanOutcome {
+        let error = error.to_string();
+        self.record_error(stage, &error);
+        HistoryScanOutcome {
+            processed: 0,
+            state,
+            warnings: Vec::new(),
+            failure: Some(error),
         }
     }
 
@@ -513,13 +569,19 @@ impl HistoryWatcherContext {
                         &mut line_number,
                         &mut last_inode,
                         &mut recent_hashes,
+                        true,
                     )
                     .await;
             }
             #[cfg(not(unix))]
             {
                 let _ = self
-                    .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut recent_hashes,
+                        true,
+                    )
                     .await;
             }
 
@@ -558,7 +620,7 @@ impl HistoryWatcherContext {
             }
 
             let _ = self
-                .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes, true)
                 .await;
 
             tokio::select! {
@@ -596,7 +658,7 @@ impl HistoryWatcherContext {
             }
 
             let _ = self
-                .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes, true)
                 .await;
 
             tokio::select! {
@@ -642,6 +704,305 @@ impl HistoryWatcherContext {
     async fn persist_sqlite_state(&self, sqlite_row_id: i64, recent_hashes: &VecDeque<u64>) {
         self.persist_state_full(0, 0, Some(sqlite_row_id), recent_hashes)
             .await;
+    }
+
+    async fn scan_history_once_from_state(
+        &self,
+        state_override: Option<HistoryState>,
+    ) -> HistoryScanOutcome {
+        match &self.source_mode {
+            HistorySourceMode::FishSqlite => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut recent_hashes = state.recent_hashes;
+                let poll_started_at = Instant::now();
+                let file_size = fs::metadata(&self.path)
+                    .await
+                    .map(|metadata| metadata.len())
+                    .unwrap_or_default();
+                let mut processed = 0usize;
+                let mut warnings = Vec::new();
+                match crate::fish_history::read_fish_history(&self.path, sqlite_row_id) {
+                    Ok((entries, last_row_id)) => {
+                        for entry in entries {
+                            if entry.command.trim().is_empty() {
+                                continue;
+                            }
+                            match process_fish_entry(self, &entry, &mut recent_hashes).await {
+                                Ok(()) => {
+                                    processed += 1;
+                                }
+                                Err(error) => {
+                                    let message = format!(
+                                        "failed to process Fish row {}: {}",
+                                        entry.row_id, error
+                                    );
+                                    self.record_error("process_fish_entry", &message);
+                                    warnings.push(self.strict_warning(message));
+                                }
+                            }
+                        }
+                        if last_row_id > sqlite_row_id {
+                            sqlite_row_id = last_row_id;
+                        }
+                        self.record_poll(poll_started_at, file_size, processed);
+                        self.success_outcome(
+                            processed,
+                            HistoryState {
+                                sqlite_row_id: Some(sqlite_row_id),
+                                recent_hashes,
+                                ..HistoryState::default()
+                            },
+                            warnings,
+                        )
+                    }
+                    Err(error) => {
+                        self.record_poll(poll_started_at, file_size, processed);
+                        self.failed_outcome(
+                            "read_fish_history",
+                            format!("failed to read Fish history from {}: {error}", self.path),
+                            HistoryState {
+                                sqlite_row_id: Some(sqlite_row_id),
+                                recent_hashes,
+                                ..HistoryState::default()
+                            },
+                        )
+                    }
+                }
+            }
+            HistorySourceMode::AtuinSqlite => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut recent_hashes = state.recent_hashes;
+                let poll_started_at = Instant::now();
+                let file_size = fs::metadata(&self.path)
+                    .await
+                    .map(|metadata| metadata.len())
+                    .unwrap_or_default();
+                let mut processed = 0usize;
+                let mut warnings = Vec::new();
+                match crate::atuin_history::read_atuin_history(&self.path, sqlite_row_id) {
+                    Ok((entries, last_row_id)) => {
+                        for entry in entries {
+                            if entry.command.trim().is_empty() {
+                                continue;
+                            }
+                            match process_atuin_entry(self, &entry, &mut recent_hashes).await {
+                                Ok(()) => {
+                                    processed += 1;
+                                }
+                                Err(error) => {
+                                    let message = format!(
+                                        "failed to process Atuin row {}: {}",
+                                        entry.row_id, error
+                                    );
+                                    self.record_error("process_atuin_entry", &message);
+                                    warnings.push(self.strict_warning(message));
+                                }
+                            }
+                        }
+                        if last_row_id > sqlite_row_id {
+                            sqlite_row_id = last_row_id;
+                        }
+                        self.record_poll(poll_started_at, file_size, processed);
+                        self.success_outcome(
+                            processed,
+                            HistoryState {
+                                sqlite_row_id: Some(sqlite_row_id),
+                                recent_hashes,
+                                ..HistoryState::default()
+                            },
+                            warnings,
+                        )
+                    }
+                    Err(error) => {
+                        self.record_poll(poll_started_at, file_size, processed);
+                        self.failed_outcome(
+                            "read_atuin_history",
+                            format!("failed to read Atuin history from {}: {error}", self.path),
+                            HistoryState {
+                                sqlite_row_id: Some(sqlite_row_id),
+                                recent_hashes,
+                                ..HistoryState::default()
+                            },
+                        )
+                    }
+                }
+            }
+            HistorySourceMode::Text => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut offset_bytes = state.offset_bytes;
+                let mut line_number = state.line_number;
+                let mut recent_hashes = state.recent_hashes;
+                #[cfg(unix)]
+                let mut last_inode = state.inode;
+
+                let poll_started_at = Instant::now();
+                let mut file_size = 0u64;
+                let mut processed = 0usize;
+                let mut warnings = Vec::new();
+
+                match fs::metadata(&self.path).await {
+                    Ok(metadata) => {
+                        file_size = metadata.len();
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::MetadataExt;
+
+                            let current_inode = metadata.ino();
+                            let inode_changed =
+                                last_inode.is_some_and(|prev| prev != current_inode);
+                            last_inode = Some(current_inode);
+
+                            if file_size < offset_bytes {
+                                if inode_changed {
+                                    warnings.push(self.strict_warning(format!(
+                                        "history file rotated at {}; restarting from the beginning",
+                                        self.path
+                                    )));
+                                    offset_bytes = 0;
+                                    line_number = 0;
+                                } else {
+                                    warnings.push(self.strict_warning(format!(
+                                        "history file truncated at {}; advancing checkpoint to the new end",
+                                        self.path
+                                    )));
+                                    offset_bytes = file_size;
+                                }
+                            }
+                        }
+
+                        #[cfg(not(unix))]
+                        {
+                            if file_size < offset_bytes {
+                                warnings.push(self.strict_warning(format!(
+                                    "history file truncated at {}; restarting from the beginning",
+                                    self.path
+                                )));
+                                offset_bytes = 0;
+                                line_number = 0;
+                            }
+                        }
+
+                        if file_size == offset_bytes {
+                            self.record_poll(poll_started_at, file_size, processed);
+                            return self.success_outcome(
+                                processed,
+                                HistoryState {
+                                    offset_bytes,
+                                    line_number,
+                                    #[cfg(unix)]
+                                    inode: last_inode,
+                                    sqlite_row_id: None,
+                                    recent_hashes,
+                                },
+                                warnings,
+                            );
+                        }
+
+                        match self.read_new_segment(offset_bytes).await {
+                            Ok(new_segment) => {
+                                if !new_segment.is_empty() {
+                                    let mut consumed_bytes = 0u64;
+                                    for line in new_segment.split_inclusive('\n') {
+                                        if !line.ends_with('\n') && new_segment.ends_with(line) {
+                                            break;
+                                        }
+                                        let trimmed = line.trim_end_matches('\n');
+                                        consumed_bytes += line.len() as u64;
+                                        if trimmed.is_empty() {
+                                            continue;
+                                        }
+                                        line_number += 1;
+                                        match process_command(
+                                            self,
+                                            trimmed,
+                                            line_number,
+                                            &mut recent_hashes,
+                                        )
+                                        .await
+                                        {
+                                            Ok(()) => {
+                                                processed += 1;
+                                            }
+                                            Err(error) => {
+                                                let message = format!(
+                                                    "failed to process history line {line_number}: {error}"
+                                                );
+                                                self.record_error("process_command", &message);
+                                                warnings.push(self.strict_warning(message));
+                                            }
+                                        }
+                                    }
+                                    if consumed_bytes > 0 {
+                                        offset_bytes = offset_bytes.saturating_add(consumed_bytes);
+                                    }
+                                }
+                                self.record_poll(poll_started_at, file_size, processed);
+                                self.success_outcome(
+                                    processed,
+                                    HistoryState {
+                                        offset_bytes,
+                                        line_number,
+                                        #[cfg(unix)]
+                                        inode: last_inode,
+                                        sqlite_row_id: None,
+                                        recent_hashes,
+                                    },
+                                    warnings,
+                                )
+                            }
+                            Err(error) => {
+                                self.record_poll(poll_started_at, file_size, processed);
+                                self.failed_outcome(
+                                    "read_history_segment",
+                                    format!(
+                                        "failed to read terminal history from {}: {error}",
+                                        self.path
+                                    ),
+                                    HistoryState {
+                                        offset_bytes,
+                                        line_number,
+                                        #[cfg(unix)]
+                                        inode: last_inode,
+                                        sqlite_row_id: None,
+                                        recent_hashes,
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        self.record_poll(poll_started_at, file_size, processed);
+                        self.failed_outcome(
+                            "stat_history_file",
+                            format!("failed to stat terminal history {}: {error}", self.path),
+                            HistoryState {
+                                offset_bytes,
+                                line_number,
+                                #[cfg(unix)]
+                                inode: last_inode,
+                                sqlite_row_id: None,
+                                recent_hashes,
+                            },
+                        )
+                    }
+                }
+            }
+            HistorySourceMode::ConfiguredError(error) => {
+                let state = state_override.unwrap_or_default();
+                self.failed_outcome("configure_history_source", error.clone(), state)
+            }
+        }
     }
 
     async fn persist_state_full(
@@ -769,6 +1130,7 @@ impl HistoryWatcherContext {
         line_number: &mut u64,
         last_inode: &mut Option<u64>,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use std::os::unix::fs::MetadataExt;
 
@@ -809,8 +1171,10 @@ impl HistoryWatcherContext {
                         *offset_bytes = file_size;
                         // Keep line_number as-is; we don't know exactly where we are
                     }
-                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                            .await;
+                    }
                     self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
@@ -859,8 +1223,10 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                                .await;
+                            if persist_state {
+                                self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -886,6 +1252,7 @@ impl HistoryWatcherContext {
         offset_bytes: &mut u64,
         line_number: &mut u64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         let poll_started_at = Instant::now();
         let mut processed = 0usize;
@@ -903,8 +1270,10 @@ impl HistoryWatcherContext {
                     );
                     *offset_bytes = 0;
                     *line_number = 0;
-                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                            .await;
+                    }
                     self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
@@ -953,8 +1322,10 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                                .await;
+                            if persist_state {
+                                self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -973,72 +1344,11 @@ impl HistoryWatcherContext {
         processed
     }
 
-    async fn scan_history_once(&self) -> usize {
-        match self.source_mode {
-            HistorySourceMode::FishSqlite => {
-                let mut sqlite_row_id = 0i64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-
-                if let Some(state) = self.load_state().await {
-                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                    recent_hashes = state.recent_hashes;
-                }
-
-                self.poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
-                    .await
-            }
-            HistorySourceMode::AtuinSqlite => {
-                let mut sqlite_row_id = 0i64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-
-                if let Some(state) = self.load_state().await {
-                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                    recent_hashes = state.recent_hashes;
-                }
-
-                self.poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
-                    .await
-            }
-            HistorySourceMode::Text => {
-                let mut offset_bytes = 0u64;
-                let mut line_number = 0u64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-                #[cfg(unix)]
-                let mut last_inode: Option<u64> = None;
-
-                if let Some(state) = self.load_state().await {
-                    offset_bytes = state.offset_bytes;
-                    line_number = state.line_number;
-                    recent_hashes = state.recent_hashes;
-                    #[cfg(unix)]
-                    {
-                        last_inode = state.inode;
-                    }
-                }
-
-                #[cfg(unix)]
-                {
-                    self.poll_history_once(
-                        &mut offset_bytes,
-                        &mut line_number,
-                        &mut last_inode,
-                        &mut recent_hashes,
-                    )
-                    .await
-                }
-                #[cfg(not(unix))]
-                {
-                    self.poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
-                        .await
-                }
-            }
-        }
-    }
-
     async fn poll_fish_history_once(
         &self,
         sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use crate::fish_history;
 
@@ -1056,14 +1366,12 @@ impl HistoryWatcherContext {
                         continue;
                     }
 
-                    match process_command(self, &entry.command, last_row_id as u64, recent_hashes)
-                        .await
-                    {
+                    match process_fish_entry(self, &entry, recent_hashes).await {
                         Ok(()) => {
                             processed += 1;
                         }
                         Err(e) => {
-                            self.record_error("process_fish_command", &e.to_string());
+                            self.record_error("process_fish_entry", &e.to_string());
                             warn!(
                                 "Failed to process Fish history entry from {}: {}",
                                 self.path, e
@@ -1074,8 +1382,10 @@ impl HistoryWatcherContext {
 
                 if last_row_id > *sqlite_row_id {
                     *sqlite_row_id = last_row_id;
-                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                            .await;
+                    }
                 }
             }
             Err(e) => {
@@ -1092,6 +1402,7 @@ impl HistoryWatcherContext {
         &self,
         sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use crate::atuin_history;
 
@@ -1115,15 +1426,20 @@ impl HistoryWatcherContext {
                         }
                         Err(e) => {
                             self.record_error("process_atuin_entry", &e.to_string());
-                            warn!("Failed to process Atuin history entry from {}: {}", self.path, e);
+                            warn!(
+                                "Failed to process Atuin history entry from {}: {}",
+                                self.path, e
+                            );
                         }
                     }
                 }
 
                 if last_row_id > *sqlite_row_id {
                     *sqlite_row_id = last_row_id;
-                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                            .await;
+                    }
                 }
             }
             Err(e) => {
@@ -1238,10 +1554,7 @@ fn prepare_command_for_capture(
     Ok(Some(final_command))
 }
 
-async fn record_processed_command_for_test(
-    ctx: &HistoryWatcherContext,
-    command: &str,
-) {
+async fn record_processed_command_for_test(ctx: &HistoryWatcherContext, command: &str) {
     if let Some(commands) = &ctx.processed_commands {
         commands.lock().await.push(command.to_string());
     }
@@ -1262,12 +1575,13 @@ async fn process_command(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
+    let material_id = Uuid::now_v7();
     let mut handle = ctx
         .acquisition
-        .begin_material(ctx.path.as_str())
+        .build_material(ctx.path.as_str())
+        .begin()
         .await
         .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-    let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, &bytes)
@@ -1296,15 +1610,72 @@ async fn process_command(
         .build()
         .map_err(|e| SinexError::service(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| {
-            SinexError::serialization("Failed to convert event to JSON").with_source(e)
-        })?;
+        .map_err(|e| SinexError::serialization("Failed to convert event to JSON").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
         .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
+
+    ctx.metrics
+        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
+
+    Ok(())
+}
+
+async fn process_fish_entry(
+    ctx: &HistoryWatcherContext,
+    entry: &crate::fish_history::FishHistoryEntry,
+    recent_hashes: &mut VecDeque<u64>,
+) -> NodeResult<()> {
+    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let Some(final_command) =
+        prepare_command_for_capture(ctx, &entry.command, line_number, Some(recent_hashes))?
+    else {
+        return Ok(());
+    };
+    let bytes = final_command.as_bytes().to_vec();
+
+    record_processed_command_for_test(ctx, &final_command).await;
+
+    let material_id = stage_stable_material(
+        ctx.acquisition.as_ref(),
+        ctx.path.as_str(),
+        &entry.row_id.to_string(),
+        &bytes,
+        MATERIAL_REASON_HISTORY,
+        None,
+    )
+    .await
+    .map_err(|e| SinexError::service("Failed to stage Fish history material").with_source(e))?;
+
+    let payload = HistoryCommandImportedPayload {
+        command: final_command,
+        timestamp: entry.when.and_then(Timestamp::from_unix_timestamp),
+        shell_type: ctx.shell.clone(),
+        source_file: ctx.path.to_string(),
+        line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
+    };
+
+    let event = payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
+        .with_offset_end(bytes.len() as i64)
+        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
+        .build()
+        .map_err(|e| SinexError::service(format!("Failed to build Fish event: {e}")))?
+        .to_json_event()
+        .map_err(|e| {
+            SinexError::serialization("Failed to convert Fish event to JSON").with_source(e)
+        })?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| SinexError::messaging("Failed to emit Fish history event").with_source(e))?;
 
     ctx.metrics
         .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
@@ -1322,49 +1693,44 @@ async fn process_atuin_entry(
     else {
         return Ok(());
     };
+    let payload = match AtuinCommandExecutedPayload::from_raw_history(
+        final_command.clone(),
+        RecordedPath::from(entry.cwd.clone()),
+        entry.exit_code,
+        entry.duration_ns,
+        entry.history_id.clone(),
+        entry.session_id.clone(),
+        entry.timestamp_ns,
+        entry.hostname.clone(),
+    ) {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(
+                row_id = entry.row_id,
+                error = %error,
+                "Rejecting Atuin row with invalid timestamp or duration"
+            );
+            return Err(SinexError::validation(format!(
+                "Atuin row {} has invalid timestamp or duration",
+                entry.row_id
+            ))
+            .with_source(error));
+        }
+    };
     let bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let mut handle = ctx
-        .acquisition
-        .begin_material(ctx.path.as_str())
-        .await
-        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-    let material_id = handle.material_id;
-
-    ctx.acquisition
-        .append_slice(&mut handle, &bytes)
-        .await
-        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
-
-    ctx.acquisition
-        .finalize(handle, MATERIAL_REASON_HISTORY)
-        .await
-        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
-
-    let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(entry.timestamp_ns))
-        .unwrap_or(Timestamp::UNIX_EPOCH);
-    let duration_ns = entry.duration_ns.max(0);
-    let ts_end_orig = Timestamp::from_unix_timestamp_nanos(
-        i128::from(entry.timestamp_ns) + i128::from(duration_ns),
+    let material_id = stage_stable_material(
+        ctx.acquisition.as_ref(),
+        ctx.path.as_str(),
+        &entry.history_id,
+        &bytes,
+        MATERIAL_REASON_HISTORY,
+        None,
     )
-    .unwrap_or(ts_start_orig);
-    let exit_code = i32::try_from(entry.exit_code).unwrap_or(i32::MAX);
-
-    let payload = AtuinCommandExecutedPayload {
-        command_string: final_command.into(),
-        cwd: RecordedPath::from(entry.cwd.clone()),
-        exit_code: ExitCode::from_raw(exit_code),
-        duration_ns: Nanoseconds::from_nanos(duration_ns),
-        atuin_history_id: entry.history_id.clone(),
-        atuin_session_id: entry.session_id.clone(),
-        timestamp: entry.timestamp_ns,
-        ts_start_orig,
-        ts_end_orig,
-        hostname: HostName::new(entry.hostname.clone()),
-        terminal_session_uuid: None,
-    };
+    .await
+    .map_err(|e| SinexError::service("Failed to stage Atuin history material").with_source(e))?;
 
     let event = payload
         .from_material(material_id)
@@ -1531,16 +1897,13 @@ impl TerminalNode {
                     );
                     HistorySourceMode::Text
                 }
-                "atuin" if crate::atuin_history::is_atuin_sqlite_history(&source.path) => {
-                    HistorySourceMode::AtuinSqlite
-                }
-                "atuin" => {
-                    debug!(
-                        path = %source.path,
-                        "Atuin history file is not SQLite format; will attempt text parsing"
-                    );
-                    HistorySourceMode::Text
-                }
+                "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
+                    Ok(()) => HistorySourceMode::AtuinSqlite,
+                    Err(error) => HistorySourceMode::ConfiguredError(format!(
+                        "configured Atuin history source {} is unusable: {error}",
+                        source.path
+                    )),
+                },
                 _ => HistorySourceMode::Text,
             };
 
@@ -1560,6 +1923,35 @@ impl TerminalNode {
         }
 
         Ok(contexts)
+    }
+
+    fn checkpoint_state_for_source(
+        checkpoint: &Checkpoint,
+        key: &str,
+    ) -> NodeResult<Option<HistoryState>> {
+        let Checkpoint::External { position, .. } = checkpoint else {
+            return Ok(None);
+        };
+
+        let checkpoint: TerminalHistoryCheckpoint = serde_json::from_value(position.clone())
+            .map_err(|error| {
+                SinexError::serialization("failed to parse terminal history checkpoint state")
+                    .with_std_error(&error)
+            })?;
+
+        Ok(checkpoint.sources.get(key).cloned())
+    }
+
+    fn checkpoint_from_states(states: HashMap<String, HistoryState>) -> NodeResult<Checkpoint> {
+        let position = serde_json::to_value(TerminalHistoryCheckpoint { sources: states })
+            .map_err(|error| {
+                SinexError::serialization("failed to encode terminal history checkpoint state")
+                    .with_std_error(&error)
+            })?;
+        Ok(Checkpoint::external(
+            position,
+            "terminal history source progress",
+        ))
     }
 }
 
@@ -1647,24 +2039,52 @@ impl IngestorNode for TerminalNode {
         _until: TimeHorizon,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        let started_at = Instant::now();
         let (_, shutdown_rx) = watch::channel(false);
         let contexts = self.build_history_contexts(shutdown_rx)?;
         let mut events_processed = 0u64;
+        let mut checkpoint_states = HashMap::new();
+        let mut successful_targets = Vec::new();
+        let mut failed_targets = Vec::new();
+        let mut warnings = Vec::new();
 
         for ctx in contexts {
-            events_processed =
-                events_processed.saturating_add(ctx.scan_history_once().await as u64);
+            let checkpoint_key = ctx.checkpoint_key();
+            let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
+                Ok(Some(state)) => Some(state),
+                Ok(None) => ctx.load_state().await,
+                Err(error) => {
+                    warnings.push(ctx.strict_warning(format!(
+                        "ignoring unreadable checkpoint state and falling back to local state: {error}"
+                    )));
+                    warn!(
+                        source = %checkpoint_key,
+                        error = %error,
+                        "Ignoring unreadable terminal checkpoint state and falling back to local state"
+                    );
+                    ctx.load_state().await
+                }
+            };
+            let outcome = ctx.scan_history_once_from_state(state_override).await;
+            events_processed = events_processed.saturating_add(outcome.processed as u64);
+            warnings.extend(outcome.warnings);
+            if let Some(error) = outcome.failure {
+                failed_targets.push((checkpoint_key.clone(), error));
+            } else {
+                successful_targets.push(checkpoint_key.clone());
+            }
+            checkpoint_states.insert(checkpoint_key, outcome.state);
         }
 
         Ok(ScanReport {
             events_processed,
-            duration: std::time::Duration::from_millis(0),
-            final_checkpoint: from,
+            duration: started_at.elapsed(),
+            final_checkpoint: Self::checkpoint_from_states(checkpoint_states)?,
             time_range: None,
             node_stats: HashMap::new(),
-            successful_targets: vec!["historical".to_string()],
-            failed_targets: Vec::new(),
-            warnings: Vec::new(),
+            successful_targets,
+            failed_targets,
+            warnings,
         })
     }
 
@@ -1675,11 +2095,32 @@ impl IngestorNode for TerminalNode {
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let contexts = self.build_history_contexts(shutdown_rx.clone())?;
+        let mut successful_targets = Vec::new();
+        let mut failed_targets = Vec::new();
+        let mut warnings = Vec::new();
 
         let mut guard = self.watch_handles.lock().await;
         for watch_ctx in contexts {
-            let handle = tokio::spawn(watch_ctx.clone().monitor());
-            guard.push(handle);
+            if let HistorySourceMode::ConfiguredError(error) = &watch_ctx.source_mode {
+                failed_targets.push((watch_ctx.checkpoint_key(), error.clone()));
+                warnings.push(watch_ctx.strict_warning(
+                    "configured source will not be monitored until its SQLite database is repaired",
+                ));
+            } else {
+                successful_targets.push(watch_ctx.checkpoint_key());
+                let handle = tokio::spawn(watch_ctx.clone().monitor());
+                guard.push(handle);
+            }
+        }
+
+        if successful_targets.is_empty() && !failed_targets.is_empty() {
+            return Err(SinexError::configuration(
+                "terminal continuous monitoring has no usable history sources".to_string(),
+            )
+            .with_context(
+                "failed_targets",
+                serde_json::to_string(&failed_targets).unwrap_or_default(),
+            ));
         }
 
         info!(
@@ -1696,9 +2137,9 @@ impl IngestorNode for TerminalNode {
             final_checkpoint: Checkpoint::None,
             time_range: None,
             node_stats: HashMap::new(),
-            successful_targets: vec!["continuous".to_string()],
-            failed_targets: Vec::new(),
-            warnings: Vec::new(),
+            successful_targets,
+            failed_targets,
+            warnings,
         })
     }
 
@@ -1891,7 +2332,6 @@ mod tests {
                 ));
             }
         };
-
         let expected_bytes = command.len() as i64;
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
@@ -1952,6 +2392,32 @@ mod tests {
         assert_eq!(payload_command, command);
 
         ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_history_checkpoint_roundtrips_per_source_progress() -> TestResult<()> {
+        let source_key = "atuin:/home/test/.local/share/atuin/history.db".to_string();
+        let mut states = HashMap::new();
+        states.insert(
+            source_key.clone(),
+            HistoryState {
+                sqlite_row_id: Some(42),
+                recent_hashes: VecDeque::from([1_u64, 2_u64]),
+                ..HistoryState::default()
+            },
+        );
+
+        let checkpoint = TerminalNode::checkpoint_from_states(states)?;
+        let restored = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("checkpoint state missing"))?;
+
+        assert_eq!(restored.sqlite_row_id, Some(42));
+        assert_eq!(restored.recent_hashes, VecDeque::from([1_u64, 2_u64]));
+        assert!(
+            TerminalNode::checkpoint_state_for_source(&checkpoint, "bash:/tmp/missing")?.is_none()
+        );
+
         Ok(())
     }
 
@@ -2036,6 +2502,18 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("echo 'hello from atuin'")
         );
+        let material_uuid = match event.provenance() {
+            Provenance::Material { id, .. } => *id.as_uuid(),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected material provenance in Atuin event"
+                ));
+            }
+        };
+        assert_eq!(
+            material_uuid,
+            sinex_node_sdk::stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
+        );
 
         ingest_handle.stop().await?;
         Ok(())
@@ -2113,11 +2591,17 @@ mod tests {
                 &mut line_number,
                 &mut last_inode,
                 &mut recent_hashes,
+                true,
             )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut recent_hashes,
+                true,
+            )
             .await;
 
         let mut history_file: tokio::fs::File = tokio::fs::OpenOptions::new()
@@ -2135,11 +2619,17 @@ mod tests {
                 &mut line_number,
                 &mut last_inode,
                 &mut recent_hashes,
+                true,
             )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut recent_hashes,
+                true,
+            )
             .await;
 
         #[cfg(test)]
@@ -2153,6 +2643,192 @@ mod tests {
         }
 
         ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_atuin_entry_rejects_invalid_duration(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-atuin-invalid-duration")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let work_dir = tempfile::tempdir()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
+            .await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/atuin/history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "atuin".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/atuin/history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::AtuinSqlite,
+        };
+
+        let entry = crate::atuin_history::AtuinHistoryEntry {
+            row_id: 42,
+            history_id: "h1".to_string(),
+            timestamp_ns: 1_700_000_000_000_000_000,
+            duration_ns: -1,
+            exit_code: 0,
+            command: "echo 'hello from atuin'".to_string(),
+            cwd: "/realm/project/sinex".to_string(),
+            session_id: "session-1".to_string(),
+            hostname: "test-host".to_string(),
+        };
+        let mut recent_hashes = VecDeque::new();
+        let error = process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes)
+            .await
+            .expect_err("invalid Atuin row should fail loudly");
+        assert!(
+            error.to_string().contains("invalid timestamp or duration"),
+            "unexpected error: {error}"
+        );
+
+        let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
+        assert!(next.is_err(), "invalid Atuin row should not emit an event");
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_reports_invalid_atuin_database_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-atuin")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_db = temp_dir.path().join("history.db");
+        tokio::fs::write(&invalid_db, "not a sqlite database").await?;
+        let invalid_db = Utf8PathBuf::from_path_buf(invalid_db).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Atuin temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_db.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("atuin:{invalid_db}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("configured Atuin history source"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_rejects_all_invalid_terminal_sources(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-invalid-atuin")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_db = temp_dir.path().join("history.db");
+        tokio::fs::write(&invalid_db, "not a sqlite database").await?;
+        let invalid_db = Utf8PathBuf::from_path_buf(invalid_db).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Atuin temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_db,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .await
+            .expect_err("continuous mode should fail when no valid sources remain");
+        assert!(
+            error.to_string().contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+
         Ok(())
     }
 
@@ -2187,8 +2863,7 @@ mod tests {
             work_dir: None,
             ..Default::default()
         };
-        let ingest_handle =
-            start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
+        let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
@@ -2253,7 +2928,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
@@ -2293,7 +2974,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
@@ -2314,11 +3001,7 @@ mod tests {
     #[sinex_test]
     async fn history_deduplicates_repeated_commands(ctx: TestContext) -> TestResult<()> {
         let mut fix = make_watcher(&ctx, "dedup-filter", 4096).await?;
-        tokio::fs::write(
-            &fix.history_path,
-            "git status\ngit diff\ngit status\n",
-        )
-        .await?;
+        tokio::fs::write(&fix.history_path, "git status\ngit diff\ngit status\n").await?;
 
         let mut offset = 0u64;
         let mut line_number = 0u64;
@@ -2327,12 +3010,21 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
         assert_eq!(
-            commands.iter().filter(|c| c.as_str() == "git status").count(),
+            commands
+                .iter()
+                .filter(|c| c.as_str() == "git status")
+                .count(),
             1,
             "repeated 'git status' must be deduplicated to exactly 1 capture, got: {commands:?}"
         );
@@ -2356,7 +3048,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let after_first_poll = fix.commands.lock().await.clone();
@@ -2381,7 +3079,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let after_second_poll = fix.commands.lock().await.clone();
@@ -2411,7 +3115,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();

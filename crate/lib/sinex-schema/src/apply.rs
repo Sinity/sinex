@@ -75,6 +75,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, BOOTSTRAP_SQL).await?;
     create_tables(pool).await?;
     crate::converge::converge_tables(pool, &crate::converge::convergible_tables()).await?;
+    converge_operations_log_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
@@ -127,6 +128,12 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         }
     }
 
+    if relation_exists(pool, "core.operations_log").await?
+        && !operations_log_operation_type_constraint_is_current(pool).await?
+    {
+        drifts.push("stale core.operations_log constraint operations_log_operation_type_check".into());
+    }
+
     Ok(drifts)
 }
 
@@ -137,6 +144,51 @@ async fn ensure_schemas(pool: &PgPool) -> Result<(), ApplyError> {
     }
     execute_sql(pool, "CREATE SCHEMA IF NOT EXISTS sinex_telemetry").await?;
     Ok(())
+}
+
+async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyError> {
+    if !relation_exists(pool, "core.operations_log").await? {
+        return Ok(());
+    }
+
+    if operations_log_operation_type_constraint_is_current(pool).await? {
+        return Ok(());
+    }
+
+    execute_sql(
+        pool,
+        r#"
+        ALTER TABLE core.operations_log
+            DROP CONSTRAINT IF EXISTS operations_log_operation_type_check,
+            ADD CONSTRAINT operations_log_operation_type_check
+            CHECK (operation_type IN ('replay', 'archive', 'restore', 'purge', 'tombstone'))
+        "#,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn operations_log_operation_type_constraint_is_current(
+    pool: &PgPool,
+) -> Result<bool, ApplyError> {
+    let definition = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = 'core'
+          AND r.relname = 'operations_log'
+          AND c.conname = 'operations_log_operation_type_check'
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(definition.is_some_and(|def| {
+        def.contains("'restore'") && def.contains("'tombstone'")
+    }))
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
@@ -418,7 +470,10 @@ BEGIN
     UPDATE core.operations_log
     SET result_status = 'success',
         result_message = p_summary->>'message',
-        duration_ms = COALESCE(duration_ms, 0),
+        duration_ms = COALESCE(
+            duration_ms,
+            EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(p_operation_id)))::integer
+        ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
     WHERE id = p_operation_id;
 END;
@@ -430,7 +485,10 @@ BEGIN
     UPDATE core.operations_log
     SET result_status = 'failure',
         result_message = p_error->>'error',
-        duration_ms = COALESCE(duration_ms, 0),
+        duration_ms = COALESCE(
+            duration_ms,
+            EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(p_operation_id)))::integer
+        ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
     WHERE id = p_operation_id;
 END;
@@ -697,14 +755,18 @@ BEGIN
         ts_orig, ts_orig_subnano,
         source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
         source_event_ids, associated_blob_ids,
-        payload_schema_id, node_run_id
+        payload_schema_id, node_run_id,
+        temporal_policy, semantics_version, scope_key, equivalence_key,
+        created_by_operation_id, node_model
     )
     SELECT
         ae.id, ae.source, ae.event_type, ae.host, ae.payload,
         ae.ts_orig, ae.ts_orig_subnano,
         ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
         ae.source_event_ids, ae.associated_blob_ids,
-        ae.payload_schema_id, ae.node_run_id
+        ae.payload_schema_id, ae.node_run_id,
+        ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
+        ae.created_by_operation_id, ae.node_model
     FROM audit.archived_events ae
     WHERE ae.id = ANY(p_archived_ids)
     ON CONFLICT (id) DO NOTHING;
@@ -856,7 +918,7 @@ END $$;
 
 const TELEMETRY_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_health AS
-SELECT
+SELECT DISTINCT ON (e.source, e.payload->>'component')
     e.source,
     e.event_type,
     e.payload->>'component' AS component,
@@ -864,15 +926,10 @@ SELECT
     e.payload->>'reason' AS reason,
     e.ts_coided AS last_update
 FROM core.events e
-INNER JOIN (
-    SELECT source, MAX(ts_coided) AS max_ts
-    FROM core.events
-    WHERE source = 'sinex'
-      AND event_type = 'health.status'
-      AND ts_coided > NOW() - INTERVAL '1 hour'
-    GROUP BY source
-) latest ON e.source = latest.source AND e.ts_coided = latest.max_ts
-WHERE e.event_type = 'health.status';
+WHERE e.source = 'sinex'
+  AND e.event_type = 'health.status'
+  AND e.ts_coided > NOW() - INTERVAL '1 hour'
+ORDER BY e.source, e.payload->>'component', e.ts_coided DESC, e.id DESC;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_device_state AS
 SELECT DISTINCT ON (payload->>'unit_name')

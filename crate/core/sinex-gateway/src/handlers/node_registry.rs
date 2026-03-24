@@ -56,6 +56,7 @@ pub struct NodesHealthResponse {
 #[derive(Debug, Deserialize)]
 pub struct NodesHeartbeatRequest {
     pub node_name: NodeName,
+    pub version: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +67,7 @@ pub struct NodesHeartbeatResponse {
 #[derive(Debug, Deserialize)]
 pub struct NodesMarkInactiveRequest {
     pub node_name: NodeName,
+    pub version: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,17 +147,19 @@ pub async fn handle_nodes_heartbeat(pool: &PgPool, params: Value) -> Result<Valu
         SinexError::serialization("Invalid nodes heartbeat request").with_std_error(&e)
     })?;
 
-    pool.state()
-        .update_node_heartbeat(&request.node_name)
+    let updated = pool
+        .state()
+        .update_node_heartbeat_for_version(&request.node_name, &request.version)
         .await
         .map_err(|e| SinexError::database("Failed to update node heartbeat").with_std_error(&e))?;
 
     info!(
         node_name = %request.node_name,
+        version = %request.version,
         "Updated node heartbeat"
     );
 
-    let response = NodesHeartbeatResponse { updated: true };
+    let response = NodesHeartbeatResponse { updated };
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("Failed to serialize heartbeat response").with_std_error(&e)
     })
@@ -170,17 +174,19 @@ pub async fn handle_nodes_mark_inactive(pool: &PgPool, params: Value) -> Result<
         SinexError::serialization("Invalid nodes mark inactive request").with_std_error(&e)
     })?;
 
-    pool.state()
-        .mark_node_inactive(&request.node_name)
+    let marked = pool
+        .state()
+        .mark_node_inactive_for_version(&request.node_name, &request.version)
         .await
         .map_err(|e| SinexError::database("Failed to mark node inactive").with_std_error(&e))?;
 
     info!(
         node_name = %request.node_name,
+        version = %request.version,
         "Marked node as inactive"
     );
 
-    let response = NodesMarkInactiveResponse { marked: true };
+    let response = NodesMarkInactiveResponse { marked };
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("Failed to serialize mark inactive response").with_std_error(&e)
     })

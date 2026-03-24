@@ -160,6 +160,10 @@ let
     dlqPath
     blobDir
   ];
+  restartRateLimits = {
+    StartLimitIntervalSec = 300;
+    StartLimitBurst = 5;
+  };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
   targetUser = cfg.users.target;
@@ -266,6 +270,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
+        unitConfig = restartRateLimits;
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
@@ -301,6 +306,7 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
+        unitConfig = restartRateLimits;
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -407,6 +413,13 @@ let
           SERVICE_USER=${escapeShellArg serviceUser}
           SETFACL=${pkgs.acl}/bin/setfacl
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-terminal-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
 
           grant_parent_dirs() {
             local path="$1"
@@ -414,7 +427,7 @@ let
             dir="$("$DIRNAME" "$path")"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -423,7 +436,7 @@ let
           grant_file_read() {
             local path="$1"
             if [ -f "$path" ]; then
-              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || true
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -431,6 +444,10 @@ let
             grant_parent_dirs ${escapeShellArg path}
             grant_file_read ${escapeShellArg path}
           '') accessAclPaths)}
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
         '';
     in
     mkNodeUnits {
@@ -466,7 +483,8 @@ let
         ++ optional (sat.session.waylandDisplay != null) "WAYLAND_DISPLAY=${sat.session.waylandDisplay}"
         ++ optional (sat.session.hyprlandInstanceSignature != null) "SINEX_HYPRLAND_INSTANCE_SIGNATURE=${sat.session.hyprlandInstanceSignature}"
         ++ optional (sat.session.hyprlandEventSocket != null) "SINEX_HYPRLAND_EVENT_SOCKET=${sat.session.hyprlandEventSocket}"
-        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}";
+        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}"
+        ++ optional (sat.history.activitywatchDbPath != null) "SINEX_ACTIVITYWATCH_DB_PATH=${sat.history.activitywatchDbPath}";
       accessSetupScript =
         if targetUser == null then null else pkgs.writeShellScript "sinex-desktop-target-access" ''
           set -euo pipefail
@@ -476,6 +494,7 @@ let
           CONFIGURED_RUNTIME_DIR=${escapeShellArg (if sat.session.runtimeDir != null then sat.session.runtimeDir else "")}
           CONFIGURED_WAYLAND_DISPLAY=${escapeShellArg (if sat.session.waylandDisplay != null then sat.session.waylandDisplay else "")}
           CONFIGURED_HYPRLAND_SIGNATURE=${escapeShellArg (if sat.session.hyprlandInstanceSignature != null then sat.session.hyprlandInstanceSignature else "")}
+          CONFIGURED_ACTIVITYWATCH_DB=${escapeShellArg (if sat.history.activitywatchDbPath != null then sat.history.activitywatchDbPath else "")}
           ENV_FILE=${escapeShellArg bridgeEnvFile}
           SETFACL=${pkgs.acl}/bin/setfacl
           ID=${pkgs.coreutils}/bin/id
@@ -487,6 +506,13 @@ let
           SORT=${pkgs.coreutils}/bin/sort
           BASENAME=${pkgs.coreutils}/bin/basename
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-desktop-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
 
           grant_parent_dirs() {
             local path="$1"
@@ -494,7 +520,7 @@ let
             dir="$path"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || true
+                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -503,7 +529,7 @@ let
           grant_dir_defaults() {
             local path="$1"
             if [ -d "$path" ]; then
-              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || true
+              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -511,7 +537,15 @@ let
             local path="$1"
             if [ -S "$path" ]; then
               grant_parent_dirs "$("$DIRNAME" "$path")"
-              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || true
+              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          grant_file_read() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              grant_parent_dirs "$path"
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
             fi
           }
 
@@ -593,10 +627,18 @@ let
             if [ -n "$HYPRLAND_SIGNATURE" ]; then
               echo "SINEX_HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
             fi
+            if [ -n "$CONFIGURED_ACTIVITYWATCH_DB" ]; then
+              grant_file_read "$CONFIGURED_ACTIVITYWATCH_DB"
+              echo "SINEX_ACTIVITYWATCH_DB_PATH=$CONFIGURED_ACTIVITYWATCH_DB"
+            fi
           } > "$ENV_FILE"
 
           "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
           "$CHMOD" 0640 "$ENV_FILE"
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
         '';
     in
     mkNodeUnits {
@@ -655,6 +697,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
+        unitConfig = restartRateLimits;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
           WorkingDirectory = stateRoot;
@@ -689,6 +732,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
+      unitConfig = restartRateLimits;
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
         WorkingDirectory = stateRoot;

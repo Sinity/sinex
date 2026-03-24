@@ -3,14 +3,43 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::{
-    AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NodeResult,
+    ProcessingModel, ProvisionalEvent, prelude::async_trait,
 };
+use sinex_primitives::events::builder::EventId;
 use sinex_primitives::{error::SinexError, temporal};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tracing::info;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+
+#[derive(Default)]
+struct TrackingConfirmedEventHandler {
+    processed_event_ids: RwLock<Vec<EventId>>,
+}
+
+impl TrackingConfirmedEventHandler {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    async fn processed_event_ids(&self) -> Vec<EventId> {
+        self.processed_event_ids.read().await.clone()
+    }
+}
+
+#[async_trait]
+impl ConfirmedEventHandler for TrackingConfirmedEventHandler {
+    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> NodeResult<()> {
+        self.processed_event_ids
+            .write()
+            .await
+            .push(provisional.event_id);
+        Ok(())
+    }
+}
 
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
@@ -23,7 +52,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     let namespace = scope.namespace().prefix().to_string();
     let nats_client = sandbox.nats_client();
 
-    let automaton_handler = Arc::new(AutomatonEventHandler::new());
+    let automaton_handler = Arc::new(TrackingConfirmedEventHandler::new());
     let automaton_config = JetStreamEventConsumerConfig {
         processing_model: ProcessingModel::StatelessWorker,
         batch_size: 100,

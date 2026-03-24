@@ -15,6 +15,7 @@ use sinex_gateway::handlers::node_registry::{
     handle_nodes_mark_inactive,
 };
 use sinex_primitives::domain::{NodeName, NodeType};
+use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
 /// Register a test node directly via the repository so we can test the handlers.
@@ -22,10 +23,11 @@ async fn register_test_node(
     pool: &sinex_db::DbPool,
     name: &str,
     node_type: NodeType,
+    version: &str,
 ) -> color_eyre::Result<()> {
     let node_name = NodeName::new(name);
     pool.state()
-        .register_node(&node_name, node_type, "1.0.0-test", Some("test node"))
+        .register_node(&node_name, node_type, version, Some("test node"))
         .await?;
     Ok(())
 }
@@ -54,11 +56,11 @@ async fn heartbeat_activates_node(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
     // Register a node
-    register_test_node(pool, "test-ingestor-hb", NodeType::Ingestor).await?;
+    register_test_node(pool, "test-ingestor-hb", NodeType::Ingestor, "1.0.0-test").await?;
 
     // Send heartbeat
     let hb_result =
-        handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-hb" })).await?;
+        handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-hb", "version": "1.0.0-test" })).await?;
     let updated = hb_result["updated"].as_bool().unwrap_or(false);
     assert!(updated, "Heartbeat should return updated=true");
 
@@ -79,8 +81,8 @@ async fn mark_inactive_removes_from_active_list(ctx: TestContext) -> TestResult<
     let pool = ctx.pool();
 
     // Register and activate via heartbeat
-    register_test_node(pool, "test-ingestor-inactive", NodeType::Ingestor).await?;
-    handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-inactive" })).await?;
+    register_test_node(pool, "test-ingestor-inactive", NodeType::Ingestor, "1.0.0-test").await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-inactive", "version": "1.0.0-test" })).await?;
 
     // Verify it's active
     let list = handle_nodes_list_active(pool, json!({})).await?;
@@ -91,7 +93,7 @@ async fn mark_inactive_removes_from_active_list(ctx: TestContext) -> TestResult<
 
     // Mark inactive
     let mark_result =
-        handle_nodes_mark_inactive(pool, json!({ "node_name": "test-ingestor-inactive" })).await?;
+        handle_nodes_mark_inactive(pool, json!({ "node_name": "test-ingestor-inactive", "version": "1.0.0-test" })).await?;
     let marked = mark_result["marked"].as_bool().unwrap_or(false);
     assert!(marked, "mark_inactive should return marked=true");
 
@@ -129,11 +131,11 @@ async fn health_summary_counts_active_and_inactive(ctx: TestContext) -> TestResu
     let pool = ctx.pool();
 
     // Register two nodes
-    register_test_node(pool, "health-node-a", NodeType::Ingestor).await?;
-    register_test_node(pool, "health-node-b", NodeType::Automaton).await?;
+    register_test_node(pool, "health-node-a", NodeType::Ingestor, "1.0.0-test").await?;
+    register_test_node(pool, "health-node-b", NodeType::Automaton, "1.0.0-test").await?;
 
     // Activate node-a via heartbeat
-    handle_nodes_heartbeat(pool, json!({ "node_name": "health-node-a" })).await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "health-node-a", "version": "1.0.0-test" })).await?;
 
     // node-b has no heartbeat, so it should be inactive
 
@@ -160,8 +162,8 @@ async fn health_summary_respects_stale_threshold(ctx: TestContext) -> TestResult
     let pool = ctx.pool();
 
     // Register and heartbeat a node
-    register_test_node(pool, "stale-test-node", NodeType::Ingestor).await?;
-    handle_nodes_heartbeat(pool, json!({ "node_name": "stale-test-node" })).await?;
+    register_test_node(pool, "stale-test-node", NodeType::Ingestor, "1.0.0-test").await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "stale-test-node", "version": "1.0.0-test" })).await?;
 
     // With a very large stale threshold (1 hour), the node should be active
     let health_result = handle_nodes_health(pool, json!({ "stale_after_secs": 3600 })).await?;
@@ -191,8 +193,8 @@ async fn health_summary_respects_stale_threshold(ctx: TestContext) -> TestResult
 async fn heartbeat_sets_node_info(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    register_test_node(pool, "info-check-node", NodeType::Automaton).await?;
-    handle_nodes_heartbeat(pool, json!({ "node_name": "info-check-node" })).await?;
+    register_test_node(pool, "info-check-node", NodeType::Automaton, "1.0.0-test").await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "info-check-node", "version": "1.0.0-test" })).await?;
 
     let list_result = handle_nodes_list_active(pool, json!({})).await?;
     let node = find_node_in_list(&list_result, "info-check-node");
@@ -229,10 +231,10 @@ async fn heartbeat_sets_node_info(ctx: TestContext) -> TestResult<()> {
 async fn multiple_heartbeats_update_timestamp(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    register_test_node(pool, "multi-hb-node", NodeType::Ingestor).await?;
+    register_test_node(pool, "multi-hb-node", NodeType::Ingestor, "1.0.0-test").await?;
 
     // First heartbeat
-    handle_nodes_heartbeat(pool, json!({ "node_name": "multi-hb-node" })).await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "multi-hb-node", "version": "1.0.0-test" })).await?;
 
     let list1 = handle_nodes_list_active(pool, json!({})).await?;
     let ts1 = find_node_in_list(&list1, "multi-hb-node")
@@ -243,7 +245,7 @@ async fn multiple_heartbeats_update_timestamp(ctx: TestContext) -> TestResult<()
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Second heartbeat
-    handle_nodes_heartbeat(pool, json!({ "node_name": "multi-hb-node" })).await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "multi-hb-node", "version": "1.0.0-test" })).await?;
 
     let list2 = handle_nodes_list_active(pool, json!({})).await?;
     let ts2 = find_node_in_list(&list2, "multi-hb-node")
@@ -268,11 +270,11 @@ async fn multiple_heartbeats_update_timestamp(ctx: TestContext) -> TestResult<()
 async fn reactivate_after_mark_inactive(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    register_test_node(pool, "reactivate-node", NodeType::Ingestor).await?;
-    handle_nodes_heartbeat(pool, json!({ "node_name": "reactivate-node" })).await?;
+    register_test_node(pool, "reactivate-node", NodeType::Ingestor, "1.0.0-test").await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "reactivate-node", "version": "1.0.0-test" })).await?;
 
     // Mark inactive
-    handle_nodes_mark_inactive(pool, json!({ "node_name": "reactivate-node" })).await?;
+    handle_nodes_mark_inactive(pool, json!({ "node_name": "reactivate-node", "version": "1.0.0-test" })).await?;
 
     // Verify inactive
     let list = handle_nodes_list_active(pool, json!({})).await?;
@@ -282,13 +284,55 @@ async fn reactivate_after_mark_inactive(ctx: TestContext) -> TestResult<()> {
     );
 
     // Re-activate via heartbeat
-    handle_nodes_heartbeat(pool, json!({ "node_name": "reactivate-node" })).await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "reactivate-node", "version": "1.0.0-test" })).await?;
 
     // Verify active again
     let list_after = handle_nodes_list_active(pool, json!({})).await?;
     assert!(
         active_list_contains(&list_after, "reactivate-node"),
         "Should be active again after heartbeat"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn heartbeat_and_inactive_target_exact_manifest_version(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+
+    register_test_node(pool, "versioned-node", NodeType::Ingestor, "1.0.0-test").await?;
+    register_test_node(pool, "versioned-node", NodeType::Ingestor, "2.0.0-test").await?;
+
+    let heartbeat = handle_nodes_heartbeat(
+        pool,
+        json!({ "node_name": "versioned-node", "version": "1.0.0-test" }),
+    )
+    .await?;
+    assert_eq!(heartbeat["updated"].as_bool(), Some(true));
+
+    let active_after_heartbeat = handle_nodes_list_active(pool, json!({})).await?;
+    let nodes = active_after_heartbeat["nodes"]
+        .as_array()
+        .expect("nodes should be an array");
+    assert_eq!(nodes.len(), 1, "only one manifest version should be active");
+    assert_eq!(nodes[0]["version"].as_str(), Some("1.0.0-test"));
+
+    let health = handle_nodes_health(pool, json!({})).await?;
+    assert_eq!(health["active_count"].as_i64(), Some(1));
+    assert_eq!(health["inactive_count"].as_i64(), Some(0));
+
+    let inactive = handle_nodes_mark_inactive(
+        pool,
+        json!({ "node_name": "versioned-node", "version": "1.0.0-test" }),
+    )
+    .await?;
+    assert_eq!(inactive["marked"].as_bool(), Some(true));
+
+    // Verify the targeted row was the only active manifest.
+    let list_after = handle_nodes_list_active(pool, json!({})).await?;
+    assert!(
+        !active_list_contains(&list_after, "versioned-node"),
+        "No manifest version should remain active after marking the targeted row inactive"
     );
 
     Ok(())

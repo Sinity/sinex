@@ -95,7 +95,9 @@ impl DerivedTriggerContext {
             processing_mode: ProcessingMode::Replay,
             trigger_kind: TriggerKind::ReplayRecompute,
             created_by_operation_id: operation_id.or_else(|| {
-                event.created_by_operation_id.map(Id::<Operation>::from_uuid)
+                event
+                    .created_by_operation_id
+                    .map(Id::<Operation>::from_uuid)
             }),
         })
     }
