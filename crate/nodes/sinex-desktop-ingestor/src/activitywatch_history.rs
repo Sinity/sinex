@@ -272,37 +272,66 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_history_reader_rejects_invalid_json_rows() -> TestResult<()> {
+    async fn activitywatch_history_reader_skips_invalid_json_rows() -> TestResult<()> {
         let path = fixture_db()?;
         let conn = Connection::open(path.as_std_path())?;
         conn.execute(
             "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
             (1, 20_000_000_000_i64, 21_000_000_000_i64, "{\"app\":"),
         )?;
+        conn.execute(
+            "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
+            (
+                1,
+                22_000_000_000_i64,
+                23_000_000_000_i64,
+                "{\"app\":\"kitty\",\"title\":\"after malformed json\"}",
+            ),
+        )?;
 
-        let error = read_activitywatch_history(&path, 3).unwrap_err();
-        assert!(
-            error.to_string().contains("invalid JSON payload"),
-            "unexpected error: {error}"
+        let (entries, last_row_id) = read_activitywatch_history(&path, 3)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].row_id, 5);
+        assert_eq!(
+            entries[0].string_field("title").as_deref(),
+            Some("after malformed json")
         );
+        assert_eq!(last_row_id, 5);
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn activitywatch_history_reader_rejects_invalid_timestamp_rows() -> TestResult<()> {
+    async fn activitywatch_history_reader_skips_invalid_timestamp_rows() -> TestResult<()> {
         let path = fixture_db()?;
         let conn = Connection::open(path.as_std_path())?;
         conn.execute(
             "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
-            (1, "not-a-timestamp", 21_000_000_000_i64, "{\"app\":\"kitty\"}"),
+            (
+                1,
+                "not-a-timestamp",
+                21_000_000_000_i64,
+                "{\"app\":\"kitty\"}",
+            ),
+        )?;
+        conn.execute(
+            "INSERT INTO events (bucketrow, starttime, endtime, data) VALUES (?, ?, ?, ?)",
+            (
+                1,
+                24_000_000_000_i64,
+                25_000_000_000_i64,
+                "{\"app\":\"kitty\",\"title\":\"after malformed timestamp\"}",
+            ),
         )?;
 
-        let error = read_activitywatch_history(&path, 3).unwrap_err();
-        assert!(
-            error.to_string().contains("starttime"),
-            "unexpected error: {error}"
+        let (entries, last_row_id) = read_activitywatch_history(&path, 3)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].row_id, 5);
+        assert_eq!(
+            entries[0].string_field("title").as_deref(),
+            Some("after malformed timestamp")
         );
+        assert_eq!(last_row_id, 5);
 
         Ok(())
     }

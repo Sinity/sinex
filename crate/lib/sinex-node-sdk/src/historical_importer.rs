@@ -4,7 +4,9 @@
 //! and progress tracking — the mechanical parts that every historical importer needs.
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sinex_db::repositories::StreamBatchInsertResult;
+use sinex_db::repositories::source_materials::status as material_status;
 use sinex_db::{DbPool, DbPoolExt, Id, SourceMaterialRecord, repositories::StreamBatchRow};
 use sinex_primitives::prelude::*;
 use tracing::{debug, info, warn};
@@ -175,12 +177,12 @@ impl HistoricalImporter {
             return Ok(0);
         }
 
-        let count = batch.len() as u64;
         match self.try_insert_batch(&batch).await {
-            Ok(_result) => {
-                self.events_processed += count;
+            Ok(result) => {
+                let inserted = result.inserted_count as u64;
+                self.events_processed += inserted;
                 self.maybe_log_progress();
-                Ok(count)
+                Ok(inserted)
             }
             Err(e) => {
                 debug!(
@@ -211,7 +213,7 @@ impl HistoricalImporter {
         if batch.len() <= 1 {
             // Single row — try insert, quarantine on FK/constraint failure
             match self.try_insert_batch(&batch).await {
-                Ok(_) => Ok(1),
+                Ok(result) => Ok(result.inserted_count as u64),
                 Err(e) => {
                     if Self::is_constraint_violation(&e) {
                         if let Some(row) = batch.first() {
@@ -239,12 +241,12 @@ impl HistoricalImporter {
             };
 
             let left_count = match self.try_insert_batch(&left).await {
-                Ok(_) => left.len() as u64,
+                Ok(result) => result.inserted_count as u64,
                 Err(_) => Box::pin(self.bisect_retry(left)).await?,
             };
 
             let right_count = match self.try_insert_batch(&right).await {
-                Ok(_) => right.len() as u64,
+                Ok(result) => result.inserted_count as u64,
                 Err(_) => Box::pin(self.bisect_retry(right)).await?,
             };
 
@@ -282,20 +284,53 @@ impl HistoricalImporter {
     /// Finalize the import — mark source material as completed.
     pub async fn finalize(&self, total_bytes: Option<i64>) -> Result<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(self.material_id);
-        self.pool
-            .source_materials()
-            .finalize_in_flight(id, None, None, None, total_bytes)
-            .await
-            .map_err(|e| {
-                SinexError::database("failed to finalize historical import source material")
+        if self.rows_quarantined > 0 {
+            let mut metadata = json!({
+                "quarantined_rows": self.rows_quarantined,
+                "events_processed": self.events_processed,
+            });
+            if let Some(bytes) = total_bytes {
+                metadata
+                    .as_object_mut()
+                    .expect("historical import metadata literal must be an object")
+                    .insert("file_size_bytes".to_string(), json!(bytes));
+            }
+            self.pool
+                .source_materials()
+                .mark_as_recovered_partial(
+                    id,
+                    "historical_import_quarantined_rows",
+                    metadata,
+                )
+                .await
+                .map_err(|e| {
+                    SinexError::database(
+                        "failed to mark historical import source material as recovered_partial",
+                    )
                     .with_context("material_id", self.material_id.to_string())
                     .with_std_error(&e)
-            })?;
+                })?;
+        } else {
+            self.pool
+                .source_materials()
+                .finalize_in_flight(id, None, None, None, total_bytes)
+                .await
+                .map_err(|e| {
+                    SinexError::database("failed to finalize historical import source material")
+                        .with_context("material_id", self.material_id.to_string())
+                        .with_std_error(&e)
+                })?;
+        }
 
         info!(
             material_id = %self.material_id,
             events = self.events_processed,
             quarantined = self.rows_quarantined,
+            status = if self.rows_quarantined > 0 {
+                material_status::RECOVERED_PARTIAL
+            } else {
+                material_status::COMPLETED
+            },
             "Historical import finalized"
         );
 
