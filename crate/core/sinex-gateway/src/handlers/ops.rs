@@ -81,11 +81,15 @@ pub async fn handle_ops_list(
     debug!(token_prefix = %auth.token_prefix, "Operations list requested");
 
     let request: OpsListRequest = super::parse_default_on_null(params)?;
-
-    let limit = if request.limit > 0 {
+    let limit = if request.limit == default_ops_limit() {
+        request.limit
+    } else if request.limit > 0 {
         request.limit
     } else {
-        default_ops_limit()
+        return Err(SinexError::validation(format!(
+            "ops.list limit must be positive, got {}",
+            request.limit
+        )));
     };
 
     let records = pool
