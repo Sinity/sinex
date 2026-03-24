@@ -970,8 +970,59 @@ fn runtime_dir_for_target(
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
 }
 
-/// Check 1: deployment binaries exist in PATH.
-fn check_node_binaries() -> DeploymentReadinessItem {
+fn check_node_entrypoints(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if let Some(descriptor) = descriptor
+        && descriptor.source.as_deref() == Some("nixos")
+    {
+        let units = &descriptor.managed_units;
+
+        if units.is_empty() {
+            return DeploymentReadinessItem::fail(
+                "node-entrypoints",
+                "NixOS deployment descriptor does not declare managed units",
+            );
+        }
+
+        let mut unavailable = Vec::new();
+
+        for unit in units {
+            let output = match std::process::Command::new("systemctl")
+                .args(["show", unit, "--property=LoadState", "--value"])
+                .output()
+            {
+                Ok(output) => output,
+                Err(error) => {
+                    return DeploymentReadinessItem::fail(
+                        "node-entrypoints",
+                        format!("Could not query systemd for {unit}: {error}"),
+                    );
+                }
+            };
+
+            let load_state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !output.status.success() || load_state == "not-found" || load_state.is_empty() {
+                unavailable.push(unit.clone());
+            }
+        }
+
+        return if unavailable.is_empty() {
+            DeploymentReadinessItem::pass(
+                "node-entrypoints",
+                format!("Managed Sinex units are present in systemd: {}", units.join(", ")),
+            )
+        } else {
+            DeploymentReadinessItem::fail(
+                "node-entrypoints",
+                format!(
+                    "Managed Sinex units are missing or not loaded: {}",
+                    unavailable.join(", ")
+                ),
+            )
+        };
+    }
+
     let nodes = [
         "sinex-ingestd",
         "sinex-gateway",
@@ -987,10 +1038,10 @@ fn check_node_binaries() -> DeploymentReadinessItem {
         .collect();
 
     if missing.is_empty() {
-        DeploymentReadinessItem::pass("node-binaries", "All node binaries found on PATH")
+        DeploymentReadinessItem::pass("node-entrypoints", "All node binaries found on PATH")
     } else {
         DeploymentReadinessItem::fail(
-            "node-binaries",
+            "node-entrypoints",
             format!("Missing node binaries: {}", missing.join(", ")),
         )
     }
@@ -1827,7 +1878,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
 
     let mut items = vec![
         descriptor_item,
-        check_node_binaries(),
+        check_node_entrypoints(descriptor.as_ref()),
         check_realm_accessible(),
     ];
 
@@ -1933,6 +1984,22 @@ mod tests {
                 uid: Some(4242),
                 home: Some(PathBuf::from("/tmp/probe-home")),
             }),
+            ..Default::default()
+        }
+    }
+
+    fn sample_nixos_descriptor() -> DeploymentReadinessDescriptor {
+        DeploymentReadinessDescriptor {
+            source: Some("nixos".to_string()),
+            managed_units: vec![
+                "sinex-ingestd.service".to_string(),
+                "sinex-gateway.service".to_string(),
+                "sinex-filesystem-1.service".to_string(),
+                "sinex-terminal-1.service".to_string(),
+                "sinex-terminal-2.service".to_string(),
+                "sinex-system-1.service".to_string(),
+                "sinex-health-automaton.service".to_string(),
+            ],
             ..Default::default()
         }
     }
@@ -2377,6 +2444,21 @@ mod tests {
         let item = check_singleton_workstation_topology(Some(&descriptor));
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("filesystem=2"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nixos_descriptor_managed_units_are_consumed_directly()
+    -> ::xtask::sandbox::TestResult<()> {
+        let units = sample_nixos_descriptor().managed_units;
+        assert!(units.contains(&"sinex-ingestd.service".to_string()));
+        assert!(units.contains(&"sinex-gateway.service".to_string()));
+        assert!(units.contains(&"sinex-filesystem-1.service".to_string()));
+        assert!(units.contains(&"sinex-terminal-1.service".to_string()));
+        assert!(units.contains(&"sinex-terminal-2.service".to_string()));
+        assert!(units.contains(&"sinex-system-1.service".to_string()));
+        assert!(units.contains(&"sinex-health-automaton.service".to_string()));
+        assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));
         Ok(())
     }
 }

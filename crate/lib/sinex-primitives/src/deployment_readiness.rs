@@ -13,6 +13,8 @@ pub struct DeploymentReadinessDescriptor {
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
+    pub managed_units: Vec<String>,
+    #[serde(default)]
     pub target: Option<DeploymentTarget>,
     #[serde(default)]
     pub filesystem: DeploymentSurface,

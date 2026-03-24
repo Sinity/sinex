@@ -29,6 +29,8 @@ let
 
     lifecycle.preflight.enable = lib.mkDefault false;
 
+    core.gateway.autoGenerateTls = lib.mkDefault true;
+
     nodes = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;

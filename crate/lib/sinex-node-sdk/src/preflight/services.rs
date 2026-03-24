@@ -10,6 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
+use sinex_primitives::DeploymentReadinessDescriptor;
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
@@ -289,29 +290,30 @@ async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
 
 async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_info = HashMap::new();
-
-    // Sinex-related services that should be manageable
-    let sinex_services = vec![
-        "sinex-ingestd.service",
-        "sinex-gateway.service",
-        "sinex-fs-ingestor-1.service",
-        "sinex-terminal-ingestor-1.service",
-        "sinex-desktop-ingestor-1.service",
-        "sinex-system-ingestor-1.service",
-        "sinex-health-automaton.service",
-    ];
+    let sinex_services = deployment_managed_units();
 
     // System services that Sinex depends on
     let dependency_services = vec!["postgresql.service", "systemd-resolved.service"];
 
     for service_name in sinex_services {
-        match check_systemd_service(service_name).await {
+        match check_systemd_service(&service_name).await {
             Ok(service_data) => {
                 service_info.insert(service_name.to_string(), service_data);
 
-                if service_name.starts_with("sinex-") {
+                let is_available = service_info[&service_name]["available"]
+                    .as_bool()
+                    .unwrap_or(false);
+                let load_state = service_info[&service_name]["load_state"]
+                    .as_str()
+                    .unwrap_or("unknown");
+
+                if service_name.starts_with("sinex-") && is_available {
                     // For Sinex services, it's OK if they're not loaded yet (they will be after deployment)
                     messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
+                } else if service_name.starts_with("sinex-") {
+                    messages.push(format!(
+                        "ℹ Sinex service '{service_name}' not yet configured (load state: {load_state})"
+                    ));
                 } else {
                     messages.push(format!("✓ Service '{service_name}' is available"));
                 }
@@ -371,6 +373,33 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
     }))
 }
 
+fn deployment_managed_units() -> Vec<String> {
+    match DeploymentReadinessDescriptor::load() {
+        Ok(Some(descriptor)) if !descriptor.managed_units.is_empty() => descriptor.managed_units,
+        Ok(_) => vec![
+            "sinex-ingestd.service".to_string(),
+            "sinex-gateway.service".to_string(),
+            "sinex-filesystem-1.service".to_string(),
+            "sinex-terminal-1.service".to_string(),
+            "sinex-desktop-1.service".to_string(),
+            "sinex-system-1.service".to_string(),
+            "sinex-health-automaton.service".to_string(),
+        ],
+        Err(error) => {
+            debug!("Ignoring deployment descriptor for service verification: {error}");
+            vec![
+                "sinex-ingestd.service".to_string(),
+                "sinex-gateway.service".to_string(),
+                "sinex-filesystem-1.service".to_string(),
+                "sinex-terminal-1.service".to_string(),
+                "sinex-desktop-1.service".to_string(),
+                "sinex-system-1.service".to_string(),
+                "sinex-health-automaton.service".to_string(),
+            ]
+        }
+    }
+}
+
 async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
     let status_output = run_command_with_timeout(
         "systemctl",
@@ -409,14 +438,15 @@ async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
         .get("LoadState")
         .cloned()
         .unwrap_or_else(|| "unknown".to_string());
+    let is_loaded = load_state == "loaded";
 
     Ok(json!({
-        "available": true,
+        "available": is_loaded,
         "status": active_state,
         "sub_status": sub_state,
         "load_state": load_state,
         "is_active": active_state == "active",
-        "is_loaded": load_state == "loaded"
+        "is_loaded": is_loaded
     }))
 }
 

@@ -29,7 +29,10 @@
 
     nats.environment = "prod"; # REQUIRED for production; use "dev" for local testing only
 
-    core.enable = true;
+    core = {
+      enable = true;
+      gateway.autoGenerateTls = true;
+    };
 
     nodes = {
       enable = true;

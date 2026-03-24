@@ -25,7 +25,10 @@
 
     lifecycle.maintenance.enable = true;
 
-    core.enable = true;
+    core = {
+      enable = true;
+      gateway.autoGenerateTls = true;
+    };
 
     nodes = {
       enable = true;
