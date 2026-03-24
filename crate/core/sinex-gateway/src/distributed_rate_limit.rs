@@ -65,10 +65,26 @@ const BUCKET_EVICTION_INTERVAL: u64 = 10_000;
 pub struct DistributedRateLimiter {
     kv: Store,
     config: DistributedRateLimitConfig,
-    /// Local reservation buckets: Token -> Remaining Local Capacity
+    /// Local reservation buckets keyed by hashed token identifiers.
     local_buckets: DashMap<String, Arc<AtomicU32>>,
     /// Call counter used to trigger periodic eviction of exhausted buckets
     call_count: AtomicU64,
+}
+
+#[derive(Debug, Clone)]
+struct TokenIdentity {
+    hashed_token: String,
+    kv_key: String,
+    fingerprint: String,
+}
+
+fn token_identity(token: &str) -> TokenIdentity {
+    let hashed_token = blake3::hash(token.as_bytes()).to_hex().to_string();
+    TokenIdentity {
+        kv_key: format!("token.{hashed_token}"),
+        fingerprint: hashed_token[..16].to_string(),
+        hashed_token,
+    }
 }
 
 impl DistributedRateLimiter {
@@ -109,6 +125,8 @@ impl DistributedRateLimiter {
             return true;
         }
 
+        let token_identity = token_identity(token);
+
         // Periodically evict exhausted local buckets to prevent unbounded DashMap growth.
         // Tokens with zero local capacity re-hit NATS KV on the next call, which is correct.
         let count = self.call_count.fetch_add(1, Ordering::Relaxed);
@@ -120,7 +138,7 @@ impl DistributedRateLimiter {
         // 1. Get local bucket (lock-free access via Arc)
         let bucket = self
             .local_buckets
-            .entry(token.to_string())
+            .entry(token_identity.hashed_token.clone())
             .or_insert_with(|| Arc::new(AtomicU32::new(0)))
             .clone();
 
@@ -145,10 +163,9 @@ impl DistributedRateLimiter {
             }
         }
 
-        // 3. Replenish from NATS (with CAS loop)
-        // NATS KV keys must match [a-zA-Z0-9_.-]+ pattern; ':' is invalid.
-        // Use '.' as the hierarchy separator instead.
-        let key = format!("token.{token}");
+        // 3. Replenish from NATS (with CAS loop).
+        // Never use the raw bearer token as a NATS KV key or log field.
+        let key = token_identity.kv_key.clone();
         let limit = self.config.requests_per_minute.get();
         let batch_size = RESERVATION_BATCH_SIZE;
 
@@ -166,7 +183,7 @@ impl DistributedRateLimiter {
                         v
                     } else {
                         warn!(
-                            token = %token,
+                            token_fingerprint = %token_identity.fingerprint,
                             raw = ?entry.value,
                             "Corrupt rate limit counter in NATS KV; failing closed"
                         );
@@ -176,14 +193,23 @@ impl DistributedRateLimiter {
                 }
                 Ok(None) => (0, 0), // Key doesn't exist yet, revision 0 signals create
                 Err(e) => {
-                    warn!(error = %e, token = %token, "NATS KV read failed; failing closed (rate limit enforced)");
+                    warn!(
+                        error = %e,
+                        token_fingerprint = %token_identity.fingerprint,
+                        "NATS KV read failed; failing closed (rate limit enforced)"
+                    );
                     return false; // Fail closed: NATS outage should not bypass rate limits
                 }
             };
 
             // Check hard limit
             if entry_value >= limit {
-                debug!(token = %token, used = entry_value, limit = limit, "Rate limit exceeded (global)");
+                debug!(
+                    token_fingerprint = %token_identity.fingerprint,
+                    used = entry_value,
+                    limit = limit,
+                    "Rate limit exceeded (global)"
+                );
                 // Cache 0 locally to prevent hammering this loop
                 bucket.store(0, Ordering::Relaxed);
                 return false;
@@ -227,7 +253,7 @@ impl DistributedRateLimiter {
                     // We consume 1 for *this* request immediately, store the rest
                     bucket.store(to_reserve - 1, Ordering::Relaxed);
                     debug!(
-                        token = %token,
+                        token_fingerprint = %token_identity.fingerprint,
                         reserved = to_reserve,
                         new_global = new_value,
                         "Refilled local rate limit bucket"
@@ -244,7 +270,10 @@ impl DistributedRateLimiter {
             }
         }
 
-        warn!(token = %token, "Failed to reserve rate limit tokens after retries; failing closed");
+        warn!(
+            token_fingerprint = %token_identity.fingerprint,
+            "Failed to reserve rate limit tokens after retries; failing closed"
+        );
         false // Fail closed on persistent CAS failure
     }
 

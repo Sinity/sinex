@@ -90,6 +90,34 @@ async fn rate_limit_per_token_isolation(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn rate_limit_kv_uses_hashed_token_keys(ctx: TestContext) -> TestResult<()> {
+    let (ctx, limiter) = start_limiter(ctx, config_with_limit(10)).await?;
+    let token = "sensitive.token.value";
+
+    assert!(
+        limiter.check_and_increment(token).await,
+        "first request should reserve quota"
+    );
+
+    let nats = ctx.nats_handle()?;
+    let js = nats.jetstream().await?;
+    let kv = js.get_key_value("sinex_gateway_rate_limits").await?;
+    let hashed_key = format!("token.{}", blake3::hash(token.as_bytes()).to_hex());
+    let raw_key = format!("token.{token}");
+
+    assert!(
+        kv.entry(&hashed_key).await?.is_some(),
+        "hashed token key should be present in KV"
+    );
+    assert!(
+        kv.entry(&raw_key).await?.is_none(),
+        "raw bearer token must not appear in KV keyspace"
+    );
+
+    Ok(())
+}
+
 // ─── Disabled limiter ───────────────────────────────────────────────────
 
 #[sinex_test]

@@ -31,7 +31,7 @@ use sinex_primitives::{Bytes, Uuid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -55,11 +55,9 @@ use tracing::{debug, error, info, warn};
 use std::time::Duration;
 use std::{
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
-use tokio::sync::RwLock;
-
 pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -212,6 +210,37 @@ pub(crate) struct GatewayAuth {
 }
 
 impl GatewayAuth {
+    fn store_token(token: &RwLock<Option<String>>, new_token: String) {
+        let mut token_guard = match token.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("Gateway token lock poisoned during reload; continuing with inner state");
+                poisoned.into_inner()
+            }
+        };
+        *token_guard = Some(new_token);
+    }
+
+    fn reload_token_from_path(token: &RwLock<Option<String>>, path: &Path) {
+        match std::fs::read_to_string(path) {
+            Ok(new_token) => {
+                let trimmed = new_token.trim().to_string();
+                if trimmed.is_empty() {
+                    warn!("Token file {:?} is empty after reload", path);
+                } else {
+                    Self::store_token(token, trimmed);
+                    info!("RPC token reloaded from {:?}", path);
+                }
+            }
+            Err(error) => {
+                error!(
+                    "Failed to read token file {:?} after modification: {}",
+                    path, error
+                );
+            }
+        }
+    }
+
     fn from_config(config: &GatewayConfig) -> color_eyre::eyre::Result<Self> {
         let (token, token_path) = config
             .auth_token_from_config()
@@ -256,8 +285,12 @@ impl GatewayAuth {
                 });
             }
 
+            let (ready_tx, ready_rx) =
+                std::sync::mpsc::sync_channel::<color_eyre::eyre::Result<()>>(1);
+
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
+                let mut ready_tx = Some(ready_tx);
 
                 let watcher = notify::recommended_watcher(
                     move |res: Result<Event, notify::Error>| {
@@ -265,32 +298,7 @@ impl GatewayAuth {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Modify(_) | EventKind::Create(_) => {
-                                        // File was modified or created - reload token
-                                        match std::fs::read_to_string(&path_for_closure) {
-                                            Ok(new_token) => {
-                                                let trimmed = new_token.trim().to_string();
-                                                if trimmed.is_empty() {
-                                                    warn!(
-                                                        "Token file {:?} is empty after reload",
-                                                        path_for_closure
-                                                    );
-                                                } else {
-                                                    let mut token_lock =
-                                                        token_clone.blocking_write();
-                                                    *token_lock = Some(trimmed);
-                                                    info!(
-                                                        "RPC token reloaded from {:?}",
-                                                        path_for_closure
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!(
-                                                    "Failed to read token file {:?} after modification: {}",
-                                                    path_for_closure, e
-                                                );
-                                            }
-                                        }
+                                        Self::reload_token_from_path(&token_clone, &path_for_closure);
                                     }
                                     EventKind::Remove(_) => {
                                         // File was deleted — keep last valid token (fail-closed).
@@ -318,23 +326,51 @@ impl GatewayAuth {
                 let mut watcher = match watcher {
                     Ok(w) => w,
                     Err(e) => {
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(Err(eyre!("Failed to create file watcher: {e}")));
+                        }
                         error!("Failed to create file watcher: {}", e);
                         return;
                     }
                 };
 
                 if let Err(e) = watcher.watch(&path_clone, RecursiveMode::NonRecursive) {
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Err(eyre!(
+                            "Failed to watch token file {:?}: {e}",
+                            path_clone
+                        )));
+                    }
                     error!("Failed to watch token file {:?}: {}", path_clone, e);
                     return;
                 }
 
+                if let Some(tx) = ready_tx.take() {
+                    let _ = tx.send(Ok(()));
+                }
                 info!("Watching token file {:?} for changes", path_clone);
 
                 // Block until the shutdown signal fires; no busy-polling.
-                // recv() returns Err only when the sender is dropped, which also means shutdown.
-                debug!("Token file watcher shutting down");
                 let _ = done_rx.recv();
+                debug!("Token file watcher shutting down");
             });
+
+            match ready_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(err),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(eyre!(
+                        "Timed out waiting for token file watcher to initialize for {:?}",
+                        path
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(eyre!(
+                        "Token file watcher thread exited before initialization for {:?}",
+                        path
+                    ));
+                }
+            }
         }
 
         Ok(self)
@@ -342,10 +378,16 @@ impl GatewayAuth {
 
     /// Verify the bearer token in the request headers.
     /// Returns the verified token string on success so callers need not re-extract it.
-    pub(crate) async fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
+    pub(crate) fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
-        let token_guard = self.token.read().await;
+        let token_guard = match self.token.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("Gateway token lock poisoned during verify; continuing with inner state");
+                poisoned.into_inner()
+            }
+        };
         if let Some(expected) = token_guard.as_ref() {
             if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
                 Ok(provided)
@@ -702,7 +744,7 @@ pub async fn dispatch_rpc_method(
     result
 }
 
-/// Health check endpoint
+/// Health and readiness check endpoint
 ///
 /// Returns 200 OK while the gateway can still serve DB-backed RPCs; the JSON
 /// body distinguishes full health from degraded operation.
@@ -780,7 +822,7 @@ async fn handle_rpc(
     state.metrics.record_request_start();
     let start = std::time::Instant::now();
 
-    let token = match state.auth.verify(&headers).await {
+    let token = match state.auth.verify(&headers) {
         Ok(t) => t,
         Err(err) => {
             state.metrics.record_request_rejected();
@@ -1422,6 +1464,7 @@ impl RpcServer {
             .route("/rpc", post(handle_rpc))
             .route("/", post(handle_rpc))
             .route("/health", get(health_check))
+            .route("/ready", get(health_check))
     }
 
     /// Build the complete app with split middleware:
@@ -1924,7 +1967,7 @@ mod tests {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = HeaderMap::new();
         assert!(matches!(
-            auth.verify(&headers).await,
+            auth.verify(&headers),
             Err(AuthError::Missing)
         ));
         Ok(())
@@ -1934,7 +1977,7 @@ mod tests {
     async fn gateway_auth_accepts_bearer_header() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = bearer_headers("secret");
-        assert!(auth.verify(&headers).await.is_ok());
+        assert!(auth.verify(&headers).is_ok());
         Ok(())
     }
 
@@ -1959,9 +2002,9 @@ mod tests {
         let auth = GatewayAuth::from_config(&gateway_config_from_env())?
             .start_file_watcher(shutdown_rx)?;
 
-        assert!(auth.verify(&bearer_headers("initial-token")).await.is_ok());
+        assert!(auth.verify(&bearer_headers("initial-token")).is_ok());
         assert!(matches!(
-            auth.verify(&bearer_headers("wrong-token")).await,
+            auth.verify(&bearer_headers("wrong-token")),
             Err(AuthError::Invalid)
         ));
 
@@ -1970,10 +2013,10 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let old_rejected = matches!(
-                    auth.verify(&bearer_headers("initial-token")).await,
+                    auth.verify(&bearer_headers("initial-token")),
                     Err(AuthError::Invalid)
                 );
-                let new_accepted = auth.verify(&bearer_headers("rotated-token")).await.is_ok();
+                let new_accepted = auth.verify(&bearer_headers("rotated-token")).is_ok();
 
                 if old_rejected && new_accepted {
                     break;
@@ -1987,6 +2030,23 @@ mod tests {
 
         let _ = shutdown_tx.send(true);
         clear_auth_env();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn gateway_auth_keeps_last_token_when_reload_file_is_empty() -> TestResult<()> {
+        let auth = GatewayAuth::with_test_token("initial-token");
+        let temp_dir = tempfile::tempdir()?;
+        let token_file = temp_dir.path().join("gateway-token");
+        std::fs::write(&token_file, " \n\t")?;
+
+        GatewayAuth::reload_token_from_path(&auth.token, &token_file);
+
+        assert!(auth.verify(&bearer_headers("initial-token")).is_ok());
+        assert!(matches!(
+            auth.verify(&bearer_headers("wrong-token")),
+            Err(AuthError::Invalid)
+        ));
         Ok(())
     }
 }
