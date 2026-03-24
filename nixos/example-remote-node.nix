@@ -1,8 +1,8 @@
 # Sinex remote node example
 #
 # Configures a node to run only node collectors and forward data to remote
-# ingestd/NATS and PostgreSQL endpoints. Suitable for edge devices feeding a
-# central Sinex cluster.
+# ingestd/NATS endpoints. Suitable for edge devices feeding a central Sinex
+# cluster.
 
 {
   config,
@@ -17,15 +17,9 @@
   services.sinex = {
     enable = true;
     users.target = "agent";
-
-    database = {
-      autoSetup = false;
-      host = "db.example.net";
-      port = 5432;
-      name = "sinex_prod";
-      user = "sinex_agent";
-      passwordFile = config.environment.etc."sinex/remote-db-password".source;
-    };
+    # Edge-mode remote nodes forward into the central cluster via NATS only.
+    database.enable = false;
+    nats.autoSetup = false;
 
     nats.environment = "prod";
 
@@ -48,8 +42,7 @@
       defaults = {
         logLevel = "info";
         env = {
-          # Enable True Edge Mode (no database dependency)
-          # Checkpoints will use NATS KV.
+          # True edge mode: no runtime PostgreSQL dependency; checkpoints stay in NATS KV.
           SINEX_EDGE_MODE = "1";
         };
       };
@@ -87,7 +80,6 @@
     createHome = true;
   };
 
-  environment.etc."sinex/remote-db-password".text = "replace-me";
   environment.etc."sinex/remote-nats-ca.pem".text = "replace-with-real-ca";
   environment.etc."sinex/remote-nats-cert.pem".text = "replace-with-real-client-cert";
   environment.etc."sinex/remote-nats-key.pem".text = "replace-with-real-client-key";

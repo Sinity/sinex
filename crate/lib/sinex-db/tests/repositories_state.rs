@@ -1,7 +1,8 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
+use sinex_primitives::{Id, Uuid};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -9,7 +10,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let operation = Operation {
         id: None,
-        operation_type: "process".to_string(),
+        operation_type: "archive".to_string(),
         operator: "ingestd@localhost".to_string(),
         scope: Some(json!({
             "node": "ingestd",
@@ -26,7 +27,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     };
 
     let logged = repo.log_operation(operation).await?;
-    assert_eq!(logged.operation_type, "process");
+    assert_eq!(logged.operation_type, "archive");
     assert_eq!(logged.operator, "ingestd@localhost");
     assert_eq!(
         logged.scope,
@@ -48,7 +49,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
 
     let failed_op = Operation {
         id: None,
-        operation_type: "validate".to_string(),
+        operation_type: "restore".to_string(),
         operator: "api-user@localhost".to_string(),
         scope: Some(json!({
             "node": "schema-manager",
@@ -62,7 +63,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     };
 
     let failed = repo.log_operation(failed_op).await?;
-    assert_eq!(failed.operation_type, "validate");
+    assert_eq!(failed.operation_type, "restore");
     assert_eq!(failed.operator, "api-user@localhost");
     assert_eq!(
         failed.scope,
@@ -122,7 +123,7 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
     for (status, message) in operations {
         let operation = Operation {
             id: None,
-            operation_type: "test".to_string(),
+            operation_type: "purge".to_string(),
             operator: "test-service@localhost".to_string(),
             scope: Some(json!({
                 "node": "test",
@@ -143,5 +144,98 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
     assert_eq!(stats.failed, 1);
     assert_eq!(stats.cancelled, 1);
     assert!(stats.avg_duration_ms.is_some());
+    Ok(())
+}
+
+#[sinex_test]
+async fn log_operation_rejects_unknown_operation_type(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let err = repo
+        .log_operation(Operation {
+            id: None,
+            operation_type: "test".to_string(),
+            operator: "tester@localhost".to_string(),
+            scope: None,
+            result_status: OperationStatus::Running,
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        })
+        .await
+        .expect_err("unknown operation type should be rejected before insert");
+
+    assert!(err.to_string().contains("Unsupported operation type"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_node_is_idempotent_per_manifest_version(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("idempotent-node");
+
+    let first = repo
+        .register_node(&node_name, NodeType::Service, "1.0.0", Some("first description"))
+        .await?;
+    let second = repo
+        .register_node(
+            &node_name,
+            NodeType::Service,
+            "1.0.0",
+            Some("updated description"),
+        )
+        .await?;
+
+    assert_eq!(first.id, second.id, "duplicate registration should reuse the manifest row");
+    assert_eq!(second.description.as_deref(), Some("updated description"));
+
+    let manifests = repo.get_all_nodes().await?;
+    let matching = manifests
+        .into_iter()
+        .filter(|manifest| manifest.node_name == node_name)
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "duplicate registration should not create extra rows");
+    assert_eq!(matching[0].version, "1.0.0");
+    assert_eq!(matching[0].description.as_deref(), Some("updated description"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn update_operation_meta_rejects_missing_operation(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let missing = Id::<Operation>::from_uuid(Uuid::now_v7());
+
+    let err = repo
+        .update_operation_meta(
+            &missing,
+            OperationStatus::Success,
+            Some("done"),
+            json!({ "message": "done" }),
+        )
+        .await
+        .expect_err("missing operation updates must fail");
+
+    assert!(err.to_string().contains("Operation not found"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn update_tombstone_operation_rejects_missing_operation(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let missing = Uuid::now_v7().to_string();
+
+    let err = repo
+        .update_tombstone_operation(
+            &missing,
+            OperationStatus::Cancelled,
+            json!({ "operation_id": missing, "state": "Cancelled" }),
+            None,
+            Some("cancelled"),
+            None,
+        )
+        .await
+        .expect_err("missing tombstone operation updates must fail");
+
+    assert!(err.to_string().contains("Tombstone operation not found"));
     Ok(())
 }

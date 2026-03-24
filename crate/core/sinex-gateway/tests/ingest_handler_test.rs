@@ -75,6 +75,7 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
     );
     assert_eq!(record.metadata["event_source"].as_str(), Some("gateway.test"));
     assert_eq!(record.metadata["event_type"].as_str(), Some("inline.event"));
+    assert_eq!(record.metadata["file_size_bytes"].as_i64(), Some(12));
 
     Ok(())
 }

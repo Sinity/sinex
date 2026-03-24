@@ -330,7 +330,7 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
     );
     assert!(
         report.serving,
-        "Gateway should report serving=true only when the end-to-end control path is live"
+        "Gateway should report serving=true when the DB-backed RPC surface is live"
     );
     match report.status {
         GatewayHealthStatus::Healthy => {

@@ -1,17 +1,18 @@
 use clap::Args;
 use console::style;
-use inquire::{MultiSelect, Select, Text};
+use inquire::{Select, Text};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
 };
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
+use sinex_primitives::validation::query_validation::{self, DEFAULT_MAX_LIMIT};
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
+use crate::validation::parse_time_input;
 
 /// Query/search events
 #[derive(Debug, Args)]
@@ -24,13 +25,13 @@ EXAMPLES:
     sinexctl query -q error -s 24h
 
     # Filter by source and event type
-    sinexctl query --source terminal --event-type command -s 2d
+    sinexctl query --source shell.atuin --event-type shell.command -s 2d
 
     # Search within a date range
     sinexctl query -s 2025-01-10 -u 2025-01-15
 
     # Multiple sources (OR filter)
-    sinexctl query --source terminal --source filesystem -s 1d
+    sinexctl query --source shell.atuin --source desktop.hyprland -s 1d
 
     # Output as JSON for piping
     sinexctl query -s 1h -f json | jq '.event_type'
@@ -74,7 +75,7 @@ pub struct QueryCommand {
     no_lineage: bool,
 
     /// Maximum number of results
-    #[arg(long, short = 'n', default_value = "100")]
+    #[arg(long, short = 'n', default_value = "100", value_parser = parse_query_limit_arg)]
     limit: i64,
 
     /// Output format
@@ -185,53 +186,23 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         (since_time, None)
     };
 
-    // Fetch available sources from nodes if possible
-    let default_sources = vec![
-        "terminal".to_string(),
-        "filesystem".to_string(),
-        "desktop".to_string(),
-        "system".to_string(),
-        "health".to_string(),
-    ];
+    let selected_sources = Text::new("Sources (comma-separated, optional):")
+        .with_help_message(
+            "Examples: shell.atuin, desktop.hyprland, system.journal. Leave empty to search all sources.",
+        )
+        .prompt_skippable()?
+        .map(|input| parse_event_sources(&input))
+        .transpose()?
+        .unwrap_or_default();
 
-    let sources = match client.list_nodes(None).await {
-        Ok(nodes) => {
-            if nodes.is_empty() {
-                default_sources
-            } else {
-                nodes.iter().map(|n| n.node_type.to_string()).collect()
-            }
-        }
-        Err(_) => default_sources,
-    };
-
-    let selected_sources =
-        MultiSelect::new("Sources (Space to select, Enter to confirm):", sources)
-            .with_help_message("Leave empty to search all sources")
-            .prompt_skippable()?
-            .unwrap_or_default();
-
-    // Event types
-    let event_types = vec![
-        "command".to_string(),
-        "file_write".to_string(),
-        "file_read".to_string(),
-        "file_delete".to_string(),
-        "process_start".to_string(),
-        "process_exit".to_string(),
-        "window_focus".to_string(),
-        "clipboard".to_string(),
-        "system_event".to_string(),
-        "health_check".to_string(),
-    ];
-
-    let selected_types = MultiSelect::new(
-        "Event types (Space to select, Enter to confirm):",
-        event_types,
-    )
-    .with_help_message("Leave empty to search all event types")
-    .prompt_skippable()?
-    .unwrap_or_default();
+    let selected_types = Text::new("Event types (comma-separated, optional):")
+        .with_help_message(
+            "Examples: shell.command, window.focused, file.created. Leave empty to search all event types.",
+        )
+        .prompt_skippable()?
+        .map(|input| parse_event_types(&input))
+        .transpose()?
+        .unwrap_or_default();
 
     // Full-text search
     let text = Text::new("Full-text search (optional):")
@@ -241,19 +212,14 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 
     // Limit
     let limit_str = Text::new("Maximum results:").with_default("100").prompt()?;
-    let limit: i64 = limit_str.parse().unwrap_or(100);
+    let limit = parse_query_limit_arg(&limit_str)
+        .map_err(|error| color_eyre::eyre::eyre!(error))?;
 
     // Build query
     let time_range = make_time_range(Some(since), until)?;
     let query = EventQuery {
-        sources: selected_sources
-            .iter()
-            .map(|s| EventSource::new(s.clone()))
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        event_types: selected_types
-            .iter()
-            .map(|t| EventType::new(t.clone()))
-            .collect::<std::result::Result<Vec<_>, _>>()?,
+        sources: selected_sources.clone(),
+        event_types: selected_types.clone(),
         time_range,
         payload: text
             .as_ref()
@@ -299,6 +265,50 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     execute_query(client, query, format).await
 }
 
+fn parse_csv_values(input: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for part in input.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !values.iter().any(|existing| existing == trimmed) {
+            values.push(trimmed.to_string());
+        }
+    }
+    values
+}
+
+fn parse_event_sources(input: &str) -> Result<Vec<EventSource>> {
+    parse_csv_values(input)
+        .into_iter()
+        .map(EventSource::new)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn parse_event_types(input: &str) -> Result<Vec<EventType>> {
+    parse_csv_values(input)
+        .into_iter()
+        .map(EventType::new)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn parse_query_limit_arg(input: &str) -> std::result::Result<i64, String> {
+    let parsed: i64 = input
+        .parse()
+        .map_err(|_| format!("limit must be an integer, got {input:?}"))?;
+    if parsed <= 0 {
+        return Err(format!("limit must be between 1 and {DEFAULT_MAX_LIMIT}"));
+    }
+    let parsed_u32 = u32::try_from(parsed)
+        .map_err(|_| format!("limit must be between 1 and {DEFAULT_MAX_LIMIT}"))?;
+    query_validation::validate_limit(parsed_u32, DEFAULT_MAX_LIMIT)
+        .map_err(|error| error.to_string())?;
+    Ok(i64::from(parsed_u32))
+}
+
 /// Parse preset time ranges
 fn parse_preset_time(preset: &str) -> Result<Timestamp> {
     let now = Timestamp::now();
@@ -321,31 +331,7 @@ fn parse_preset_time(preset: &str) -> Result<Timestamp> {
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
 #[allow(clippy::expect_used)]
 fn parse_time(s: &str) -> Result<Timestamp> {
-    // Try relative time first using sinex-primitives's parse_relative_duration
-    if let Some(time_duration) = parse_relative_duration(s) {
-        return Ok(Timestamp::now() - time_duration);
-    }
-
-    // Try absolute timestamp
-    if let Ok(ts) = Timestamp::parse_rfc3339(s) {
-        return Ok(ts);
-    }
-
-    // Try date-only format (YYYY-MM-DD)
-    if let Ok(date) =
-        time::Date::parse(s, time::macros::format_description!("[year]-[month]-[day]"))
-    {
-        return Ok(Timestamp::from(
-            date.with_hms(0, 0, 0)
-                .expect("midnight is always valid")
-                .assume_utc(),
-        ));
-    }
-
-    Err(color_eyre::eyre::eyre!(
-        "Invalid time format: '{}'\nSupported formats:\n  Relative: 1h, 2d, 30m, 1w\n  Absolute: 2025-01-15, 2025-01-15T10:00:00Z",
-        s
-    ))
+    parse_time_input(s)
 }
 
 /// Format search results as a table
@@ -401,6 +387,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use sinex_primitives::temporal::Duration;
+    use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
     use xtask::sandbox::{sinex_proptest, sinex_test};
 
     #[sinex_test]
@@ -576,6 +563,23 @@ mod tests {
         assert!(parse_time("2d").is_ok());
         assert!(parse_time("2025-01-15").is_ok());
         assert!(parse_time("2025-01-15T10:00:00Z").is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_query_limit_rejects_zero() -> TestResult<()> {
+        let err = parse_query_limit_arg("0").expect_err("zero limit should be rejected");
+        assert!(err.contains("between 1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_csv_values_dedupes_and_trims() -> TestResult<()> {
+        let parsed = parse_csv_values(" shell.command,window.focused, shell.command ,, ");
+        assert_eq!(
+            parsed,
+            vec!["shell.command".to_string(), "window.focused".to_string()]
+        );
         Ok(())
     }
 

@@ -5,7 +5,7 @@
 
 use crate::Timestamp;
 use crate::domain::{CommandText, HostName, RecordedPath, ShellName};
-use crate::events::enums::{ScanType, TerminalType};
+use crate::events::enums::TerminalType;
 use crate::units::{ExitCode, Nanoseconds, ProcessId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -188,72 +188,6 @@ define_event_payload! {
     } => ("shell.history", "command.imported");
 }
 
-// Atuin imported entry (from CSV/DB import)
-
-define_event_payload! {
-    /// Atuin entry imported from external source.
-    pub struct AtuinEntryPayload {
-        id: String,
-        command: String,
-        timestamp: Timestamp,
-        duration_ms: u64,
-        exit_code: ExitCode,
-        directory: String,
-        session: String,
-        hostname: String,
-    } => ("atuin", "entry.imported");
-}
-
-// Command imported from shell history
-
-define_event_payload! {
-    /// Generic shell command import event.
-    pub struct CommandImportedPayload {
-        command: String,
-        timestamp: Timestamp,
-        source_file: String,
-        line_number: Option<u32>,
-        shell_type: String,
-    } => ("shell", "command.imported");
-}
-
-// Bash-specific history
-
-define_event_payload! {
-    /// Entry parsed from a Bash history file.
-    pub struct BashHistoryEntryPayload {
-        command: String,
-        timestamp: Option<Timestamp>,
-        histfile_path: String,
-        line_number: u32,
-    } => ("shell.bash_histfile", "entry.imported");
-}
-
-// Real-time shell history file monitoring
-
-define_event_payload! {
-    /// Historical command streamed from Bash histfile tailing.
-    pub struct BashHistoricalCommandPayload {
-        command_string: String,
-        source_file: String,
-    } => ("shell.bash_histfile", "command.historical");
-}
-
-define_event_payload! {
-    /// Historical command streamed from Zsh history monitoring.
-    pub struct ZshHistoricalCommandPayload {
-        command_string: String,
-        source_file: String,
-    } => ("shell.zsh_histfile", "command.historical");
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.fish_history", event_type = "command.historical")]
-pub struct FishHistoricalCommandPayload {
-    pub command_string: String,
-    pub source_file: String,
-}
-
 // Terminal monitoring events
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -261,31 +195,6 @@ pub struct FishHistoricalCommandPayload {
 pub struct TerminalMonitoringStartedPayload {
     pub enabled_sources: HashMap<String, bool>,
     pub start_time: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal", event_type = "shell.command_historical")]
-pub struct TerminalCommandHistoricalPayload {
-    pub source: String,
-    pub db_path: Option<std::path::PathBuf>,
-    pub file_path: Option<std::path::PathBuf>,
-    pub scan_type: ScanType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal", event_type = "shell.history_historical")]
-pub struct TerminalHistoryHistoricalPayload {
-    pub source: String,
-    pub file_path: std::path::PathBuf,
-    pub scan_type: ScanType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal", event_type = "shell.terminal_snapshot")]
-pub struct TerminalSnapshotPayload {
-    pub active_watchers: usize,
-    pub enabled_sources: HashMap<String, bool>,
-    pub snapshot_time: Timestamp,
 }
 
 // Kitty terminal-specific events
@@ -454,8 +363,6 @@ impl KittySessionStartedPayload {
         self
     }
 }
-
-impl HistoryCommandImportedPayload {}
 
 // Asciinema recording payloads
 

@@ -40,6 +40,15 @@ pub struct JunitTestMeta {
     pub failure_type: Option<String>,
 }
 
+/// Aggregated test counts extracted from JUnit XML.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct JunitSummary {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub ignored: usize,
+}
+
 /// Parse the nextest JUnit XML report and extract test metadata.
 ///
 /// Returns a map of `test_name -> JunitTestMeta` for all tests. Tests without any
@@ -193,6 +202,71 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
     }
 
     Ok(results)
+}
+
+/// Parse aggregate test counts from the nextest JUnit XML report.
+///
+/// This is used to repair streamed nextest stats when libtest-json-plus output
+/// underreports passing or failing tests.
+pub fn parse_junit_summary(path: &Path) -> Result<JunitSummary> {
+    let xml_content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read JUnit XML at {}", path.display()))?;
+
+    let mut reader = Reader::from_str(&xml_content);
+    let mut summary = JunitSummary::default();
+    let mut in_testcase = false;
+    let mut testcase_failed = false;
+    let mut testcase_ignored = false;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => match e.name().as_ref() {
+                b"testcase" => {
+                    in_testcase = true;
+                    testcase_failed = false;
+                    testcase_ignored = false;
+                }
+                b"failure" if in_testcase => testcase_failed = true,
+                b"skipped" if in_testcase => testcase_ignored = true,
+                _ => {}
+            },
+            Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"testcase" => {
+                    summary.total += 1;
+                    summary.passed += 1;
+                }
+                b"failure" if in_testcase => testcase_failed = true,
+                b"skipped" if in_testcase => testcase_ignored = true,
+                _ => {}
+            },
+            Ok(Event::End(ref e)) => {
+                if e.name().as_ref() == b"testcase" && in_testcase {
+                    summary.total += 1;
+                    if testcase_failed {
+                        summary.failed += 1;
+                    } else if testcase_ignored {
+                        summary.ignored += 1;
+                    } else {
+                        summary.passed += 1;
+                    }
+                    in_testcase = false;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  JUnit XML summary parse error at position {}: {e}",
+                    reader.error_position()
+                );
+                break;
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(summary)
 }
 
 /// Parse the nextest JUnit XML report and extract test outputs.
@@ -400,6 +474,38 @@ test output
         assert_eq!(test_meta.failure_type.as_deref(), Some("test failure"));
         assert_eq!(test_meta.classname.as_deref(), Some("my-crate"));
         assert!(test_meta.output.as_deref().unwrap().contains("test output"));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_junit_summary_counts_pass_fail_and_skip() -> TestResult<()> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="3" failures="1">
+    <testsuite name="my-crate" tests="3" failures="1" skipped="1">
+        <testcase name="test_pass" classname="my-crate" time="0.1" />
+        <testcase name="test_fail" classname="my-crate" time="0.2">
+            <failure message="boom" type="test failure">stacktrace</failure>
+        </testcase>
+        <testcase name="test_skip" classname="my-crate" time="0.0">
+            <skipped />
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
+
+        let summary = parse_junit_summary(f.path())?;
+        assert_eq!(
+            summary,
+            JunitSummary {
+                total: 3,
+                passed: 1,
+                failed: 1,
+                ignored: 1,
+            }
+        );
 
         Ok(())
     }

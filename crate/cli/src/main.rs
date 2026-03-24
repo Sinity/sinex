@@ -2,9 +2,9 @@ use clap::{CommandFactory, Parser, Subcommand};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands, DbCommands,
-    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, ImportCommands,
-    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
-    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
+    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands,
+    NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
+    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -117,12 +117,6 @@ enum Commands {
     /// Seed database with deterministic fake events for testing/demos
     Demo(DemoCommand),
 
-    /// Import historical data from external sources
-    Import {
-        #[command(subcommand)]
-        cmd: ImportCommands,
-    },
-
     /// Direct database access (bypasses gateway)
     Db {
         #[command(subcommand)]
@@ -210,11 +204,6 @@ async fn main() -> color_eyre::Result<()> {
         return cmd.execute().await;
     }
 
-    // Handle import command early (connects directly to DB, no gateway needed)
-    if let Commands::Import { cmd } = cli.command {
-        return cmd.execute().await;
-    }
-
     // Load effective config:
     // defaults -> runtime env overrides -> local user preferences
     let mut config = Config::load().unwrap_or_else(|e| {
@@ -261,7 +250,6 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Config { .. } => unreachable!("Config command handled above"),
         Commands::Db { .. } => unreachable!("Db command handled above"),
         Commands::Demo(_) => unreachable!("Demo command handled above"),
-        Commands::Import { .. } => unreachable!("Import command handled above"),
         Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
         Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
         Commands::Telemetry { cmd } => cmd.execute(&client).await?,

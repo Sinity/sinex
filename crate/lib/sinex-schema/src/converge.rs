@@ -292,7 +292,8 @@ async fn drop_obsolete_indexes(pool: &PgPool) -> Result<(), ApplyError> {
          DROP INDEX IF EXISTS audit.ix_archived_events_ts_orig;
          DROP INDEX IF EXISTS audit.ix_archived_events_archived_at;
          DROP INDEX IF EXISTS audit.ix_archived_events_superseded_by_event_id;
-         DROP INDEX IF EXISTS audit.ix_archived_events_source_event_ids",
+         DROP INDEX IF EXISTS audit.ix_archived_events_source_event_ids;
+         DROP INDEX IF EXISTS raw.uk_temporal_ledger_material_offset",
     )
     .await?;
     Ok(())

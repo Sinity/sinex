@@ -54,6 +54,7 @@ use crate::Result;
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
+use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
@@ -470,15 +471,7 @@ impl GatewayClient {
 
     /// Set node horizon (cutoff time for event processing)
     pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
-        // Parse horizon string to Timestamp
-        let horizon_ts = Timestamp::parse_rfc3339(horizon).or_else(|_| {
-            // Try parsing as unix timestamp
-            horizon
-                .parse::<i64>()
-                .ok()
-                .and_then(Timestamp::from_unix_timestamp)
-                .ok_or_else(|| color_eyre::eyre::eyre!("Invalid horizon format"))
-        })?;
+        let horizon_ts = parse_time_input(horizon)?;
 
         let req = NodeSetHorizonRequest {
             node_id: node_id.into(),
@@ -500,21 +493,8 @@ impl GatewayClient {
         materials: &[String],
         event_types: &[String],
     ) -> Result<ReplayOperation> {
-        // Build time window from relative or absolute times
-        let time_window = if since.is_some() || until.is_some() {
-            let now = Timestamp::now();
-            let start = since
-                .map(|s| Self::parse_time(s, now))
-                .transpose()?
-                .unwrap_or_else(|| (now - time::Duration::hours(24)).format_rfc3339());
-            let end = until
-                .map(|u| Self::parse_time(u, now))
-                .transpose()?
-                .unwrap_or_else(|| now.format_rfc3339());
-            Some((start, end))
-        } else {
-            None
-        };
+        let time_window = Self::build_replay_time_window(since, until, Timestamp::now())?
+            .map(|(start, end)| (start.format_rfc3339(), end.format_rfc3339()));
 
         let material_filter = if materials.is_empty() {
             None
@@ -557,34 +537,29 @@ impl GatewayClient {
         Ok(response.operation)
     }
 
-    /// Parse relative time (e.g., "1h", "24h") or RFC3339 timestamp
-    fn parse_time(input: &str, now: Timestamp) -> Result<String> {
-        // Try relative format first (e.g., "1h", "24h", "7d")
-        if let Some(hours) = input.strip_suffix('h')
-            && let Ok(h) = hours.parse::<i64>()
-        {
-            return Ok((now - time::Duration::hours(h)).format_rfc3339());
-        }
-        if let Some(days) = input.strip_suffix('d')
-            && let Ok(d) = days.parse::<i64>()
-        {
-            return Ok((now - time::Duration::days(d)).format_rfc3339());
-        }
-        if let Some(mins) = input.strip_suffix('m')
-            && let Ok(m) = mins.parse::<i64>()
-        {
-            return Ok((now - time::Duration::minutes(m)).format_rfc3339());
-        }
+    fn build_replay_time_window(
+        since: Option<&str>,
+        until: Option<&str>,
+        now: Timestamp,
+    ) -> Result<Option<(Timestamp, Timestamp)>> {
+        let start = since
+            .map(|input| parse_time_input_with_now(input, now))
+            .transpose()?;
+        let end = until
+            .map(|input| parse_time_input_with_now(input, now))
+            .transpose()?;
 
-        // Try RFC3339 format
-        if Timestamp::parse_rfc3339(input).is_ok() {
-            return Ok(input.to_string());
-        }
+        let Some((start, end)) = (match (start, end) {
+            (None, None) => None,
+            (Some(start), Some(end)) => Some((start, end)),
+            (Some(start), None) => Some((start, now)),
+            (None, Some(end)) => Some((end - time::Duration::hours(24), end)),
+        }) else {
+            return Ok(None);
+        };
 
-        Err(color_eyre::eyre::eyre!(
-            "Invalid time format '{}': use relative (1h, 24h, 7d) or RFC3339",
-            input
-        ))
+        validate_time_range(Some(start), Some(end))?;
+        Ok(Some((start, end)))
     }
 
     /// Submit a replay plan for execution
@@ -882,7 +857,7 @@ impl GatewayClient {
 
     /// Get lifecycle tier status
     pub async fn lifecycle_status(&self) -> Result<LifecycleStatusResponse> {
-        let req = LifecycleStatusRequest { by_source: false };
+        let req = LifecycleStatusRequest::default();
         let result = self
             .call_rpc(methods::LIFECYCLE_STATUS, serde_json::to_value(&req)?)
             .await?;
@@ -1168,6 +1143,52 @@ impl GatewayClient {
         }
 
         Ok(SseFrameParser::new(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn test_build_replay_time_window_supports_relative_inputs() -> TestResult<()> {
+        let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
+        let window =
+            GatewayClient::build_replay_time_window(Some("24h"), None, now)?.expect("window");
+
+        assert_eq!(window.0.format_rfc3339(), "2025-01-14T12:00:00Z");
+        assert_eq!(window.1.format_rfc3339(), "2025-01-15T12:00:00Z");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_replay_time_window_rejects_inverted_range() -> TestResult<()> {
+        let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
+        let err = GatewayClient::build_replay_time_window(
+            Some("2025-01-16T00:00:00Z"),
+            Some("2025-01-15T00:00:00Z"),
+            now,
+        )
+        .expect_err("inverted replay window must fail");
+
+        assert!(err.to_string().contains("Invalid time range"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_replay_time_window_defaults_since_from_until() -> TestResult<()> {
+        let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
+        let window = GatewayClient::build_replay_time_window(
+            None,
+            Some("2025-01-10T08:30:00Z"),
+            now,
+        )?
+        .expect("window");
+
+        assert_eq!(window.0.format_rfc3339(), "2025-01-09T08:30:00Z");
+        assert_eq!(window.1.format_rfc3339(), "2025-01-10T08:30:00Z");
+        Ok(())
     }
 }
 

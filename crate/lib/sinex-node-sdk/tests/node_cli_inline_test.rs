@@ -4,7 +4,7 @@ use sinex_node_sdk::{NodeCommand, command_requires_heartbeat};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn scan_mode_emits_heartbeats() -> TestResult<()> {
+async fn scan_mode_does_not_emit_heartbeats() -> TestResult<()> {
     let command = NodeCommand::Scan {
         from: "none".to_string(),
         until: "snapshot".to_string(),
@@ -16,13 +16,13 @@ async fn scan_mode_emits_heartbeats() -> TestResult<()> {
         estimate: false,
     };
 
-    assert!(command_requires_heartbeat(&command));
+    assert!(!command_requires_heartbeat(&command));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn explore_mode_emits_heartbeats() -> TestResult<()> {
+async fn explore_mode_does_not_emit_heartbeats() -> TestResult<()> {
     let command = NodeCommand::Explore {
         source_state: true,
         ingestion_history: false,
@@ -31,7 +31,7 @@ async fn explore_mode_emits_heartbeats() -> TestResult<()> {
         export_to: None,
     };
 
-    assert!(command_requires_heartbeat(&command));
+    assert!(!command_requires_heartbeat(&command));
 
     Ok(())
 }

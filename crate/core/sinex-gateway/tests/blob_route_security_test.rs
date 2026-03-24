@@ -94,3 +94,23 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
 
     Ok(())
 }
+
+#[sinex_test]
+async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) -> TestResult<()> {
+    require_git_annex()?;
+    let (_annex_dir, services) =
+        blob_test_services(ctx, "gateway-blob-malformed-params", 5 * 1024 * 1024).await?;
+
+    let params = serde_json::json!({
+        "filename": ["not-a-string"],
+        "content_type": "text/plain",
+        "content": BASE64_STANDARD.encode(b"hello gateway")
+    });
+
+    let error = handle_store_blob(&services, params)
+        .await
+        .expect_err("malformed optional blob params must fail");
+    assert!(error.to_string().contains("filename"));
+
+    Ok(())
+}

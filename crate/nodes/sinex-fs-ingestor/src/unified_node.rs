@@ -600,23 +600,11 @@ impl ExplorationProvider for FilesystemNode {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(Timestamp, Timestamp)>,
+        _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
-        let time_range = time_range.unwrap_or_else(|| {
-            let now = Timestamp::now();
-            (now - time::Duration::hours(1), now)
-        });
-
-        Ok(CoverageAnalysis {
-            time_range,
-            coverage_percentage: 1.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            source_total: self.config.watch_paths.len() as u64,
-            sinex_total: 0,
-            missing_samples: Vec::new(),
-            recommendations: Vec::new(),
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for filesystem watcher sources",
+        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -1215,6 +1203,15 @@ mod tests {
         };
 
         assert!(config.validate_config().is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
+            .expect_err("filesystem node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 

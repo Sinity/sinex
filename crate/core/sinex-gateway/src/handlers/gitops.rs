@@ -20,10 +20,9 @@ type Result<T> = std::result::Result<T, SinexError>;
 
 /// List all configured gitops sources.
 pub async fn handle_gitops_list_sources(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: GitOpsListSourcesRequest =
-        serde_json::from_value(params).unwrap_or(GitOpsListSourcesRequest {
-            include_disabled: false,
-        });
+    let request: GitOpsListSourcesRequest = super::parse_default_on_null(params).map_err(|e| {
+        SinexError::serialization("Invalid gitops list sources request").with_std_error(&e)
+    })?;
 
     let records = pool.gitops().list_sources(request.include_disabled).await?;
 

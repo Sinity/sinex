@@ -47,6 +47,22 @@ pub struct RuntimeMetrics {
     pub last_batch_latency_ms: Option<f64>,
     /// Age of the latest batch latency sample in seconds
     pub last_batch_latency_age_secs: Option<i64>,
+    /// Query failure detail when runtime metrics could not be read at all.
+    pub query_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeHealthStatus {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeAssessment {
+    pub status: RuntimeHealthStatus,
+    pub warnings: Vec<String>,
 }
 
 impl RuntimeMetrics {
@@ -68,6 +84,69 @@ impl RuntimeMetrics {
 
     pub fn batch_latency_is_stale(&self) -> bool {
         self.last_batch_latency_ms.is_some() && self.fresh_batch_latency_ms().is_none()
+    }
+
+    pub fn warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if let Some(error) = &self.query_error {
+            warnings.push(format!("Runtime health: failed to query runtime metrics ({error})"));
+        }
+        match self.ingestd_status {
+            IngestdStatus::Healthy => {}
+            IngestdStatus::Stale => {
+                warnings.push("Runtime health: ingestd heartbeat is stale".into());
+            }
+            IngestdStatus::Down => warnings.push("Runtime health: ingestd is down".into()),
+            IngestdStatus::Unknown => {
+                warnings.push("Runtime health: ingestd status is unknown".into());
+            }
+        }
+
+        if let Some(lag) = self.fresh_consumer_lag_pending()
+            && lag > RUNTIME_LAG_WARN_THRESHOLD
+        {
+            warnings.push(format!(
+                "Runtime health: consumer lag is high ({lag:.0} pending)"
+            ));
+        }
+        if self.consumer_lag_is_stale() {
+            warnings.push(format!(
+                "Runtime health: consumer lag telemetry is stale ({}s old)",
+                self.consumer_lag_age_secs.unwrap_or_default()
+            ));
+        }
+
+        if let Some(latency) = self.fresh_batch_latency_ms()
+            && latency > RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS
+        {
+            warnings.push(format!(
+                "Runtime health: batch latency is high ({latency:.0}ms)"
+            ));
+        }
+        if self.batch_latency_is_stale() {
+            warnings.push(format!(
+                "Runtime health: batch latency telemetry is stale ({}s old)",
+                self.last_batch_latency_age_secs.unwrap_or_default()
+            ));
+        }
+
+        warnings
+    }
+
+    pub fn assessment(&self) -> RuntimeAssessment {
+        let warnings = self.warnings();
+        let status = if matches!(self.ingestd_status, IngestdStatus::Unknown)
+            && self.consumer_lag_pending.is_none()
+            && self.last_batch_latency_ms.is_none()
+        {
+            RuntimeHealthStatus::Unavailable
+        } else if warnings.is_empty() {
+            RuntimeHealthStatus::Healthy
+        } else {
+            RuntimeHealthStatus::Degraded
+        };
+
+        RuntimeAssessment { status, warnings }
     }
 
     /// Format as a compact one-line summary fragment for status --summary
@@ -93,13 +172,20 @@ impl RuntimeMetrics {
                     "batch:-".to_string()
                 }
             });
-        format!("{ingestd} {lag} {batch}")
+        let query = if self.query_error.is_some() {
+            " query:error"
+        } else {
+            ""
+        };
+        format!("{ingestd} {lag} {batch}{query}")
     }
 }
 
 /// Default stale threshold in seconds (matches SINEX_NODE_HEARTBEAT_STALE_SECS)
 const HEARTBEAT_STALE_SECS: i64 = 120;
 const TELEMETRY_STALE_SECS: i64 = 120;
+const RUNTIME_LAG_WARN_THRESHOLD: f64 = 1000.0;
+const RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS: f64 = 5000.0;
 
 /// Query runtime metrics from Postgres. Returns `Unknown` status if unreachable.
 pub async fn query_runtime_metrics(db_url: &str) -> RuntimeMetrics {
@@ -114,6 +200,7 @@ pub async fn query_runtime_metrics(db_url: &str) -> RuntimeMetrics {
                 consumer_lag_age_secs: None,
                 last_batch_latency_ms: None,
                 last_batch_latency_age_secs: None,
+                query_error: Some(e.to_string()),
             }
         }
     }
@@ -205,6 +292,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         consumer_lag_age_secs: consumer_lag.as_ref().map(|row| row.age_secs),
         last_batch_latency_ms: last_batch_latency.as_ref().map(|row| row.value),
         last_batch_latency_age_secs: last_batch_latency.as_ref().map(|row| row.age_secs),
+        query_error: None,
     })
 }
 
@@ -234,6 +322,7 @@ mod tests {
             consumer_lag_age_secs: Some(300),
             last_batch_latency_ms: Some(12.0),
             last_batch_latency_age_secs: Some(300),
+            query_error: None,
         };
 
         assert_eq!(metrics.summary_fragment(), "ingestd:down lag:stale batch:stale");
@@ -249,9 +338,87 @@ mod tests {
             consumer_lag_age_secs: Some(10),
             last_batch_latency_ms: Some(125.0),
             last_batch_latency_age_secs: Some(10),
+            query_error: None,
         };
 
         assert_eq!(metrics.summary_fragment(), "ingestd:ok lag:7 batch:125ms");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_assessment_marks_unknown_runtime_unavailable()
+    -> xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Unknown,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: None,
+        };
+
+        let assessment = metrics.assessment();
+        assert_eq!(assessment.status, RuntimeHealthStatus::Unavailable);
+        assert_eq!(
+            assessment.warnings,
+            vec!["Runtime health: ingestd status is unknown".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_assessment_marks_degraded_on_stale_signals()
+    -> xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Stale,
+            last_heartbeat_age_secs: Some(300),
+            consumer_lag_pending: Some(42.0),
+            consumer_lag_age_secs: Some(300),
+            last_batch_latency_ms: Some(12.0),
+            last_batch_latency_age_secs: Some(300),
+            query_error: None,
+        };
+
+        let assessment = metrics.assessment();
+        assert_eq!(assessment.status, RuntimeHealthStatus::Degraded);
+        assert!(
+            assessment
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("ingestd heartbeat is stale"))
+        );
+        assert!(
+            assessment
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("consumer lag telemetry is stale"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_fragment_marks_query_failures() -> xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Unknown,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: Some("connection refused".to_string()),
+        };
+
+        assert_eq!(
+            metrics.summary_fragment(),
+            "ingestd:unknown lag:- batch:- query:error"
+        );
+        assert!(
+            metrics
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("failed to query runtime metrics"))
+        );
         Ok(())
     }
 }

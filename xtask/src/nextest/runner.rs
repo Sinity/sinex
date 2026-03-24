@@ -144,7 +144,7 @@ impl<'a> TestRunner<'a> {
 
         // Run reporter (blocks until stdout closes)
         let reporter = TestReporter::new(self.ctx.is_human());
-        let stats = reporter.run(stdout_reader, stderr_reader, history)?;
+        let mut stats = reporter.run(stdout_reader, stderr_reader, history)?;
 
         // Wait for process to finish. The reporter already blocked on stdout,
         // so this returns near-instantly in normal cases.
@@ -166,6 +166,31 @@ impl<'a> TestRunner<'a> {
             // and sandbox slog events (slot name, acquisition/cleanup timing).
             let junit_path = junit::junit_path_for_profile(self.profile);
             if junit_path.exists() {
+                match junit::parse_junit_summary(&junit_path) {
+                    Ok(summary)
+                        if summary.total > 0
+                            && (summary.passed != stats.passed
+                                || summary.failed != stats.failed
+                                || summary.ignored != stats.ignored) =>
+                    {
+                        eprintln!(
+                            "📋 Adjusted nextest stats from JUnit XML: passed {}→{}, failed {}→{}, ignored {}→{}",
+                            stats.passed,
+                            summary.passed,
+                            stats.failed,
+                            summary.failed,
+                            stats.ignored,
+                            summary.ignored
+                        );
+                        stats.passed = summary.passed;
+                        stats.failed = summary.failed;
+                        stats.ignored = summary.ignored;
+                        stats.total = stats.total.max(summary.total);
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("⚠️  Failed to parse JUnit summary: {e}"),
+                }
+
                 match junit::parse_junit_metadata(&junit_path) {
                     Ok(metadata) if !metadata.is_empty() => {
                         match db.backfill_test_metadata(invocation_id, &metadata) {
@@ -182,12 +207,13 @@ impl<'a> TestRunner<'a> {
             }
         }
 
-        // Check exit status
         if !exit_status.success() && stats.failed == 0 {
-            // Process failed but no tests failed? (Configuration error, compilation error, signal?)
-            // We might want to reflect this.
-            // But stats.failed should catch most test failures.
-            // If build failed, stats.total might be 0.
+            let exit_code = exit_status
+                .code()
+                .map_or_else(|| "signal".to_string(), |code| code.to_string());
+            bail!(
+                "nextest exited with status {exit_code} without recording failed tests"
+            );
         }
 
         Ok(stats)

@@ -11,13 +11,13 @@ use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
 // ─── Request/Response types ─────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct NodesListActiveRequest {}
 
 #[derive(Debug, Serialize)]
@@ -39,6 +39,14 @@ pub struct NodeInfo {
 pub struct NodesHealthRequest {
     #[serde(default = "default_stale_after_secs")]
     pub stale_after_secs: u64,
+}
+
+impl Default for NodesHealthRequest {
+    fn default() -> Self {
+        Self {
+            stale_after_secs: default_stale_after_secs(),
+        }
+    }
 }
 
 fn default_stale_after_secs() -> u64 {
@@ -82,8 +90,9 @@ pub struct NodesMarkInactiveResponse {
 /// Returns nodes where status = 'active' and `last_heartbeat_at` is recent
 /// (within the default 5-minute stale threshold).
 pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Value> {
-    let _request: NodesListActiveRequest =
-        serde_json::from_value(params).unwrap_or(NodesListActiveRequest {});
+    let _request: NodesListActiveRequest = super::parse_default_on_null(params).map_err(|e| {
+        SinexError::serialization("Invalid nodes list active request").with_std_error(&e)
+    })?;
 
     let manifests = pool
         .state()
@@ -114,10 +123,9 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
 /// Returns counts of active/inactive nodes and the oldest heartbeat timestamp.
 /// The `stale_after_secs` parameter determines what is considered "active" (default: 300 seconds = 5 minutes).
 pub async fn handle_nodes_health(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: NodesHealthRequest =
-        serde_json::from_value(params).unwrap_or(NodesHealthRequest {
-            stale_after_secs: 300,
-        });
+    let request: NodesHealthRequest = super::parse_default_on_null(params).map_err(|e| {
+        SinexError::serialization("Invalid nodes health request").with_std_error(&e)
+    })?;
 
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let health = pool
@@ -152,6 +160,18 @@ pub async fn handle_nodes_heartbeat(pool: &PgPool, params: Value) -> Result<Valu
         .update_node_heartbeat_for_version(&request.node_name, &request.version)
         .await
         .map_err(|e| SinexError::database("Failed to update node heartbeat").with_std_error(&e))?;
+
+    if !updated {
+        warn!(
+            node_name = %request.node_name,
+            version = %request.version,
+            "Rejected node heartbeat because no matching manifest row exists"
+        );
+        return Err(SinexError::not_found(format!(
+            "Node manifest {}@{} is not registered",
+            request.node_name, request.version
+        )));
+    }
 
     info!(
         node_name = %request.node_name,

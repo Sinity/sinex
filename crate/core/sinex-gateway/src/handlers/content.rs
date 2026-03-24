@@ -17,12 +17,15 @@ pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Re
 
     let filename = params
         .optional_str("filename")
+        ?
         .unwrap_or(DEFAULT_BLOB_FILENAME);
     let content_type = params
         .optional_str("content_type")
+        ?
         .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
     let source = params
         .optional_str("source")
+        ?
         .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annex_key = services

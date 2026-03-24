@@ -34,6 +34,11 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
 ];
 const NODE_MANIFESTS_REQUIRED_INDEXES: &[&str] =
     &["idx_processors_status", "idx_processors_heartbeat"];
+const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
+    "uk_temporal_ledger_material_offset_source_type",
+    "ix_tl_material_offsets",
+    "ix_tl_ts_and_source_type",
+];
 
 #[derive(Debug)]
 pub enum ApplyError {
@@ -124,6 +129,14 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         for index in NODE_MANIFESTS_REQUIRED_INDEXES {
             if !index_exists(pool, "core", "node_manifests", index).await? {
                 drifts.push(format!("missing core.node_manifests index {index}"));
+            }
+        }
+    }
+
+    if relation_exists(pool, "raw.temporal_ledger").await? {
+        for index in TEMPORAL_LEDGER_REQUIRED_INDEXES {
+            if !index_exists(pool, "raw", "temporal_ledger", index).await? {
+                drifts.push(format!("missing raw.temporal_ledger index {index}"));
             }
         }
     }
@@ -325,6 +338,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
+    recreate_telemetry_read_models(pool).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
     execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
@@ -342,6 +356,30 @@ async fn apply_roles_and_grants(pool: &PgPool) -> Result<(), ApplyError> {
 async fn execute_sql(pool: &PgPool, sql: &str) -> Result<(), ApplyError> {
     pool.execute(sql).await?;
     Ok(())
+}
+
+async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError> {
+    // Schema apply is hash-gated by xtask. When telemetry SQL changes, rebuild the read
+    // models decisively so stale materialized view definitions cannot survive.
+    execute_sql(
+        pool,
+        r#"
+        DROP VIEW IF EXISTS sinex_telemetry.recent_activity_summary;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.ingestd_batch_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_system_state;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.file_activity_summary;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.command_frequency_hourly;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_window_focus;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.metric_counters_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.node_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.assembly_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.stream_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.gateway_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_device_state;
+        DROP VIEW IF EXISTS sinex_telemetry.current_health;
+        "#,
+    )
+    .await
 }
 
 fn render_table(stmt: TableCreateStatement) -> String {
@@ -466,6 +504,8 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION core.complete_operation(p_operation_id UUID, p_summary JSONB)
 RETURNS VOID AS $$
+DECLARE
+    v_rows_updated integer;
 BEGIN
     UPDATE core.operations_log
     SET result_status = 'success',
@@ -476,11 +516,17 @@ BEGIN
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
     WHERE id = p_operation_id;
+    GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+    IF v_rows_updated = 0 THEN
+        RAISE EXCEPTION 'operation % not found', p_operation_id USING ERRCODE = 'P0002';
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION core.fail_operation(p_operation_id UUID, p_error JSONB)
 RETURNS VOID AS $$
+DECLARE
+    v_rows_updated integer;
 BEGIN
     UPDATE core.operations_log
     SET result_status = 'failure',
@@ -491,6 +537,10 @@ BEGIN
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
     WHERE id = p_operation_id;
+    GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+    IF v_rows_updated = 0 THEN
+        RAISE EXCEPTION 'operation % not found', p_operation_id USING ERRCODE = 'P0002';
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -1262,10 +1312,30 @@ SELECT
     NULL::uuid AS created_by_operation_id,
     NULL::text AS node_model
 FROM core.events e
-INNER JOIN raw.temporal_ledger tl
-    ON tl.source_material_id = e.source_material_id
-    AND tl.offset_start <= e.anchor_byte
-    AND tl.offset_end > e.anchor_byte
+INNER JOIN LATERAL (
+    SELECT
+        tl.ts_capture,
+        tl.source_type,
+        tl.precision,
+        tl.clock
+    FROM raw.temporal_ledger tl
+    WHERE tl.source_material_id = e.source_material_id
+      AND tl.offset_start <= e.anchor_byte
+      AND tl.offset_end > e.anchor_byte
+    ORDER BY
+        CASE tl.source_type
+            WHEN 'realtime_capture' THEN 0
+            WHEN 'intrinsic_content' THEN 1
+            WHEN 'inferred_mtime' THEN 2
+            WHEN 'inferred_ctime' THEN 3
+            WHEN 'inferred_user' THEN 4
+            WHEN 'staged_at' THEN 5
+            ELSE 99
+        END,
+        (tl.offset_end - tl.offset_start) ASC,
+        tl.ts_capture DESC
+    LIMIT 1
+) tl ON TRUE
 WHERE e.source_material_id IS NOT NULL
 
 UNION ALL

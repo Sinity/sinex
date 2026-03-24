@@ -4,7 +4,7 @@
 //! in production, focusing on system resilience and error handling.
 
 use sinex_node_sdk::VersionInfo;
-use sinex_primitives::DynamicPayload;
+use sinex_primitives::{DynamicPayload, EventSource, EventType};
 use std::fs;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -331,6 +331,10 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
     ];
 
     for (source, event_type) in test_cases {
+        let (Ok(source), Ok(event_type)) = (EventSource::new(source), EventType::new(event_type))
+        else {
+            continue;
+        };
         let event = DynamicPayload::new(source, event_type, json!({"test": "invalid"}))
             .from_material(material.id)
             .build();
@@ -338,8 +342,6 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
         if let Ok(event) = event {
             // Try to insert — may succeed or fail on DB constraints
             let _ = pool.events().insert(event).await;
-        } else {
-            // Builder rejected the input — that's a valid outcome
         }
     }
 

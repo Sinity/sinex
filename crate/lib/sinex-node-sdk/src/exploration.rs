@@ -1,4 +1,4 @@
-use crate::NodeResult;
+use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
@@ -78,6 +78,10 @@ pub struct CoverageAnalysis {
 
     /// Recommendations for improvement
     pub recommendations: Vec<String>,
+}
+
+pub fn coverage_analysis_unavailable(reason: impl Into<String>) -> NodeResult<CoverageAnalysis> {
+    Err(SinexError::invalid_state(reason.into()))
 }
 
 /// Export format options

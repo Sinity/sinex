@@ -11,7 +11,7 @@
 use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
 use tracing::info;
 
@@ -431,75 +431,113 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
 }
 
 async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> {
-    // Basic network connectivity tests
     let mut network_info = HashMap::new();
 
-    // Check if we can resolve DNS
-    match test_dns_resolution().await {
+    match test_loopback_resolution() {
         Ok(()) => {
-            messages.push("✓ DNS resolution working".to_string());
-            network_info.insert("dns_resolution", json!(true));
+            messages.push("✓ Loopback hostname resolution working".to_string());
+            network_info.insert("loopback_resolution", json!(true));
         }
         Err(e) => {
-            messages.push(format!("⚠ DNS resolution issue: {e}"));
-            network_info.insert("dns_resolution", json!(false));
+            messages.push(format!("⚠ Loopback hostname resolution issue: {e}"));
+            network_info.insert("loopback_resolution", json!(false));
         }
     }
 
-    // Check localhost connectivity (for PostgreSQL)
-    match test_localhost_connectivity().await {
-        Ok(()) => {
-            messages.push("✓ Localhost connectivity working".to_string());
-            network_info.insert("localhost_connectivity", json!(true));
+    let configured_hosts = configured_hostname_resolution_targets();
+    if configured_hosts.is_empty() {
+        messages.push(
+            "ℹ No configured network hostnames to resolve; hostname probe skipped".to_string(),
+        );
+        network_info.insert(
+            "configured_hostname_resolution",
+            json!({
+                "skipped": true,
+                "reason": "no_configured_hostnames",
+            }),
+        );
+    } else {
+        let mut results = serde_json::Map::new();
+        let mut failed_hosts = Vec::new();
+
+        for host in configured_hosts {
+            match resolve_hostname(&host) {
+                Ok(()) => {
+                    results.insert(host, json!({ "resolved": true }));
+                }
+                Err(error) => {
+                    failed_hosts.push(format!("{host}: {error}"));
+                    results.insert(host, json!({ "resolved": false, "error": error.to_string() }));
+                }
+            }
         }
-        Err(e) => {
-            messages.push(format!("⚠ Localhost connectivity issue: {e}"));
-            network_info.insert("localhost_connectivity", json!(false));
+
+        if failed_hosts.is_empty() {
+            messages.push("✓ Configured hostname resolution working".to_string());
+        } else {
+            messages.push(format!(
+                "⚠ Configured hostname resolution issues: {}",
+                failed_hosts.join("; ")
+            ));
         }
+
+        network_info.insert(
+            "configured_hostname_resolution",
+            Value::Object(results),
+        );
     }
 
     Ok(json!(network_info))
 }
 
-async fn test_dns_resolution() -> NodeResult<()> {
-    // Try to resolve a well-known hostname
-    "google.com:80"
+fn configured_hostname_resolution_targets() -> Vec<String> {
+    let mut targets = BTreeSet::new();
+    for env_name in ["DATABASE_URL", "SINEX_NATS_URL", "SINEX_GATEWAY_URL"] {
+        if let Ok(raw) = std::env::var(env_name)
+            && let Some(host) = resolution_target_host(&raw)
+        {
+            targets.insert(host);
+        }
+    }
+    targets.into_iter().collect()
+}
+
+fn resolution_target_host(raw: &str) -> Option<String> {
+    let candidate = if raw.contains("://") {
+        raw.to_string()
+    } else if raw.contains(':') && !raw.starts_with('/') {
+        format!("dummy://{raw}")
+    } else {
+        return None;
+    };
+
+    let parsed = url::Url::parse(&candidate).ok()?;
+    let host = parsed.host_str()?;
+    if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+        return None;
+    }
+    Some(host.to_string())
+}
+
+fn resolve_hostname(host: &str) -> NodeResult<()> {
+    (host, 0)
         .to_socket_addrs()
-        .map_err(|e| SinexError::processing(format!("Failed to resolve DNS: {e}")))?
+        .map_err(|e| SinexError::processing(format!("Failed to resolve host '{host}': {e}")))?
         .next()
-        .ok_or_else(|| SinexError::processing("No DNS resolution results".to_string()))?;
+        .ok_or_else(|| {
+            SinexError::processing(format!("Host '{host}' resolved to no socket addresses"))
+        })?;
 
     Ok(())
 }
 
-async fn test_localhost_connectivity() -> NodeResult<()> {
-    use std::net::SocketAddr;
-    use std::time::Duration;
-
-    // Test localhost connectivity by attempting to connect to a common port
-    let addr: SocketAddr = "127.0.0.1:22"
-        .parse()
-        .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {e}")))?;
-
-    // Try to connect with a short timeout
-    if tokio::time::timeout(
-        Duration::from_millis(100),
-        tokio::net::TcpStream::connect(addr),
-    )
-    .await
-    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Connection timeout"))
-    .and_then(|result| result)
-    .is_ok()
-    {
-        Ok(())
-    } else {
-        // SSH not running is normal, just test that localhost is reachable
-        // Try a different approach - just verify localhost resolves
-        "localhost:80".to_socket_addrs().map_err(|e| {
-            SinexError::processing(format!("Localhost name resolution failed: {e}"))
-        })?;
-        Ok(())
-    }
+fn test_loopback_resolution() -> NodeResult<()> {
+    ("localhost", 0)
+        .to_socket_addrs()
+        .map_err(|e| SinexError::processing(format!("Failed to resolve localhost: {e}")))?
+        .next()
+        .ok_or_else(|| SinexError::processing("localhost resolved to no socket addresses"))?;
+    Ok(())
 }
 
 fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
@@ -558,4 +596,76 @@ fn check_process_limits_info() -> NodeResult<Value> {
         "max_processes_soft": soft,
         "max_processes_hard": hard
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{configured_hostname_resolution_targets, resolution_target_host};
+    use xtask::sandbox::sinex_test;
+
+    struct EnvGuard {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            Self { saved: Vec::new() }
+        }
+
+        fn set(&mut self, key: &'static str, value: &str) {
+            self.saved.push((key, std::env::var(key).ok()));
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..).rev() {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(key, value) },
+                    None => unsafe { std::env::remove_var(key) },
+                }
+            }
+        }
+    }
+
+    #[sinex_test]
+    async fn resolution_target_host_skips_local_and_socket_targets()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            resolution_target_host("postgresql://db.example/sinex"),
+            Some("db.example".to_string())
+        );
+        assert_eq!(
+            resolution_target_host("nats://nats.example:4222"),
+            Some("nats.example".to_string())
+        );
+        assert_eq!(
+            resolution_target_host("127.0.0.1:4222"),
+            None,
+            "loopback-only endpoints should not be reported as hostname resolution targets"
+        );
+        assert_eq!(
+            resolution_target_host("postgresql:///sinex?host=/tmp"),
+            None,
+            "unix-socket URLs should not be treated as DNS targets"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configured_hostname_resolution_targets_deduplicate_hosts()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "postgresql://db.example/sinex");
+        env.set("SINEX_NATS_URL", "nats://db.example:4222");
+        env.set("SINEX_GATEWAY_URL", "https://gateway.example/rpc");
+
+        let targets = configured_hostname_resolution_targets();
+        assert_eq!(
+            targets,
+            vec!["db.example".to_string(), "gateway.example".to_string()]
+        );
+        Ok(())
+    }
 }

@@ -31,6 +31,7 @@ mod help_tests {
             .stdout(predicate::str::contains("ops"))
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("config"))
+            .stdout(predicate::str::contains("import").not())
             .stdout(predicate::str::contains("completions"));
         Ok(())
     }

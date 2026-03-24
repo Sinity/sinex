@@ -367,7 +367,7 @@ impl HeartbeatEmitter {
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
             use sinex_db::DbPoolExt;
-            if let Err(e) = pool
+            match pool
                 .state()
                 .update_node_heartbeat_for_version(
                     &NodeName::new(&metrics.service_name),
@@ -375,11 +375,21 @@ impl HeartbeatEmitter {
                 )
                 .await
             {
-                debug!(
-                    service = %metrics.service_name,
-                    error = %e,
-                    "Failed to persist heartbeat to database (non-fatal)"
-                );
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(
+                        service = %metrics.service_name,
+                        version = %metrics.version,
+                        "Heartbeat did not persist because the node manifest row is missing"
+                    );
+                }
+                Err(e) => {
+                    debug!(
+                        service = %metrics.service_name,
+                        error = %e,
+                        "Failed to persist heartbeat to database (non-fatal)"
+                    );
+                }
             }
         }
 

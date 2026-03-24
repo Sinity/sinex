@@ -280,6 +280,22 @@ async fn gitops_list_sources_defaults_to_enabled_only(ctx: TestContext) -> TestR
     Ok(())
 }
 
+#[sinex_test]
+async fn gitops_list_sources_rejects_malformed_params(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+
+    let result = handle_gitops_list_sources(pool, json!({ "include_disabled": "yes" })).await;
+    assert!(result.is_err(), "malformed list params must fail");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid gitops list sources request")
+    );
+
+    Ok(())
+}
+
 // ─── Create with defaults ───────────────────────────────────────────────
 
 #[sinex_test]

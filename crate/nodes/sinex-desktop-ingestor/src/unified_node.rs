@@ -832,19 +832,9 @@ impl IngestorNode for DesktopNode {
         _state: &Self::State,
         _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
-        Ok(CoverageAnalysis {
-            time_range: (
-                sinex_primitives::Timestamp::now(),
-                sinex_primitives::Timestamp::now(),
-            ),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 100.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            missing_samples: vec![],
-            recommendations: vec![],
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for desktop watcher sources",
+        )
     }
 }
 

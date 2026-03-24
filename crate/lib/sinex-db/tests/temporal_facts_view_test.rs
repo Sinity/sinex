@@ -33,7 +33,17 @@ async fn register_test_material(
 #[sinex_test]
 async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult<()> {
     let material_id = register_test_material(&ctx, "temporal-facts-material").await?;
-    let capture_ts = Timestamp::now();
+    let staged_at = Timestamp::now();
+    let capture_ts = staged_at + time::Duration::seconds(5);
+
+    ctx.pool
+        .source_materials()
+        .append_temporal_ledger(TemporalLedgerEntry::staged_at(
+            *material_id.as_uuid(),
+            i64::MAX,
+            staged_at,
+        ))
+        .await?;
 
     // Insert temporal ledger entry covering byte range [0, 1024)
     ctx.pool
@@ -91,6 +101,19 @@ async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult
     assert!(row.temporal_policy.is_none());
     assert!(row.semantics_version.is_none());
     assert!(row.scope_key.is_none());
+
+    let projected_count: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM core.event_temporal_facts
+        WHERE event_id = $1
+        "#,
+        event_id.as_uuid()
+    )
+    .fetch_one(&ctx.pool)
+    .await?
+    .unwrap_or_default();
+    assert_eq!(projected_count, 1, "material event should project only once");
 
     Ok(())
 }

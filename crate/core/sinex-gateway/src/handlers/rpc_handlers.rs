@@ -24,23 +24,57 @@ impl<'a> RpcParams<'a> {
             .ok_or_else(|| eyre!("missing string parameter '{}'", key))
     }
 
-    pub(crate) fn optional_str(&self, key: &str) -> Option<&'a str> {
-        self.inner.get(key).and_then(|v| v.as_str())
+    pub(crate) fn optional_str(&self, key: &str) -> Result<Option<&'a str>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_str()
+                .map(Some)
+                .ok_or_else(|| eyre!("parameter '{}' must be a string", key)),
+        }
     }
 
-    pub(crate) fn optional_array(&self, key: &str) -> Option<&'a [Value]> {
-        self.inner
-            .get(key)
-            .and_then(|v| v.as_array())
-            .map(Vec::as_slice)
+    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_array()
+                .map(|items| Some(items.as_slice()))
+                .ok_or_else(|| eyre!("parameter '{}' must be an array", key)),
+        }
     }
 
-    pub(crate) fn optional_bool(&self, key: &str) -> Option<bool> {
-        self.inner.get(key).and_then(serde_json::Value::as_bool)
+    pub(crate) fn optional_bool(&self, key: &str) -> Result<Option<bool>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_bool()
+                .map(Some)
+                .ok_or_else(|| eyre!("parameter '{}' must be a boolean", key)),
+        }
     }
 
-    pub(crate) fn optional_object(&self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
-        self.inner.get(key).and_then(|v| v.as_object())
+    pub(crate) fn optional_object(
+        &self,
+        key: &str,
+    ) -> Result<Option<&'a serde_json::Map<String, Value>>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_object()
+                .map(Some)
+                .ok_or_else(|| eyre!("parameter '{}' must be an object", key)),
+        }
+    }
+
+    pub(crate) fn optional_i64(&self, key: &str) -> Result<Option<i64>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_i64()
+                .map(Some)
+                .ok_or_else(|| eyre!("parameter '{}' must be an integer", key)),
+        }
     }
 
     pub(crate) fn require_value(&self, key: &str) -> Result<&'a Value> {
@@ -143,6 +177,7 @@ pub async fn handle_replay_create_operation(
     let params = RpcParams::new(&params);
     let actor = params
         .optional_str("actor")
+        ?
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
 
@@ -172,6 +207,7 @@ pub async fn handle_replay_approve_operation(
     let operation_id = params.require_uuid("operation_id")?;
     let approver = params
         .optional_str("approver")
+        ?
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
     let operation = client.approve(operation_id, approver).await?;
@@ -186,9 +222,10 @@ pub async fn handle_replay_execute_operation(
     let operation_id = params.require_uuid("operation_id")?;
     let executor = params
         .optional_str("executor")
+        ?
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
-    let dry_run = params.optional_bool("dry_run").unwrap_or(false);
+    let dry_run = params.optional_bool("dry_run")?.unwrap_or(false);
     let operation = client.execute(operation_id, executor, dry_run).await?;
     Ok(json!({ "operation": operation }))
 }
@@ -201,10 +238,12 @@ pub async fn handle_replay_cancel_operation(
     let operation_id = params.require_uuid("operation_id")?;
     let canceller = params
         .optional_str("canceller")
+        ?
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
     let reason = params
         .optional_str("reason")
+        ?
         .map(std::string::ToString::to_string);
     let operation = client.cancel(operation_id, canceller, reason).await?;
     Ok(json!({ "cancelled": true, "operation": operation }))
@@ -227,13 +266,11 @@ pub async fn handle_replay_list_operations(
     let params = RpcParams::new(&params);
     let state = params
         .optional_str("state")
+        ?
         .map(parse_replay_state)
         .transpose()?;
-    let node = params.optional_str("node").map(String::from);
-    let limit = params
-        .inner
-        .get("limit")
-        .and_then(serde_json::Value::as_i64);
+    let node = params.optional_str("node")?.map(String::from);
+    let limit = params.optional_i64("limit")?;
     let operations = client.list(state, node, limit).await?;
     Ok(json!({ "operations": operations }))
 }
@@ -314,6 +351,25 @@ mod tests {
         let invalid = json!({"operation_id": "not-uuid"});
         let rpc_params = RpcParams::new(&invalid);
         assert!(rpc_params.require_uuid("operation_id").is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn rpc_params_optional_values_reject_wrong_types() -> TestResult<()> {
+        let params = json!({
+            "name": ["not-a-string"],
+            "items": "not-an-array",
+            "enabled": "not-a-bool",
+            "properties": ["not-an-object"],
+            "limit": "not-an-int"
+        });
+        let rpc_params = RpcParams::new(&params);
+
+        assert!(rpc_params.optional_str("name").is_err());
+        assert!(rpc_params.optional_array("items").is_err());
+        assert!(rpc_params.optional_bool("enabled").is_err());
+        assert!(rpc_params.optional_object("properties").is_err());
+        assert!(rpc_params.optional_i64("limit").is_err());
         Ok(())
     }
 }

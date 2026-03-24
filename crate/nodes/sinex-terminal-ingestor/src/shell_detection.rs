@@ -66,8 +66,10 @@ impl ShellType {
     /// # Shell-Specific Notes
     ///
     /// ## Fish
-    /// Fish stores history in an `SQLite` database at `~/.local/share/fish/fish_history`.
-    /// The terminal ingestor includes a `SQLite` parser to read Fish history incrementally.
+    /// Fish stores its native history in a YAML-like text file at
+    /// `~/.local/share/fish/fish_history`. The terminal ingestor does not treat that
+    /// format as generic line-oriented text; only explicitly SQLite-backed Fish history
+    /// sources are accepted for ingestion.
     ///
     /// ## Elvish
     /// Elvish uses a custom binary format at `~/.config/elvish/db`. This format is not

@@ -438,7 +438,7 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
                 "Failed to register verification metadata in KV: {e}"
             ))
         })?;
-        kv_client.heartbeat(&instance_id, &metadata).await.ok(); // heartbeat best-effort
+        kv_client.heartbeat(&metadata).await.ok(); // heartbeat best-effort
 
         info!(
             service_name = "sinex-preflight",
@@ -451,6 +451,7 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
         );
 
         kv_client.release_leadership(&instance_id).await?;
+        kv_client.unregister_instance(&instance_id).await.ok();
     } else {
         warn!(
             "Another preflight verification is already running - skipping duplicate verification"

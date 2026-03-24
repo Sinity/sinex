@@ -11,6 +11,7 @@ use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempoten
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
+use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
 use sqlx::types::BigDecimal;
@@ -59,6 +60,7 @@ pub struct StateRepository<'a> {
 
 const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
+const VALID_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
 
 fn node_heartbeat_stale_after() -> Duration {
     std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
@@ -127,7 +129,7 @@ impl StateRepository<'_> {
         result_message: Option<&str>,
         preview_summary: JsonValue,
     ) -> DbResult<()> {
-        sqlx::query!(
+        let result = sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET result_status = $2,
@@ -143,6 +145,12 @@ impl StateRepository<'_> {
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "update operation meta"))?;
+        if result.rows_affected() == 0 {
+            return Err(SinexError::not_found(format!(
+                "Operation not found: {}",
+                id.to_uuid()
+            )));
+        }
         Ok(())
     }
 
@@ -180,6 +188,17 @@ impl StateRepository<'_> {
             return Err(SinexError::validation("Operation ID cannot be zero"));
         }
         Ok(())
+    }
+
+    fn validate_operation_type(operation_type: &str) -> DbResult<()> {
+        if VALID_OPERATION_TYPES.contains(&operation_type) {
+            Ok(())
+        } else {
+            Err(SinexError::validation(format!(
+                "Unsupported operation type '{operation_type}'. Allowed types: {}",
+                VALID_OPERATION_TYPES.join(", ")
+            )))
+        }
     }
 
     /// Validate a `ReplayScope` JSON object
@@ -248,6 +267,7 @@ impl StateRepository<'_> {
 
     /// Log an operation
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
+        Self::validate_operation_type(&operation.operation_type)?;
         // Validate replay-specific scope only for replay operations; allow other shapes otherwise
         if operation.operation_type == "replay"
             && let Some(ref scope) = operation.scope
@@ -553,6 +573,7 @@ impl StateRepository<'_> {
         operator: &str,
         scope: JsonValue,
     ) -> DbResult<OperationRecord> {
+        Self::validate_operation_type(operation_type)?;
         let op_uuid = sqlx::query_scalar!(
             r#"SELECT core.start_operation($1, $2, $3)::uuid as "id!""#,
             operation_type,
@@ -581,7 +602,7 @@ impl StateRepository<'_> {
 
         let mut qb = sqlx::QueryBuilder::new(
             r#"SELECT
-                id as "id!: Id<Operation>",
+                id,
                 operation_type, operator, scope,
                 result_status, result_message, preview_summary, duration_ms
             FROM core.operations_log WHERE 1=1"#,
@@ -628,6 +649,22 @@ impl StateRepository<'_> {
             )));
         }
 
+        match record.operation_type.as_str() {
+            "replay" => {
+                crate::replay::state_machine::ReplayStateMachine::new(self.pool.clone())
+                    .cancel(id.to_uuid(), reason.to_string())
+                    .await?;
+                return self
+                    .get_operation(id)
+                    .await?
+                    .ok_or_else(|| SinexError::database("operation disappeared after cancel"));
+            }
+            "tombstone" => {
+                return self.cancel_tombstone_operation(&id.to_string(), Some(reason)).await;
+            }
+            _ => {}
+        }
+
         sqlx::query!(
             r#"
             UPDATE core.operations_log
@@ -666,6 +703,10 @@ impl StateRepository<'_> {
             ) VALUES (
                 $1, $2, $3, $4
             )
+            ON CONFLICT (node_name, version) DO UPDATE
+            SET node_type = EXCLUDED.node_type,
+                description = EXCLUDED.description,
+                status = 'active'
             RETURNING
                 id,
                 node_name,
@@ -1051,6 +1092,42 @@ pub struct SystemHealthReport {
 ///
 /// Uses `operation_type` = "tombstone" and stores full state in scope JSONB.
 impl StateRepository<'_> {
+    fn parse_tombstone_scope(
+        operation_id: &str,
+        scope: Option<JsonValue>,
+    ) -> DbResult<TombstoneOperation> {
+        let scope = scope.ok_or_else(|| {
+            SinexError::invalid_state(format!(
+                "Tombstone operation {operation_id} is missing scope"
+            ))
+        })?;
+        serde_json::from_value(scope).map_err(|error| {
+            SinexError::invalid_state(format!(
+                "Failed to deserialize tombstone operation {operation_id}: {error}"
+            ))
+        })
+    }
+
+    fn tombstone_operation_duration_ms(
+        operation: &TombstoneOperation,
+        finished_at: Timestamp,
+    ) -> Option<i32> {
+        let created_at = Timestamp::parse_rfc3339(&operation.created_at).ok()?;
+        let elapsed_ms = (finished_at - created_at).whole_milliseconds();
+        i32::try_from(elapsed_ms).ok()
+    }
+
+    fn tombstone_preview_summary_with_message(
+        preview_summary: Option<JsonValue>,
+        message: &str,
+    ) -> Option<JsonValue> {
+        let mut preview_summary = preview_summary?;
+        if let Some(object) = preview_summary.as_object_mut() {
+            object.insert("message".to_string(), JsonValue::String(message.to_string()));
+        }
+        Some(preview_summary)
+    }
+
     /// Create a new tombstone operation record.
     ///
     /// The full `TombstoneOperation` is serialized into the `scope` field,
@@ -1141,7 +1218,7 @@ impl StateRepository<'_> {
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
         let id = Id::<Operation>::from_uuid(operation_uuid);
 
-        sqlx::query!(
+        let result = sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET result_status = $2,
@@ -1161,8 +1238,82 @@ impl StateRepository<'_> {
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "update tombstone operation"))?;
+        if result.rows_affected() == 0 {
+            return Err(SinexError::not_found(format!(
+                "Tombstone operation not found: {operation_id}"
+            )));
+        }
 
         Ok(())
+    }
+
+    /// Cancel a tombstone operation while keeping persisted scope state honest.
+    pub async fn cancel_tombstone_operation(
+        &self,
+        operation_id: &str,
+        reason: Option<&str>,
+    ) -> DbResult<OperationRecord> {
+        let record = self
+            .get_tombstone_operation(operation_id)
+            .await?
+            .ok_or_else(|| {
+                SinexError::not_found(format!("Tombstone operation not found: {operation_id}"))
+            })?;
+
+        let mut operation = Self::parse_tombstone_scope(operation_id, record.scope.clone())?;
+        let now = Timestamp::now();
+        if !operation.state.is_terminal()
+            && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+            && now > expires_at
+        {
+            operation.state = TombstoneOperationState::Expired;
+            operation.phase = operation.state.into();
+            operation.finished_at = Some(now.format_rfc3339());
+            operation.error_details = Some("Expired before approval".to_string());
+
+            self.update_tombstone_operation(
+                operation_id,
+                OperationStatus::Cancelled,
+                serde_json::to_value(&operation)?,
+                Self::tombstone_preview_summary_with_message(
+                    record.preview_summary.clone(),
+                    "Tombstone operation expired",
+                ),
+                Some("Tombstone operation expired"),
+                Self::tombstone_operation_duration_ms(&operation, now),
+            )
+            .await?;
+
+            return Err(SinexError::invalid_state(format!(
+                "Tombstone operation {operation_id} has expired"
+            )));
+        }
+        if !operation.state.is_cancellable() {
+            return Err(SinexError::invalid_state(format!(
+                "Operation cannot be cancelled (state: {:?})",
+                operation.state
+            )));
+        }
+
+        operation.state = TombstoneOperationState::Cancelled;
+        operation.phase = operation.state.into();
+        let finished_at = now;
+        operation.finished_at = Some(finished_at.format_rfc3339());
+        operation.error_details = reason.map(|reason| format!("Cancelled: {reason}"));
+
+        self.update_tombstone_operation(
+            operation_id,
+            OperationStatus::Cancelled,
+            serde_json::to_value(&operation)?,
+            record.preview_summary,
+            Some("Tombstone operation cancelled"),
+            Self::tombstone_operation_duration_ms(&operation, finished_at),
+        )
+        .await?;
+
+        self.get_tombstone_operation(operation_id)
+            .await?
+            .ok_or_else(|| SinexError::database("tombstone operation disappeared after cancel"))
     }
 
     /// Count how many archived rows currently exist for the given event IDs.
@@ -1180,13 +1331,20 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "count archived event ids"))
     }
 
-    /// List tombstone operations (canonical filtering happens on scope phase in handlers).
-    pub async fn list_tombstone_operations(&self, limit: i64) -> DbResult<Vec<OperationRecord>> {
-        sqlx::query_as!(
-            OperationRecord,
+    /// List tombstone operations with canonical filtering on persisted scope phase.
+    pub async fn list_tombstone_operations(
+        &self,
+        state: Option<TombstoneOperationState>,
+        limit: i64,
+    ) -> DbResult<Vec<OperationRecord>> {
+        let phase = state.map(|state| serde_json::to_value(state))
+            .transpose()?
+            .and_then(|value| value.as_str().map(str::to_string));
+
+        let mut qb = sqlx::QueryBuilder::new(
             r#"
             SELECT
-                id as "id!: Id<Operation>",
+                id,
                 operation_type,
                 operator,
                 scope,
@@ -1196,13 +1354,20 @@ impl StateRepository<'_> {
                 duration_ms
             FROM core.operations_log
             WHERE operation_type = 'tombstone'
-            ORDER BY id DESC
-            LIMIT $1
             "#,
-            limit
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "list tombstone operations"))
+        );
+
+        if let Some(phase) = phase {
+            qb.push(" AND COALESCE(scope->>'phase', LOWER(scope->>'state')) = ");
+            qb.push_bind(phase);
+        }
+
+        qb.push(" ORDER BY id DESC LIMIT ");
+        qb.push_bind(limit);
+
+        qb.build_query_as::<OperationRecord>()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "list tombstone operations"))
     }
 }

@@ -12,7 +12,7 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::style;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
@@ -44,6 +44,13 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
     } else if package.contains("gateway") {
         args.extend(["--".to_string(), "rpc-server".to_string()]);
     }
+}
+
+fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
+    dev_journal_path.map_or_else(
+        || "Inspect the process output above".to_string(),
+        |path| format!("Inspect the process output above or the dev journal at {}", path.display()),
+    )
 }
 
 /// Developer observability shim — writes pseudo-journald NDJSON to a log file.
@@ -83,10 +90,17 @@ impl DevJournal {
             use std::io::Write;
             let mut writer = std::io::BufWriter::new(file);
             while let Some(line) = rx.recv().await {
-                let _ = writer.write_all(line.as_bytes());
-                let _ = writer.write_all(b"\n");
+                if let Err(error) = writer
+                    .write_all(line.as_bytes())
+                    .and_then(|_| writer.write_all(b"\n"))
+                {
+                    eprintln!("[run] failed to write dev journal entry: {error}");
+                    break;
+                }
             }
-            let _ = writer.flush();
+            if let Err(error) = writer.flush() {
+                eprintln!("[run] failed to flush dev journal: {error}");
+            }
         });
 
         Ok(Self { tx, boot_id })
@@ -106,7 +120,9 @@ impl DevJournal {
             "__REALTIME_TIMESTAMP": ts_us.to_string(),
             "SYSLOG_IDENTIFIER": unit,
         });
-        let _ = self.tx.send(entry.to_string());
+        if self.tx.send(entry.to_string()).is_err() {
+            eprintln!("[run] failed to enqueue dev journal entry for {unit} (pid {pid})");
+        }
     }
 }
 
@@ -139,14 +155,28 @@ fn spawn_output_handlers(
             let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if show_prefix {
-                        println!("{prefix} {line}");
-                    } else {
-                        println!("{line}");
-                    }
-                    if let Some(ref j) = journal_clone {
-                        j.write_entry(&name_clone, pid, &line);
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if show_prefix {
+                                println!("{prefix} {line}");
+                            } else {
+                                println!("{line}");
+                            }
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &line);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            let message =
+                                format!("stdout stream read failed for {name_clone}: {error}");
+                            eprintln!("[run] {message}");
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &message);
+                            }
+                            break;
+                        }
                     }
                 }
             });
@@ -158,14 +188,28 @@ fn spawn_output_handlers(
             let journal_clone = journal.clone();
             tokio::task::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if show_prefix {
-                        eprintln!("{prefix} {line}");
-                    } else {
-                        eprintln!("{line}");
-                    }
-                    if let Some(ref j) = journal_clone {
-                        j.write_entry(&name_clone, pid, &line);
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if show_prefix {
+                                eprintln!("{prefix} {line}");
+                            } else {
+                                eprintln!("{line}");
+                            }
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &line);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            let message =
+                                format!("stderr stream read failed for {name_clone}: {error}");
+                            eprintln!("[run] {message}");
+                            if let Some(ref j) = journal_clone {
+                                j.write_entry(&name_clone, pid, &message);
+                            }
+                            break;
+                        }
                     }
                 }
             });
@@ -418,6 +462,8 @@ impl XtaskCommand for RunCommand {
             ));
         }
 
+        self.validate_flag_compatibility(ctx)?;
+
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
             RunSubcommand::Ingestd { instance_id } => {
@@ -464,6 +510,94 @@ impl XtaskCommand for RunCommand {
 }
 
 impl RunCommand {
+    fn runs_single_binary(&self) -> bool {
+        matches!(
+            self.subcommand,
+            RunSubcommand::Ingestd { .. }
+                | RunSubcommand::Gateway { .. }
+                | RunSubcommand::Node { .. }
+        )
+    }
+
+    fn runs_bundle(&self) -> bool {
+        matches!(
+            self.subcommand,
+            RunSubcommand::Core { .. }
+                | RunSubcommand::AllIngestors { .. }
+                | RunSubcommand::AllAutomatons { .. }
+        )
+    }
+
+    fn runs_local_processes(&self) -> bool {
+        self.runs_single_binary() || self.runs_bundle()
+    }
+
+    fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
+        if self.watch && !self.runs_single_binary() {
+            bail!("--watch only supports single local binaries (`ingestd`, `gateway`, or `node`)");
+        }
+
+        if self.watch && ctx.is_background() {
+            bail!("--watch is incompatible with --bg");
+        }
+
+        if (self.logs || self.dev_journal) && !self.runs_local_processes() {
+            bail!("--logs and --dev-journal only support local binary or bundle runs");
+        }
+
+        if (self.logs || self.dev_journal) && ctx.is_background() {
+            bail!("--logs and --dev-journal are incompatible with --bg");
+        }
+
+        if (self.logs || self.dev_journal) && self.watch {
+            bail!("--logs and --dev-journal are incompatible with --watch");
+        }
+
+        if self.metrics && !self.runs_local_processes() {
+            bail!("--metrics only supports local binary or bundle runs");
+        }
+
+        if self.metrics && ctx.is_background() {
+            bail!("--metrics is incompatible with --bg");
+        }
+
+        Ok(())
+    }
+
+    fn maybe_spawn_metrics_overlay(&self, ctx: &CommandContext) {
+        if !self.metrics {
+            return;
+        }
+
+        let db_url = crate::config::config().database_url.clone();
+        if db_url.is_none() {
+            if ctx.is_human() {
+                eprintln!("[metrics] DATABASE_URL not set; runtime overlay disabled");
+            }
+            return;
+        }
+
+        tokio::spawn(async move {
+            if let Some(url) = db_url {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let metrics = crate::runtime_metrics::query_runtime_metrics(&url).await;
+                    eprintln!("[metrics] {}", style(metrics.summary_fragment()).dim());
+                }
+            }
+        });
+    }
+
+    fn build_cargo_run_args(&self, package: &str, instance_id: &str) -> Vec<String> {
+        let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+        if self.release {
+            args.push("--release".to_string());
+        }
+        append_binary_extra_args(&mut args, package, instance_id);
+        args
+    }
+
     async fn run_binary(
         &self,
         name: &str,
@@ -550,11 +684,7 @@ impl RunCommand {
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
-            let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
-            if self.release {
-                args.push("--release".to_string());
-            }
-            append_binary_extra_args(&mut args, package, &instance_id);
+            let args = self.build_cargo_run_args(package, &instance_id);
 
             let job = manager.spawn("cargo", &args)?;
             job_ids.push(job.id);
@@ -683,20 +813,7 @@ impl RunCommand {
             spawn_output_handlers(log_streams, self.logs, journal);
         }
 
-        // Spawn metrics overlay task (B5)
-        if self.metrics {
-            let db_url = crate::config::config().database_url.clone();
-            tokio::spawn(async move {
-                if let Some(url) = db_url {
-                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-                    loop {
-                        interval.tick().await;
-                        let metrics = crate::runtime_metrics::query_runtime_metrics(&url).await;
-                        eprintln!("[metrics] {}", style(metrics.summary_fragment()).dim());
-                    }
-                }
-            });
-        }
+        self.maybe_spawn_metrics_overlay(ctx);
 
         let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
 
@@ -742,20 +859,9 @@ impl RunCommand {
                 .await;
         }
 
-        let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+        let args = self.build_cargo_run_args(package, instance_id);
 
-        if self.release {
-            args.push("--release".to_string());
-        }
-
-        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
-        // Core services (ingestd, gateway) don't support this flag
-        if is_node_package(package) {
-            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
-        } else if package == "sinex-gateway" {
-            // Gateway requires a subcommand - default to rpc-server
-            args.extend(["--".to_string(), "rpc-server".to_string()]);
-        }
+        self.maybe_spawn_metrics_overlay(ctx);
 
         let status = Command::new("cargo")
             .args(&args)
@@ -784,7 +890,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: xtask infra logs".to_string()),
+                suggestion: Some(local_run_failure_suggestion(None)),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
@@ -845,15 +951,15 @@ impl RunCommand {
             .map(|(n, _, _)| *n)
             .unwrap_or(binary);
 
-        let journal = if self.dev_journal {
-            let journal_path = config().state_dir.join("dev-journal.log");
+        let journal_path = self.dev_journal.then(|| config().state_dir.join("dev-journal.log"));
+        let journal = if let Some(journal_path) = journal_path.as_ref() {
             if ctx.is_human() {
                 println!(
                     "Dev journal: {} (sinex-system-ingestor will pick this up)",
                     journal_path.display()
                 );
             }
-            Some(DevJournal::new(&journal_path)?)
+            Some(DevJournal::new(journal_path)?)
         } else {
             None
         };
@@ -868,6 +974,8 @@ impl RunCommand {
             self.logs,
             journal,
         );
+
+        self.maybe_spawn_metrics_overlay(ctx);
 
         if ctx.is_human() {
             println!("{short_name} running (pid {pid}). Press Ctrl+C to stop.");
@@ -896,7 +1004,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: xtask infra logs".to_string()),
+                suggestion: Some(local_run_failure_suggestion(journal_path.as_deref())),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
@@ -913,20 +1021,7 @@ impl RunCommand {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
 
-        let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
-
-        if self.release {
-            args.push("--release".to_string());
-        }
-
-        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
-        // Core services (ingestd, gateway) don't support this flag
-        if is_node_package(package) {
-            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
-        } else if package == "sinex-gateway" {
-            // Gateway requires a subcommand - default to rpc-server
-            args.extend(["--".to_string(), "rpc-server".to_string()]);
-        }
+        let args = self.build_cargo_run_args(package, instance_id);
 
         let job = manager.spawn("cargo", &args)?;
 
@@ -971,6 +1066,7 @@ impl RunCommand {
         };
 
         let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
+        self.maybe_spawn_metrics_overlay(ctx);
         orchestrator.run().await?;
 
         Ok(CommandResult::success()
@@ -1134,7 +1230,24 @@ async fn execute_tether(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
+
+    fn test_context(background: bool) -> CommandContext {
+        CommandContext::new(OutputWriter::new(OutputFormat::Silent), background, None, "test")
+    }
+
+    fn base_command(subcommand: RunSubcommand) -> RunCommand {
+        RunCommand {
+            subcommand,
+            watch: false,
+            release: false,
+            dry_run: false,
+            logs: false,
+            metrics: false,
+            dev_journal: false,
+        }
+    }
 
     #[sinex_test]
     async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
@@ -1170,6 +1283,88 @@ mod tests {
         for (name, _, _) in automatons {
             assert!(name.contains("automaton"));
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_watch_rejects_bundle_targets() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(false);
+        let mut command = base_command(RunSubcommand::Core { instance_id: None });
+        command.watch = true;
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("bundle watch must be rejected");
+        assert!(err.to_string().contains("--watch only supports single local binaries"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_logs_reject_background_mode() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(true);
+        let mut command = base_command(RunSubcommand::Node {
+            name: "fs-ingestor".to_string(),
+            instance_id: None,
+        });
+        command.logs = true;
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("background logs must be rejected");
+        assert!(err.to_string().contains("--logs and --dev-journal are incompatible with --bg"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_dev_journal_rejects_watch_mode() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(false);
+        let mut command = base_command(RunSubcommand::Gateway { instance_id: None });
+        command.watch = true;
+        command.dev_journal = true;
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("watch+journal must be rejected");
+        assert!(err.to_string().contains("--logs and --dev-journal are incompatible with --watch"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_metrics_reject_non_local_subcommands() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(false);
+        let mut command = base_command(RunSubcommand::Tether {
+            target: "prod".to_string(),
+            filter: "events.>".to_string(),
+            from_beginning: false,
+            from_sequence: None,
+        });
+        command.metrics = true;
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("metrics on tether must be rejected");
+        assert!(err.to_string().contains("--metrics only supports local binary or bundle runs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_run_failure_suggestion_without_journal()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            local_run_failure_suggestion(None),
+            "Inspect the process output above"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_run_failure_suggestion_with_journal()
+    -> ::xtask::sandbox::TestResult<()> {
+        let path = Path::new("/tmp/dev-journal.log");
+        assert_eq!(
+            local_run_failure_suggestion(Some(path)),
+            "Inspect the process output above or the dev journal at /tmp/dev-journal.log"
+        );
         Ok(())
     }
 }

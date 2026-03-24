@@ -21,14 +21,36 @@ async fn wait_for_material_assembler_ready(
 ) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js_check,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
-    )
-    .await?;
+    for stream in [
+        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+        env.nats_stream_name("SOURCE_MATERIAL_END"),
+    ] {
+        nats.wait_for_consumer_on_stream(
+            &js_check,
+            &stream,
+            Duration::from_secs(Timeouts::STANDARD),
+        )
+        .await?;
+    }
     Ok(())
+}
+
+async fn fetch_realtime_capture_bytes(
+    pool: &sqlx::PgPool,
+    material_id: Uuid,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT MAX(offset_end) AS "max?"
+        FROM raw.temporal_ledger
+        WHERE source_material_id = $1::uuid
+          AND source_type = 'realtime_capture'
+        "#,
+        material_id
+    )
+    .fetch_one(pool)
+    .await
 }
 
 async fn setup_material_ingestd<F>(
@@ -313,12 +335,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                     .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
-                    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id
-                    )
-                    .fetch_optional(&pool)
-                    .await?;
+                    let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id).await?;
                     return Ok::<bool, SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_bytes.unwrap_or_default() >= expected_size,
@@ -341,12 +358,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     if let Some(material) = material {
         // MaterialAssembler should have finalized it
         assert_eq!(material.status.as_str(), "completed");
-        let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
-            material_id
-        )
-        .fetch_optional(&ctx.pool)
-        .await?;
+        let ledger_bytes = fetch_realtime_capture_bytes(&ctx.pool, material_id).await?;
         assert!(
             ledger_bytes.unwrap_or_default() >= expected_size,
             "ledger should capture all bytes"
@@ -441,12 +453,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
                     if material.status.as_str() != "completed" {
                         return Ok::<bool, SinexError>(false);
                     }
-                    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id
-                    )
-                    .fetch_optional(&pool)
-                    .await?;
+                    let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id).await?;
                     return Ok::<bool, SinexError>(ledger_bytes.unwrap_or_default() >= expected_size);
                 }
                 Ok::<bool, SinexError>(false)
@@ -565,13 +572,9 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
                     .get_by_id(Id::from_uuid(material_id))
                     .await?
                     && material.status.as_str() == "completed" {
-                        let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
-                            material_id
-                        )
-                        .fetch_optional(&pool)
-                        .await
-                        .map_err(|e| SinexError::database(e.to_string()))?;
+                        let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id)
+                            .await
+                            .map_err(|e| SinexError::database(e.to_string()))?;
 
                         return Ok::<bool, SinexError>(
                             ledger_bytes.unwrap_or_default() >= expected_size,
@@ -592,12 +595,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         .expect("material should exist after restart");
     assert_eq!(record.status.as_str(), "completed");
 
-    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
-        material_id
-    )
-    .fetch_optional(&ctx.pool)
-    .await?;
+    let ledger_bytes = fetch_realtime_capture_bytes(&ctx.pool, material_id).await?;
 
     assert_eq!(ledger_bytes.unwrap_or_default(), expected_size);
 

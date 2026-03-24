@@ -1316,16 +1316,9 @@ where
         &self,
         _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<crate::exploration::CoverageAnalysis> {
-        Ok(crate::exploration::CoverageAnalysis {
-            time_range: (Timestamp::now(), Timestamp::now()),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 100.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            missing_samples: Vec::new(),
-            recommendations: Vec::new(),
-        })
+        crate::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for derived nodes",
+        )
     }
 
     fn export_data(

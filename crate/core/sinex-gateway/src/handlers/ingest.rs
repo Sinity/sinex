@@ -192,7 +192,13 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
     services
         .pool()
         .source_materials()
-        .finalize_in_flight(material_record_id, None, None, None, None)
+        .finalize_in_flight(
+            material_record_id,
+            None,
+            None,
+            None,
+            Some(payload_size_bytes),
+        )
         .await
         .wrap_err("failed to finalize events.ingest source material after publish")?;
 
