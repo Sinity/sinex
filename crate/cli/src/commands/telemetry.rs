@@ -254,15 +254,22 @@ fn resolve_time_arg(s: &str) -> Result<String> {
 
 fn format_window_focus_table(buckets: &[WindowFocusBucket]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["BUCKET", "APP", "FOCUS COUNT", "DURATION (s)"]);
+    builder.push_record([
+        "BUCKET",
+        "WORKSPACE",
+        "WINDOW CLASS",
+        "WINDOW TITLE",
+        "FOCUS EVENTS",
+        "LAST FOCUS",
+    ]);
     for b in buckets {
         builder.push_record([
             style(b.bucket.as_str()).dim().to_string(),
-            b.app_name.as_deref().unwrap_or("—").to_string(),
-            b.focus_count.to_string(),
-            b.total_duration_secs
-                .map(|d| format!("{d:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+            b.workspace.as_deref().unwrap_or("—").to_string(),
+            b.window_class.as_deref().unwrap_or("—").to_string(),
+            b.window_title.as_deref().unwrap_or("—").to_string(),
+            b.focus_event_count.to_string(),
+            b.last_focus_time.as_deref().unwrap_or("—").to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -272,12 +279,24 @@ fn format_window_focus_table(buckets: &[WindowFocusBucket]) -> String {
 
 fn format_command_frequency_table(entries: &[CommandFrequencyEntry]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["COMMAND", "TOTAL COUNT", "ACTIVE HOURS"]);
+    builder.push_record([
+        "COMMAND",
+        "SHELL",
+        "TOTAL",
+        "OK",
+        "FAILED",
+        "AVG DURATION (ms)",
+    ]);
     for e in entries {
         builder.push_record([
             e.command.clone(),
-            e.total_count.to_string(),
-            e.bucket_count.to_string(),
+            e.shell.as_deref().unwrap_or("—").to_string(),
+            e.total_executions.to_string(),
+            e.successful_executions.to_string(),
+            e.failed_executions.to_string(),
+            e.avg_duration_ms
+                .map(|value| format!("{value:.1}"))
+                .unwrap_or_else(|| "—".to_string()),
         ]);
     }
     let mut table = builder.build();
@@ -287,12 +306,14 @@ fn format_command_frequency_table(entries: &[CommandFrequencyEntry]) -> String {
 
 fn format_file_activity_table(entries: &[FileActivityEntry]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["BUCKET", "DIRECTORY", "EVENTS"]);
+    builder.push_record(["BUCKET", "DIRECTORY", "EVENT TYPE", "EVENTS", "FILES"]);
     for e in entries {
         builder.push_record([
             style(e.bucket.as_str()).dim().to_string(),
             e.directory.as_deref().unwrap_or("—").to_string(),
-            e.event_count.to_string(),
+            e.event_type.clone(),
+            e.total_events.to_string(),
+            e.unique_files.to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -302,12 +323,13 @@ fn format_file_activity_table(entries: &[FileActivityEntry]) -> String {
 
 fn format_recent_activity_table(entries: &[RecentActivityEntry]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["TYPE", "SUMMARY", "RECORDED AT"]);
+    builder.push_record(["TYPE", "CONTEXT", "DETAIL", "TIMESTAMP"]);
     for e in entries {
         builder.push_record([
             e.activity_type.clone(),
-            e.summary.as_deref().unwrap_or("—").to_string(),
-            e.recorded_at.as_deref().unwrap_or("—").to_string(),
+            e.context.as_deref().unwrap_or("—").to_string(),
+            e.detail.as_deref().unwrap_or("—").to_string(),
+            e.timestamp.as_deref().unwrap_or("—").to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -317,38 +339,41 @@ fn format_recent_activity_table(entries: &[RecentActivityEntry]) -> String {
 
 fn format_system_state_table(buckets: &[SystemStateBucket]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["BUCKET", "CPU %", "MEMORY (bytes)", "DISK I/O (Bps)"]);
+    builder.push_record([
+        "BUCKET",
+        "AVG CPU %",
+        "MAX CPU %",
+        "AVG MEM %",
+        "MAX MEM %",
+        "AVG DISK %",
+        "ACTIVE UNITS",
+        "SAMPLES",
+    ]);
     for b in buckets {
         builder.push_record([
             style(b.bucket.as_str()).dim().to_string(),
-            b.avg_cpu_pct
+            b.avg_cpu_percent
                 .map(|v| format!("{v:.1}"))
                 .unwrap_or_else(|| "—".to_string()),
-            b.avg_memory_bytes
-                .map(|v| format_bytes(v as u64))
+            b.max_cpu_percent
+                .map(|v| format!("{v:.1}"))
                 .unwrap_or_else(|| "—".to_string()),
-            b.avg_disk_io_bps
-                .map(|v| format!("{}/s", format_bytes(v as u64)))
+            b.avg_memory_percent
+                .map(|v| format!("{v:.1}"))
                 .unwrap_or_else(|| "—".to_string()),
+            b.max_memory_percent
+                .map(|v| format!("{v:.1}"))
+                .unwrap_or_else(|| "—".to_string()),
+            b.avg_disk_percent
+                .map(|v| format!("{v:.1}"))
+                .unwrap_or_else(|| "—".to_string()),
+            b.current_active_units
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            b.sample_count.to_string(),
         ]);
     }
     let mut table = builder.build();
     table.with(Style::rounded());
     table.to_string()
-}
-
-/// Format a byte count into a human-readable string (KiB / MiB / GiB).
-fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * KIB;
-    const GIB: u64 = 1024 * MIB;
-    if bytes >= GIB {
-        format!("{:.1} GiB", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
 }

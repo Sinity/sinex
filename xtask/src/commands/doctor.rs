@@ -2,6 +2,7 @@
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
+use crate::infra::probe::{probe_nats, probe_postgres};
 use crate::output::Status;
 use crate::tools::{ToolInfo, ToolManager};
 use color_eyre::eyre::{Result, WrapErr};
@@ -17,14 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-fn current_nats_port() -> u16 {
-    crate::infra::stack::StackConfig::for_current_checkout()
-        .map(|config| config.nats.port)
-        .unwrap_or(4222)
-}
-
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
+const RUNTIME_LAG_WARN_THRESHOLD: f64 = 1000.0;
+const RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS: f64 = 5000.0;
 
 #[derive(clap::Args)]
 pub struct DoctorCommand {
@@ -97,7 +94,30 @@ impl XtaskCommand for DoctorCommand {
         let mut result = execute_doctor(self.pipelines, ctx)?;
 
         if self.runtime {
-            execute_runtime_check(ctx).await?;
+            let runtime = execute_runtime_check(ctx).await?;
+            let runtime_value = serde_json::to_value(&runtime)?;
+            let existing_data = result.data.take();
+            result.data = Some(match existing_data {
+                Some(mut existing) => {
+                    if let Some(map) = existing.as_object_mut() {
+                        map.insert("runtime".to_string(), runtime_value);
+                        existing
+                    } else {
+                        serde_json::json!({
+                            "doctor": existing,
+                            "runtime": runtime_value,
+                        })
+                    }
+                }
+                None => serde_json::json!({
+                    "runtime": runtime_value,
+                }),
+            });
+
+            if !runtime.overall && result.status == Status::Success {
+                result.status = Status::Partial;
+            }
+            result.warnings.extend(runtime.warnings.clone());
         }
 
         if self.deployment_readiness {
@@ -136,21 +156,17 @@ impl XtaskCommand for DoctorCommand {
             }
 
             // Check infra status and restart if needed
-            let pg_ready = std::process::Command::new("pg_isready")
-                .arg("-q")
-                .status()
-                .is_ok_and(|s| s.success());
-            let nats_port = current_nats_port();
-            let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+            let pg_probe = probe_postgres();
+            let nats_probe = probe_nats();
 
-            if !pg_ready || !nats_ready {
+            if !pg_probe.ready() || !nats_probe.ready() {
                 let stack_config = crate::infra::stack::StackConfig::for_current_checkout().ok();
                 if let Some(cfg) = stack_config {
                     let verbose = ctx.is_human();
-                    if !pg_ready {
+                    if !pg_probe.ready() {
                         let _ = crate::infra::stack::pg_start(&cfg, verbose);
                     }
-                    if !nats_ready {
+                    if !nats_probe.ready() {
                         let _ = crate::infra::stack::nats_start(&cfg, verbose);
                     }
                 }
@@ -176,25 +192,31 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     let mut all_ok = true;
 
     // Check Postgres
-    let pg_ready = std::process::Command::new("pg_isready")
-        .arg("-q")
-        .status()
-        .is_ok_and(|s| s.success());
-    let pg_msg = if pg_ready {
+    let pg_probe = probe_postgres();
+    let pg_msg = if pg_probe.ready() {
         None
     } else {
         all_ok = false;
-        Some("pg_isready failed - is Postgres running?".to_string())
+        Some(
+            pg_probe
+                .message
+                .clone()
+                .unwrap_or_else(|| "Postgres is not ready".to_string()),
+        )
     };
 
     // Check NATS
-    let nats_port = current_nats_port();
-    let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-    let nats_msg = if nats_ready {
+    let nats_probe = probe_nats();
+    let nats_msg = if nats_probe.ready() {
         None
     } else {
         all_ok = false;
-        Some(format!("Cannot connect to NATS on port {nats_port}"))
+        Some(
+            nats_probe
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("Cannot connect to NATS on port {}", nats_probe.port)),
+        )
     };
 
     // Check required tools
@@ -236,7 +258,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     // Check Postgres extensions
     let mut pg_extensions = None;
-    if pg_ready {
+    if pg_probe.ready() {
         let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
         if let Some(cfg) = config {
             let output = std::process::Command::new("psql")
@@ -320,11 +342,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     let report = DoctorReport {
         postgres: DoctorServiceCheck {
-            available: pg_ready,
+            available: pg_probe.ready(),
             message: pg_msg,
         },
         nats: DoctorServiceCheck {
-            available: nats_ready,
+            available: nats_probe.ready(),
             message: nats_msg,
         },
         tools: tool_checks,
@@ -475,7 +497,56 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
 }
 
-async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeCheckReport {
+    overall: bool,
+    metrics: crate::runtime_metrics::RuntimeMetrics,
+    warnings: Vec<String>,
+}
+
+fn runtime_warnings(metrics: &crate::runtime_metrics::RuntimeMetrics) -> Vec<String> {
+    use crate::runtime_metrics::IngestdStatus;
+
+    let mut warnings = Vec::new();
+    match metrics.ingestd_status {
+        IngestdStatus::Healthy => {}
+        IngestdStatus::Stale => warnings.push("Runtime health: ingestd heartbeat is stale".into()),
+        IngestdStatus::Down => warnings.push("Runtime health: ingestd is down".into()),
+        IngestdStatus::Unknown => warnings.push("Runtime health: ingestd status is unknown".into()),
+    }
+
+    if let Some(lag) = metrics.fresh_consumer_lag_pending()
+        && lag > RUNTIME_LAG_WARN_THRESHOLD
+    {
+        warnings.push(format!(
+            "Runtime health: consumer lag is high ({lag:.0} pending)"
+        ));
+    }
+    if metrics.consumer_lag_is_stale() {
+        warnings.push(format!(
+            "Runtime health: consumer lag telemetry is stale ({}s old)",
+            metrics.consumer_lag_age_secs.unwrap_or_default()
+        ));
+    }
+
+    if let Some(latency) = metrics.fresh_batch_latency_ms()
+        && latency > RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS
+    {
+        warnings.push(format!(
+            "Runtime health: batch latency is high ({latency:.0}ms)"
+        ));
+    }
+    if metrics.batch_latency_is_stale() {
+        warnings.push(format!(
+            "Runtime health: batch latency telemetry is stale ({}s old)",
+            metrics.last_batch_latency_age_secs.unwrap_or_default()
+        ));
+    }
+
+    warnings
+}
+
+async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckReport> {
     use crate::config::config;
     use crate::runtime_metrics::{IngestdStatus, query_runtime_metrics};
 
@@ -490,11 +561,23 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
                     style("⚠").yellow()
                 );
             }
-            return Ok(());
+            return Ok(RuntimeCheckReport {
+                overall: true,
+                metrics: crate::runtime_metrics::RuntimeMetrics {
+                    ingestd_status: crate::runtime_metrics::IngestdStatus::Unknown,
+                    last_heartbeat_age_secs: None,
+                    consumer_lag_pending: None,
+                    consumer_lag_age_secs: None,
+                    last_batch_latency_ms: None,
+                    last_batch_latency_age_secs: None,
+                },
+                warnings: vec!["Runtime health skipped: DATABASE_URL not set".into()],
+            });
         }
     };
 
     let metrics = query_runtime_metrics(&db_url).await;
+    let warnings = runtime_warnings(&metrics);
 
     if ctx.is_human() {
         println!("\n{}", style("Runtime Health:").bold());
@@ -550,7 +633,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(RuntimeCheckReport {
+        overall: warnings.is_empty(),
+        metrics,
+        warnings,
+    })
 }
 
 /// Result of a single deployment readiness check.
@@ -1988,6 +2075,49 @@ mod tests {
         assert_eq!(json["overall"], false);
         assert_eq!(json["items"][0]["name"], "gateway-ready");
         assert_eq!(json["items"][1]["status"], "fail");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_warnings_capture_degraded_signals()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = crate::runtime_metrics::RuntimeMetrics {
+            ingestd_status: crate::runtime_metrics::IngestdStatus::Stale,
+            last_heartbeat_age_secs: Some(300),
+            consumer_lag_pending: Some(1500.0),
+            consumer_lag_age_secs: Some(10),
+            last_batch_latency_ms: Some(6000.0),
+            last_batch_latency_age_secs: Some(10),
+        };
+
+        let warnings = runtime_warnings(&metrics);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("ingestd heartbeat is stale"))
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("consumer lag is high")));
+        assert!(warnings.iter().any(|warning| warning.contains("batch latency is high")));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_warnings_capture_stale_telemetry()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = crate::runtime_metrics::RuntimeMetrics {
+            ingestd_status: crate::runtime_metrics::IngestdStatus::Healthy,
+            last_heartbeat_age_secs: Some(5),
+            consumer_lag_pending: Some(42.0),
+            consumer_lag_age_secs: Some(600),
+            last_batch_latency_ms: Some(125.0),
+            last_batch_latency_age_secs: Some(600),
+        };
+
+        let warnings = runtime_warnings(&metrics);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("consumer lag telemetry is stale"))
+        );
+        assert!(
+            warnings.iter().any(|warning| warning.contains("batch latency telemetry is stale"))
+        );
         Ok(())
     }
 

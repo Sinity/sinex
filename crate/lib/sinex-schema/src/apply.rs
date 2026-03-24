@@ -918,7 +918,7 @@ END $$;
 
 const TELEMETRY_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_health AS
-SELECT
+SELECT DISTINCT ON (e.source, e.payload->>'component')
     e.source,
     e.event_type,
     e.payload->>'component' AS component,
@@ -926,15 +926,10 @@ SELECT
     e.payload->>'reason' AS reason,
     e.ts_coided AS last_update
 FROM core.events e
-INNER JOIN (
-    SELECT source, MAX(ts_coided) AS max_ts
-    FROM core.events
-    WHERE source = 'sinex'
-      AND event_type = 'health.status'
-      AND ts_coided > NOW() - INTERVAL '1 hour'
-    GROUP BY source
-) latest ON e.source = latest.source AND e.ts_coided = latest.max_ts
-WHERE e.event_type = 'health.status';
+WHERE e.source = 'sinex'
+  AND e.event_type = 'health.status'
+  AND e.ts_coided > NOW() - INTERVAL '1 hour'
+ORDER BY e.source, e.payload->>'component', e.ts_coided DESC, e.id DESC;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_device_state AS
 SELECT DISTINCT ON (payload->>'unit_name')
