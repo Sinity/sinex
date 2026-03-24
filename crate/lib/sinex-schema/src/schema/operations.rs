@@ -15,7 +15,8 @@ use sea_query::{Alias, ColumnDef, Expr, Iden, Table, TableCreateStatement};
 /// **Table: `core.operations_log`**
 ///
 /// The audit trail of high-level, intentional system operations (e.g., replays,
-/// archival jobs). This provides "intent provenance" - the *why* behind data changes.
+/// archival, restore, and tombstone jobs). This provides "intent provenance" -
+/// the *why* behind data changes.
 #[derive(Iden, Copy, Clone)]
 pub enum OperationsLog {
     Table,
@@ -58,7 +59,9 @@ impl OperationsLog {
                 ColumnDef::new(OperationsLog::OperationType)
                     .text()
                     .not_null()
-                    .check(Expr::cust("operation_type IN ('replay', 'archive', 'purge')")),
+                    .check(Expr::cust(
+                        "operation_type IN ('replay', 'archive', 'restore', 'purge', 'tombstone')",
+                    )),
             )
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())
             .col(ColumnDef::new(OperationsLog::Scope).json_binary()) // Parameters of the operation

@@ -740,43 +740,53 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "get nodes by type"))
     }
 
-    /// Update node heartbeat timestamp and set status to 'active'.
+    /// Update a specific node manifest heartbeat timestamp and set status to 'active'.
     ///
-    /// Called by the heartbeat emitter to record that a node is alive and
-    /// actively running. Updates `last_heartbeat_at` to `NOW()` and `status` to 'active'.
-    pub async fn update_node_heartbeat(&self, node_name: &NodeName) -> DbResult<()> {
-        sqlx::query!(
+    /// Returns whether a matching manifest row was updated.
+    pub async fn update_node_heartbeat_for_version(
+        &self,
+        node_name: &NodeName,
+        version: &str,
+    ) -> DbResult<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE core.node_manifests
             SET last_heartbeat_at = NOW(),
                 status = 'active'
             WHERE node_name = $1
+              AND version = $2
             "#,
-            node_name as &NodeName
+            node_name as &NodeName,
+            version,
         )
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "update node heartbeat"))?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a node as inactive.
+    /// Mark a specific node manifest as inactive.
     ///
-    /// Called when a node is known to have stopped (e.g., graceful shutdown,
-    /// or detected stale by monitoring).
-    pub async fn mark_node_inactive(&self, node_name: &NodeName) -> DbResult<()> {
-        sqlx::query!(
+    /// Returns whether a matching manifest row was updated.
+    pub async fn mark_node_inactive_for_version(
+        &self,
+        node_name: &NodeName,
+        version: &str,
+    ) -> DbResult<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE core.node_manifests
             SET status = 'inactive'
             WHERE node_name = $1
+              AND version = $2
             "#,
-            node_name as &NodeName
+            node_name as &NodeName,
+            version,
         )
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "mark node inactive"))?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Get active nodes based on status column and recent heartbeat.
@@ -818,28 +828,24 @@ impl StateRepository<'_> {
 
         let row = sqlx::query!(
             r#"
-            WITH latest_manifest AS (
-                SELECT DISTINCT ON (node_name)
+            WITH node_status AS (
+                SELECT
                     node_name,
-                    status,
-                    last_heartbeat_at
+                    BOOL_OR(
+                        status = 'active'
+                        AND last_heartbeat_at IS NOT NULL
+                        AND last_heartbeat_at >= $1
+                    ) AS has_live_version,
+                    MAX(last_heartbeat_at) AS latest_heartbeat_at
                 FROM core.node_manifests
-                ORDER BY node_name, created_at DESC
+                GROUP BY node_name
             )
             SELECT
-                COUNT(*) FILTER (
-                    WHERE status = 'active'
-                      AND last_heartbeat_at IS NOT NULL
-                      AND last_heartbeat_at >= $1
-                ) as "active_count!",
-                COUNT(*) FILTER (
-                    WHERE status != 'active'
-                       OR last_heartbeat_at IS NULL
-                       OR last_heartbeat_at < $1
-                ) as "inactive_count!",
+                COUNT(*) FILTER (WHERE has_live_version) as "active_count!",
+                COUNT(*) FILTER (WHERE NOT has_live_version) as "inactive_count!",
                 COUNT(*) as "unique_nodes!",
-                MIN(last_heartbeat_at) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM latest_manifest
+                MIN(latest_heartbeat_at) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
+            FROM node_status
             "#,
             *cutoff
         )
@@ -1054,6 +1060,7 @@ impl StateRepository<'_> {
         operation_id: &str,
         operator: &str,
         scope: JsonValue,
+        preview_summary: JsonValue,
     ) -> DbResult<OperationRecord> {
         let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
@@ -1063,9 +1070,9 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                id, operation_type, operator, scope, result_status
+                id, operation_type, operator, scope, result_status, preview_summary
             ) VALUES (
-                $1::uuid, 'tombstone', $2, $3, 'running'
+                $1::uuid, 'tombstone', $2, $3, 'running', $4
             )
             RETURNING
                 id as "id!: Id<Operation>",
@@ -1079,7 +1086,8 @@ impl StateRepository<'_> {
             "#,
             id.to_uuid(),
             operator,
-            scope
+            scope,
+            preview_summary,
         )
         .fetch_one(self.pool)
         .await
@@ -1125,6 +1133,8 @@ impl StateRepository<'_> {
         operation_id: &str,
         result_status: OperationStatus,
         scope: JsonValue,
+        preview_summary: Option<JsonValue>,
+        result_message: Option<&str>,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
         let operation_uuid = Uuid::from_str(operation_id)
@@ -1136,19 +1146,38 @@ impl StateRepository<'_> {
             UPDATE core.operations_log
             SET result_status = $2,
                 scope = $3,
-                duration_ms = $4
+                preview_summary = COALESCE($4, preview_summary),
+                result_message = COALESCE($5, result_message),
+                duration_ms = COALESCE($6, duration_ms)
             WHERE id = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid(),
             result_status.to_string(),
             scope,
-            duration_ms
+            preview_summary,
+            result_message,
+            duration_ms,
         )
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "update tombstone operation"))?;
 
         Ok(())
+    }
+
+    /// Count how many archived rows currently exist for the given event IDs.
+    pub async fn count_archived_event_ids(&self, event_ids: &[Uuid]) -> DbResult<i64> {
+        if event_ids.is_empty() {
+            return Ok(0);
+        }
+
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_events WHERE id = ANY($1::uuid[])"#,
+            event_ids
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "count archived event ids"))
     }
 
     /// List tombstone operations (canonical filtering happens on scope phase in handlers).

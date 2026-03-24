@@ -369,7 +369,10 @@ impl HeartbeatEmitter {
             use sinex_db::DbPoolExt;
             if let Err(e) = pool
                 .state()
-                .update_node_heartbeat(&NodeName::new(&metrics.service_name))
+                .update_node_heartbeat_for_version(
+                    &NodeName::new(&metrics.service_name),
+                    &metrics.version,
+                )
                 .await
             {
                 debug!(

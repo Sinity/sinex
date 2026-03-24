@@ -2228,6 +2228,37 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         Ok(())
     }
 
+    pub async fn populate_cascade_roots_from(
+        &mut self,
+        table_name: &str,
+        event_ids: &[Uuid],
+        source: CascadeSource,
+    ) -> DbResult<()> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+        validate_cascade_table_name(table_name)?;
+
+        let ids: Vec<Uuid> = event_ids.to_vec();
+        let src = source.table_name();
+
+        sqlx::query(&format!(
+            r"
+            INSERT INTO {table_name} (id, depth, parent_ids, processed)
+            SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
+            FROM {src} s
+            WHERE s.id = ANY($1::uuid[])
+            ON CONFLICT (id) DO NOTHING
+            "
+        ))
+        .bind(&ids)
+        .execute(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "populate cascade roots"))?;
+
+        Ok(())
+    }
+
     /// Expand cascade graph to find all descendants (transaction version)
     ///
     /// # Cycle Detection
@@ -2245,6 +2276,56 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         .map_err(|e| db_error(e, "expand cascade graph"))?
         .unwrap_or(0);
         Ok(depth as usize)
+    }
+
+    pub async fn expand_cascade_from(
+        &mut self,
+        table_name: &str,
+        max_depth: i32,
+        source: CascadeSource,
+    ) -> DbResult<usize> {
+        validate_cascade_table_name(table_name)?;
+
+        let src = source.table_name();
+        let mut current_depth = 0;
+
+        while current_depth < max_depth {
+            let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
+                r"
+                WITH new_children AS (
+                    INSERT INTO {table_name} (id, depth, parent_ids, processed)
+                    SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
+                    FROM {src} s
+                    JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
+                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM new_children
+                "
+            ))
+            .bind(current_depth)
+            .fetch_one(&mut **self.tx)
+            .await
+            .map_err(|e| db_error(e, "expand cascade"))?;
+
+            sqlx::query(&format!(
+                "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
+            ))
+            .bind(current_depth)
+            .execute(&mut **self.tx)
+            .await
+            .map_err(|e| db_error(e, "mark cascade depth processed"))?;
+
+            if rows_inserted == 0 {
+                break;
+            }
+
+            current_depth += 1;
+        }
+
+        Ok(current_depth as usize)
     }
 
     pub async fn cascade_depth_histogram(&mut self, table_name: &str) -> DbResult<Vec<(i32, i64)>> {
@@ -2355,6 +2436,17 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         }
 
         Ok(result)
+    }
+
+    pub async fn get_cascade_ids(&mut self, table_name: &str) -> DbResult<Vec<Uuid>> {
+        validate_cascade_table_name(table_name)?;
+
+        sqlx::query_scalar::<_, Uuid>(&format!(
+            "SELECT id::uuid FROM {table_name} ORDER BY depth DESC"
+        ))
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "get cascade ids"))
     }
 
     pub async fn cleanup_cascade_session(&mut self, table_name: &str) -> DbResult<()> {

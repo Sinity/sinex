@@ -7,10 +7,13 @@
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
+use sinex_primitives::domain::DataTier;
 use sinex_primitives::events::Event;
+use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::{Id, SinexError, Timestamp};
 use sqlx::PgPool;
+use std::str::FromStr;
 
 // Re-export shared types
 pub use sinex_primitives::rpc::audit::{
@@ -31,47 +34,246 @@ struct AffectedEventRow {
     id: uuid::Uuid,
     source: String,
     event_type: String,
-    ts_orig: Timestamp,
+    ts_orig: Option<Timestamp>,
     ts_coided: Timestamp,
+    tier: String,
+}
+
+fn explicit_lifecycle_summary(summary: Option<&Value>) -> Option<LifecycleOperationSummary> {
+    summary
+        .cloned()
+        .and_then(|value| serde_json::from_value::<LifecycleOperationSummary>(value).ok())
+        .filter(|summary| !summary.affected_event_ids.is_empty())
+}
+
+async fn query_affected_events_by_operation_links(
+    pool: &PgPool,
+    operation_id: &Id<Operation>,
+    limit: i64,
+    after_id: Option<&Id<Event>>,
+) -> Result<(Vec<EventSummary>, bool)> {
+    let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
+    let fetch_limit = page_size + 1;
+    let cursor_uuid = after_id.map(|id| id.to_uuid());
+
+    let mut rows = sqlx::query_as::<_, AffectedEventRow>(
+        r#"
+        WITH tiered_events AS (
+            SELECT
+                e.id::uuid AS id,
+                e.source,
+                e.event_type,
+                e.ts_orig,
+                e.ts_coided,
+                'live'::text AS tier,
+                0 AS tier_rank
+            FROM core.events e
+            WHERE e.created_by_operation_id = $1::uuid
+
+            UNION ALL
+
+            SELECT
+                t.id::uuid AS id,
+                t.source,
+                t.event_type,
+                t.ts_orig,
+                uuid_extract_timestamp(t.id)::timestamptz AS ts_coided,
+                'tombstone'::text AS tier,
+                2 AS tier_rank
+            FROM core.event_tombstones t
+            WHERE t.purge_operation_id = $1::uuid
+        ),
+        ranked AS (
+            SELECT DISTINCT ON (id) id, source, event_type, ts_orig, ts_coided, tier, tier_rank
+            FROM tiered_events
+            ORDER BY id, tier_rank
+        )
+        SELECT id, source, event_type, ts_orig, ts_coided, tier
+        FROM ranked
+        WHERE ($2::uuid IS NULL OR id < $2::uuid)
+        ORDER BY id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(operation_id.to_uuid())
+    .bind(cursor_uuid)
+    .bind(fetch_limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        SinexError::service("failed to query operation-linked affected events").with_std_error(&e)
+    })?;
+
+    let has_more = rows.len() as i64 > page_size;
+    if has_more {
+        rows.truncate(page_size as usize);
+    }
+
+    let events = rows
+        .into_iter()
+        .map(|row| EventSummary {
+            id: Id::from_uuid(row.id),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
+            ts_orig: row.ts_orig,
+            ts_coided: row.ts_coided,
+            tier: DataTier::from_str(&row.tier).ok(),
+            provenance_operation_id: Some(*operation_id),
+        })
+        .collect();
+
+    Ok((events, has_more))
+}
+
+async fn query_affected_events_by_ids(
+    pool: &PgPool,
+    operation_id: &Id<Operation>,
+    affected_event_ids: &[uuid::Uuid],
+    limit: i64,
+    after_id: Option<&Id<Event>>,
+) -> Result<(Vec<EventSummary>, bool)> {
+    let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
+    let fetch_limit = page_size + 1;
+    let cursor_uuid = after_id.map(|id| id.to_uuid());
+    let mut rows = sqlx::query_as::<_, AffectedEventRow>(
+        r#"
+        WITH affected_ids AS (
+            SELECT unnest($1::uuid[]) AS id
+        ),
+        tiered_events AS (
+            SELECT
+                e.id::uuid AS id,
+                e.source,
+                e.event_type,
+                e.ts_orig,
+                e.ts_coided,
+                'live'::text AS tier,
+                0 AS tier_rank
+            FROM core.events e
+            INNER JOIN affected_ids ids ON ids.id = e.id
+
+            UNION ALL
+
+            SELECT
+                ae.id::uuid AS id,
+                ae.source,
+                ae.event_type,
+                ae.ts_orig,
+                ae.ts_coided,
+                'archive'::text AS tier,
+                1 AS tier_rank
+            FROM audit.archived_events ae
+            INNER JOIN affected_ids ids ON ids.id = ae.id
+
+            UNION ALL
+
+            SELECT
+                t.id::uuid AS id,
+                t.source,
+                t.event_type,
+                t.ts_orig,
+                uuid_extract_timestamp(t.id)::timestamptz AS ts_coided,
+                'tombstone'::text AS tier,
+                2 AS tier_rank
+            FROM core.event_tombstones t
+            INNER JOIN affected_ids ids ON ids.id = t.id
+        ),
+        ranked AS (
+            SELECT DISTINCT ON (id) id, source, event_type, ts_orig, ts_coided, tier, tier_rank
+            FROM tiered_events
+            ORDER BY id, tier_rank
+        )
+        SELECT id, source, event_type, ts_orig, ts_coided, tier
+        FROM ranked
+        WHERE ($2::uuid IS NULL OR id < $2::uuid)
+        ORDER BY id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(affected_event_ids)
+    .bind(cursor_uuid)
+    .bind(fetch_limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| SinexError::service("failed to query explicit affected events").with_std_error(&e))?;
+
+    let has_more = rows.len() as i64 > page_size;
+    if has_more {
+        rows.truncate(page_size as usize);
+    }
+
+    let events = rows
+        .into_iter()
+        .map(|row| EventSummary {
+            id: Id::from_uuid(row.id),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
+            ts_orig: row.ts_orig,
+            ts_coided: row.ts_coided,
+            tier: DataTier::from_str(&row.tier).ok(),
+            provenance_operation_id: Some(*operation_id),
+        })
+        .collect();
+
+    Ok((events, has_more))
 }
 
 /// Query events affected by an operation with optional cursor-based pagination.
 ///
-/// NOTE: This query intentionally lives outside the repository pattern. It joins
-/// `audit.archived_events` with time-window arithmetic derived from operation `UUIDv7` IDs
-/// and uses keyset pagination with a cursor ID. This logic is specific to the audit
-/// RPC endpoint and doesn't generalize to other consumers.
-///
-/// Operations affect events through archive operations. We find affected events by:
-/// 1. Using the operation `UUIDv7`'s embedded timestamp as the start time
-/// 2. Adding `duration_ms` (or a default buffer) to get the end time
-/// 3. Querying `archived_events` whose `archived_at` falls within this window
-///
-/// Events are returned in descending `UUIDv7` order. When `after_id` is supplied,
-/// only events with `id < after_id` are returned (keyset pagination).
-///
-/// Returns `(events, has_more)` where `has_more` indicates whether additional
-/// pages are available.
+/// Prefer explicit lifecycle summaries persisted in `preview_summary`. Older
+/// operations without that data fall back to the legacy archive-window heuristic.
 async fn query_affected_events(
     pool: &PgPool,
     operation_id: &Id<Operation>,
     duration_ms: Option<i32>,
     limit: i64,
     after_id: Option<&Id<Event>>,
+    preview_summary: Option<&Value>,
 ) -> Result<(Vec<EventSummary>, bool)> {
+    if let Some(summary) = explicit_lifecycle_summary(preview_summary) {
+        let affected_event_ids = summary
+            .affected_event_ids
+            .iter()
+            .map(|raw| {
+                uuid::Uuid::parse_str(raw).map_err(|error| {
+                    SinexError::invalid_state(format!(
+                        "invalid affected_event_id '{raw}' in lifecycle preview summary: {error}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return query_affected_events_by_ids(
+            pool,
+            operation_id,
+            &affected_event_ids,
+            limit,
+            after_id,
+        )
+        .await;
+    }
+
+    let linked_events =
+        query_affected_events_by_operation_links(pool, operation_id, limit, after_id).await?;
+    if !linked_events.0.is_empty() || linked_events.1 {
+        return Ok(linked_events);
+    }
+
     let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
-    // Fetch one extra to detect whether more pages exist.
     let fetch_limit = page_size + 1;
     let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
-    // Bind the operation UUIDv7 as a string; the query casts it with `$1::uuid`.
     let op_uuid = operation_id.as_uuid().to_string();
 
     let mut rows: Vec<AffectedEventRow> = if let Some(cursor) = after_id {
-        // Cursor path: restrict to events before the cursor ID (keyset, descending).
         let cursor_uuid = cursor.to_uuid();
         sqlx::query_as(
             r"
-            SELECT id::uuid AS id, source, event_type, ts_orig, ts_coided
+            SELECT
+                id::uuid AS id,
+                source,
+                event_type,
+                ts_orig,
+                ts_coided,
+                'archive'::text AS tier
             FROM audit.archived_events
             WHERE archived_at >= ($1::uuid)::timestamptz
               AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
@@ -90,10 +292,15 @@ async fn query_affected_events(
             SinexError::service("failed to query affected events (paged)").with_std_error(&e)
         })?
     } else {
-        // First page: no cursor restriction.
         sqlx::query_as(
             r"
-            SELECT id::uuid AS id, source, event_type, ts_orig, ts_coided
+            SELECT
+                id::uuid AS id,
+                source,
+                event_type,
+                ts_orig,
+                ts_coided,
+                'archive'::text AS tier
             FROM audit.archived_events
             WHERE archived_at >= ($1::uuid)::timestamptz
               AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
@@ -120,8 +327,9 @@ async fn query_affected_events(
             id: Id::from_uuid(row.id),
             source: row.source.into(),
             event_type: row.event_type.into(),
-            ts_orig: Some(row.ts_orig),
+            ts_orig: row.ts_orig,
             ts_coided: row.ts_coided,
+            tier: DataTier::from_str(&row.tier).ok(),
             provenance_operation_id: Some(*operation_id),
         })
         .collect();
@@ -146,6 +354,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         .await?
         .ok_or_else(|| SinexError::not_found(format!("Operation not found: {operation_id}")))?;
 
+    let preview_summary = record.preview_summary.clone();
     let operation = OperationRecord {
         id: Id::from_uuid(*record.id.as_uuid()),
         operation_type: record.operation_type,
@@ -153,7 +362,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         scope: record.scope,
         result_status: record.result_status,
         result_message: record.result_message,
-        preview_summary: record.preview_summary,
+        preview_summary: preview_summary.clone(),
         duration_ms: record.duration_ms,
     };
 
@@ -164,6 +373,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         record.duration_ms,
         limit,
         request.after_id.as_ref(),
+        preview_summary.as_ref(),
     )
     .await?;
 
