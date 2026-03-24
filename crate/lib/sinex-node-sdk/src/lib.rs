@@ -55,8 +55,6 @@ pub mod annex;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
 #[cfg(feature = "messaging")]
-pub mod automaton_event_handler;
-#[cfg(feature = "messaging")]
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
@@ -91,8 +89,6 @@ pub mod ingestor_node;
 #[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
 #[cfg(feature = "messaging")]
-pub mod lifecycle;
-#[cfg(feature = "messaging")]
 pub mod nats_publisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub mod node_cli;
@@ -119,11 +115,8 @@ pub use acquisition_manager::{
 };
 #[cfg(feature = "messaging")]
 pub use automaton_base::{
-    ActivityEntry, AutomatonFields, AutomatonStats, ChannelConfirmedEventHandler,
-    DEFAULT_CHANNEL_CAPACITY, DEFAULT_MAX_HISTORY_ENTRIES, IngestionHistoryEntry,
+    ActivityEntry, IngestionHistoryEntry,
 };
-#[cfg(feature = "messaging")]
-pub use automaton_event_handler::AutomatonEventHandler;
 #[cfg(feature = "messaging")]
 pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
@@ -165,8 +158,6 @@ pub use derived_node::{
 pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
-#[cfg(feature = "messaging")]
-pub use lifecycle::{LifecycleManager, ServiceStatus};
 #[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]

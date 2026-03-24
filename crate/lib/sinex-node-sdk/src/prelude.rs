@@ -28,8 +28,6 @@ pub use crate::{NodeInstance, NodeVersion};
 // Lifecycle management
 #[cfg(feature = "messaging")]
 pub use crate::{IngestorNode, IngestorNodeAdapter, IngestorState};
-#[cfg(feature = "messaging")]
-pub use crate::{LifecycleManager, ServiceStatus};
 
 // Event handling
 #[cfg(feature = "messaging")]
