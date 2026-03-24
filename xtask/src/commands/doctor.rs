@@ -804,17 +804,22 @@ fn resolve_target_identity(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<TargetIdentity> {
     let descriptor_target = descriptor.and_then(|value| value.target.as_ref());
-    let explicit_target_user = descriptor_target
-        .map(|target| target.user.clone())
-        .or_else(|| std::env::var("SINEX_TARGET_USER").ok())
-        .filter(|value| !value.trim().is_empty());
-    let current_user = std::env::var("USER")
+    let env_target_user = std::env::var("SINEX_TARGET_USER")
         .ok()
         .filter(|value| !value.trim().is_empty());
+    let explicit_target_user = descriptor_target
+        .map(|target| target.user.clone())
+        .or_else(|| env_target_user.clone());
 
-    let user = match explicit_target_user.clone().or(current_user.clone()) {
-        Some(user) => user,
-        None => command_output("id", &["-un"], "deployment readiness target user")?,
+    if descriptor.is_some() && descriptor_target.is_none() && env_target_user.is_none() {
+        color_eyre::eyre::bail!(
+            "deployment descriptor is present but does not declare target.user; set SINEX_TARGET_USER or fix the descriptor"
+        );
+    }
+    let Some(user) = explicit_target_user.clone() else {
+        color_eyre::eyre::bail!(
+            "deployment readiness refuses to guess the target user; set SINEX_TARGET_USER or provide a deployment descriptor with target.user"
+        );
     };
     let passwd_entry = read_passwd_entry(&user)?;
 
@@ -838,10 +843,6 @@ fn resolve_target_identity(
         home
     } else if let Ok(home) = std::env::var("SINEX_TARGET_HOME") {
         PathBuf::from(home)
-    } else if explicit_target_user.is_none() {
-        dirs::home_dir()
-            .or_else(|| passwd_entry.as_ref().map(|(_, home)| home.clone()))
-            .unwrap_or_else(|| PathBuf::from(format!("/home/{user}")))
     } else {
         passwd_entry
             .as_ref()
@@ -974,14 +975,14 @@ fn check_node_entrypoints(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
     if let Some(descriptor) = descriptor
-        && descriptor.source.as_deref() == Some("nixos")
+        && !descriptor.managed_units.is_empty()
     {
         let units = &descriptor.managed_units;
 
         if units.is_empty() {
             return DeploymentReadinessItem::fail(
                 "node-entrypoints",
-                "NixOS deployment descriptor does not declare managed units",
+                "Deployment descriptor does not declare managed units",
             );
         }
 
@@ -1071,9 +1072,10 @@ fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.terminal.surface.enabled)
-        .unwrap_or(false)
+    let terminal_enabled = descriptor
+        .map(|value| value.terminal.surface.enabled)
+        .unwrap_or(true);
+    if !terminal_enabled
     {
         return DeploymentReadinessItem::skip(
             "terminal-sources",
@@ -1121,10 +1123,10 @@ fn check_terminal_sources(
             ),
         )
     } else {
-        DeploymentReadinessItem::skip(
+        DeploymentReadinessItem::fail(
             "terminal-sources",
             format!(
-                "No terminal history sources found under {} for target user {}",
+                "No readable terminal history sources found under {} for target user {}",
                 target.home.display(),
                 target.user
             ),
@@ -1137,9 +1139,10 @@ fn check_hyprland_socket(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.desktop.surface.enabled)
-        .unwrap_or(false)
+    let desktop_enabled = descriptor
+        .map(|value| value.desktop.surface.enabled)
+        .unwrap_or(true);
+    if !desktop_enabled
     {
         return DeploymentReadinessItem::skip(
             "hyprland-socket",
@@ -1184,10 +1187,10 @@ fn check_hyprland_socket(
 
     let hypr_dir = runtime_dir_for_target(target, descriptor).join("hypr");
     if !hypr_dir.exists() {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!(
-                "{} does not exist for target user {} (Hyprland not running or different UID)",
+                "{} does not exist for target user {} (Hyprland runtime is unavailable)",
                 hypr_dir.display(),
                 target.user
             ),
@@ -1261,9 +1264,10 @@ fn check_activitywatch_db(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.desktop.surface.enabled)
-        .unwrap_or(false)
+    let desktop_enabled = descriptor
+        .map(|value| value.desktop.surface.enabled)
+        .unwrap_or(true);
+    if !desktop_enabled
     {
         return DeploymentReadinessItem::skip(
             "activitywatch-db",
@@ -1273,7 +1277,7 @@ fn check_activitywatch_db(
 
     let path = activitywatch_db_for_target(target, descriptor);
     if !path.exists() {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::fail(
             "activitywatch-db",
             format!(
                 "No ActivityWatch SQLite database found at {} for target user {}",
@@ -2222,6 +2226,23 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_resolve_target_identity_rejects_implicit_shell_user()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.clear("SINEX_TARGET_USER");
+        env.clear("SINEX_TARGET_UID");
+        env.clear("SINEX_TARGET_HOME");
+        env.set("USER", "current-user");
+        env.set("UID", "1000");
+        env.set("HOME", "/tmp/current-home");
+
+        let error = resolve_target_identity(None)
+            .expect_err("deployment readiness should not guess the shell user");
+        assert!(error.to_string().contains("refuses to guess the target user"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_terminal_sources_accepts_atuin_sqlite_history()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
@@ -2257,6 +2278,38 @@ mod tests {
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("atuin:"));
         assert!(item.description.contains("bash:"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_terminal_sources_fails_when_enabled_sources_are_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home)?;
+
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                terminal: sinex_primitives::TerminalDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    history_sources: vec![sinex_primitives::TerminalHistorySource {
+                        path: PathBuf::from("/tmp/probe-home/.bash_history"),
+                        shell: "bash".to_string(),
+                    }],
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("No readable terminal history sources"));
         Ok(())
     }
 
@@ -2298,6 +2351,37 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_check_activitywatch_db_fails_when_enabled_path_is_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home)?;
+        let missing_db = home.join(".local/share/activitywatch/aw-server-rust/sqlite.db");
+
+        let item = check_activitywatch_db(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                desktop: sinex_primitives::DesktopDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    activitywatch_db_path: Some(missing_db.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains(&missing_db.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_hyprland_socket_rejects_multiple_instances_without_signature()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
@@ -2326,6 +2410,35 @@ mod tests {
         );
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_hyprland_socket_fails_when_enabled_runtime_is_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let runtime_dir = temp.path().join("missing-runtime");
+
+        let item = check_hyprland_socket(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: temp.path().to_path_buf(),
+            },
+            Some(&DeploymentReadinessDescriptor {
+                desktop: sinex_primitives::DesktopDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    runtime_dir: Some(runtime_dir),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("Hyprland runtime is unavailable"));
         Ok(())
     }
 
