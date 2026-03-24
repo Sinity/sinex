@@ -15,8 +15,9 @@ use serde_json::json;
 use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{DbPoolExt, create_pool};
 use sinex_node_sdk::HistoricalImporter;
-use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::{Id, Timestamp, Uuid};
+use sinex_primitives::domain::{EventSource, EventType, RecordedPath};
+use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
+use sinex_primitives::{Id, Uuid};
 
 /// Historical data import subcommands
 #[derive(Debug, Subcommand)]
@@ -133,19 +134,33 @@ impl AtuinImportCommand {
 
         // Register source material via HistoricalImporter
         let source_path = self.db_path.to_string_lossy();
+        let deterministic_material_id = HistoricalImporter::material_uuid_for_path(&source_path);
+        let existing_event_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1",
+        )
+        .bind(deterministic_material_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+        if !self.resume && existing_event_count > 0 {
+            return Err(color_eyre::eyre::eyre!(
+                "Material {deterministic_material_id} already has {existing_event_count} imported events. \
+                 Rerun with --resume to continue from the recorded row offset instead of duplicating history."
+            ));
+        }
+
         let mut importer = if self.resume {
             // Check if material already registered
-            let material_id = HistoricalImporter::material_uuid_for_path(&source_path);
             let existing = pool
                 .source_materials()
-                .get_by_id(Id::from_uuid(material_id))
+                .get_by_id(Id::from_uuid(deterministic_material_id))
                 .await
                 .ok()
                 .flatten();
 
             if existing.is_some() {
-                println!("Resuming import (material_id={material_id})");
-                HistoricalImporter::resume(&pool, material_id)
+                println!("Resuming import (material_id={deterministic_material_id})");
+                HistoricalImporter::resume(&pool, deterministic_material_id)
             } else {
                 HistoricalImporter::register(
                     &pool,
@@ -178,7 +193,9 @@ impl AtuinImportCommand {
         // Determine resume offset: count events already imported from this material
         let resume_offset: i64 = if self.resume {
             sqlx::query_scalar(
-                "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1",
+                "SELECT COALESCE(MAX(offset_end), 0) \
+                 FROM core.events \
+                 WHERE source_material_id = $1 AND offset_kind = 'row'",
             )
             .bind(material_id)
             .fetch_one(&pool)
@@ -202,7 +219,7 @@ impl AtuinImportCommand {
                 "SELECT id, timestamp, duration, exit, command, cwd, session, hostname \
                  FROM history \
                  WHERE deleted_at IS NULL \
-                 ORDER BY timestamp ASC \
+                 ORDER BY timestamp ASC, ROWID ASC \
                  LIMIT -1 OFFSET ?1",
             )
             .map_err(|e| color_eyre::eyre::eyre!("Failed to prepare SQLite query: {e}"))?;
@@ -222,109 +239,118 @@ impl AtuinImportCommand {
             })
             .map_err(|e| color_eyre::eyre::eyre!("Failed to query Atuin history: {e}"))?;
 
-        let mut batch: Vec<StreamBatchRow> = Vec::with_capacity(self.batch_size);
-        let mut row_index: i64 = resume_offset;
-        let mut total_submitted: u64 = 0;
+        let import_result: Result<(u64, u64, std::time::Duration)> = async {
+            let mut batch: Vec<StreamBatchRow> = Vec::with_capacity(self.batch_size);
+            let mut row_index: i64 = resume_offset;
+            let mut total_submitted: u64 = 0;
 
-        for row_result in rows {
-            let row = row_result
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to read Atuin row: {e}"))?;
+            for row_result in rows {
+                let row = row_result
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to read Atuin row: {e}"))?;
 
-            // Parse timestamp: Atuin stores nanoseconds since epoch
-            let ts_nanos = row.timestamp;
-            let ts_orig = Timestamp::from_unix_timestamp_nanos(i128::from(ts_nanos))
-                .unwrap_or(Timestamp::UNIX_EPOCH);
+                let payload = match AtuinCommandExecutedPayload::from_raw_history(
+                    row.command,
+                    RecordedPath::from(row.cwd),
+                    row.exit,
+                    row.duration,
+                    row.id,
+                    row.session,
+                    row.timestamp,
+                    row.hostname,
+                ) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        importer.quarantine_row(
+                            Some(row_index),
+                            &format!("invalid Atuin row: {error}"),
+                        );
+                        row_index += 1;
+                        continue;
+                    }
+                };
 
-            // Compute end timestamp: start + duration (duration is also in nanoseconds)
-            let ts_end = Timestamp::from_unix_timestamp_nanos(
-                i128::from(ts_nanos) + i128::from(row.duration),
-            )
-            .unwrap_or(ts_orig);
+                let host = payload.hostname.clone();
+                let ts_orig = payload.ts_start_orig;
+                let payload = serde_json::to_value(payload)
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to serialize Atuin payload: {e}"))?;
 
-            // Capture hostname before payload consumes it
-            let host = HostName::new(&row.hostname);
+                let batch_row = StreamBatchRow {
+                    id: Uuid::now_v7(),
+                    source: source.clone(),
+                    event_type: event_type.clone(),
+                    ts_orig,
+                    host,
+                    payload,
+                    source_material_id: Some(material_id_typed.clone()),
+                    anchor_byte: Some(row_index),
+                    offset_start: Some(row_index),
+                    offset_end: Some(row_index + 1),
+                    offset_kind: Some("row".to_string()),
+                    source_event_ids: None,
+                    payload_schema_id: None,
+                    node_run_id: None,
+                    associated_blob_ids: None,
+                    temporal_policy: None,
+                    semantics_version: None,
+                    scope_key: None,
+                    equivalence_key: None,
+                    created_by_operation_id: None,
+                    node_model: None,
+                };
 
-            // Build the typed payload JSON matching AtuinCommandExecutedPayload
-            let payload = json!({
-                "command_string": row.command,
-                "cwd": row.cwd,
-                "exit_code": row.exit as i32,
-                "duration_ns": row.duration,
-                "atuin_history_id": row.id,
-                "atuin_session_id": row.session,
-                "timestamp": ts_nanos,
-                "ts_start_orig": ts_orig.format_rfc3339(),
-                "ts_end_orig": ts_end.format_rfc3339(),
-                "hostname": row.hostname,
-                "terminal_session_uuid": null,
-            });
+                batch.push(batch_row);
+                row_index += 1;
 
-            let batch_row = StreamBatchRow {
-                id: Uuid::now_v7(),
-                source: source.clone(),
-                event_type: event_type.clone(),
-                ts_orig,
-                host,
-                payload,
-                source_material_id: Some(material_id_typed.clone()),
-                anchor_byte: Some(row_index),
-                offset_start: Some(row_index),
-                offset_end: Some(row_index + 1),
-                offset_kind: Some("row".to_string()),
-                source_event_ids: None,
-                payload_schema_id: None,
-                node_run_id: None,
-                associated_blob_ids: None,
-                temporal_policy: None,
-                semantics_version: None,
-                scope_key: None,
-                equivalence_key: None,
-                created_by_operation_id: None,
-                node_model: None,
-            };
+                if batch.len() >= self.batch_size {
+                    let submitted = importer.submit_batch(std::mem::take(&mut batch)).await
+                        .map_err(|e| color_eyre::eyre::eyre!("Batch submit failed: {e}"))?;
+                    total_submitted += submitted;
+                    batch = Vec::with_capacity(self.batch_size);
 
-            batch.push(batch_row);
-            row_index += 1;
-
-            if batch.len() >= self.batch_size {
-                let submitted = importer.submit_batch(std::mem::take(&mut batch)).await
-                    .map_err(|e| color_eyre::eyre::eyre!("Batch submit failed: {e}"))?;
-                total_submitted += submitted;
-                batch = Vec::with_capacity(self.batch_size);
-
-                // Progress every 5000 events
-                if total_submitted % 5000 < self.batch_size as u64 {
-                    let elapsed = started.elapsed().as_secs_f64();
-                    let rate = total_submitted as f64 / elapsed;
-                    let remaining = (total_rows - resume_offset) as u64 - total_submitted;
-                    let eta = remaining as f64 / rate;
-                    println!(
-                        "  [{total_submitted}/{} events] {:.0} events/sec, ETA {:.0}s",
-                        total_rows - resume_offset,
-                        rate,
-                        eta
-                    );
+                    if total_submitted % 5000 < self.batch_size as u64 {
+                        let elapsed = started.elapsed().as_secs_f64();
+                        let rate = total_submitted as f64 / elapsed;
+                        let remaining = (total_rows - resume_offset) as u64 - total_submitted;
+                        let eta = remaining as f64 / rate;
+                        println!(
+                            "  [{total_submitted}/{} events] {:.0} events/sec, ETA {:.0}s",
+                            total_rows - resume_offset,
+                            rate,
+                            eta
+                        );
+                    }
                 }
             }
+
+            if !batch.is_empty() {
+                importer.submit_batch(batch).await
+                    .map_err(|e| color_eyre::eyre::eyre!("Final batch submit failed: {e}"))?;
+            }
+
+            importer.finalize(None).await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to finalize import: {e}"))?;
+
+            Ok((
+                importer.events_processed(),
+                importer.rows_quarantined(),
+                started.elapsed(),
+            ))
         }
+        .await;
 
-        // Submit remaining rows
-        if !batch.is_empty() {
-            let submitted = importer.submit_batch(batch).await
-                .map_err(|e| color_eyre::eyre::eyre!("Final batch submit failed: {e}"))?;
-            total_submitted += submitted;
-        }
+        let (events_processed, rows_quarantined, elapsed) = match import_result {
+            Ok(stats) => stats,
+            Err(error) => {
+                if let Err(mark_error) = importer.fail(&error.to_string()).await {
+                    return Err(color_eyre::eyre::eyre!(
+                        "{error}\n(additionally failed to mark material {material_id} as failed: {mark_error})"
+                    ));
+                }
+                return Err(error);
+            }
+        };
 
-        let elapsed = started.elapsed();
-        let rate = total_submitted as f64 / elapsed.as_secs_f64();
-
-        // Capture stats before finalize consumes the importer
-        let events_processed = importer.events_processed();
-        let rows_quarantined = importer.rows_quarantined();
-
-        // Finalize the source material
-        importer.finalize(None).await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to finalize import: {e}"))?;
+        let rate = events_processed as f64 / elapsed.as_secs_f64();
 
         println!();
         println!("Import complete:");

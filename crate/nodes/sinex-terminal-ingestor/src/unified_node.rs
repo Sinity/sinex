@@ -23,13 +23,12 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::{
     Bytes, Seconds,
-    domain::{HostName, RecordedPath, SanitizedPath},
+    domain::{RecordedPath, SanitizedPath},
     events::{
         EventPayload,
         payloads::shell::{AtuinCommandExecutedPayload, HistoryCommandImportedPayload},
     },
     temporal::Timestamp,
-    units::{ExitCode, Nanoseconds},
     validate_path,
 };
 use std::{
@@ -1386,6 +1385,26 @@ async fn process_atuin_entry(
     else {
         return Ok(());
     };
+    let payload = match AtuinCommandExecutedPayload::from_raw_history(
+        final_command.clone(),
+        RecordedPath::from(entry.cwd.clone()),
+        entry.exit_code,
+        entry.duration_ns,
+        entry.history_id.clone(),
+        entry.session_id.clone(),
+        entry.timestamp_ns,
+        entry.hostname.clone(),
+    ) {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(
+                row_id = entry.row_id,
+                error = %error,
+                "Skipping Atuin row with invalid timestamp or duration"
+            );
+            return Ok(());
+        }
+    };
     let bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
@@ -1406,29 +1425,6 @@ async fn process_atuin_entry(
         .finalize(handle, MATERIAL_REASON_HISTORY)
         .await
         .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
-
-    let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(entry.timestamp_ns))
-        .unwrap_or(Timestamp::UNIX_EPOCH);
-    let duration_ns = entry.duration_ns.max(0);
-    let ts_end_orig = Timestamp::from_unix_timestamp_nanos(
-        i128::from(entry.timestamp_ns) + i128::from(duration_ns),
-    )
-    .unwrap_or(ts_start_orig);
-    let exit_code = i32::try_from(entry.exit_code).unwrap_or(i32::MAX);
-
-    let payload = AtuinCommandExecutedPayload {
-        command_string: final_command.into(),
-        cwd: RecordedPath::from(entry.cwd.clone()),
-        exit_code: ExitCode::from_raw(exit_code),
-        duration_ns: Nanoseconds::from_nanos(duration_ns),
-        atuin_history_id: entry.history_id.clone(),
-        atuin_session_id: entry.session_id.clone(),
-        timestamp: entry.timestamp_ns,
-        ts_start_orig,
-        ts_end_orig,
-        hostname: HostName::new(entry.hostname.clone()),
-        terminal_session_uuid: None,
-    };
 
     let event = payload
         .from_material(material_id)
@@ -2215,6 +2211,81 @@ mod tests {
                 "history watcher should append only new commands in order"
             );
         }
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_atuin_entry_skips_invalid_duration(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-atuin-invalid-duration")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let work_dir = tempfile::tempdir()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
+            .await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/atuin/history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "atuin".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/atuin/history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::AtuinSqlite,
+        };
+
+        let entry = crate::atuin_history::AtuinHistoryEntry {
+            row_id: 42,
+            history_id: "h1".to_string(),
+            timestamp_ns: 1_700_000_000_000_000_000,
+            duration_ns: -1,
+            exit_code: 0,
+            command: "echo 'hello from atuin'".to_string(),
+            cwd: "/realm/project/sinex".to_string(),
+            session_id: "session-1".to_string(),
+            hostname: "test-host".to_string(),
+        };
+        let mut recent_hashes = VecDeque::new();
+        process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes).await?;
+
+        let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
+        assert!(next.is_err(), "invalid Atuin row should not emit an event");
 
         ingest_handle.stop().await?;
         Ok(())

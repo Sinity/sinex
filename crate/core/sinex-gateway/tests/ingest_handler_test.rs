@@ -98,3 +98,51 @@ async fn events_ingest_rejects_invalid_rfc3339_timestamp(ctx: TestContext) -> Te
     assert!(error.to_string().contains("invalid `ts_orig`"));
     Ok(())
 }
+
+#[sinex_test]
+async fn events_ingest_marks_material_failed_when_publish_fails(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    let error = handle_events_ingest(
+        &harness.services,
+        json!({
+            "source": "gateway.test",
+            "event_type": "inline.event",
+            "payload": { "value": 42 }
+        }),
+    )
+    .await
+    .expect_err("publish without an events stream should fail");
+
+    let record = sqlx::query!(
+        r#"
+        SELECT
+            status,
+            metadata
+        FROM raw.source_material_registry
+        WHERE metadata ->> 'gateway_surface' = 'events.ingest'
+        ORDER BY staged_at DESC
+        LIMIT 1
+        "#
+    )
+    .fetch_one(harness.services.pool())
+    .await?;
+
+    assert!(
+        error.to_string().contains("publish")
+            || error.to_string().contains("JetStream")
+            || error.to_string().contains("stream"),
+        "unexpected publish failure: {error}"
+    );
+    assert_eq!(record.status, "failed");
+    assert!(
+        record.metadata["failure_reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()),
+        "failure_reason should be recorded in material metadata"
+    );
+
+    Ok(())
+}

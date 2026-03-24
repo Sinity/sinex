@@ -683,8 +683,9 @@ impl SourceMaterialRepository<'_> {
     /// The table has a unique constraint on `source_identifier`, making it the natural key.
     /// On conflict (same `source_identifier)`:
     /// - The existing row is updated (id is preserved)
-    /// - Terminal statuses (completed, failed) are preserved
+    /// - The row is reset to the active sensing state for the restarted import
     /// - Metadata is deep-merged with new values
+    /// - `end_time` is cleared so terminal state does not leak into the rerun
     /// - `staged_by` and `staged_on_host` are updated if not null
     async fn register_in_flight_internal(
         &self,
@@ -742,14 +743,11 @@ impl SourceMaterialRepository<'_> {
                 $9
             )
             ON CONFLICT (source_identifier) DO UPDATE SET
-                -- Preserve terminal statuses (completed, failed)
-                status = CASE
-                    WHEN raw.source_material_registry.status IN ('completed', 'failed')
-                    THEN raw.source_material_registry.status
-                    ELSE EXCLUDED.status
-                END,
+                status = EXCLUDED.status,
                 -- Deep merge metadata, preserving existing values
                 metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
+                start_time = COALESCE(EXCLUDED.start_time, raw.source_material_registry.start_time),
+                end_time = NULL,
                 -- Update staging info
                 staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
                 staged_on_host = COALESCE(EXCLUDED.staged_on_host, raw.source_material_registry.staged_on_host)

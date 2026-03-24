@@ -115,6 +115,17 @@ impl HistoricalImporter {
         self.rows_quarantined
     }
 
+    /// Record a caller-side quarantine decision for a single source row.
+    pub fn quarantine_row(&mut self, anchor_byte: Option<i64>, reason: &str) {
+        warn!(
+            material_id = %self.material_id,
+            anchor_byte = ?anchor_byte,
+            reason,
+            "Quarantined historical import row before batch insert"
+        );
+        self.rows_quarantined += 1;
+    }
+
     /// Validate that all rows in a batch have correct provenance XOR.
     ///
     /// Returns indices of invalid rows (rows where both or neither provenance fields are set).
@@ -269,7 +280,7 @@ impl HistoricalImporter {
     }
 
     /// Finalize the import — mark source material as completed.
-    pub async fn finalize(self, total_bytes: Option<i64>) -> Result<()> {
+    pub async fn finalize(&self, total_bytes: Option<i64>) -> Result<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(self.material_id);
         self.pool
             .source_materials()
@@ -292,7 +303,7 @@ impl HistoricalImporter {
     }
 
     /// Mark the import as failed.
-    pub async fn fail(self, reason: &str) -> Result<()> {
+    pub async fn fail(&self, reason: &str) -> Result<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(self.material_id);
         self.pool
             .source_materials()
