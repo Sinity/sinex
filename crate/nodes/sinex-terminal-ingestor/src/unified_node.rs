@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, stable_material_id, stable_row_material_id,
+    SourceState, stage_stable_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -1393,24 +1393,16 @@ async fn process_fish_entry(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stable_row_material_id(ctx.path.as_str(), entry.row_id);
-    let mut handle = ctx
-        .acquisition
-        .build_material(ctx.path.as_str())
-        .with_material_id(material_id)
-        .begin()
-        .await
-        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-
-    ctx.acquisition
-        .append_slice(&mut handle, &bytes)
-        .await
-        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
-
-    ctx.acquisition
-        .finalize(handle, MATERIAL_REASON_HISTORY)
-        .await
-        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
+    let material_id = stage_stable_material(
+        ctx.acquisition.as_ref(),
+        ctx.path.as_str(),
+        &entry.row_id.to_string(),
+        &bytes,
+        MATERIAL_REASON_HISTORY,
+        None,
+    )
+    .await
+    .map_err(|e| SinexError::service("Failed to stage Fish history material").with_source(e))?;
 
     let payload = HistoryCommandImportedPayload {
         command: final_command,
@@ -1479,24 +1471,16 @@ async fn process_atuin_entry(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stable_material_id(ctx.path.as_str(), &entry.history_id);
-    let mut handle = ctx
-        .acquisition
-        .build_material(ctx.path.as_str())
-        .with_material_id(material_id)
-        .begin()
-        .await
-        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-
-    ctx.acquisition
-        .append_slice(&mut handle, &bytes)
-        .await
-        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
-
-    ctx.acquisition
-        .finalize(handle, MATERIAL_REASON_HISTORY)
-        .await
-        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
+    let material_id = stage_stable_material(
+        ctx.acquisition.as_ref(),
+        ctx.path.as_str(),
+        &entry.history_id,
+        &bytes,
+        MATERIAL_REASON_HISTORY,
+        None,
+    )
+    .await
+    .map_err(|e| SinexError::service("Failed to stage Atuin history material").with_source(e))?;
 
     let event = payload
         .from_material(material_id)
@@ -2247,7 +2231,7 @@ mod tests {
         };
         assert_eq!(
             material_uuid,
-            stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
+            sinex_node_sdk::stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
         );
 
         ingest_handle.stop().await?;

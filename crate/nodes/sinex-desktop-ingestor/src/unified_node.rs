@@ -26,7 +26,7 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
-    stable_row_material_id,
+    stage_stable_material,
     stage_as_you_go::StageAsYouGoContext,
     watcher_handle::WatcherHandle,
 };
@@ -286,7 +286,6 @@ impl DesktopNode {
             .as_ref()
             .ok_or_else(|| SinexError::lifecycle("Desktop stage context not initialized"))?;
 
-        let material_id = stable_row_material_id(db_path.as_str(), entry.row_id);
         let material_metadata = json!({
             "bucket_id": entry.bucket_id,
             "kind": entry.kind.as_str(),
@@ -298,34 +297,18 @@ impl DesktopNode {
                 SinexError::serialization("failed to serialize ActivityWatch source material")
                     .with_std_error(&error)
             })?;
-
-        let mut handle = acquisition
-            .build_material(db_path.as_str())
-            .with_material_id(material_id)
-            .with_metadata(material_metadata.clone())
-            .begin()
-            .await
-            .map_err(|error| {
-                SinexError::service("failed to begin ActivityWatch material").with_source(error)
-            })?;
-
-        acquisition
-            .append_slice(&mut handle, &material_bytes)
-            .await
-            .map_err(|error| {
-                SinexError::service("failed to append ActivityWatch material").with_source(error)
-            })?;
-
-        acquisition
-            .finalize_with_metadata(
-                handle,
-                MATERIAL_REASON_ACTIVITYWATCH_HISTORY,
-                material_metadata,
-            )
-            .await
-            .map_err(|error| {
-                SinexError::service("failed to finalize ActivityWatch material").with_source(error)
-            })?;
+        let material_id = stage_stable_material(
+            acquisition.as_ref(),
+            db_path.as_str(),
+            &entry.row_id.to_string(),
+            &material_bytes,
+            MATERIAL_REASON_ACTIVITYWATCH_HISTORY,
+            Some(material_metadata),
+        )
+        .await
+        .map_err(|error| {
+            SinexError::service("failed to stage ActivityWatch material").with_source(error)
+        })?;
 
         let host = HostName::new(entry.host.clone());
         let title = |value: Option<String>| {

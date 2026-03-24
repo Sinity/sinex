@@ -180,6 +180,8 @@ pub use sqlite_source::{
     is_sqlite_with_tables, max_row_id_for_query, read_rows_after, stable_material_id,
     stable_row_material_id,
 };
+#[cfg(feature = "messaging")]
+pub use sqlite_source::stage_stable_material;
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};

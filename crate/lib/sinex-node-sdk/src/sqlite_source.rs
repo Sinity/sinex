@@ -1,5 +1,9 @@
+#[cfg(feature = "messaging")]
+use crate::{NodeResult, acquisition_manager::AcquisitionManager};
 use camino::Utf8Path;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row};
+#[cfg(feature = "messaging")]
+use serde_json::Value as JsonValue;
 use sinex_primitives::Uuid;
 use std::path::Path;
 
@@ -66,4 +70,35 @@ pub fn stable_material_id(source_identifier: &str, stable_key: &str) -> Uuid {
 #[must_use]
 pub fn stable_row_material_id(source_identifier: &str, row_id: i64) -> Uuid {
     stable_material_id(source_identifier, &row_id.to_string())
+}
+
+#[cfg(feature = "messaging")]
+pub async fn stage_stable_material(
+    acquisition: &AcquisitionManager,
+    source_identifier: &str,
+    stable_key: &str,
+    bytes: &[u8],
+    reason: &str,
+    metadata: Option<JsonValue>,
+) -> NodeResult<Uuid> {
+    let material_id = stable_material_id(source_identifier, stable_key);
+    let mut builder = acquisition
+        .build_material(source_identifier)
+        .with_material_id(material_id);
+    if let Some(metadata_value) = metadata.clone() {
+        builder = builder.with_metadata(metadata_value);
+    }
+
+    let mut handle = builder.begin().await?;
+    acquisition.append_slice(&mut handle, bytes).await?;
+
+    if let Some(metadata_value) = metadata {
+        acquisition
+            .finalize_with_metadata(handle, reason, metadata_value)
+            .await?;
+    } else {
+        acquisition.finalize(handle, reason).await?;
+    }
+
+    Ok(material_id)
 }
