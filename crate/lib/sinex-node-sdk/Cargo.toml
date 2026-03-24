@@ -70,6 +70,8 @@ workspace = true
 features = ["derive"]
 [dependencies.dirs]
 workspace = true
+[dependencies.rusqlite]
+workspace = true
 [dependencies.validator]
 workspace = true
 [dependencies.gethostname]

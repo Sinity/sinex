@@ -28,6 +28,7 @@
 //! ```
 
 use async_nats::Client as NatsClient;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
     IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
@@ -35,7 +36,6 @@ use sinex_primitives::events::payloads::{
     StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, EventId, Provenance};
-use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -156,7 +156,15 @@ impl SelfObserver {
             return parts.join("|");
         };
 
-        for key in ["component", "name", "stream", "pool", "node_type", "method", "token_prefix"] {
+        for key in [
+            "component",
+            "name",
+            "stream",
+            "pool",
+            "node_type",
+            "method",
+            "token_prefix",
+        ] {
             if let Some(value) = payload.get(key) {
                 let value = value
                     .as_str()
@@ -667,21 +675,26 @@ mod tests {
     async fn test_metric_reservations_are_per_metric_identity() -> TestResult<()> {
         let observer = test_observer();
 
-        assert!(observer
-            .reserve_metric_slot("metric.counter|name=assembly_started")
-            .await);
-        assert!(observer
-            .reserve_metric_slot("metric.counter|name=assembly_completed")
-            .await);
-        assert!(!observer
-            .reserve_metric_slot("metric.counter|name=assembly_started")
-            .await);
+        assert!(
+            observer
+                .reserve_metric_slot("metric.counter|name=assembly_started")
+                .await
+        );
+        assert!(
+            observer
+                .reserve_metric_slot("metric.counter|name=assembly_completed")
+                .await
+        );
+        assert!(
+            !observer
+                .reserve_metric_slot("metric.counter|name=assembly_started")
+                .await
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_release_metric_slot_clears_failed_publish_reservation(
-    ) -> TestResult<()> {
+    async fn test_release_metric_slot_clears_failed_publish_reservation() -> TestResult<()> {
         let observer = test_observer();
         let key = "metric.counter|name=assembly_completed";
 

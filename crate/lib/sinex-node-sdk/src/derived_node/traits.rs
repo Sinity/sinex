@@ -44,7 +44,6 @@ impl Default for DerivedNodeConfig {
     }
 }
 
-
 // ── TransducerNode ─────────────────────────────────────────────────────
 
 /// A 1:1 event transducer: one input event produces zero or one output event.

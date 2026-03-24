@@ -75,6 +75,8 @@ pub struct DesktopDeploymentSurface {
     #[serde(flatten)]
     pub surface: DeploymentSurface,
     #[serde(default)]
+    pub activitywatch_db_path: Option<PathBuf>,
+    #[serde(default)]
     pub runtime_dir: Option<PathBuf>,
     #[serde(default)]
     pub wayland_display: Option<String>,

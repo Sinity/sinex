@@ -466,7 +466,8 @@ let
         ++ optional (sat.session.waylandDisplay != null) "WAYLAND_DISPLAY=${sat.session.waylandDisplay}"
         ++ optional (sat.session.hyprlandInstanceSignature != null) "SINEX_HYPRLAND_INSTANCE_SIGNATURE=${sat.session.hyprlandInstanceSignature}"
         ++ optional (sat.session.hyprlandEventSocket != null) "SINEX_HYPRLAND_EVENT_SOCKET=${sat.session.hyprlandEventSocket}"
-        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}";
+        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}"
+        ++ optional (sat.history.activitywatchDbPath != null) "SINEX_ACTIVITYWATCH_DB_PATH=${sat.history.activitywatchDbPath}";
       accessSetupScript =
         if targetUser == null then null else pkgs.writeShellScript "sinex-desktop-target-access" ''
           set -euo pipefail
@@ -476,6 +477,7 @@ let
           CONFIGURED_RUNTIME_DIR=${escapeShellArg (if sat.session.runtimeDir != null then sat.session.runtimeDir else "")}
           CONFIGURED_WAYLAND_DISPLAY=${escapeShellArg (if sat.session.waylandDisplay != null then sat.session.waylandDisplay else "")}
           CONFIGURED_HYPRLAND_SIGNATURE=${escapeShellArg (if sat.session.hyprlandInstanceSignature != null then sat.session.hyprlandInstanceSignature else "")}
+          CONFIGURED_ACTIVITYWATCH_DB=${escapeShellArg (if sat.history.activitywatchDbPath != null then sat.history.activitywatchDbPath else "")}
           ENV_FILE=${escapeShellArg bridgeEnvFile}
           SETFACL=${pkgs.acl}/bin/setfacl
           ID=${pkgs.coreutils}/bin/id
@@ -512,6 +514,14 @@ let
             if [ -S "$path" ]; then
               grant_parent_dirs "$("$DIRNAME" "$path")"
               "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || true
+            fi
+          }
+
+          grant_file_read() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              grant_parent_dirs "$path"
+              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || true
             fi
           }
 
@@ -592,6 +602,10 @@ let
             fi
             if [ -n "$HYPRLAND_SIGNATURE" ]; then
               echo "SINEX_HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
+            fi
+            if [ -n "$CONFIGURED_ACTIVITYWATCH_DB" ]; then
+              grant_file_read "$CONFIGURED_ACTIVITYWATCH_DB"
+              echo "SINEX_ACTIVITYWATCH_DB_PATH=$CONFIGURED_ACTIVITYWATCH_DB"
             fi
           } > "$ENV_FILE"
 

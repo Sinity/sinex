@@ -351,7 +351,10 @@ async fn test_phase4_filesystem_permissions() -> TestResult<()> {
                     .and_then(Value::as_object)
                     .unwrap_or_else(|| panic!("missing directory details for {expected_dir}"));
                 assert_eq!(entry.get("exists").and_then(Value::as_bool), Some(true));
-                assert_eq!(entry.get("is_directory").and_then(Value::as_bool), Some(true));
+                assert_eq!(
+                    entry.get("is_directory").and_then(Value::as_bool),
+                    Some(true)
+                );
                 assert_eq!(entry.get("writable").and_then(Value::as_bool), Some(true));
             }
 
@@ -399,7 +402,8 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
             assert!(
                 messages
                     .iter()
-                    .any(|message| message.contains(&work_dir_str) && message.contains("not writable")),
+                    .any(|message| message.contains(&work_dir_str)
+                        && message.contains("not writable")),
                 "missing work dir should be reported explicitly; messages={messages:#?}"
             );
             assert!(
@@ -509,8 +513,13 @@ async fn test_phase5_configuration_event_sources_follow_home_contents(
     let temp = tempfile::tempdir()?;
     let home = temp.path().join("home");
     fs::create_dir_all(home.join(".local/share/atuin"))?;
+    fs::create_dir_all(home.join(".local/share/activitywatch/aw-server-rust"))?;
     fs::write(home.join(".bash_history"), "echo hello\n")?;
     fs::write(home.join(".local/share/atuin/history.db"), "")?;
+    fs::write(
+        home.join(".local/share/activitywatch/aw-server-rust/sqlite.db"),
+        "",
+    )?;
 
     with_env_vars(
         &[
@@ -518,7 +527,8 @@ async fn test_phase5_configuration_event_sources_follow_home_contents(
             ("HOME", home.display().to_string()),
         ],
         || async {
-            let (_status, details, _messages) = configuration::verify_configuration_generation().await?;
+            let (_status, details, _messages) =
+                configuration::verify_configuration_generation().await?;
 
             let sources = details
                 .get("event_sources")
@@ -536,6 +546,13 @@ async fn test_phase5_configuration_event_sources_follow_home_contents(
             assert_eq!(
                 sources
                     .get("atuin")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(true)
@@ -565,7 +582,8 @@ async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
             ("HOME", home.display().to_string()),
         ],
         || async {
-            let (_status, details, _messages) = configuration::verify_configuration_generation().await?;
+            let (_status, details, _messages) =
+                configuration::verify_configuration_generation().await?;
 
             let sources = details
                 .get("event_sources")
@@ -583,6 +601,13 @@ async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
             assert_eq!(
                 sources
                     .get("atuin")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(false)
@@ -607,8 +632,13 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
     let configured_home = temp.path().join("configured-home");
     fs::create_dir_all(empty_home.join(".local/share"))?;
     fs::create_dir_all(configured_home.join(".local/share/atuin"))?;
+    fs::create_dir_all(configured_home.join(".local/share/activitywatch/aw-server-rust"))?;
     fs::write(configured_home.join(".bash_history"), "echo hello\n")?;
     fs::write(configured_home.join(".local/share/atuin/history.db"), "")?;
+    fs::write(
+        configured_home.join(".local/share/activitywatch/aw-server-rust/sqlite.db"),
+        "",
+    )?;
 
     let descriptor_path = temp.path().join("deployment-readiness.json");
     fs::write(
@@ -629,6 +659,11 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
                         "shell": "atuin"
                     }
                 ]
+            },
+            "desktop": {
+                "enabled": true,
+                "instances": 1,
+                "activitywatch_db_path": configured_home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")
             }
         }))?,
     )?;
@@ -662,6 +697,13 @@ async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
             assert_eq!(
                 sources
                     .get("atuin")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("activitywatch")
                     .and_then(|value| value.get("available"))
                     .and_then(Value::as_bool),
                 Some(true)
@@ -741,7 +783,8 @@ async fn test_phase7_integration_success(ctx: TestContext) -> TestResult<()> {
         .map(|(_, suffix)| suffix.to_string())
         .ok_or_else(|| color_eyre::eyre::eyre!("expected suffixed database name in test URL"))?;
     let env = SinexEnvironment::new(&env_name)?;
-    let _environment_guard = sinex_primitives::environment::override_environment_for_tests(&env_name)?;
+    let _environment_guard =
+        sinex_primitives::environment::override_environment_for_tests(&env_name)?;
     let expected_checkpoint_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
     let topology = JetStreamTopology::new(
         &env,

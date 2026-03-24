@@ -4,6 +4,7 @@
 
 //! Desktop ingestor integrating clipboard and window-sensing feeds.
 
+mod activitywatch_history;
 mod clipboard;
 mod window_manager;
 

@@ -624,12 +624,15 @@ fn path_from_env_or_default(env_key: &str, default_path: PathBuf) -> Option<Path
         .or_else(|| default_path.exists().then_some(default_path))
 }
 
-fn load_deployment_descriptor() -> (Option<DeploymentReadinessDescriptor>, DeploymentReadinessItem) {
+fn load_deployment_descriptor() -> (
+    Option<DeploymentReadinessDescriptor>,
+    DeploymentReadinessItem,
+) {
     let configured_path = DeploymentReadinessDescriptor::configured_path();
     match DeploymentReadinessDescriptor::load() {
         Ok(Some(descriptor)) => {
-            let source = configured_path
-                .unwrap_or_else(DeploymentReadinessDescriptor::default_path);
+            let source =
+                configured_path.unwrap_or_else(DeploymentReadinessDescriptor::default_path);
             let mode = match descriptor.mode {
                 DeploymentReadinessMode::Prepared => "prepared",
                 DeploymentReadinessMode::Enabled => "enabled",
@@ -659,10 +662,7 @@ fn load_deployment_descriptor() -> (Option<DeploymentReadinessDescriptor>, Deplo
         ),
         Err(error) => (
             None,
-            DeploymentReadinessItem::fail(
-                "deployment-descriptor",
-                error.to_string(),
-            ),
+            DeploymentReadinessItem::fail("deployment-descriptor", error.to_string()),
         ),
     }
 }
@@ -693,7 +693,12 @@ fn command_output(command: &str, args: &[&str], description: &str) -> Result<Str
     let output = Command::new(command)
         .args(args)
         .output()
-        .wrap_err_with(|| format!("failed to run `{command} {}` for {description}", args.join(" ")))?;
+        .wrap_err_with(|| {
+            format!(
+                "failed to run `{command} {}` for {description}",
+                args.join(" ")
+            )
+        })?;
     if !output.status.success() {
         color_eyre::eyre::bail!(
             "`{command} {}` failed with status {} while resolving {description}",
@@ -808,13 +813,72 @@ fn validate_atuin_history_db(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn activitywatch_db_for_target(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> PathBuf {
+    descriptor
+        .and_then(|value| value.desktop.activitywatch_db_path.clone())
+        .unwrap_or_else(|| {
+            target
+                .home
+                .join(".local/share/activitywatch/aw-server-rust/sqlite.db")
+        })
+}
+
+fn validate_activitywatch_db(path: &Path) -> Result<()> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).wrap_err_with(
+        || {
+            format!(
+                "failed to open ActivityWatch database at {}",
+                path.display()
+            )
+        },
+    )?;
+    let has_events_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='events')",
+            [],
+            |row| row.get(0),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "failed to inspect ActivityWatch events table at {}",
+                path.display()
+            )
+        })?;
+    let has_buckets_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='buckets')",
+            [],
+            |row| row.get(0),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "failed to inspect ActivityWatch buckets table at {}",
+                path.display()
+            )
+        })?;
+    if !has_events_table || !has_buckets_table {
+        color_eyre::eyre::bail!("missing `events`/`buckets` tables");
+    }
+
+    Ok(())
+}
+
 fn runtime_dir_for_target(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> PathBuf {
     descriptor
         .and_then(|value| value.desktop.runtime_dir.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+                .ok()
+                .map(PathBuf::from)
+        })
         .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
 }
@@ -836,10 +900,7 @@ fn check_node_binaries() -> DeploymentReadinessItem {
         .collect();
 
     if missing.is_empty() {
-        DeploymentReadinessItem::pass(
-            "node-binaries",
-            "All node binaries found on PATH",
-        )
+        DeploymentReadinessItem::pass("node-binaries", "All node binaries found on PATH")
     } else {
         DeploymentReadinessItem::fail(
             "node-binaries",
@@ -950,11 +1011,19 @@ fn check_hyprland_socket(
 
     if let Some(event_socket) = descriptor
         .and_then(|value| value.desktop.hyprland_event_socket.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_EVENT_SOCKET").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
+                .ok()
+                .map(PathBuf::from)
+        })
     {
         let command_socket = descriptor
             .and_then(|value| value.desktop.hyprland_command_socket.clone())
-            .or_else(|| std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET").ok().map(PathBuf::from));
+            .or_else(|| {
+                std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
+                    .ok()
+                    .map(PathBuf::from)
+            });
         if event_socket.exists() {
             return DeploymentReadinessItem::pass(
                 "hyprland-socket",
@@ -1025,10 +1094,7 @@ fn check_hyprland_socket(
             match candidates.as_slice() {
                 [candidate] => DeploymentReadinessItem::pass(
                     "hyprland-socket",
-                    format!(
-                        "Found Hyprland event socket under {}",
-                        candidate.display()
-                    ),
+                    format!("Found Hyprland event socket under {}", candidate.display()),
                 ),
                 [] => DeploymentReadinessItem::fail(
                     "hyprland-socket",
@@ -1049,6 +1115,52 @@ fn check_hyprland_socket(
         Err(e) => DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!("Could not read {}: {e}", hypr_dir.display()),
+        ),
+    }
+}
+
+fn check_activitywatch_db(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.desktop.surface.enabled)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "activitywatch-db",
+            "Desktop ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    let path = activitywatch_db_for_target(target, descriptor);
+    if !path.exists() {
+        return DeploymentReadinessItem::skip(
+            "activitywatch-db",
+            format!(
+                "No ActivityWatch SQLite database found at {} for target user {}",
+                path.display(),
+                target.user
+            ),
+        );
+    }
+
+    match validate_activitywatch_db(&path) {
+        Ok(()) => DeploymentReadinessItem::pass(
+            "activitywatch-db",
+            format!(
+                "ActivityWatch SQLite history is readable at {} for target user {}",
+                path.display(),
+                target.user
+            ),
+        ),
+        Err(error) => DeploymentReadinessItem::fail(
+            "activitywatch-db",
+            format!(
+                "Unreadable ActivityWatch history for {} at {} ({error})",
+                target.user,
+                path.display()
+            ),
         ),
     }
 }
@@ -1097,10 +1209,7 @@ fn check_inotify_limit(
     };
 
     if value >= RECOMMENDED_INOTIFY_MAX_USER_WATCHES {
-        DeploymentReadinessItem::pass(
-            "inotify-max-user-watches",
-            format!("Configured to {value}"),
-        )
+        DeploymentReadinessItem::pass("inotify-max-user-watches", format!("Configured to {value}"))
     } else {
         DeploymentReadinessItem::fail(
             "inotify-max-user-watches",
@@ -1186,8 +1295,8 @@ async fn check_schema_apply(
         }
     };
 
-    use sqlx::postgres::PgPoolOptions;
     use sqlx::Row;
+    use sqlx::postgres::PgPoolOptions;
 
     let pool = match PgPoolOptions::new()
         .max_connections(1)
@@ -1222,10 +1331,9 @@ async fn check_schema_apply(
                 )
             }
         }
-        Err(e) => DeploymentReadinessItem::fail(
-            "schema-apply",
-            format!("Database query failed: {e}"),
-        ),
+        Err(e) => {
+            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
+        }
     }
 }
 
@@ -1355,7 +1463,9 @@ fn check_secret_materials(
         });
     let gateway_cert = descriptor
         .and_then(|value| value.secrets.gateway_tls_cert_file.clone())
-        .or_else(|| path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem")));
+        .or_else(|| {
+            path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem"))
+        });
     let gateway_key = descriptor
         .and_then(|value| value.secrets.gateway_tls_key_file.clone())
         .or_else(|| {
@@ -1386,7 +1496,10 @@ fn check_secret_materials(
         if path.is_file() {
             present.push(format!("gateway-admin-token={}", path.display()));
         } else {
-            missing.push(format!("gateway-admin-token unreadable: {}", path.display()));
+            missing.push(format!(
+                "gateway-admin-token unreadable: {}",
+                path.display()
+            ));
         }
     } else if !descriptor_present {
         missing.push(
@@ -1418,10 +1531,16 @@ fn check_secret_materials(
             key.display()
         )),
         (Some(cert), None) => {
-            missing.push(format!("gateway-tls missing key for cert {}", cert.display()));
+            missing.push(format!(
+                "gateway-tls missing key for cert {}",
+                cert.display()
+            ));
         }
         (None, Some(key)) => {
-            missing.push(format!("gateway-tls missing cert for key {}", key.display()));
+            missing.push(format!(
+                "gateway-tls missing cert for key {}",
+                key.display()
+            ));
         }
         (None, None) => {
             if !descriptor_present {
@@ -1462,11 +1581,7 @@ fn check_secret_materials(
         let description = if present.is_empty() {
             missing.join("; ")
         } else {
-            format!(
-                "{}; present: {}",
-                missing.join("; "),
-                present.join(", ")
-            )
+            format!("{}; present: {}", missing.join("; "), present.join(", "))
         };
         DeploymentReadinessItem::fail("secret-materials", description)
     }
@@ -1487,28 +1602,38 @@ async fn build_gateway_probe_client(base_url: &str) -> Result<GatewayProbeClient
                 "gateway readiness over HTTPS requires a trusted CA; set SINEX_RPC_CA_CERT or provide .sinex/tls/ca.pem"
             );
         };
-        let pem = tokio::fs::read(&ca_path)
-            .await
-            .wrap_err_with(|| format!("failed to read RPC CA certificate from {}", ca_path.display()))?;
-        let cert = reqwest::Certificate::from_pem(&pem)
-            .wrap_err_with(|| format!("failed to parse RPC CA certificate at {}", ca_path.display()))?;
+        let pem = tokio::fs::read(&ca_path).await.wrap_err_with(|| {
+            format!(
+                "failed to read RPC CA certificate from {}",
+                ca_path.display()
+            )
+        })?;
+        let cert = reqwest::Certificate::from_pem(&pem).wrap_err_with(|| {
+            format!(
+                "failed to parse RPC CA certificate at {}",
+                ca_path.display()
+            )
+        })?;
         builder = builder.add_root_certificate(cert);
     }
 
     let client_cert =
         path_from_env_or_default("SINEX_RPC_CLIENT_CERT", default_tls_dir.join("client.pem"));
-    let client_key =
-        path_from_env_or_default("SINEX_RPC_CLIENT_KEY", default_tls_dir.join("client-key.pem"));
+    let client_key = path_from_env_or_default(
+        "SINEX_RPC_CLIENT_KEY",
+        default_tls_dir.join("client-key.pem"),
+    );
     let client_identity_path = match (client_cert, client_key) {
         (Some(cert_path), Some(key_path)) => {
-            let mut pem = tokio::fs::read(&cert_path)
-                .await
-                .wrap_err_with(|| format!("failed to read RPC client certificate from {}", cert_path.display()))?;
-            pem.extend_from_slice(
-                &tokio::fs::read(&key_path)
-                    .await
-                    .wrap_err_with(|| format!("failed to read RPC client key from {}", key_path.display()))?,
-            );
+            let mut pem = tokio::fs::read(&cert_path).await.wrap_err_with(|| {
+                format!(
+                    "failed to read RPC client certificate from {}",
+                    cert_path.display()
+                )
+            })?;
+            pem.extend_from_slice(&tokio::fs::read(&key_path).await.wrap_err_with(|| {
+                format!("failed to read RPC client key from {}", key_path.display())
+            })?);
             let identity = reqwest::Identity::from_pem(&pem).wrap_err_with(|| {
                 format!(
                     "failed to parse client identity from {} and {}",
@@ -1551,8 +1676,7 @@ async fn check_gateway_ready(
         );
     }
 
-    let base_url =
-        normalize_gateway_base_url(gateway_url.unwrap_or("https://127.0.0.1:9999"));
+    let base_url = normalize_gateway_base_url(gateway_url.unwrap_or("https://127.0.0.1:9999"));
     let ready_url = format!("{base_url}/ready");
 
     let mtls_expected = env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
@@ -1560,10 +1684,7 @@ async fn check_gateway_ready(
     let probe_client = match build_gateway_probe_client(&base_url).await {
         Ok(client) => client,
         Err(error) => {
-            return DeploymentReadinessItem::fail(
-                "gateway-ready",
-                error.to_string(),
-            );
+            return DeploymentReadinessItem::fail("gateway-ready", error.to_string());
         }
     };
 
@@ -1572,9 +1693,7 @@ async fn check_gateway_ready(
         Err(error) => {
             return DeploymentReadinessItem::fail(
                 "gateway-ready",
-                if mtls_expected
-                    && probe_client.client_identity_path.is_none()
-                {
+                if mtls_expected && probe_client.client_identity_path.is_none() {
                     format!(
                         "Cannot reach {ready_url}: {error}; gateway mTLS appears enabled, but no RPC client identity was available from SINEX_RPC_CLIENT_CERT/SINEX_RPC_CLIENT_KEY or .sinex/tls/client.pem + client-key.pem"
                     )
@@ -1619,7 +1738,11 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     let cfg = crate::config::config();
     let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![descriptor_item, check_node_binaries(), check_realm_accessible()];
+    let mut items = vec![
+        descriptor_item,
+        check_node_binaries(),
+        check_realm_accessible(),
+    ];
 
     match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
@@ -1640,6 +1763,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             ));
             items.push(check_terminal_sources(&target, descriptor.as_ref()));
             items.push(check_hyprland_socket(&target, descriptor.as_ref()));
+            items.push(check_activitywatch_db(&target, descriptor.as_ref()));
         }
         Err(error) => {
             items.push(DeploymentReadinessItem::fail(
@@ -1652,6 +1776,10 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             ));
             items.push(DeploymentReadinessItem::skip(
                 "hyprland-socket",
+                "Skipped because target identity resolution failed",
+            ));
+            items.push(DeploymentReadinessItem::skip(
+                "activitywatch-db",
                 "Skipped because target identity resolution failed",
             ));
         }
@@ -1833,8 +1961,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_normalize_gateway_base_url_strips_rpc_suffix(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_normalize_gateway_base_url_strips_rpc_suffix() -> ::xtask::sandbox::TestResult<()>
+    {
         assert_eq!(
             normalize_gateway_base_url("https://127.0.0.1:9999/rpc"),
             "https://127.0.0.1:9999"
@@ -1847,8 +1975,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_deployment_readiness_report_serialization(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_deployment_readiness_report_serialization() -> ::xtask::sandbox::TestResult<()> {
         let report = DeploymentReadinessReport {
             items: vec![
                 DeploymentReadinessItem::pass("gateway-ready", "ready"),
@@ -1865,8 +1992,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_target_identity_prefers_explicit_target_env(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_resolve_target_identity_prefers_explicit_target_env()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TARGET_USER", "probe-user");
         env.set("SINEX_TARGET_UID", "4242");
@@ -1883,8 +2010,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_target_identity_prefers_descriptor_target(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_resolve_target_identity_prefers_descriptor_target()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TARGET_USER", "env-user");
         env.set("SINEX_TARGET_UID", "1000");
@@ -1898,8 +2025,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_terminal_sources_accepts_atuin_sqlite_history(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_terminal_sources_accepts_atuin_sqlite_history()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let home = temp.path().join("home");
         std::fs::create_dir_all(home.join(".local/share/atuin"))?;
@@ -1922,11 +2049,14 @@ mod tests {
             [],
         )?;
 
-        let item = check_terminal_sources(&TargetIdentity {
-            user: "probe-user".to_string(),
-            uid: 1000,
-            home,
-        }, None);
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            None,
+        );
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("atuin:"));
         assert!(item.description.contains("bash:"));
@@ -1934,8 +2064,45 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_hyprland_socket_rejects_multiple_instances_without_signature(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_activitywatch_db_accepts_valid_sqlite_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        let aw_dir = home.join(".local/share/activitywatch/aw-server-rust");
+        std::fs::create_dir_all(&aw_dir)?;
+
+        let aw_db = aw_dir.join("sqlite.db");
+        let conn = rusqlite::Connection::open(&aw_db)?;
+        conn.execute(
+            "CREATE TABLE buckets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE events (
+                bucketrow INTEGER NOT NULL,
+                starttime INTEGER NOT NULL,
+                endtime INTEGER NOT NULL,
+                data TEXT
+            )",
+            [],
+        )?;
+
+        let item = check_activitywatch_db(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            None,
+        );
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("ActivityWatch SQLite history"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_hyprland_socket_rejects_multiple_instances_without_signature()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let runtime_dir = temp.path();
         let hypr_dir = runtime_dir.join("hypr");
@@ -1952,19 +2119,22 @@ mod tests {
         env.clear("SINEX_HYPRLAND_INSTANCE_SIGNATURE");
         env.clear("HYPRLAND_INSTANCE_SIGNATURE");
 
-        let item = check_hyprland_socket(&TargetIdentity {
-            user: "probe-user".to_string(),
-            uid: 1000,
-            home: runtime_dir.to_path_buf(),
-        }, None);
+        let item = check_hyprland_socket(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: runtime_dir.to_path_buf(),
+            },
+            None,
+        );
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_build_gateway_probe_client_allows_http_without_ca(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_gateway_probe_client_allows_http_without_ca()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.clear("SINEX_RPC_CA_CERT");
         env.clear("SINEX_RPC_CLIENT_CERT");
@@ -1975,8 +2145,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_build_gateway_probe_client_requires_readable_ca_for_https(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_gateway_probe_client_requires_readable_ca_for_https()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let missing_ca = temp.path().join("missing-ca.pem");
 
@@ -1988,13 +2158,17 @@ mod tests {
         let error = build_gateway_probe_client("https://127.0.0.1:9999")
             .await
             .expect_err("HTTPS readiness probing should fail without a readable CA");
-        assert!(error.to_string().contains("failed to read RPC CA certificate"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read RPC CA certificate")
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_required_nats_stream_names_follow_environment(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_required_nats_stream_names_follow_environment() -> ::xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set("SINEX_ENVIRONMENT", "prod");
 
@@ -2006,8 +2180,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_secret_materials_requires_gateway_admin_token(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_secret_materials_requires_gateway_admin_token()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let cert = temp.path().join("server.pem");
         let key = temp.path().join("server-key.pem");
@@ -2029,8 +2203,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_secret_materials_respects_descriptor_declared_paths_only(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_secret_materials_respects_descriptor_declared_paths_only()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let db = temp.path().join("db-password");
         std::fs::write(&db, "password")?;
@@ -2053,8 +2227,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_singleton_workstation_topology_flags_fanout(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_singleton_workstation_topology_flags_fanout()
+    -> ::xtask::sandbox::TestResult<()> {
         let descriptor = DeploymentReadinessDescriptor {
             filesystem: sinex_primitives::DeploymentSurface {
                 enabled: true,

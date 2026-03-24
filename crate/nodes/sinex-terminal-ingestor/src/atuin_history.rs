@@ -6,8 +6,7 @@
 //! node pipeline instead of the separate CLI import path.
 
 use camino::Utf8PathBuf;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use std::path::Path;
+use sinex_node_sdk::{is_sqlite_with_tables, max_row_id_for_query, read_rows_after};
 
 /// Represents a single command from Atuin history.
 #[derive(Debug, Clone)]
@@ -26,25 +25,7 @@ pub struct AtuinHistoryEntry {
 /// Check if a path points to an Atuin `SQLite` history file.
 #[must_use]
 pub fn is_atuin_sqlite_history(path: &Utf8PathBuf) -> bool {
-    let path_std = Path::new(path.as_str());
-
-    if !path_std.exists() {
-        return false;
-    }
-
-    match Connection::open_with_flags(path_std, OpenFlags::SQLITE_OPEN_READ_ONLY) {
-        Ok(conn) => conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='history'",
-                [],
-                |row| {
-                    let count: i64 = row.get(0)?;
-                    Ok(count > 0)
-                },
-            )
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+    is_sqlite_with_tables(path, &["history"])
 }
 
 /// Read Atuin history entries starting from a given row offset.
@@ -56,10 +37,8 @@ pub fn read_atuin_history(
     path: &Utf8PathBuf,
     from_row_id: i64,
 ) -> Result<(Vec<AtuinHistoryEntry>, i64), rusqlite::Error> {
-    let path_std = Path::new(path.as_str());
-    let conn = Connection::open_with_flags(path_std, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-
-    let mut stmt = conn.prepare(
+    read_rows_after(
+        path,
         "SELECT
             ROWID,
             id,
@@ -73,10 +52,8 @@ pub fn read_atuin_history(
          FROM history
          WHERE deleted_at IS NULL AND ROWID > ?
          ORDER BY ROWID ASC",
-    )?;
-
-    let entries = stmt
-        .query_map([from_row_id], |row| {
+        from_row_id,
+        |row| {
             Ok(AtuinHistoryEntry {
                 row_id: row.get(0)?,
                 history_id: row.get(1)?,
@@ -88,26 +65,14 @@ pub fn read_atuin_history(
                 session_id: row.get(7)?,
                 hostname: row.get(8)?,
             })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let last_row_id = entries
-        .iter()
-        .map(|entry| entry.row_id)
-        .max()
-        .unwrap_or(from_row_id);
-
-    Ok((entries, last_row_id))
+        },
+    )
 }
 
 /// Get the current maximum row ID from the Atuin history database.
 pub fn get_max_row_id(path: &Utf8PathBuf) -> Result<i64, rusqlite::Error> {
-    let path_std = Path::new(path.as_str());
-    let conn = Connection::open_with_flags(path_std, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-
-    let max_id: Option<i64> = conn
-        .query_row("SELECT MAX(ROWID) FROM history WHERE deleted_at IS NULL", [], |row| row.get(0))
-        .optional()?;
-
-    Ok(max_id.unwrap_or(0))
+    max_row_id_for_query(
+        path,
+        "SELECT MAX(ROWID) FROM history WHERE deleted_at IS NULL",
+    )
 }

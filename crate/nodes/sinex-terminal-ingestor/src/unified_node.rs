@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState,
+    SourceState, stable_row_material_id,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -1056,14 +1056,12 @@ impl HistoryWatcherContext {
                         continue;
                     }
 
-                    match process_command(self, &entry.command, last_row_id as u64, recent_hashes)
-                        .await
-                    {
+                    match process_fish_entry(self, &entry, recent_hashes).await {
                         Ok(()) => {
                             processed += 1;
                         }
                         Err(e) => {
-                            self.record_error("process_fish_command", &e.to_string());
+                            self.record_error("process_fish_entry", &e.to_string());
                             warn!(
                                 "Failed to process Fish history entry from {}: {}",
                                 self.path, e
@@ -1115,7 +1113,10 @@ impl HistoryWatcherContext {
                         }
                         Err(e) => {
                             self.record_error("process_atuin_entry", &e.to_string());
-                            warn!("Failed to process Atuin history entry from {}: {}", self.path, e);
+                            warn!(
+                                "Failed to process Atuin history entry from {}: {}",
+                                self.path, e
+                            );
                         }
                     }
                 }
@@ -1238,10 +1239,7 @@ fn prepare_command_for_capture(
     Ok(Some(final_command))
 }
 
-async fn record_processed_command_for_test(
-    ctx: &HistoryWatcherContext,
-    command: &str,
-) {
+async fn record_processed_command_for_test(ctx: &HistoryWatcherContext, command: &str) {
     if let Some(commands) = &ctx.processed_commands {
         commands.lock().await.push(command.to_string());
     }
@@ -1262,12 +1260,13 @@ async fn process_command(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
+    let material_id = Uuid::now_v7();
     let mut handle = ctx
         .acquisition
-        .begin_material(ctx.path.as_str())
+        .build_material(ctx.path.as_str())
+        .begin()
         .await
         .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-    let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, &bytes)
@@ -1296,15 +1295,80 @@ async fn process_command(
         .build()
         .map_err(|e| SinexError::service(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| {
-            SinexError::serialization("Failed to convert event to JSON").with_source(e)
-        })?;
+        .map_err(|e| SinexError::serialization("Failed to convert event to JSON").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
         .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
+
+    ctx.metrics
+        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
+
+    Ok(())
+}
+
+async fn process_fish_entry(
+    ctx: &HistoryWatcherContext,
+    entry: &crate::fish_history::FishHistoryEntry,
+    recent_hashes: &mut VecDeque<u64>,
+) -> NodeResult<()> {
+    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let Some(final_command) =
+        prepare_command_for_capture(ctx, &entry.command, line_number, Some(recent_hashes))?
+    else {
+        return Ok(());
+    };
+    let bytes = final_command.as_bytes().to_vec();
+
+    record_processed_command_for_test(ctx, &final_command).await;
+
+    let material_id = stable_row_material_id(ctx.path.as_str(), entry.row_id);
+    let mut handle = ctx
+        .acquisition
+        .build_material(ctx.path.as_str())
+        .with_material_id(material_id)
+        .begin()
+        .await
+        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
+
+    ctx.acquisition
+        .append_slice(&mut handle, &bytes)
+        .await
+        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
+
+    ctx.acquisition
+        .finalize(handle, MATERIAL_REASON_HISTORY)
+        .await
+        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
+
+    let payload = HistoryCommandImportedPayload {
+        command: final_command,
+        timestamp: entry.when.and_then(Timestamp::from_unix_timestamp),
+        shell_type: ctx.shell.clone(),
+        source_file: ctx.path.to_string(),
+        line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
+    };
+
+    let event = payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
+        .with_offset_end(bytes.len() as i64)
+        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
+        .build()
+        .map_err(|e| SinexError::service(format!("Failed to build Fish event: {e}")))?
+        .to_json_event()
+        .map_err(|e| {
+            SinexError::serialization("Failed to convert Fish event to JSON").with_source(e)
+        })?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| SinexError::messaging("Failed to emit Fish history event").with_source(e))?;
 
     ctx.metrics
         .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
@@ -2187,8 +2251,7 @@ mod tests {
             work_dir: None,
             ..Default::default()
         };
-        let ingest_handle =
-            start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
+        let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
@@ -2314,11 +2377,7 @@ mod tests {
     #[sinex_test]
     async fn history_deduplicates_repeated_commands(ctx: TestContext) -> TestResult<()> {
         let mut fix = make_watcher(&ctx, "dedup-filter", 4096).await?;
-        tokio::fs::write(
-            &fix.history_path,
-            "git status\ngit diff\ngit status\n",
-        )
-        .await?;
+        tokio::fs::write(&fix.history_path, "git status\ngit diff\ngit status\n").await?;
 
         let mut offset = 0u64;
         let mut line_number = 0u64;
@@ -2332,7 +2391,10 @@ mod tests {
 
         let commands = fix.commands.lock().await.clone();
         assert_eq!(
-            commands.iter().filter(|c| c.as_str() == "git status").count(),
+            commands
+                .iter()
+                .filter(|c| c.as_str() == "git status")
+                .count(),
             1,
             "repeated 'git status' must be deduplicated to exactly 1 capture, got: {commands:?}"
         );

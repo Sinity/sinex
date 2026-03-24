@@ -498,7 +498,11 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
             if available_streams.is_empty() {
                 "<none>".to_string()
             } else {
-                available_streams.iter().cloned().collect::<Vec<_>>().join(", ")
+                available_streams
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             }
         )));
     }

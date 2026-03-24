@@ -11,18 +11,40 @@ use crate::common::{
     warn,
 };
 
-use crate::{ClipboardWatcher, WindowManagerWatcher, window_manager::WindowManagerType};
+use crate::{
+    ClipboardWatcher, WindowManagerWatcher,
+    activitywatch_history::{
+        ActivityWatchEntryKind, ActivityWatchHistoryEntry, is_activitywatch_sqlite,
+        read_activitywatch_history,
+    },
+    window_manager::WindowManagerType,
+};
+use camino::Utf8PathBuf;
+use serde_json::json;
 use sinex_node_sdk::{
     EventTransport,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
+    stable_row_material_id,
     stage_as_you_go::StageAsYouGoContext,
     watcher_handle::WatcherHandle,
 };
-use sinex_primitives::{Seconds, Timestamp};
+use sinex_primitives::{
+    HostName, Seconds, Timestamp,
+    events::{
+        payload::PayloadExt,
+        payloads::{
+            ActivityWatchAfkChangedPayload, ActivityWatchBrowserTabActivePayload,
+            ActivityWatchWindowActivePayload,
+        },
+    },
+    privacy::{self, ProcessingContext},
+};
 use std::sync::Arc;
 use tokio::sync::watch;
+
+const MATERIAL_REASON_ACTIVITYWATCH_HISTORY: &str = "desktop-activitywatch-history";
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +59,8 @@ pub struct DesktopConfig {
     pub clipboard_poll_interval_secs: Seconds,
     /// Require Hyprland to be present (if false, runs in degraded mode)
     pub require_hyprland: bool,
+    /// Optional ActivityWatch SQLite database path used for truthful historical imports.
+    pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
 impl Default for DesktopConfig {
@@ -50,6 +74,9 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
+            activitywatch_db_path: dirs::home_dir()
+                .and_then(|path| Utf8PathBuf::from_path_buf(path).ok())
+                .map(|home| home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
         }
     }
 }
@@ -113,6 +140,8 @@ pub struct DesktopMonitorHealth {
 pub struct DesktopPersistentState {
     pub health: DesktopMonitorHealth,
     pub last_state: Option<DesktopState>,
+    #[serde(default)]
+    pub activitywatch_last_row_id: i64,
 }
 
 /// Unified desktop node implementing Node with Stage-as-You-Go
@@ -222,6 +251,205 @@ impl DesktopNode {
         }
         Ok(())
     }
+
+    fn configured_activitywatch_db_path(&self) -> Option<&Utf8PathBuf> {
+        self.config.activitywatch_db_path.as_ref()
+    }
+
+    fn checkpoint_activitywatch_row_id(checkpoint: &Checkpoint) -> Option<i64> {
+        match checkpoint {
+            Checkpoint::External { position, .. } => position
+                .get("activitywatch_row_id")
+                .and_then(serde_json::Value::as_i64),
+            _ => None,
+        }
+    }
+
+    fn historical_activitywatch_start_row(
+        state: &DesktopPersistentState,
+        from: &Checkpoint,
+    ) -> i64 {
+        state
+            .activitywatch_last_row_id
+            .max(Self::checkpoint_activitywatch_row_id(from).unwrap_or_default())
+    }
+
+    async fn emit_activitywatch_entry(
+        &self,
+        db_path: &Utf8PathBuf,
+        entry: &ActivityWatchHistoryEntry,
+    ) -> NodeResult<()> {
+        let acquisition = self
+            .acquisition
+            .as_ref()
+            .ok_or_else(|| SinexError::lifecycle("Desktop acquisition manager not initialized"))?;
+        let stage_context = self
+            .stage_context
+            .as_ref()
+            .ok_or_else(|| SinexError::lifecycle("Desktop stage context not initialized"))?;
+
+        let material_id = stable_row_material_id(db_path.as_str(), entry.row_id);
+        let material_metadata = json!({
+            "bucket_id": entry.bucket_id,
+            "kind": entry.kind.as_str(),
+            "row_id": entry.row_id,
+            "host": entry.host,
+        });
+        let material_bytes =
+            serde_json::to_vec(&entry.raw_material_payload()).map_err(|error| {
+                SinexError::serialization("failed to serialize ActivityWatch source material")
+                    .with_std_error(&error)
+            })?;
+
+        let mut handle = acquisition
+            .build_material(db_path.as_str())
+            .with_material_id(material_id)
+            .with_metadata(material_metadata.clone())
+            .begin()
+            .await
+            .map_err(|error| {
+                SinexError::service("failed to begin ActivityWatch material").with_source(error)
+            })?;
+
+        acquisition
+            .append_slice(&mut handle, &material_bytes)
+            .await
+            .map_err(|error| {
+                SinexError::service("failed to append ActivityWatch material").with_source(error)
+            })?;
+
+        acquisition
+            .finalize_with_metadata(
+                handle,
+                MATERIAL_REASON_ACTIVITYWATCH_HISTORY,
+                material_metadata,
+            )
+            .await
+            .map_err(|error| {
+                SinexError::service("failed to finalize ActivityWatch material").with_source(error)
+            })?;
+
+        let host = HostName::new(entry.host.clone());
+        let title = |value: Option<String>| {
+            value.map(|raw| {
+                privacy::engine()
+                    .process(&raw, ProcessingContext::WindowTitle)
+                    .text
+                    .into_owned()
+            })
+        };
+        let document = |value: Option<String>| {
+            value.map(|raw| {
+                privacy::engine()
+                    .process(&raw, ProcessingContext::Document)
+                    .text
+                    .into_owned()
+            })
+        };
+
+        let event = match entry.kind {
+            ActivityWatchEntryKind::Window => ActivityWatchWindowActivePayload {
+                app: entry.string_field("app").unwrap_or_default(),
+                title: title(entry.string_field("title")).unwrap_or_default(),
+                duration_ms: entry.duration_ms,
+                bucket_id: entry.bucket_id.clone(),
+            }
+            .into_builder()
+            .hostname(host)
+            .from_material(material_id, 0)
+            .at_time(entry.started_at)
+            .with_offset_start(0)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .with_offset_end(material_bytes.len() as i64)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .build()
+            .map_err(|error| {
+                SinexError::service(format!(
+                    "failed to build ActivityWatch window event: {error}"
+                ))
+            })?
+            .to_json_event()
+            .map_err(|error| {
+                SinexError::serialization("failed to encode ActivityWatch window event")
+                    .with_source(error)
+            })?,
+            ActivityWatchEntryKind::Web => ActivityWatchBrowserTabActivePayload {
+                browser: entry
+                    .string_field("app")
+                    .unwrap_or_else(|| "browser".to_string()),
+                title: title(entry.string_field("title")).unwrap_or_default(),
+                url: document(entry.string_field("url")).unwrap_or_default(),
+                duration_ms: entry.duration_ms,
+                bucket_id: entry.bucket_id.clone(),
+            }
+            .into_builder()
+            .hostname(host)
+            .from_material(material_id, 0)
+            .at_time(entry.started_at)
+            .with_offset_start(0)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .with_offset_end(material_bytes.len() as i64)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .build()
+            .map_err(|error| {
+                SinexError::service(format!("failed to build ActivityWatch web event: {error}"))
+            })?
+            .to_json_event()
+            .map_err(|error| {
+                SinexError::serialization("failed to encode ActivityWatch web event")
+                    .with_source(error)
+            })?,
+            ActivityWatchEntryKind::Afk => ActivityWatchAfkChangedPayload {
+                status: entry
+                    .string_field("status")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                duration_ms: entry.duration_ms,
+                bucket_id: entry.bucket_id.clone(),
+            }
+            .into_builder()
+            .hostname(host)
+            .from_material(material_id, 0)
+            .at_time(entry.started_at)
+            .with_offset_start(0)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .with_offset_end(material_bytes.len() as i64)
+            .map_err(|error| {
+                SinexError::service("failed to set ActivityWatch offset").with_source(error)
+            })?
+            .build()
+            .map_err(|error| {
+                SinexError::service(format!("failed to build ActivityWatch afk event: {error}"))
+            })?
+            .to_json_event()
+            .map_err(|error| {
+                SinexError::serialization("failed to encode ActivityWatch afk event")
+                    .with_source(error)
+            })?,
+        };
+
+        stage_context
+            .emit_event_with_provenance(
+                event,
+                material_id,
+                Some(0),
+                Some(material_bytes.len() as i64),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                SinexError::messaging("failed to emit ActivityWatch event").with_source(error)
+            })
+    }
 }
 
 impl Default for DesktopNode {
@@ -294,6 +522,12 @@ impl IngestorNode for DesktopNode {
         if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
             config.require_hyprland = val.parse().unwrap_or(false);
         }
+        if let Some(path) = parse_config_value::<String, _>("activitywatch_db_path", runtime) {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
+        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
 
         info!(
             clipboard_enabled = config.clipboard_enabled,
@@ -301,6 +535,7 @@ impl IngestorNode for DesktopNode {
             window_manager_type = %config.window_manager_type,
             clipboard_poll_interval_secs = config.clipboard_poll_interval_secs.as_secs(),
             require_hyprland = config.require_hyprland,
+            activitywatch_db_path = ?config.activitywatch_db_path,
             "Desktop node configuration"
         );
 
@@ -360,9 +595,6 @@ impl IngestorNode for DesktopNode {
         _until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        // Historical scan for desktop: re-capture current desktop state from checkpoint.
-        // Uses the same snapshot mechanism as scan_snapshot — desktop state is ephemeral,
-        // so historical means "capture what's there now, knowing we're replaying from checkpoint."
         info!(
             checkpoint = ?from,
             replay = args.replay.is_some(),
@@ -370,18 +602,76 @@ impl IngestorNode for DesktopNode {
         );
         let start_time = std::time::Instant::now();
 
-        let snapshot = self.take_snapshot(&state.health).await?;
-        state.last_state = Some(snapshot.clone());
+        let Some(db_path) = self.configured_activitywatch_db_path().cloned() else {
+            return Ok(ScanReport {
+                events_processed: 0,
+                duration: start_time.elapsed(),
+                final_checkpoint: from,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: vec![(
+                    "desktop_activitywatch_historical".to_string(),
+                    "ActivityWatch historical import is not configured".to_string(),
+                )],
+                warnings: vec![
+                    "ActivityWatch historical import is not configured; no desktop history was scanned".to_string(),
+                ],
+            });
+        };
+
+        if !is_activitywatch_sqlite(&db_path) {
+            return Err(SinexError::configuration(format!(
+                "ActivityWatch database at {} is missing the expected events/buckets schema",
+                db_path
+            )));
+        }
+
+        let start_row_id = Self::historical_activitywatch_start_row(state, &from);
+        let (entries, last_row_id) =
+            read_activitywatch_history(&db_path, start_row_id).map_err(|error| {
+                SinexError::io(format!(
+                    "Failed to read ActivityWatch history from {}: {error}",
+                    db_path
+                ))
+            })?;
+
+        let mut first_ts = None;
+        let mut last_ts = None;
+        let mut events_processed = 0u64;
+
+        for entry in &entries {
+            self.emit_activitywatch_entry(&db_path, entry).await?;
+            if first_ts.is_none() {
+                first_ts = Some(entry.started_at);
+            }
+            last_ts = Some(entry.ended_at);
+            events_processed = events_processed.saturating_add(1);
+        }
+
+        if last_row_id > state.activitywatch_last_row_id {
+            state.activitywatch_last_row_id = last_row_id;
+        }
 
         Ok(ScanReport {
-            events_processed: snapshot.enabled_sources.len() as u64,
+            events_processed,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::external(
+                json!({ "activitywatch_row_id": last_row_id }),
+                format!("ActivityWatch row {last_row_id}"),
+            ),
+            time_range: first_ts.zip(last_ts),
             node_stats: HashMap::new(),
-            successful_targets: vec!["desktop_historical".to_string()],
-            failed_targets: vec![],
-            warnings: Vec::new(),
+            successful_targets: vec!["desktop_activitywatch_historical".to_string()],
+            failed_targets: Vec::new(),
+            warnings: if entries.is_empty() {
+                vec![format!(
+                    "No new ActivityWatch rows found in {} beyond row {}",
+                    db_path, start_row_id
+                )]
+            } else {
+                Vec::new()
+            },
         })
     }
 

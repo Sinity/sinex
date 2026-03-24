@@ -3,10 +3,10 @@
 //! Handles source material registration, provenance validation, batch error isolation,
 //! and progress tracking — the mechanical parts that every historical importer needs.
 
-use sinex_db::{DbPool, DbPoolExt, Id, SourceMaterialRecord, repositories::StreamBatchRow};
-use sinex_db::repositories::StreamBatchInsertResult;
-use sinex_primitives::prelude::*;
 use serde::{Deserialize, Serialize};
+use sinex_db::repositories::StreamBatchInsertResult;
+use sinex_db::{DbPool, DbPoolExt, Id, SourceMaterialRecord, repositories::StreamBatchRow};
+use sinex_primitives::prelude::*;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -191,10 +191,7 @@ impl HistoricalImporter {
             .events()
             .insert_stream_batch(batch)
             .await
-            .map_err(|e| {
-                SinexError::database("batch insert failed")
-                    .with_std_error(&e)
-            })
+            .map_err(|e| SinexError::database("batch insert failed").with_std_error(&e))
     }
 
     /// Bisect-retry: split batch in half, retry each half.

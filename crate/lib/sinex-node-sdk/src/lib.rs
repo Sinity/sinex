@@ -106,6 +106,7 @@ pub mod schema_validator;
 #[cfg(feature = "messaging")]
 pub mod self_observation;
 pub mod shutdown;
+pub mod sqlite_source;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
 pub mod version;
@@ -184,6 +185,9 @@ pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
 pub use shutdown::{ShutdownConfig, ShutdownHandler, ShutdownSignal, default_checkpoint_path};
+pub use sqlite_source::{
+    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, stable_row_material_id,
+};
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};

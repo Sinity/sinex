@@ -9,8 +9,8 @@
  */
 
 use crate::{NodeResult, SinexError};
-use sinex_primitives::DeploymentReadinessDescriptor;
 use serde_json::{Value, json};
+use sinex_primitives::DeploymentReadinessDescriptor;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -218,11 +218,13 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
         ("clipboard", "Clipboard content monitoring"),
         ("kitty", "Kitty terminal integration"),
         ("hyprland", "Hyprland window manager integration"),
+        ("activitywatch", "ActivityWatch desktop history integration"),
         ("atuin", "Atuin shell history integration"),
     ];
 
     for (source_name, description) in available_sources {
-        let config_info = verify_event_source_config(source_name, description, descriptor.as_ref()).await?;
+        let config_info =
+            verify_event_source_config(source_name, description, descriptor.as_ref()).await?;
         let is_available = config_info["available"].as_bool().unwrap_or(false);
         event_sources.insert(source_name.to_string(), config_info);
 
@@ -254,6 +256,7 @@ async fn verify_event_source_config(
         "clipboard" => check_clipboard_availability().await,
         "kitty" => check_kitty_availability().await,
         "hyprland" => check_hyprland_availability(descriptor).await,
+        "activitywatch" => check_activitywatch_availability(descriptor).await,
         "atuin" => check_atuin_availability(descriptor).await,
         _ => false,
     };
@@ -306,9 +309,7 @@ fn default_terminal_source_candidates(
     ]
 }
 
-async fn check_terminal_availability(
-    descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> bool {
+async fn check_terminal_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
     default_terminal_source_candidates(descriptor)
         .iter()
         .any(|path| path.is_file())
@@ -318,20 +319,26 @@ async fn check_kitty_availability() -> bool {
     std::env::var("KITTY_LISTEN_ON").is_ok() || super::command_succeeds("which", &["kitty"]).await
 }
 
-async fn check_hyprland_availability(
-    descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> bool {
+async fn check_hyprland_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
     if let Some(event_socket) = descriptor
         .and_then(|value| value.desktop.hyprland_event_socket.as_ref())
         .cloned()
-        .or_else(|| std::env::var("SINEX_HYPRLAND_EVENT_SOCKET").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
+                .ok()
+                .map(PathBuf::from)
+        })
     {
         return event_socket.exists();
     }
 
     let Some(runtime_dir) = descriptor
         .and_then(|value| value.desktop.runtime_dir.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+                .ok()
+                .map(PathBuf::from)
+        })
         .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
         .or_else(dirs::runtime_dir)
     else {
@@ -360,9 +367,7 @@ async fn check_hyprland_availability(
         == 1
 }
 
-async fn check_atuin_availability(
-    descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> bool {
+async fn check_atuin_availability(descriptor: Option<&DeploymentReadinessDescriptor>) -> bool {
     if let Some(descriptor) = descriptor
         && let Some(path) = descriptor
             .terminal
@@ -376,6 +381,21 @@ async fn check_atuin_availability(
 
     dirs::home_dir()
         .map(|home| home.join(".local/share/atuin/history.db").is_file())
+        .unwrap_or(false)
+}
+
+async fn check_activitywatch_availability(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> bool {
+    if let Some(path) = descriptor.and_then(|value| value.desktop.activitywatch_db_path.clone()) {
+        return path.is_file();
+    }
+
+    dirs::home_dir()
+        .map(|home| {
+            home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")
+                .is_file()
+        })
         .unwrap_or(false)
 }
 

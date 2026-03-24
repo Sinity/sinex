@@ -1016,6 +1016,22 @@ in
                   default = {};
                   description = "Desktop node host-access configuration.";
                 };
+                history = mkOption {
+                  type = submodule {
+                    options = {
+                      activitywatchDbPath = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Optional ActivityWatch SQLite database path used for desktop historical
+                          import. Exported as <literal>SINEX_ACTIVITYWATCH_DB_PATH</literal>.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Desktop historical-import configuration.";
+                };
                 env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
                 clipboard = mkOption {
@@ -1672,6 +1688,11 @@ in
       (mkIf (cfg.enable && targetUid != null) {
         services.sinex.nodes.desktop.session.runtimeDir =
           mkDefault "/run/user/${toString targetUid}";
+      })
+
+      (mkIf (cfg.enable && targetHome != null) {
+        services.sinex.nodes.desktop.history.activitywatchDbPath =
+          mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
       })
 
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
