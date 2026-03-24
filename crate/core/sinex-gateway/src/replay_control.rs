@@ -530,9 +530,16 @@ impl ReplayControlServer {
 
         tokio::spawn(async move {
             while let Some(message) = subscription.next().await {
-                if let Err(err) = Self::handle_message(&client, &replay, &executor, message).await {
-                    warn!(?err, "Replay control request failed");
-                }
+                let client = client.clone();
+                let replay = replay.clone();
+                let executor = executor.clone();
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        Self::handle_message(&client, &replay, &executor, message).await
+                    {
+                        warn!(?err, "Replay control request failed");
+                    }
+                });
             }
         });
 
@@ -708,6 +715,8 @@ struct ReplayExecutionEngine {
 }
 
 impl ReplayExecutionEngine {
+    const EXECUTION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
     fn new(replay: Arc<ReplayStateMachine>, nats_client: Client) -> Self {
         Self {
             replay,
@@ -743,10 +752,34 @@ impl ReplayExecutionEngine {
 
         let result = self.run_operation(operation_id, &executor_name).await;
         self.handle_execution_finish(operation_id, &result).await;
-        result
+        match result {
+            Ok(operation) => Ok(operation),
+            Err(err) => match self.load_cancelled_operation(operation_id).await {
+                Ok(Some(cancelled)) => Ok(cancelled),
+                Ok(None) => Err(err),
+                Err(load_err) => Err(err).wrap_err(format!(
+                    "replay cancellation probe failed after execution error: {load_err}"
+                )),
+            },
+        }
     }
 
     async fn handle_execution_finish(&self, operation_id: Uuid, result: &Result<ReplayOperation>) {
+        match self.load_cancelled_operation(operation_id).await {
+            Ok(Some(cancelled)) => {
+                info!(
+                    operation_id = %operation_id,
+                    state = ?cancelled.state,
+                    "Replay execution stopped after operator cancellation"
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!(?err, "Failed to load replay operation while checking for cancellation");
+            }
+        }
+
         if let Err(err) = result {
             error!(
                 operation_id = %operation_id,
@@ -862,6 +895,10 @@ impl ReplayExecutionEngine {
                     .update_checkpoint(operation_id, &checkpoint)
                     .await?;
 
+                if let Some(cancelled) = self.load_cancelled_operation(operation_id).await? {
+                    return Ok(cancelled);
+                }
+
                 // Transition through Committing to Completed
                 self.replay
                     .transition(operation_id, ReplayState::Committing)
@@ -888,6 +925,14 @@ impl ReplayExecutionEngine {
                 Err(err)
             }
         }
+    }
+
+    async fn load_cancelled_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> Result<Option<ReplayOperation>> {
+        let operation = self.replay.load_operation(operation_id).await?;
+        Ok((operation.state == ReplayState::Cancelled).then_some(operation))
     }
 
     /// Pagination batch size for collecting scope events from the database.
@@ -1453,58 +1498,102 @@ impl ReplayExecutionEngine {
 
         let target_node_name = ack.node_name.clone();
         let completion = match tokio::time::timeout(self.scan_completion_timeout, async {
-            while let Some(msg) = progress_sub.next().await {
-                match serde_json::from_slice::<NodeScanProgress>(&msg.payload) {
-                    Ok(progress) => {
-                        events_processed = progress.events_processed;
-                        events_emitted = progress.events_emitted;
-                        if let Some(error) = progress.error {
+            loop {
+                tokio::select! {
+                    maybe_msg = progress_sub.next() => {
+                        let Some(msg) = maybe_msg else {
                             return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                 error: eyre!(
-                                    "Node '{}' failed replay scan: {}",
-                                    progress.node_name,
-                                    error
+                                    "Replay progress stream closed before node '{}' reported completion",
+                                    target_node_name
                                 ),
-                                emitted_count: progress.events_emitted,
-                                restore_archived_cascade: progress.events_emitted == 0,
+                                emitted_count: events_emitted,
+                                restore_archived_cascade: false,
                             });
-                        }
+                        };
 
-                        debug!(
-                            operation_id = %operation_id,
-                            events_processed = progress.events_processed,
-                            events_emitted = progress.events_emitted,
-                            "Replay progress update"
-                        );
+                        match serde_json::from_slice::<NodeScanProgress>(&msg.payload) {
+                            Ok(progress) => {
+                                events_processed = progress.events_processed;
+                                events_emitted = progress.events_emitted;
+                                if let Some(error) = progress.error {
+                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                        error: eyre!(
+                                            "Node '{}' failed replay scan: {}",
+                                            progress.node_name,
+                                            error
+                                        ),
+                                        emitted_count: progress.events_emitted,
+                                        restore_archived_cascade: progress.events_emitted == 0,
+                                    });
+                                }
 
-                        // Update checkpoint with progress
-                        checkpoint.processed_events = progress.events_processed;
-                        checkpoint.updated_at = sinex_primitives::temporal::now();
-                        let _ = replay.update_checkpoint(operation_id, checkpoint).await;
+                                debug!(
+                                    operation_id = %operation_id,
+                                    events_processed = progress.events_processed,
+                                    events_emitted = progress.events_emitted,
+                                    "Replay progress update"
+                                );
 
-                        // If final_report is present, the scan is complete
-                        if let Some(report) = &progress.final_report {
-                            info!(
-                                operation_id = %operation_id,
-                                events_processed = report.events_processed,
-                                "Node scan completed"
-                            );
-                            return Ok::<u64, ReplayScanFailure>(report.events_processed);
+                                // Update checkpoint with progress
+                                checkpoint.processed_events = progress.events_processed;
+                                checkpoint.updated_at = sinex_primitives::temporal::now();
+                                let _ = replay.update_checkpoint(operation_id, checkpoint).await;
+
+                                // If final_report is present, the scan is complete
+                                if let Some(report) = &progress.final_report {
+                                    info!(
+                                        operation_id = %operation_id,
+                                        events_processed = report.events_processed,
+                                        "Node scan completed"
+                                    );
+                                    return Ok::<u64, ReplayScanFailure>(report.events_processed);
+                                }
+                            }
+                            Err(err) => {
+                                warn!(error = %err, "Failed to parse replay progress message");
+                            }
                         }
                     }
-                    Err(err) => {
-                        warn!(error = %err, "Failed to parse replay progress message");
+                    _ = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
+                        match replay.load_operation(operation_id).await {
+                            Ok(operation) if operation.state == ReplayState::Executing => {}
+                            Ok(operation) if operation.state == ReplayState::Cancelled => {
+                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                    error: eyre!(
+                                        "Replay operation {} was cancelled during execution",
+                                        operation_id
+                                    ),
+                                    emitted_count: events_emitted,
+                                    restore_archived_cascade: events_emitted == 0,
+                                });
+                            }
+                            Ok(operation) => {
+                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                    error: eyre!(
+                                        "Replay operation {} left Executing state unexpectedly: {:?}",
+                                        operation_id,
+                                        operation.state
+                                    ),
+                                    emitted_count: events_emitted,
+                                    restore_archived_cascade: false,
+                                });
+                            }
+                            Err(error) => {
+                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                    error: eyre!(
+                                        "Failed to reload replay operation {} while waiting for progress: {}",
+                                        operation_id,
+                                        error
+                                    ),
+                                    emitted_count: events_emitted,
+                                    restore_archived_cascade: false,
+                                });
+                            }
+                        }
                     }
                 }
             }
-            Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                error: eyre!(
-                    "Replay progress stream closed before node '{}' reported completion",
-                    target_node_name
-                ),
-                emitted_count: events_emitted,
-                restore_archived_cascade: false,
-            })
         })
         .await
         {
@@ -2344,6 +2433,139 @@ mod tests {
         scan_handle
             .await
             .map_err(|e| eyre!("fake timeout-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+        let material_id = ctx.create_source_material(Some("replay-cancel-midflight")).await?;
+        let event = DynamicPayload::new(
+            "cancel-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-cancel.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+        let (_scan_command_rx, scan_handle) =
+            spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "cancel-test").await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+
+        let execute_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+        let control_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+
+        let mut scope = sample_scope();
+        scope.node_id = "cancel-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = control_client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = control_client.preview(planned.operation_id).await?;
+        let approved = control_client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        let operation_id = approved.operation_id;
+        let execute_task = tokio::spawn(async move {
+            execute_client
+                .execute(operation_id, "service:executor-node".into(), false)
+                .await
+        });
+
+        let mut saw_executing = false;
+        for _ in 0..40 {
+            let operation = replay.load_operation(operation_id).await?;
+            if operation.state == ReplayState::Executing {
+                saw_executing = true;
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            saw_executing,
+            "replay operation should enter Executing before cancellation"
+        );
+
+        let cancelled = control_client
+            .cancel(
+                operation_id,
+                "admin:approver".into(),
+                Some("operator requested stop".to_string()),
+            )
+            .await?;
+        assert_eq!(cancelled.state, ReplayState::Cancelled);
+        assert_eq!(
+            cancelled.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Cancelled)
+        );
+        assert_eq!(
+            cancelled.error_details.as_deref(),
+            Some("operator requested stop")
+        );
+
+        let executed = execute_task
+            .await
+            .map_err(|e| eyre!("execute task failed: {e}"))??;
+        assert_eq!(executed.state, ReplayState::Cancelled);
+        assert_eq!(
+            executed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Cancelled)
+        );
+        assert_eq!(
+            executed.error_details.as_deref(),
+            Some("operator requested stop")
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(live_count, 1, "cancelled replay should restore live rows when no replacement events were emitted");
+        assert_eq!(archived_count, 0, "cancelled replay should not leave archived rows behind when execution never emitted replacements");
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake cancel-test node task failed: {e}"))?;
 
         Ok(())
     }
