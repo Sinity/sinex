@@ -243,27 +243,19 @@ impl EventRepository<'_> {
             _ => unreachable!("called execute_count_by without CountBy aggregation"),
         };
 
-        let group_expr = match &field {
-            GroupByField::Source => "source".to_string(),
-            GroupByField::EventType => "event_type".to_string(),
-            GroupByField::Host => "host".to_string(),
-            GroupByField::PayloadPath(path) => {
-                // Validated later via push_bind; the column reference is safe
-                format!("payload->>'{}'", path.replace('\'', "''"))
-            }
-        };
-
-        let mut qb = QueryBuilder::<Postgres>::new(format!(
-            "SELECT {group_expr} AS key, COUNT(*) AS count FROM core.events WHERE TRUE"
-        ));
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
+        push_group_by_expr(&mut qb, &field);
+        qb.push(" AS key, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
 
         // For PayloadPath, exclude NULL keys
-        if matches!(field, GroupByField::PayloadPath(_)) {
-            qb.push(format!(" AND {group_expr} IS NOT NULL"));
+        if let GroupByField::PayloadPath(path) = &field {
+            qb.push(" AND payload->>");
+            qb.push_bind(path.clone());
+            qb.push(" IS NOT NULL");
         }
 
-        qb.push(format!(" GROUP BY {group_expr} ORDER BY count DESC LIMIT "));
+        qb.push(" GROUP BY 1 ORDER BY count DESC LIMIT ");
         qb.push_bind(limit);
 
         let rows: Vec<GroupedCountRow> = qb
@@ -558,13 +550,30 @@ fn push_payload_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &PayloadFilt
     }
 }
 
+fn push_group_by_expr(qb: &mut QueryBuilder<'_, Postgres>, field: &GroupByField) {
+    match field {
+        GroupByField::Source => {
+            qb.push("source");
+        }
+        GroupByField::EventType => {
+            qb.push("event_type");
+        }
+        GroupByField::Host => {
+            qb.push("host");
+        }
+        GroupByField::PayloadPath(path) => {
+            qb.push("payload->>");
+            qb.push_bind(path.clone());
+        }
+    }
+}
+
 fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
     match op {
         PathOp::Eq(val) => {
             if val.is_number() {
-                qb.push(" AND (payload->>");
-                qb.push_bind(path.to_string());
-                qb.push(")::numeric = ");
+                push_numeric_payload_path_expr(qb, path);
+                qb.push(" = ");
                 // Extract numeric value
                 push_json_numeric(qb, val);
             } else {
@@ -575,27 +584,23 @@ fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
             }
         }
         PathOp::Gt(val) => {
-            qb.push(" AND (payload->>");
-            qb.push_bind(path.to_string());
-            qb.push(")::numeric > ");
+            push_numeric_payload_path_expr(qb, path);
+            qb.push(" > ");
             push_json_numeric(qb, val);
         }
         PathOp::Gte(val) => {
-            qb.push(" AND (payload->>");
-            qb.push_bind(path.to_string());
-            qb.push(")::numeric >= ");
+            push_numeric_payload_path_expr(qb, path);
+            qb.push(" >= ");
             push_json_numeric(qb, val);
         }
         PathOp::Lt(val) => {
-            qb.push(" AND (payload->>");
-            qb.push_bind(path.to_string());
-            qb.push(")::numeric < ");
+            push_numeric_payload_path_expr(qb, path);
+            qb.push(" < ");
             push_json_numeric(qb, val);
         }
         PathOp::Lte(val) => {
-            qb.push(" AND (payload->>");
-            qb.push_bind(path.to_string());
-            qb.push(")::numeric <= ");
+            push_numeric_payload_path_expr(qb, path);
+            qb.push(" <= ");
             push_json_numeric(qb, val);
         }
         PathOp::Like(pattern) => {
@@ -615,6 +620,14 @@ fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
             qb.push(" IS NOT NULL");
         }
     }
+}
+
+fn push_numeric_payload_path_expr(qb: &mut QueryBuilder<'_, Postgres>, path: &str) {
+    qb.push(" AND jsonb_typeof(payload->");
+    qb.push_bind(path.to_string());
+    qb.push(") = 'number' AND (payload->>");
+    qb.push_bind(path.to_string());
+    qb.push(")::numeric");
 }
 
 fn push_json_numeric(qb: &mut QueryBuilder<'_, Postgres>, val: &JsonValue) {
