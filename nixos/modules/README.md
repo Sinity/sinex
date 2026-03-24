@@ -32,6 +32,7 @@ values derived from `stateRoot` and the global `logLevel`.
     enable = true;
     package = pkgs.sinex;
     users.target = "alice";
+    secrets.gatewayAdminTokenFile = "/run/agenix/sinex-gateway-admin-token";
 
     stateRoot = "/var/lib/sinex";
     logLevel = "info";
@@ -54,6 +55,10 @@ values derived from `stateRoot` and the global `logLevel`.
   };
 }
 ```
+
+`core.gateway` is enabled by default, so the quick-start config needs a real
+gateway admin token file (direct path or the agenix-backed default) before the
+generated unit will start.
 
 ### Database
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
@@ -106,7 +111,7 @@ disabled (e.g. staging migrations).
   `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
 - The module emits deterministic unit names (`sinex-filesystem-1`,
   `sinex-health-automaton`, etc.) and publishes them via
-  `services.sinex.nodes.generatedUnits` for other subsystems (pre-flight,
+  `config.sinex._generatedUnits` for other subsystems (pre-flight,
   tests).
 
 ### Transport Security
@@ -145,9 +150,14 @@ disabled (e.g. staging migrations).
 - The module now wires a first-boot `sinex-schema-apply` oneshot before guarded
   services and before `sinex-preflight`, so schema creation is part of the real
   deployment path instead of a VM-only convention.
-- The module also emits `/etc/sinex/deployment-readiness.json`, the canonical
-  descriptor consumed by `xtask doctor --deployment-readiness` and the
-  config-derived preflight configuration checks.
+- When `services.sinex.enable = true`, the module emits
+  `/etc/sinex/deployment-readiness.json`, the canonical descriptor consumed by
+  `xtask doctor --deployment-readiness` and the config-derived preflight
+  configuration checks.
+- That descriptor now carries the gateway probe base URL, whether the gateway
+  requires client TLS, the effective NATS server list, and all secret-material
+  paths needed for readiness checks, including the generated gateway TLS trust
+  anchor when `core.gateway.autoGenerateTls = true`.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back

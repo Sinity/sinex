@@ -732,7 +732,7 @@ async fn test_phase5_config_format_validation() -> TestResult<()> {
     Ok(())
 }
 
-/// Test Phase 5: Event-source readiness now requires a deployment descriptor
+/// Test Phase 5: Missing deployment descriptors refuse ambient source inference
 #[sinex_test]
 async fn test_phase5_configuration_event_sources_require_deployment_descriptor(
     ctx: TestContext,
@@ -756,12 +756,12 @@ async fn test_phase5_configuration_event_sources_require_deployment_descriptor(
         || async {
             let (status, details, messages) =
                 configuration::verify_configuration_generation().await?;
-            assert_eq!(status, VerificationStatus::Fail);
+            assert_eq!(status, VerificationStatus::Warning);
             assert!(
                 messages
                     .iter()
-                    .any(|message| message.contains("configured but not currently available")),
-                "configured-but-missing sources should fail loudly; messages={messages:#?}"
+                    .any(|message| message.contains("Deployment descriptor is missing")),
+                "missing deployment descriptor should downgrade readiness honestly; messages={messages:#?}"
             );
 
             let sources = details
@@ -774,7 +774,7 @@ async fn test_phase5_configuration_event_sources_require_deployment_descriptor(
                     .get("event_sources")
                     .and_then(|value| value.get("configured_unavailable_count"))
                     .and_then(Value::as_u64),
-                Some(4)
+                Some(0)
             );
 
             assert_eq!(

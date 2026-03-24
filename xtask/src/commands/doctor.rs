@@ -2013,10 +2013,14 @@ fn check_secret_materials(
     );
 
     let mtls_expected = descriptor
-        .and_then(|value| value.secrets.gateway_tls_client_ca_file.as_ref())
-        .is_some()
-        || env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
-        || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok();
+        .map(|value| {
+            value.gateway.require_client_tls
+                || value.secrets.gateway_tls_client_ca_file.as_ref().is_some()
+        })
+        .unwrap_or_else(|| {
+            env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
+                || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok()
+        });
     let database_password_expected = descriptor
         .map(|value| value.database.password_required)
         .unwrap_or(!descriptor_present);
@@ -3350,6 +3354,13 @@ mod tests {
         let db = temp.path().join("db-password");
         std::fs::write(&db, "password")?;
 
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_GATEWAY_TLS_CLIENT_CA",
+            temp.path().join("ambient-client-ca.pem").display().to_string(),
+        );
+        env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+
         let descriptor = DeploymentReadinessDescriptor {
             secrets: sinex_primitives::DeploymentSecrets {
                 database_password_file: Some(db),
@@ -3402,6 +3413,13 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let token = temp.path().join("nats-token");
         std::fs::write(&token, "token")?;
+
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_GATEWAY_TLS_CLIENT_CA",
+            temp.path().join("ambient-client-ca.pem").display().to_string(),
+        );
+        env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
 
         let descriptor = DeploymentReadinessDescriptor {
             secrets: sinex_primitives::DeploymentSecrets {

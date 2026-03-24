@@ -5,7 +5,13 @@ with lib;
 let
   cfg = config.services.sinex;
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   inherit (systemdHardening) mkHelperServiceConfig;
+  inherit (databaseRuntime)
+    mkDatabasePasswordExec
+    mkDatabasePasswordUnitConfig
+    renderDatabaseUrl
+    ;
 
   defaultSinexPackage =
     if pkgs ? sinex then
@@ -1438,7 +1444,7 @@ in
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
-      databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
+      databaseUrl = renderDatabaseUrl dbCfg;
       secretPaths = config.sinex.secrets.paths or {};
       resolveSecretPath = explicit: names:
         if explicit != null then explicit else
@@ -1478,21 +1484,38 @@ in
       ];
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
+      gatewayTlsTrustAnchorFile =
+        if cfg.core.gateway.autoGenerateTls then gatewayTlsCertFile else null;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
+      gatewayProbeListenAddress =
+        if hasPrefix "0.0.0.0:" cfg.core.gateway.listenAddress then
+          "127.0.0.1:${removePrefix "0.0.0.0:" cfg.core.gateway.listenAddress}"
+        else if hasPrefix "[::]:" cfg.core.gateway.listenAddress then
+          "[::1]:${removePrefix "[::]:" cfg.core.gateway.listenAddress}"
+        else
+          cfg.core.gateway.listenAddress;
+      gatewayProbeBaseUrl =
+        if cfg.core.enable && cfg.core.gateway.enable then
+          "https://${gatewayProbeListenAddress}"
+        else
+          null;
       deploymentManagedUnits = lib.unique (
-        (lib.optionals cfg.core.enable [ "sinex-ingestd.service" ])
-        ++ (lib.optionals (cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
-        ++ map (name: "${name}.service") (config.sinex._generatedUnits or [])
+        (lib.optionals (cfg.enable && cfg.core.enable) [ "sinex-ingestd.service" ])
+        ++ (lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
+        ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or []))
       );
       resolveNodeInstances = nodeInstances:
-        if nodeInstances == null then cfg.nodes.defaults.instances else nodeInstances;
+        if nodeInstances == null then
+          if cfg.enable then cfg.nodes.defaults.instances else 1
+        else
+          nodeInstances;
       mkDeploymentSurface = enabled: instances: {
         inherit enabled;
         instances = if enabled then resolveNodeInstances instances else null;
       };
       deploymentReadinessDescriptor = {
         version = 1;
-        mode = "enabled";
+        mode = if cfg.enable then "enabled" else "prepared";
         source = "nixos";
         managed_units = deploymentManagedUnits;
         target =
@@ -1502,6 +1525,22 @@ in
             uid = targetUid;
             home = targetHome;
           };
+        database = {
+          enabled = dbCfg.enable;
+          host = dbCfg.host;
+          port = dbCfg.port;
+          name = dbCfg.name;
+          user = dbCfg.user;
+          local_auth = dbCfg.localAuth;
+          password_required = dbCfg.localAuth != "trust";
+        };
+        gateway = {
+          base_url = gatewayProbeBaseUrl;
+          require_client_tls = cfg.core.gateway.requireClientTLS;
+        };
+        nats = {
+          servers = cfg.nodes.nats.servers;
+        };
         filesystem = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.filesystem.enable) cfg.nodes.filesystem.instances;
         terminal =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
@@ -1526,16 +1565,23 @@ in
         system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
         automata = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null;
         expectations = {
-          schema_apply = cfg.enable;
-          nats_streams = cfg.enable;
-          gateway_ready = cfg.core.enable && cfg.core.gateway.enable;
+          schema_apply = cfg.enable && cfg.database.enable;
+          nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);
+          gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
         };
         secrets = {
           database_password_file = cfg.database.passwordFile;
           gateway_admin_token_file = gatewayAdminTokenFile;
           gateway_tls_cert_file = gatewayTlsCertFile;
           gateway_tls_key_file = gatewayTlsKeyFile;
+          gateway_tls_trust_anchor_file = gatewayTlsTrustAnchorFile;
           gateway_tls_client_ca_file = gatewayTlsClientCAFile;
+          nats_ca_cert_file = effectiveNatsCaCertFile;
+          nats_client_cert_file = effectiveNatsClientCertFile;
+          nats_client_key_file = effectiveNatsClientKeyFile;
+          nats_token_file = effectiveNatsTokenFile;
+          nats_creds_file = effectiveNatsCredsFile;
+          nats_nkey_seed_file = effectiveNatsNkeySeedFile;
         };
       };
       deploymentReadinessDescriptorJson = builtins.toJSON deploymentReadinessDescriptor;
@@ -1702,18 +1748,19 @@ in
         services.sinex.nats.autoSetup = mkDefault true;
       })
 
-      # When the filesystem node is enabled with no explicit watchPaths and a
-      # target user is configured, default to watching that user's home directory.
-      # NB: guard only on cfg.enable + cfg.users.target — reading cfg.nodes.*
-      # while writing to services.sinex.nodes.* creates an evaluation cycle.
+      # When a target user is configured with no explicit watchPaths, default to
+      # watching that user's home directory. Keeping these defaults live in
+      # prepared mode makes the deployment descriptor honest before first enable.
+      # NB: guard only on cfg.users.target — reading cfg.nodes.* while writing to
+      # services.sinex.nodes.* creates an evaluation cycle.
       # mkDefault ensures explicit watchPaths override this fallback.
-      (mkIf (cfg.enable && cfg.users.target != null) {
+      (mkIf (cfg.users.target != null) {
         services.sinex.nodes.filesystem.watchPaths = mkDefault [
           targetHome
         ];
       })
 
-      (mkIf (cfg.enable && targetHome != null) {
+      (mkIf (targetHome != null) {
         services.sinex.nodes.terminal.historySources = mkDefault [
           {
             path = "${targetHome}/.bash_history";
@@ -1734,23 +1781,23 @@ in
         ];
       })
 
-      (mkIf cfg.enable {
+      (mkIf (cfg.enable || targetUser != null) {
         environment.etc."sinex/deployment-readiness.json".text = deploymentReadinessDescriptorJson;
       })
 
-      (mkIf cfg.enable {
+      (mkIf (targetUser != null) {
         services.sinex.nodes.filesystem.instances = mkDefault 1;
         services.sinex.nodes.terminal.instances = mkDefault 1;
         services.sinex.nodes.desktop.instances = mkDefault 1;
         services.sinex.nodes.system.instances = mkDefault 1;
       })
 
-      (mkIf (cfg.enable && targetUid != null) {
+      (mkIf (targetUid != null) {
         services.sinex.nodes.desktop.session.runtimeDir =
           mkDefault "/run/user/${toString targetUid}";
       })
 
-      (mkIf (cfg.enable && targetHome != null) {
+      (mkIf (targetHome != null) {
         services.sinex.nodes.desktop.history.activitywatchDbPath =
           mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
       })
@@ -1758,12 +1805,17 @@ in
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
         systemd.services.sinex-dlq-cleanup = {
           description = "Sinex DLQ cleanup";
+          unitConfig = mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
           serviceConfig = {
             Environment = [
               "DATABASE_URL=${databaseUrl}"
               "SINEX_DLQ_PATH=${dlqDir}"
             ];
-            ExecStart = dlqCleanupScript;
+            ExecStart = mkDatabasePasswordExec {
+              name = "dlq-cleanup";
+              command = dlqCleanupScript;
+              passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+            };
             # Retry within the same calendar window if cleanup fails
             # (e.g. gateway unavailable, transient I/O error).
             Restart = "on-failure";

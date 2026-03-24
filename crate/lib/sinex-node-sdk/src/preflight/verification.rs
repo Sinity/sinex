@@ -22,7 +22,9 @@ use std::time::Instant;
 use tracing::info;
 use uuid::Uuid;
 
-use super::{VerificationStatus, resolve_database_url, resolve_nats_url};
+use super::{
+    VerificationStatus, resolve_database_url, resolve_nats_url, runtime_database_expected,
+};
 
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 
@@ -33,18 +35,33 @@ pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, 
     let mut details = HashMap::new();
     let mut has_warnings = false;
     let mut has_failures = false;
+    let database_expected = runtime_database_expected();
 
     info!("Starting end-to-end integration verification");
 
-    // Database integration test
-    match verify_database_integration(&mut messages).await {
-        Ok(db_info) => {
-            details.insert("database_integration", db_info);
+    if database_expected {
+        // Database integration test
+        match verify_database_integration(&mut messages).await {
+            Ok(db_info) => {
+                details.insert("database_integration", db_info);
+            }
+            Err(e) => {
+                messages.push(format!("✗ Database integration test failed: {e}"));
+                has_failures = true;
+            }
         }
-        Err(e) => {
-            messages.push(format!("✗ Database integration test failed: {e}"));
-            has_failures = true;
-        }
+    } else {
+        messages.push(
+            "ℹ Database integration skipped: deployment is running in edge mode or does not expect a runtime PostgreSQL dependency"
+                .to_string(),
+        );
+        details.insert(
+            "database_integration",
+            json!({
+                "skipped": true,
+                "reason": "runtime_database_not_expected",
+            }),
+        );
     }
 
     // Service integration test (NATS/checkpoint KV)
@@ -526,75 +543,23 @@ async fn get_test_pool() -> NodeResult<PgPool> {
     Ok(pool)
 }
 
-/// Main entry point for preflight verification
-pub async fn run_preflight_checks() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
-    let mut messages = Vec::new();
-    let mut details = HashMap::new();
-    let mut has_warnings = false;
-    let mut has_failures = false;
-
-    info!("Starting comprehensive preflight verification");
-
-    // Run end-to-end integration tests
-    match verify_end_to_end_integration().await {
-        Ok((status, value, mut test_messages)) => {
-            messages.append(&mut test_messages);
-            details.insert("integration", value);
-
-            match status {
-                VerificationStatus::Warning => has_warnings = true,
-                VerificationStatus::Fail => has_failures = true,
-                VerificationStatus::Pass => {}
-            }
-        }
-        Err(e) => {
-            messages.push(format!("✗ Integration tests failed: {e}"));
-            has_failures = true;
-        }
-    }
-
-    // Run performance baseline tests
-    match verify_performance_baseline().await {
-        Ok((status, value, mut perf_messages)) => {
-            messages.append(&mut perf_messages);
-            details.insert("performance", value);
-
-            match status {
-                VerificationStatus::Warning => has_warnings = true,
-                VerificationStatus::Fail => has_failures = true,
-                VerificationStatus::Pass => {}
-            }
-        }
-        Err(e) => {
-            messages.push(format!("⚠ Performance baseline failed: {e}"));
-            has_warnings = true;
-        }
-    }
-
-    let status = if has_failures {
-        VerificationStatus::Fail
-    } else if has_warnings {
-        VerificationStatus::Warning
-    } else {
-        VerificationStatus::Pass
-    };
-
-    let result = json!({
-        "preflight_checks": details,
-        "total_checks": details.len(),
-        "overall_status": match status {
-            VerificationStatus::Pass => "pass",
-            VerificationStatus::Warning => "warning",
-            VerificationStatus::Fail => "fail"
-        }
-    });
-
-    Ok((status, result, messages))
-}
-
 /// Verify performance baseline using read-only queries
 pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
+    if !runtime_database_expected() {
+        messages.push(
+            "ℹ Performance baseline skipped: deployment is running without a runtime PostgreSQL dependency"
+                .to_string(),
+        );
+        return Ok((
+            VerificationStatus::Pass,
+            json!({
+                "skipped": true,
+                "reason": "runtime_database_not_expected",
+            }),
+            messages,
+        ));
+    }
     let pool = get_test_pool().await?;
 
     // Baseline query performance using COUNT query

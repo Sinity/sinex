@@ -12,10 +12,10 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
 use sinex_primitives::DeploymentReadinessDescriptor;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
-use super::VerificationStatus;
+use super::{VerificationStatus, deployment_descriptor_result, runtime_database_expected};
 
 /// Verify configuration generation and validation
 pub async fn verify_configuration_generation()
@@ -62,11 +62,19 @@ pub async fn verify_configuration_generation()
                 );
                 has_warnings = true;
             }
+            if event_config
+                .get("configured_unavailable_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+            {
+                has_failures = true;
+            }
             details.insert("event_sources", event_config);
         }
         Err(e) => {
-            messages.push(format!("⚠ Event source configuration warning: {e}"));
-            has_warnings = true;
+            messages.push(format!("✗ Event source configuration failed: {e}"));
+            has_failures = true;
         }
     }
 
@@ -100,10 +108,15 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     let mut env_vars = HashMap::new();
     let mut missing_vars = Vec::new();
     let mut has_issues = false;
+    let database_expected = runtime_database_expected();
 
     // Required environment variables for Sinex
     let required_vars = vec![
-        ("DATABASE_URL", "PostgreSQL connection URL", true),
+        (
+            "DATABASE_URL",
+            "PostgreSQL connection URL",
+            database_expected,
+        ),
         ("RUST_LOG", "Logging configuration", false),
     ];
 
@@ -151,6 +164,11 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
                     "✗ Required environment variable '{var_name}' is missing"
                 ));
                 has_issues = true;
+            } else if var_name == "DATABASE_URL" && !database_expected {
+                messages.push(
+                    "ℹ DATABASE_URL is intentionally optional for this deployment (edge mode or no runtime database expected)"
+                        .to_string(),
+                );
             } else {
                 messages.push(format!(
                     "ℹ Optional environment variable '{var_name}' is not set"
@@ -200,7 +218,8 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     Ok(json!({
         "variables": env_vars,
         "missing_required": missing_vars,
-        "all_required_present": missing_vars.is_empty()
+        "all_required_present": missing_vars.is_empty(),
+        "runtime_database_expected": database_expected,
     }))
 }
 
@@ -219,7 +238,8 @@ async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> No
 
 async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
-    let descriptor = load_deployment_descriptor();
+    let descriptor = deployment_descriptor_result("preflight configuration checks")?;
+    let mut configured_unavailable = Vec::new();
 
     // Deployment readiness is config-derived: source availability follows the
     // staged descriptor, not whichever binaries or dotfiles happen to exist in
@@ -243,8 +263,9 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
         if is_available {
             messages.push(format!("✓ Event source '{source_name}' is available"));
         } else if is_configured {
+            configured_unavailable.push(source_name.to_string());
             messages.push(format!(
-                "ℹ Event source '{source_name}' is configured but not currently available"
+                "✗ Event source '{source_name}' is configured but not currently available"
             ));
         } else {
             messages.push(format!(
@@ -256,10 +277,100 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     Ok(json!({
         "deployment_descriptor_loaded": descriptor.is_some(),
         "sources": event_sources,
+        "configured_unavailable": configured_unavailable,
+        "configured_unavailable_count": configured_unavailable.len(),
         "total_available": event_sources.values()
             .filter(|v| v["available"].as_bool().unwrap_or(false))
             .count()
     }))
+}
+
+pub fn validate_readable_file(path: &Path) -> NodeResult<()> {
+    std::fs::File::open(path).map(|_| ()).map_err(|error| {
+        SinexError::processing("failed to open configured file")
+            .with_context("path", path.display().to_string())
+            .with_std_error(&error)
+    })
+}
+
+pub fn validate_atuin_history_db(path: &Path) -> NodeResult<()> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let conn =
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| {
+            SinexError::processing("failed to open configured Atuin history database")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
+    let has_history_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='history')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            SinexError::processing("failed to inspect configured Atuin history database")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
+    if !has_history_table {
+        return Err(SinexError::processing(
+            "configured Atuin history database is missing the `history` table",
+        )
+        .with_context("path", path.display().to_string()));
+    }
+
+    Ok(())
+}
+
+pub fn validate_activitywatch_db(path: &Path) -> NodeResult<()> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let conn =
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| {
+            SinexError::processing("failed to open configured ActivityWatch history database")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
+    let has_events_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='events')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            SinexError::processing("failed to inspect configured ActivityWatch events table")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
+    let has_buckets_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='buckets')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            SinexError::processing("failed to inspect configured ActivityWatch buckets table")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
+    if !has_events_table || !has_buckets_table {
+        return Err(
+            SinexError::processing(
+                "configured ActivityWatch history database is missing the `events` and/or `buckets` tables",
+            )
+            .with_context("path", path.display().to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+pub fn validate_terminal_history_source(shell: &str, path: &Path) -> NodeResult<()> {
+    match shell {
+        "atuin" => validate_atuin_history_db(path),
+        _ => validate_readable_file(path),
+    }
 }
 
 fn verify_event_source_config(
@@ -332,16 +443,6 @@ impl EventSourceProbe {
     }
 }
 
-fn load_deployment_descriptor() -> Option<DeploymentReadinessDescriptor> {
-    match DeploymentReadinessDescriptor::load() {
-        Ok(descriptor) => descriptor,
-        Err(error) => {
-            debug!("Ignoring deployment descriptor for preflight configuration checks: {error}");
-            None
-        }
-    }
-}
-
 fn probe_filesystem_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
     match descriptor {
         Some(descriptor) if descriptor.filesystem.enabled => EventSourceProbe::available(
@@ -383,15 +484,38 @@ fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
         );
     }
 
-    let readable_count = evidence_paths.iter().filter(|path| path.is_file()).count();
-    if readable_count > 0 {
+    let mut readable = Vec::new();
+    let mut unreadable = Vec::new();
+    for source in &descriptor.terminal.history_sources {
+        match validate_terminal_history_source(&source.shell, &source.path) {
+            Ok(()) => readable.push(format!("{}:{}", source.shell, source.path.display())),
+            Err(error) => unreadable.push(format!(
+                "{}:{} ({error})",
+                source.shell,
+                source.path.display()
+            )),
+        }
+    }
+
+    if !unreadable.is_empty() {
+        EventSourceProbe::unavailable(
+            format!(
+                "Configured terminal history sources are unreadable or malformed: {}",
+                unreadable.join(", ")
+            ),
+            evidence_paths,
+        )
+    } else if !readable.is_empty() {
         EventSourceProbe::available(
-            format!("{readable_count} configured terminal source(s) are present"),
+            format!(
+                "{} configured terminal source(s) validated successfully",
+                readable.len()
+            ),
             evidence_paths,
         )
     } else {
         EventSourceProbe::unavailable(
-            "Configured terminal history sources are not present on disk",
+            "Configured terminal history sources are missing",
             evidence_paths,
         )
     }
@@ -539,10 +663,15 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
         );
     };
 
-    if path.is_file() {
-        EventSourceProbe::available("Configured Atuin history database is present", vec![path])
-    } else {
-        EventSourceProbe::unavailable("Configured Atuin history database is missing", vec![path])
+    match validate_atuin_history_db(&path) {
+        Ok(()) => EventSourceProbe::available(
+            "Configured Atuin history database validated successfully",
+            vec![path],
+        ),
+        Err(error) => EventSourceProbe::unavailable(
+            format!("Configured Atuin history database is unreadable or malformed: {error}"),
+            vec![path],
+        ),
     }
 }
 
@@ -568,16 +697,17 @@ fn probe_activitywatch_source(
         );
     };
 
-    if path.is_file() {
-        EventSourceProbe::available(
-            "Configured ActivityWatch history database is present",
+    match validate_activitywatch_db(&path) {
+        Ok(()) => EventSourceProbe::available(
+            "Configured ActivityWatch history database validated successfully",
             vec![path],
-        )
-    } else {
-        EventSourceProbe::unavailable(
-            "Configured ActivityWatch history database is missing",
+        ),
+        Err(error) => EventSourceProbe::unavailable(
+            format!(
+                "Configured ActivityWatch history database is unreadable or malformed: {error}"
+            ),
             vec![path],
-        )
+        ),
     }
 }
 

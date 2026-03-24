@@ -4,7 +4,13 @@ with lib;
 
 let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   inherit (systemdHardening) mkHelperServiceConfig;
+  inherit (databaseRuntime)
+    mkDatabasePasswordExec
+    mkDatabasePasswordUnitConfig
+    renderDatabaseUrl
+    ;
   cfg = config.services.sinex;
   coreCfg = cfg.core;
   nodesCfg = cfg.nodes;
@@ -56,7 +62,7 @@ let
   sinexPackage = cfg.package;
   serviceUser = cfg.users.nodes;
 
-  databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
+  databaseUrl = renderDatabaseUrl cfg.database;
 
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or {};
@@ -104,8 +110,7 @@ let
   renderBindReadOnlyPaths = mounts:
     map (mount: "${mount.source}:${mount.destination}") mounts;
 
-  baseEnv = [
-    "DATABASE_URL=${databaseUrl}"
+  baseEnv = optional cfg.database.enable "DATABASE_URL=${databaseUrl}" ++ [
     # Propagate environment name so service subjects match bootstrapped stream prefixes.
     # Must stay in sync with services.sinex.nats.environment.
     "SINEX_ENVIRONMENT=${cfg.nats.environment}"
@@ -297,7 +302,11 @@ let
             "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
           ]
         ) {
-          ExecStart = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
+          ExecStart = mkDatabasePasswordExec {
+            name = "ingestd";
+            command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
+            passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+          };
         };
       };
       "sinex-gateway" = {
@@ -306,16 +315,22 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
-        unitConfig = restartRateLimits;
+        unitConfig =
+          restartRateLimits
+          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null)
+          // optionalAttrs (gatewayAdminTokenFile != null) {
+            ConditionPathReadable = gatewayAdminTokenFile;
+          };
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             Type = lib.mkForce "notify";
             NotifyAccess = "main";
-            ExecStart = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
-          }
-          // optionalAttrs (gatewayAdminTokenFile != null) {
-            ConditionPathReadable = gatewayAdminTokenFile;
+            ExecStart = mkDatabasePasswordExec {
+              name = "gateway";
+              command = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
+              passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+            };
           }
         );
       };
@@ -560,7 +575,8 @@ let
             if ! TARGET_UID="$("$ID" -u "$TARGET_USER" 2>/dev/null)"; then
               "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
               "$CHMOD" 0640 "$ENV_FILE"
-              exit 0
+              echo "Sinex desktop bridge failed: target user '$TARGET_USER' does not exist" >&2
+              exit 1
             fi
             RUNTIME_ROOT="/run/user/$TARGET_UID"
           fi
@@ -568,7 +584,8 @@ let
           if [ ! -d "$RUNTIME_ROOT" ]; then
             "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
             "$CHMOD" 0640 "$ENV_FILE"
-            exit 0
+            echo "Sinex desktop bridge failed: runtime directory '$RUNTIME_ROOT' is missing" >&2
+            exit 1
           fi
 
           grant_parent_dirs "$RUNTIME_ROOT"
@@ -648,7 +665,9 @@ let
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
       env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      serviceConfig = optionalAttrs (sat.access.bindReadOnlyPaths != []) {
+      serviceConfig = {
+        ProtectHome = lib.mkForce "read-only";
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != []) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         EnvironmentFile = [ "-${bridgeEnvFile}" ];
@@ -688,8 +707,7 @@ let
       execArgs = concatStringsSep " " ([
         "--service-name sinex-${params.name}"
         "--nats-url ${natsUrl}"
-        "--database-url ${databaseUrl}"
-      ] ++ extraArgs ++ [ "service" ]);
+      ] ++ optional cfg.database.enable "--database-url ${databaseUrl}" ++ extraArgs ++ [ "service" ]);
       env = mkServiceEnv envExtras;
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
@@ -697,9 +715,15 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
-        unitConfig = restartRateLimits;
+        unitConfig =
+          restartRateLimits
+          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
         serviceConfig = mkBaseServiceConfig resources env ({
-          ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+          ExecStart = mkDatabasePasswordExec {
+            name = "${params.name}-${toString instance}";
+            command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+            passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+          };
           WorkingDirectory = stateRoot;
         } // serviceConfigOverrides);
       };
@@ -732,9 +756,15 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits;
+      unitConfig =
+        restartRateLimits
+        // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
       serviceConfig = mkBaseServiceConfig resources env {
-        ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+        ExecStart = mkDatabasePasswordExec {
+          name = params.binary;
+          command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+          passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+        };
         WorkingDirectory = stateRoot;
       };
     };
