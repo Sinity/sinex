@@ -1,6 +1,5 @@
 //! Service lifecycle management for node services
 
-use crate::health_reporter::{HealthReporter, HealthThresholds};
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
 use crate::runtime::stream::NodeRuntimeState;
 use crate::{NodeResult, SinexError};
@@ -49,8 +48,6 @@ pub struct LifecycleManager {
     health_check_interval: tokio::time::Duration,
     heartbeat_emitter: Option<HeartbeatEmitter>,
     heartbeat_interval_seconds: Seconds,
-    health_reporter: Option<Arc<HealthReporter>>,
-    health_thresholds: Option<HealthThresholds>,
     started_at: std::time::Instant,
     shutdown_grace_period: tokio::time::Duration,
 }
@@ -70,8 +67,6 @@ impl LifecycleManager {
             health_check_interval: tokio::time::Duration::from_secs(30),
             heartbeat_emitter: None,
             heartbeat_interval_seconds: Seconds::from_secs(30), // Default 30 second heartbeats
-            health_reporter: None,
-            health_thresholds: None,
             started_at: std::time::Instant::now(),
             shutdown_grace_period: tokio::time::Duration::from_secs(5),
         }
@@ -99,13 +94,6 @@ impl LifecycleManager {
         self
     }
 
-    /// Enable health monitoring with custom thresholds
-    #[must_use]
-    pub fn with_health_monitoring(mut self, thresholds: HealthThresholds) -> Self {
-        self.health_thresholds = Some(thresholds);
-        self
-    }
-
     /// Set the shutdown grace period (default: 5s)
     #[must_use]
     pub fn with_shutdown_grace_period(mut self, duration: tokio::time::Duration) -> Self {
@@ -118,61 +106,12 @@ impl LifecycleManager {
         self.heartbeat_emitter = Some(runtime.heartbeat_emitter(self.heartbeat_interval_seconds));
     }
 
-    /// Hydrate the health reporter with runtime components
-    ///
-    /// This method must be called after the lifecycle manager has access to runtime state.
-    /// It creates the `HealthReporter` with a fully configured `SelfObserver`.
-    #[cfg(feature = "messaging")]
-    pub fn hydrate_health_reporter(&mut self, runtime: &NodeRuntimeState) {
-        use crate::self_observation::{SelfObserver, SelfObserverConfig};
-        use std::time::Duration;
-
-        // Only create if thresholds were configured and NATS is available
-        if let (Some(thresholds), Some(nats_client)) =
-            (&self.health_thresholds, runtime.nats_client())
-        {
-            let config = SelfObserverConfig {
-                component: runtime.service_info().service_name().to_string(),
-                subject_prefix: "sinex.telemetry".to_string(),
-                enabled: true,
-                min_emission_interval: Duration::from_secs(1),
-            };
-
-            let observer = std::sync::Arc::new(SelfObserver::new(nats_client, config));
-
-            self.health_reporter = Some(std::sync::Arc::new(
-                crate::health_reporter::HealthReporter::new(
-                    runtime.service_info().service_name().to_string(),
-                    observer,
-                    thresholds.clone(),
-                ),
-            ));
-
-            tracing::info!(
-                component = %runtime.service_info().service_name(),
-                "Health monitoring enabled with HealthReporter"
-            );
-        }
-    }
-
-    /// Hydrate health reporter (no-op without messaging feature)
-    #[cfg(not(feature = "messaging"))]
-    pub fn hydrate_health_reporter(&mut self, _runtime: &NodeRuntimeState) {
-        // No-op when messaging feature is disabled
-    }
-
     /// Get heartbeat counter handle for tracking metrics
     #[must_use]
     pub fn get_heartbeat_handle(&self) -> Option<HeartbeatCounterHandle> {
         self.heartbeat_emitter
             .as_ref()
             .map(super::heartbeat::HeartbeatEmitter::get_counter_handle)
-    }
-
-    /// Get health reporter for tracking component health
-    #[must_use]
-    pub fn health_reporter(&self) -> Option<&Arc<HealthReporter>> {
-        self.health_reporter.as_ref()
     }
 
     /// Get current status
