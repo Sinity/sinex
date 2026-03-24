@@ -39,6 +39,7 @@ impl LiveGateway {
         env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
         env_guard.set("DATABASE_URL", database_url);
+        env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
 
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
@@ -144,6 +145,44 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
     assert!(
         error_msg.contains("already active"),
         "Second create should be rejected with 'already active' error, got: {second}"
+    );
+
+    Ok(())
+}
+
+/// Concurrent creates for the same node should still admit only one active operation.
+#[sinex_test(timeout = 60)]
+async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+
+    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+
+    let first = gw.rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-race-node"));
+    let second = gw.rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-race-node"));
+    let (first, second) = tokio::join!(first, second);
+    let first = first?;
+    let second = second?;
+
+    let successes = [&first, &second]
+        .into_iter()
+        .filter(|response| response.get("result").is_some())
+        .count();
+    let errors: Vec<&str> = [&first, &second]
+        .into_iter()
+        .filter_map(|response| {
+            response
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(|message| message.as_str())
+        })
+        .collect();
+
+    assert_eq!(successes, 1, "exactly one concurrent create should succeed: first={first}, second={second}");
+    assert!(
+        errors.iter().any(|message| message.contains("already active")),
+        "one concurrent create should be rejected as already active: first={first}, second={second}"
     );
 
     Ok(())

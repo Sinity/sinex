@@ -1,11 +1,13 @@
-use crate::{advisory_lock::AdvisoryLock, repositories::DbPoolExt};
+use crate::advisory_lock::AdvisoryLock;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::utils::ResourceGuard;
+use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::{HashMap, HashSet};
+use std::ops::Bound;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -303,6 +305,20 @@ impl ReplayStateMachine {
         scope: ReplayScope,
         actor: String,
     ) -> Result<ReplayOperation> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT pg_advisory_xact_lock(hashtext($1)::bigint) as "lock!""#,
+            &scope.node_id
+        )
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to acquire replay creation guard")
+                    .with_source(e.to_string())
+                    .with_context("node_id", &scope.node_id)
+                    .with_operation("create_replay_operation")
+            })?;
+
         // Idempotency guard: reject if an active operation exists for this node.
         // All non-terminal replay states map to result_status = 'running'.
         let existing = sqlx::query!(
@@ -316,7 +332,7 @@ impl ReplayStateMachine {
             "#,
             &scope.node_id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(|e| {
             SinexError::database("Failed to check for active replay operations")
@@ -333,16 +349,24 @@ impl ReplayStateMachine {
         }
 
         let now = sinex_primitives::temporal::now();
-        let state_repo = self.pool.state();
-        let op_id = state_repo
-            .start_replay_operation(&actor, serde_json::to_value(&scope)?, scope.time_window)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to start replay operation")
-                    .with_source(e.to_string())
-                    .with_operation("start_replay_operation")
-            })?;
-        let operation_id = op_id.to_uuid();
+        let scope_json = serde_json::to_value(&scope)?;
+        let scope_window_range = scope.time_window.map(|(start, end)| {
+            PgRange::from((Bound::Included(start.inner()), Bound::Included(end.inner())))
+        });
+        let operation_id = sqlx::query_scalar!(
+            r#"SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as "id!: Uuid""#,
+            "replay",
+            actor,
+            scope_json,
+            scope_window_range
+        )
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to start replay operation")
+                .with_source(e.to_string())
+                .with_operation("start_replay_operation")
+        })?;
 
         let mut operation = ReplayOperation {
             operation_id,
@@ -378,20 +402,33 @@ impl ReplayStateMachine {
         let meta_json = serde_json::to_value(&meta)?;
         operation.preview_summary = Some(meta_json.clone());
 
-        state_repo
-            .update_operation_meta(
-                &op_id,
-                OperationStatus::Running,
-                Some("planning"),
-                meta_json,
-            )
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to update operation metadata")
-                    .with_source(e.to_string())
-                    .with_operation("update_operation_meta")
-                    .with_id("operation_id", op_id.to_string())
-            })?;
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            OperationStatus::Running.to_string(),
+            Some("planning"),
+            meta_json
+        )
+        .execute(tx.as_mut())
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to update operation metadata")
+                .with_source(e.to_string())
+                .with_operation("update_operation_meta")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
+        tx.commit().await.map_err(|e| {
+            SinexError::database("Failed to commit replay operation creation")
+                .with_source(e.to_string())
+                .with_operation("create_replay_operation")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
 
         info!(
             "Created replay operation {} in Planning state",
