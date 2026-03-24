@@ -269,9 +269,7 @@ impl DesktopNode {
         state: &DesktopPersistentState,
         from: &Checkpoint,
     ) -> i64 {
-        state
-            .activitywatch_last_row_id
-            .max(Self::checkpoint_activitywatch_row_id(from).unwrap_or_default())
+        Self::checkpoint_activitywatch_row_id(from).unwrap_or(state.activitywatch_last_row_id)
     }
 
     async fn emit_activitywatch_entry(
@@ -869,4 +867,44 @@ impl IngestorNode for DesktopNode {
     }
 }
 
-// End of file
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_prefers_checkpoint_when_present()
+    -> xtask::sandbox::TestResult<()>
+    {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::external(
+            json!({ "activitywatch_row_id": 12 }),
+            "ActivityWatch row 12",
+        );
+
+        assert_eq!(
+            DesktopNode::historical_activitywatch_start_row(&state, &checkpoint),
+            12
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_falls_back_to_state()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+
+        assert_eq!(
+            DesktopNode::historical_activitywatch_start_row(&state, &Checkpoint::None),
+            42
+        );
+        Ok(())
+    }
+}

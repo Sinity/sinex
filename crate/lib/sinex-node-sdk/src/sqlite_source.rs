@@ -58,7 +58,12 @@ pub fn max_row_id_for_query(path: &Utf8Path, query: &str) -> Result<i64, rusqlit
 }
 
 #[must_use]
-pub fn stable_row_material_id(source_identifier: &str, row_id: i64) -> Uuid {
-    let stable_key = format!("{source_identifier}#{row_id}");
+pub fn stable_material_id(source_identifier: &str, stable_key: &str) -> Uuid {
+    let stable_key = format!("{source_identifier}#{stable_key}");
     Uuid::new_v5(&Uuid::NAMESPACE_URL, stable_key.as_bytes())
+}
+
+#[must_use]
+pub fn stable_row_material_id(source_identifier: &str, row_id: i64) -> Uuid {
+    stable_material_id(source_identifier, &row_id.to_string())
 }

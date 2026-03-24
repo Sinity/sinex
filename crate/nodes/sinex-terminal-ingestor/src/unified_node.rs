@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, stable_row_material_id,
+    SourceState, stable_material_id, stable_row_material_id,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -169,7 +169,7 @@ pub struct TerminalState {
 /// Covers ~10K most recent commands, which is sufficient to handle history rotation/truncation.
 const DEDUP_HASH_CAPACITY: usize = 10_000;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
@@ -183,6 +183,18 @@ struct HistoryState {
     /// duplicate events from being emitted.
     #[serde(default)]
     recent_hashes: VecDeque<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TerminalHistoryCheckpoint {
+    #[serde(default)]
+    sources: HashMap<String, HistoryState>,
+}
+
+#[derive(Debug, Clone)]
+struct HistoryScanOutcome {
+    processed: usize,
+    state: HistoryState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,6 +462,10 @@ impl TerminalMetrics {
 }
 
 impl HistoryWatcherContext {
+    fn checkpoint_key(&self) -> String {
+        format!("{}:{}", self.shell, self.path)
+    }
+
     fn record_poll(&self, started_at: Instant, file_size: u64, processed: usize) {
         self.metrics.record_poll(
             &self.shell,
@@ -512,13 +528,19 @@ impl HistoryWatcherContext {
                         &mut line_number,
                         &mut last_inode,
                         &mut recent_hashes,
+                        true,
                     )
                     .await;
             }
             #[cfg(not(unix))]
             {
                 let _ = self
-                    .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut recent_hashes,
+                        true,
+                    )
                     .await;
             }
 
@@ -557,7 +579,7 @@ impl HistoryWatcherContext {
             }
 
             let _ = self
-                .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes, true)
                 .await;
 
             tokio::select! {
@@ -595,7 +617,7 @@ impl HistoryWatcherContext {
             }
 
             let _ = self
-                .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
+                .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes, true)
                 .await;
 
             tokio::select! {
@@ -641,6 +663,100 @@ impl HistoryWatcherContext {
     async fn persist_sqlite_state(&self, sqlite_row_id: i64, recent_hashes: &VecDeque<u64>) {
         self.persist_state_full(0, 0, Some(sqlite_row_id), recent_hashes)
             .await;
+    }
+
+    async fn scan_history_once_from_state(
+        &self,
+        state_override: Option<HistoryState>,
+        persist_state: bool,
+    ) -> HistoryScanOutcome {
+        match self.source_mode {
+            HistorySourceMode::FishSqlite => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut recent_hashes = state.recent_hashes;
+                let processed = self
+                    .poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes, persist_state)
+                    .await;
+                HistoryScanOutcome {
+                    processed,
+                    state: HistoryState {
+                        sqlite_row_id: Some(sqlite_row_id),
+                        recent_hashes,
+                        ..HistoryState::default()
+                    },
+                }
+            }
+            HistorySourceMode::AtuinSqlite => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut recent_hashes = state.recent_hashes;
+                let processed = self
+                    .poll_atuin_history_once(
+                        &mut sqlite_row_id,
+                        &mut recent_hashes,
+                        persist_state,
+                    )
+                    .await;
+                HistoryScanOutcome {
+                    processed,
+                    state: HistoryState {
+                        sqlite_row_id: Some(sqlite_row_id),
+                        recent_hashes,
+                        ..HistoryState::default()
+                    },
+                }
+            }
+            HistorySourceMode::Text => {
+                let state = match state_override {
+                    Some(state) => state,
+                    None => self.load_state().await.unwrap_or_default(),
+                };
+                let mut offset_bytes = state.offset_bytes;
+                let mut line_number = state.line_number;
+                let mut recent_hashes = state.recent_hashes;
+                #[cfg(unix)]
+                let mut last_inode = state.inode;
+
+                #[cfg(unix)]
+                let processed = self
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut last_inode,
+                        &mut recent_hashes,
+                        persist_state,
+                    )
+                    .await;
+                #[cfg(not(unix))]
+                let processed = self
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut recent_hashes,
+                        persist_state,
+                    )
+                    .await;
+
+                HistoryScanOutcome {
+                    processed,
+                    state: HistoryState {
+                        offset_bytes,
+                        line_number,
+                        #[cfg(unix)]
+                        inode: last_inode,
+                        sqlite_row_id: None,
+                        recent_hashes,
+                    },
+                }
+            }
+        }
     }
 
     async fn persist_state_full(
@@ -768,6 +884,7 @@ impl HistoryWatcherContext {
         line_number: &mut u64,
         last_inode: &mut Option<u64>,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use std::os::unix::fs::MetadataExt;
 
@@ -808,8 +925,10 @@ impl HistoryWatcherContext {
                         *offset_bytes = file_size;
                         // Keep line_number as-is; we don't know exactly where we are
                     }
-                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                            .await;
+                    }
                     self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
@@ -858,8 +977,10 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                                .await;
+                            if persist_state {
+                                self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -885,6 +1006,7 @@ impl HistoryWatcherContext {
         offset_bytes: &mut u64,
         line_number: &mut u64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         let poll_started_at = Instant::now();
         let mut processed = 0usize;
@@ -902,8 +1024,10 @@ impl HistoryWatcherContext {
                     );
                     *offset_bytes = 0;
                     *line_number = 0;
-                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                            .await;
+                    }
                     self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
@@ -952,8 +1076,10 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
-                                .await;
+                            if persist_state {
+                                self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -972,72 +1098,11 @@ impl HistoryWatcherContext {
         processed
     }
 
-    async fn scan_history_once(&self) -> usize {
-        match self.source_mode {
-            HistorySourceMode::FishSqlite => {
-                let mut sqlite_row_id = 0i64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-
-                if let Some(state) = self.load_state().await {
-                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                    recent_hashes = state.recent_hashes;
-                }
-
-                self.poll_fish_history_once(&mut sqlite_row_id, &mut recent_hashes)
-                    .await
-            }
-            HistorySourceMode::AtuinSqlite => {
-                let mut sqlite_row_id = 0i64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-
-                if let Some(state) = self.load_state().await {
-                    sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                    recent_hashes = state.recent_hashes;
-                }
-
-                self.poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes)
-                    .await
-            }
-            HistorySourceMode::Text => {
-                let mut offset_bytes = 0u64;
-                let mut line_number = 0u64;
-                let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-                #[cfg(unix)]
-                let mut last_inode: Option<u64> = None;
-
-                if let Some(state) = self.load_state().await {
-                    offset_bytes = state.offset_bytes;
-                    line_number = state.line_number;
-                    recent_hashes = state.recent_hashes;
-                    #[cfg(unix)]
-                    {
-                        last_inode = state.inode;
-                    }
-                }
-
-                #[cfg(unix)]
-                {
-                    self.poll_history_once(
-                        &mut offset_bytes,
-                        &mut line_number,
-                        &mut last_inode,
-                        &mut recent_hashes,
-                    )
-                    .await
-                }
-                #[cfg(not(unix))]
-                {
-                    self.poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
-                        .await
-                }
-            }
-        }
-    }
-
     async fn poll_fish_history_once(
         &self,
         sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use crate::fish_history;
 
@@ -1071,8 +1136,10 @@ impl HistoryWatcherContext {
 
                 if last_row_id > *sqlite_row_id {
                     *sqlite_row_id = last_row_id;
-                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                            .await;
+                    }
                 }
             }
             Err(e) => {
@@ -1089,6 +1156,7 @@ impl HistoryWatcherContext {
         &self,
         sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
+        persist_state: bool,
     ) -> usize {
         use crate::atuin_history;
 
@@ -1122,8 +1190,10 @@ impl HistoryWatcherContext {
 
                 if last_row_id > *sqlite_row_id {
                     *sqlite_row_id = last_row_id;
-                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
-                        .await;
+                    if persist_state {
+                        self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                            .await;
+                    }
                 }
             }
             Err(e) => {
@@ -1409,12 +1479,14 @@ async fn process_atuin_entry(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
+    let material_id = stable_material_id(ctx.path.as_str(), &entry.history_id);
     let mut handle = ctx
         .acquisition
-        .begin_material(ctx.path.as_str())
+        .build_material(ctx.path.as_str())
+        .with_material_id(material_id)
+        .begin()
         .await
         .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-    let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, &bytes)
@@ -1621,6 +1693,35 @@ impl TerminalNode {
 
         Ok(contexts)
     }
+
+    fn checkpoint_state_for_source(
+        checkpoint: &Checkpoint,
+        key: &str,
+    ) -> NodeResult<Option<HistoryState>> {
+        let Checkpoint::External { position, .. } = checkpoint else {
+            return Ok(None);
+        };
+
+        let checkpoint: TerminalHistoryCheckpoint =
+            serde_json::from_value(position.clone()).map_err(|error| {
+                SinexError::serialization("failed to parse terminal history checkpoint state")
+                    .with_std_error(&error)
+            })?;
+
+        Ok(checkpoint.sources.get(key).cloned())
+    }
+
+    fn checkpoint_from_states(states: HashMap<String, HistoryState>) -> NodeResult<Checkpoint> {
+        let position = serde_json::to_value(TerminalHistoryCheckpoint { sources: states })
+            .map_err(|error| {
+                SinexError::serialization("failed to encode terminal history checkpoint state")
+                    .with_std_error(&error)
+            })?;
+        Ok(Checkpoint::external(
+            position,
+            "terminal history source progress",
+        ))
+    }
 }
 
 impl Default for TerminalNode {
@@ -1710,16 +1811,31 @@ impl IngestorNode for TerminalNode {
         let (_, shutdown_rx) = watch::channel(false);
         let contexts = self.build_history_contexts(shutdown_rx)?;
         let mut events_processed = 0u64;
+        let mut checkpoint_states = HashMap::new();
 
         for ctx in contexts {
-            events_processed =
-                events_processed.saturating_add(ctx.scan_history_once().await as u64);
+            let checkpoint_key = ctx.checkpoint_key();
+            let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
+                Ok(Some(state)) => Some(state),
+                Ok(None) => ctx.load_state().await,
+                Err(error) => {
+                    warn!(
+                        source = %checkpoint_key,
+                        error = %error,
+                        "Ignoring unreadable terminal checkpoint state and falling back to local state"
+                    );
+                    ctx.load_state().await
+                }
+            };
+            let outcome = ctx.scan_history_once_from_state(state_override, false).await;
+            events_processed = events_processed.saturating_add(outcome.processed as u64);
+            checkpoint_states.insert(checkpoint_key, outcome.state);
         }
 
         Ok(ScanReport {
             events_processed,
             duration: std::time::Duration::from_millis(0),
-            final_checkpoint: from,
+            final_checkpoint: Self::checkpoint_from_states(checkpoint_states)?,
             time_range: None,
             node_stats: HashMap::new(),
             successful_targets: vec!["historical".to_string()],
@@ -1951,7 +2067,6 @@ mod tests {
                 ));
             }
         };
-
         let expected_bytes = command.len() as i64;
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
@@ -2012,6 +2127,32 @@ mod tests {
         assert_eq!(payload_command, command);
 
         ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_history_checkpoint_roundtrips_per_source_progress() -> TestResult<()> {
+        let source_key = "atuin:/home/test/.local/share/atuin/history.db".to_string();
+        let mut states = HashMap::new();
+        states.insert(
+            source_key.clone(),
+            HistoryState {
+                sqlite_row_id: Some(42),
+                recent_hashes: VecDeque::from([1_u64, 2_u64]),
+                ..HistoryState::default()
+            },
+        );
+
+        let checkpoint = TerminalNode::checkpoint_from_states(states)?;
+        let restored = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("checkpoint state missing"))?;
+
+        assert_eq!(restored.sqlite_row_id, Some(42));
+        assert_eq!(restored.recent_hashes, VecDeque::from([1_u64, 2_u64]));
+        assert!(
+            TerminalNode::checkpoint_state_for_source(&checkpoint, "bash:/tmp/missing")?.is_none()
+        );
+
         Ok(())
     }
 
@@ -2096,6 +2237,18 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("echo 'hello from atuin'")
         );
+        let material_uuid = match event.provenance() {
+            Provenance::Material { id, .. } => *id.as_uuid(),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected material provenance in Atuin event"
+                ));
+            }
+        };
+        assert_eq!(
+            material_uuid,
+            stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
+        );
 
         ingest_handle.stop().await?;
         Ok(())
@@ -2173,11 +2326,17 @@ mod tests {
                 &mut line_number,
                 &mut last_inode,
                 &mut recent_hashes,
+                true,
             )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut recent_hashes,
+                true,
+            )
             .await;
 
         let mut history_file: tokio::fs::File = tokio::fs::OpenOptions::new()
@@ -2195,11 +2354,17 @@ mod tests {
                 &mut line_number,
                 &mut last_inode,
                 &mut recent_hashes,
+                true,
             )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut recent_hashes,
+                true,
+            )
             .await;
 
         #[cfg(test)]
@@ -2387,7 +2552,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
@@ -2427,7 +2598,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
@@ -2457,7 +2634,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();
@@ -2489,7 +2672,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let after_first_poll = fix.commands.lock().await.clone();
@@ -2514,7 +2703,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let after_second_poll = fix.commands.lock().await.clone();
@@ -2544,7 +2739,13 @@ mod tests {
         #[cfg(unix)]
         let _ = fix
             .ctx
-            .poll_history_once(&mut offset, &mut line_number, &mut last_inode, &mut hashes)
+            .poll_history_once(
+                &mut offset,
+                &mut line_number,
+                &mut last_inode,
+                &mut hashes,
+                true,
+            )
             .await;
 
         let commands = fix.commands.lock().await.clone();

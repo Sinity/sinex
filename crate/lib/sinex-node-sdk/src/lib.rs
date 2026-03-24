@@ -177,7 +177,8 @@ pub use self_observation::{
 };
 pub use shutdown::{ShutdownConfig, ShutdownHandler, ShutdownSignal, default_checkpoint_path};
 pub use sqlite_source::{
-    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, stable_row_material_id,
+    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, stable_material_id,
+    stable_row_material_id,
 };
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
