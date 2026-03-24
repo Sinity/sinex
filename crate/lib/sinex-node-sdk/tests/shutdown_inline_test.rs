@@ -1,37 +1,38 @@
 #![cfg(feature = "messaging")]
 
 use sinex_node_sdk::runtime::stream::Checkpoint;
-use sinex_node_sdk::{CheckpointState, ShutdownHandler, default_checkpoint_path};
+use sinex_node_sdk::{CheckpointState, ShutdownConfig, default_checkpoint_path};
 use sinex_primitives::Timestamp;
 use tempfile::TempDir;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn test_shutdown_handler_creation() -> TestResult<()> {
-    let handler = ShutdownHandler::new("/tmp/test.checkpoint");
-    assert!(!handler.signal().is_shutdown_requested());
+async fn test_shutdown_config_default_behavior() -> TestResult<()> {
+    let config = ShutdownConfig::default();
+    assert!(config.save_state_on_shutdown);
+    assert!(config.restore_state_on_startup);
+    assert_eq!(config.grace_period_secs, 30);
     Ok(())
 }
 
 #[sinex_test]
-async fn test_manual_shutdown() -> TestResult<()> {
-    let handler = ShutdownHandler::new("/tmp/test.checkpoint");
-    let signal = handler.signal();
-
-    assert!(!signal.is_shutdown_requested());
-    handler.trigger_shutdown();
-    assert!(signal.is_shutdown_requested());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_state_save_load() -> TestResult<()> {
+async fn test_shutdown_config_prefers_explicit_checkpoint_path() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
+    let config = ShutdownConfig {
+        checkpoint_path: Some(checkpoint_path.clone()),
+        ..Default::default()
+    };
 
-    let handler = ShutdownHandler::new(&checkpoint_path);
+    assert_eq!(config.checkpoint_path("ignored-node"), checkpoint_path);
+    Ok(())
+}
 
+#[sinex_test]
+async fn test_checkpoint_state_roundtrip_to_file() -> TestResult<()> {
+    let temp_dir = TempDir::new().unwrap();
+    let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
     let state = CheckpointState {
         checkpoint: Checkpoint::internal(Uuid::now_v7(), 42),
         processed_count: 7,
@@ -43,10 +44,9 @@ async fn test_state_save_load() -> TestResult<()> {
         version: 2,
         revision: 0,
     };
-    handler.save_state(&state).await.unwrap();
+    state.save_to_file(&checkpoint_path).await.unwrap();
 
-    let loaded = handler
-        .load_state()
+    let loaded = CheckpointState::load_from_file(&checkpoint_path)
         .await
         .expect("state should be present after save");
     assert_eq!(loaded.checkpoint, state.checkpoint);
@@ -55,8 +55,14 @@ async fn test_state_save_load() -> TestResult<()> {
     assert_eq!(loaded.data, state.data);
     assert_eq!(loaded.version, state.version);
 
-    handler.clear_state().await.unwrap();
-    assert!(handler.load_state().await.is_none());
+    CheckpointState::delete_file(&checkpoint_path)
+        .await
+        .unwrap();
+    assert!(
+        CheckpointState::load_from_file(&checkpoint_path)
+            .await
+            .is_none()
+    );
     Ok(())
 }
 
@@ -64,5 +70,18 @@ async fn test_state_save_load() -> TestResult<()> {
 async fn test_default_checkpoint_path() -> TestResult<()> {
     let path = default_checkpoint_path("my-node");
     assert!(path.to_string_lossy().ends_with("my-node.checkpoint.json"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_default_checkpoint_path_prefers_work_dir_when_runtime_dir_missing() -> TestResult<()>
+{
+    let temp_dir = TempDir::new()?;
+    let mut env = EnvGuard::new();
+    env.clear("SINEX_RUNTIME_DIR");
+    env.set("SINEX_WORK_DIR", temp_dir.path().display().to_string());
+
+    let path = default_checkpoint_path("my-node");
+    assert_eq!(path, temp_dir.path().join("my-node.checkpoint.json"));
     Ok(())
 }

@@ -57,6 +57,7 @@ use crate::heartbeat::HeartbeatEmitter;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
+use async_nats::Subscriber;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
@@ -212,11 +213,15 @@ mod tests {
 
         let listed = coordination.kv_client.list_instances().await?;
         assert!(
-            listed.iter().any(|meta| meta.instance_id == fresh.instance_id),
+            listed
+                .iter()
+                .any(|meta| meta.instance_id == fresh.instance_id),
             "fresh instance should remain visible"
         );
         assert!(
-            listed.iter().all(|meta| meta.instance_id != stale.instance_id),
+            listed
+                .iter()
+                .all(|meta| meta.instance_id != stale.instance_id),
             "stale instance should be filtered out"
         );
         assert!(
@@ -249,11 +254,230 @@ mod tests {
                 last_heartbeat: fresh.last_heartbeat - 600,
             })
             .await?;
+        coordination
+            .kv_client
+            .acquire_leadership("stale-old-version")
+            .await?;
 
         assert!(
             !coordination.maybe_initiate_handoff().await?,
             "stale older instances must not trigger startup handoff"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn maybe_initiate_handoff_ignores_older_standby_when_self_is_leader(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-leader-only-handoff").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let fresh = coordination.current_metadata();
+        coordination.kv_client.register_instance(&fresh).await?;
+        coordination
+            .kv_client
+            .register_instance(&InstanceMetadata {
+                instance_id: "older-standby".to_string(),
+                hostname: fresh.hostname.clone(),
+                version: "0.0.0".to_string(),
+                started_at: fresh.started_at,
+                last_heartbeat: fresh.last_heartbeat,
+            })
+            .await?;
+        coordination
+            .kv_client
+            .acquire_leadership(&fresh.instance_id)
+            .await?;
+
+        assert!(
+            !coordination.maybe_initiate_handoff().await?,
+            "only the current leader should be considered for startup handoff"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_handoff_request_publishes_explicit_requester_and_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-handoff-payload").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let subject = format!(
+            "sinex.coordination.{}.handoff",
+            coordination.instance.service_name
+        );
+        let mut sub = coordination.nats_client.subscribe(subject).await?;
+
+        coordination
+            .send_handoff_request("older-leader", "0.0.0".parse()?)
+            .await?;
+
+        let message = tokio::time::timeout(Duration::from_secs(5), sub.next())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("handoff request not published"))?;
+        let request: HandoffRequest = serde_json::from_slice(&message.payload)?;
+        assert_eq!(
+            request.requester_instance_id,
+            coordination.instance.instance_id
+        );
+        assert_eq!(request.requester_version, coordination.instance.version);
+        assert_eq!(request.target_instance_id, "older-leader");
+        assert_eq!(request.target_version, "0.0.0".parse()?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_handoff_ready_ignores_unrelated_messages(ctx: TestContext) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-handoff-ready-filter").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let service = coordination.instance.service_name.clone();
+        let requester = coordination.instance.instance_id.clone();
+        let nats = coordination.nats_client.clone();
+        let mut sub = coordination.subscribe_handoff_ready().await?;
+
+        let publisher = tokio::spawn(async move {
+            let ready_subject = format!("sinex.coordination.{service}.handoff_ready");
+
+            nats.publish(ready_subject.clone(), "not-json".into())
+                .await
+                .expect("publish malformed ready");
+
+            let unrelated = HandoffRequest {
+                requester_instance_id: "other-requester".to_string(),
+                requester_version: "9.9.9".parse().expect("valid version"),
+                target_instance_id: "other-target".to_string(),
+                target_version: "0.0.1".parse().expect("valid version"),
+                requested_at: SystemTime::now(),
+                timeout_seconds: Seconds::from_secs(30),
+            };
+            nats.publish(
+                ready_subject.clone(),
+                serde_json::to_vec(&unrelated)
+                    .expect("serialize unrelated")
+                    .into(),
+            )
+            .await
+            .expect("publish unrelated ready");
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let matching = HandoffRequest {
+                requester_instance_id: requester,
+                requester_version: "1.0.0".parse().expect("valid version"),
+                target_instance_id: "older-leader".to_string(),
+                target_version: "0.0.1".parse().expect("valid version"),
+                requested_at: SystemTime::now(),
+                timeout_seconds: Seconds::from_secs(30),
+            };
+            nats.publish(
+                ready_subject,
+                serde_json::to_vec(&matching)
+                    .expect("serialize matching")
+                    .into(),
+            )
+            .await
+            .expect("publish matching ready");
+        });
+
+        coordination
+            .wait_for_handoff_ready_with_subscription(
+                &mut sub,
+                "older-leader",
+                Duration::from_secs(5),
+            )
+            .await?;
+        publisher.await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_handoff_ready_times_out_honestly(ctx: TestContext) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-handoff-timeout").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let mut sub = coordination.subscribe_handoff_ready().await?;
+
+        let err = coordination
+            .wait_for_handoff_ready_with_subscription(
+                &mut sub,
+                "older-leader",
+                Duration::from_millis(50),
+            )
+            .await
+            .expect_err("missing handoff_ready should surface as an error");
+        assert!(
+            err.to_string()
+                .contains("Timed out waiting for handoff_ready"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn maybe_initiate_handoff_targets_current_leader_and_waits_for_ready(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-handoff-roundtrip").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let self_metadata = coordination.current_metadata();
+        coordination
+            .kv_client
+            .register_instance(&self_metadata)
+            .await?;
+
+        let older_leader = InstanceMetadata {
+            instance_id: "older-leader".to_string(),
+            hostname: self_metadata.hostname.clone(),
+            version: "0.0.0".to_string(),
+            started_at: self_metadata.started_at,
+            last_heartbeat: self_metadata.last_heartbeat,
+        };
+        coordination
+            .kv_client
+            .register_instance(&older_leader)
+            .await?;
+        coordination
+            .kv_client
+            .acquire_leadership(&older_leader.instance_id)
+            .await?;
+
+        let requester = coordination.instance.instance_id.clone();
+        let service = coordination.instance.service_name.clone();
+        let nats = coordination.nats_client.clone();
+        let responder = tokio::spawn(async move {
+            let handoff_subject = format!("sinex.coordination.{service}.handoff");
+            let ready_subject = format!("sinex.coordination.{service}.handoff_ready");
+            let mut sub = nats
+                .subscribe(handoff_subject)
+                .await
+                .expect("subscribe handoff");
+            let message = tokio::time::timeout(Duration::from_secs(5), sub.next())
+                .await
+                .expect("handoff timeout")
+                .expect("handoff message missing");
+            let request: HandoffRequest =
+                serde_json::from_slice(&message.payload).expect("decode handoff request");
+            assert_eq!(request.requester_instance_id, requester);
+            assert_eq!(request.target_instance_id, "older-leader");
+            nats.publish(
+                ready_subject,
+                serde_json::to_vec(&request)
+                    .expect("serialize ready")
+                    .into(),
+            )
+            .await
+            .expect("publish handoff ready");
+        });
+
+        assert!(
+            coordination.maybe_initiate_handoff().await?,
+            "older current leader should trigger startup handoff"
+        );
+        responder.await?;
         Ok(())
     }
 
@@ -301,9 +525,10 @@ mod tests {
 /// See: `send_handoff_request()`, `handle_graceful_handoff()`, `wait_for_handoff_ready()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandoffRequest {
-    pub from_instance: String,
-    pub from_version: NodeVersion,
-    pub to_version: NodeVersion,
+    pub requester_instance_id: String,
+    pub requester_version: NodeVersion,
+    pub target_instance_id: String,
+    pub target_version: NodeVersion,
     pub requested_at: SystemTime,
     pub timeout_seconds: Seconds,
 }
@@ -486,7 +711,7 @@ fn instance_metadata_at(instance: &NodeInstance, last_heartbeat: Option<i64>) ->
 }
 
 /// Leadership coordination for a node service
-    pub struct NodeCoordination {
+pub struct NodeCoordination {
     instance: NodeInstance,
     kv_client: CoordinationKvClient,
     nats_client: async_nats::Client,
@@ -675,6 +900,16 @@ impl NodeCoordination {
         F: Fn() -> Fut + Send,
         Fut: Future<Output = Result<()>> + Send,
     {
+        struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+
+        impl Drop for AbortOnDrop {
+            fn drop(&mut self) {
+                if let Some(handle) = self.0.take() {
+                    handle.abort();
+                }
+            }
+        }
+
         // Start leader tasks
         // Use a larger channel to absorb handoff bursts.
         let (handoff_sender, handoff_receiver) = mpsc::channel(100);
@@ -683,17 +918,19 @@ impl NodeCoordination {
         // Spawn handoff monitor.
         let nats_clone = self.nats_client.clone();
         let service_name_clone = self.instance.service_name.clone();
+        let instance_id_clone = self.instance.instance_id.clone();
         let handoff_sender_clone = handoff_sender.clone();
         let handoff_drops_clone = self.handoff_drops.clone();
 
         // Monitor spawned task health.
         let service_name_health = self.instance.service_name.clone();
-        let _monitor_handle = tokio::spawn(async move {
+        let _monitor_handle = AbortOnDrop(Some(tokio::spawn(async move {
             let subject = format!("sinex.coordination.{service_name_clone}.handoff");
             match nats_clone.subscribe(subject.clone()).await {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
                         if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload)
+                            && req.target_instance_id == instance_id_clone
                             && handoff_sender_clone.send(req).await.is_err()
                         {
                             let _ = handoff_drops_clone.add(1);
@@ -713,7 +950,7 @@ impl NodeCoordination {
                     );
                 }
             }
-        });
+        })));
 
         // Heartbeat/Lease Maintenance Interval
         let mut maintenance_interval = tokio::time::interval(Duration::from_secs(5));
@@ -799,16 +1036,16 @@ impl NodeCoordination {
     /// - Lease release is last and best-effort (cleanup can continue even if it fails)
     #[instrument(skip(self, request), fields(
         service = %self.instance.service_name,
-        from_version = %request.from_version.version,
-        to_version = %request.to_version.version
+        requester_version = %request.requester_version.version,
+        target_version = %request.target_version.version
     ))]
     async fn handle_graceful_handoff(&self, request: HandoffRequest) -> Result<()> {
         // 📊 COORDINATION EVENT: Handoff Started
         info!(
             event = "coordination.handoff_started",
             service = %self.instance.service_name,
-             current_instance = %self.instance.instance_id,
-            target_instance = %request.from_instance,
+            current_instance = %self.instance.instance_id,
+            requester_instance = %request.requester_instance_id,
             "🔄 Starting graceful handoff process"
         );
 
@@ -854,7 +1091,8 @@ impl NodeCoordination {
     /// to gracefully drain its work and shut down.
     #[instrument(skip(self), fields(
         service = %self.instance.service_name,
-        from_instance = %target_instance_id,
+        requester_instance = %self.instance.instance_id,
+        target_instance = %target_instance_id,
         current_version = %self.instance.version.version
     ))]
     pub async fn send_handoff_request(
@@ -869,9 +1107,10 @@ impl NodeCoordination {
         );
 
         let request = HandoffRequest {
-            from_instance: target_instance_id.to_string(),
-            from_version: target_version,
-            to_version: self.instance.version.clone(),
+            requester_instance_id: self.instance.instance_id.clone(),
+            requester_version: self.instance.version.clone(),
+            target_instance_id: target_instance_id.to_string(),
+            target_version,
             requested_at: SystemTime::now(),
             timeout_seconds: Seconds::from_secs(30),
         };
@@ -895,64 +1134,134 @@ impl NodeCoordination {
         Ok(())
     }
 
-    /// Wait for handoff completion from target instance
-    ///
-    /// Subscribe to `handoff_ready` signal and wait for confirmation
-    /// that the old instance has drained and is ready to shut down.
-    pub async fn wait_for_handoff_ready(
-        &self,
-        target_instance_id: &str,
-        timeout: Duration,
-    ) -> Result<()> {
+    async fn subscribe_handoff_ready(&self) -> Result<Subscriber> {
         let subject = format!(
             "sinex.coordination.{}.handoff_ready",
             self.instance.service_name
         );
 
+        self.nats_client
+            .subscribe(subject)
+            .await
+            .map_err(|e| SinexError::network(format!("Failed to subscribe to handoff_ready: {e}")))
+    }
+
+    /// Wait for handoff completion from target instance.
+    ///
+    /// The caller is responsible for subscribing before the request is published so
+    /// a fast responder cannot win the race and emit `handoff_ready` before we are listening.
+    async fn wait_for_handoff_ready_with_subscription(
+        &self,
+        sub: &mut Subscriber,
+        target_instance_id: &str,
+        timeout: Duration,
+    ) -> Result<()> {
         info!(
             event = "coordination.waiting_for_handoff_ready",
+            requester = %self.instance.instance_id,
             target = %target_instance_id,
             timeout_secs = timeout.as_secs(),
             "⏳ Waiting for old instance to signal ready"
         );
 
-        let mut sub = self
-            .nats_client
-            .subscribe(subject.clone())
-            .await
-            .map_err(|e| {
-                SinexError::network(format!("Failed to subscribe to handoff_ready: {e}"))
-            })?;
-
         // Wait for ready signal with timeout
-        match tokio::time::timeout(timeout, sub.next()).await {
-            Ok(Some(_msg)) => {
-                info!(
-                    event = "coordination.handoff_ready_received",
-                    target = %target_instance_id,
-                    "✅ Old instance signaled ready, proceeding with startup"
-                );
-                Ok(())
-            }
-            Ok(None) => {
-                warn!(
-                    "Handoff ready channel closed unexpectedly for {}",
-                    target_instance_id
-                );
-                // Continue anyway - old instance may have crashed
-                Ok(())
-            }
-            Err(_) => {
+        let wait_deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = wait_deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                let error = SinexError::timeout(format!(
+                    "Timed out waiting for handoff_ready from {target_instance_id} after {}s",
+                    timeout.as_secs()
+                ));
                 warn!(
                     event = "coordination.handoff_timeout",
+                    requester = %self.instance.instance_id,
                     target = %target_instance_id,
                     timeout_secs = timeout.as_secs(),
-                    "⚠️  Timeout waiting for handoff ready, proceeding anyway"
+                    error = %error,
+                    "Timed out waiting for old instance to signal ready"
                 );
-                // Don't fail - proceed with startup even if old instance doesn't respond
-                Ok(())
+                return Err(error);
+            }
+
+            match tokio::time::timeout(remaining, sub.next()).await {
+                Ok(Some(message)) => {
+                    let ready = match serde_json::from_slice::<HandoffRequest>(&message.payload) {
+                        Ok(ready) => ready,
+                        Err(error) => {
+                            warn!(
+                                event = "coordination.handoff_ready_decode_failed",
+                                requester = %self.instance.instance_id,
+                                target = %target_instance_id,
+                                error = %error,
+                                "Ignoring malformed handoff_ready payload"
+                            );
+                            continue;
+                        }
+                    };
+                    if ready.requester_instance_id == self.instance.instance_id
+                        && ready.target_instance_id == target_instance_id
+                    {
+                        info!(
+                            event = "coordination.handoff_ready_received",
+                            requester = %self.instance.instance_id,
+                            target = %target_instance_id,
+                            "✅ Old instance signaled ready, proceeding with startup"
+                        );
+                        return Ok(());
+                    }
+
+                    info!(
+                        event = "coordination.handoff_ready_ignored",
+                        requester = %self.instance.instance_id,
+                        target = %target_instance_id,
+                        received_requester = %ready.requester_instance_id,
+                        received_target = %ready.target_instance_id,
+                        "Ignoring unrelated handoff_ready signal"
+                    );
+                }
+                Ok(None) => {
+                    let error = SinexError::channel_receive(format!(
+                        "handoff_ready subscription closed while waiting for {target_instance_id}"
+                    ));
+                    warn!(
+                        requester = %self.instance.instance_id,
+                        target = %target_instance_id,
+                        error = %error,
+                        "Handoff ready channel closed unexpectedly"
+                    );
+                    return Err(error);
+                }
+                Err(_) => {
+                    let error = SinexError::timeout(format!(
+                        "Timed out waiting for handoff_ready from {target_instance_id} after {}s",
+                        timeout.as_secs()
+                    ));
+                    warn!(
+                        event = "coordination.handoff_timeout",
+                        requester = %self.instance.instance_id,
+                        target = %target_instance_id,
+                        timeout_secs = timeout.as_secs(),
+                        error = %error,
+                        "Timed out waiting for old instance to signal ready"
+                    );
+                    return Err(error);
+                }
             }
         }
+    }
+
+    /// Wait for handoff completion from target instance.
+    ///
+    /// Subscribes to `handoff_ready` and filters signals to the current requester/target pair.
+    pub async fn wait_for_handoff_ready(
+        &self,
+        target_instance_id: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let mut sub = self.subscribe_handoff_ready().await?;
+        self.wait_for_handoff_ready_with_subscription(&mut sub, target_instance_id, timeout)
+            .await
     }
 
     /// List all instances of this service currently registered
@@ -979,43 +1288,58 @@ impl NodeCoordination {
     /// }
     /// ```
     pub async fn maybe_initiate_handoff(&self) -> Result<bool> {
-        let instances = self.list_instances().await?;
-
-        // Find older version of same service
-        let my_version = &self.instance.version;
-
-        for instance in instances {
-            // Skip self
-            if instance.instance_id == self.instance.instance_id {
-                continue;
-            }
-
-            // Parse instance version
-            if let Ok(instance_version) = instance.version.parse::<NodeVersion>() {
-                // If we find an older version, request handoff
-                if instance_version < *my_version {
-                    info!(
-                        event = "coordination.older_version_detected",
-                        old_instance = %instance.instance_id,
-                        old_version = %instance_version.version,
-                        new_version = %my_version.version,
-                        "🔄 Detected older version, initiating handoff"
-                    );
-
-                    // Send handoff request
-                    self.send_handoff_request(&instance.instance_id, instance_version.clone())
-                        .await?;
-
-                    // Wait for old version to drain (30 second timeout)
-                    self.wait_for_handoff_ready(&instance.instance_id, Duration::from_secs(30))
-                        .await?;
-
-                    return Ok(true);
-                }
-            }
+        let Some(leader_instance_id) = self.kv_client.get_leader().await? else {
+            return Ok(false);
+        };
+        if leader_instance_id == self.instance.instance_id {
+            return Ok(false);
         }
 
-        // No older version found
+        let instances = self.list_instances().await?;
+        let Some(leader_metadata) = instances
+            .into_iter()
+            .find(|instance| instance.instance_id == leader_instance_id)
+        else {
+            warn!(
+                leader_instance = %leader_instance_id,
+                "Leader lease exists but instance metadata is missing or stale; skipping startup handoff"
+            );
+            return Ok(false);
+        };
+
+        let my_version = &self.instance.version;
+
+        let Ok(leader_version) = leader_metadata.version.parse::<NodeVersion>() else {
+            warn!(
+                leader_instance = %leader_metadata.instance_id,
+                leader_version = %leader_metadata.version,
+                "Leader version is not parseable; skipping startup handoff"
+            );
+            return Ok(false);
+        };
+
+        if leader_version < *my_version {
+            info!(
+                event = "coordination.older_leader_detected",
+                leader_instance = %leader_metadata.instance_id,
+                old_version = %leader_version.version,
+                new_version = %my_version.version,
+                "🔄 Detected older leader, initiating handoff"
+            );
+
+            let mut handoff_ready = self.subscribe_handoff_ready().await?;
+            self.send_handoff_request(&leader_metadata.instance_id, leader_version)
+                .await?;
+            self.wait_for_handoff_ready_with_subscription(
+                &mut handoff_ready,
+                &leader_metadata.instance_id,
+                Duration::from_secs(30),
+            )
+            .await?;
+
+            return Ok(true);
+        }
+
         Ok(false)
     }
 

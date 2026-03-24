@@ -26,10 +26,7 @@ use tracing::{info, warn};
 
 #[must_use]
 pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
-    matches!(
-        command,
-        NodeCommand::Service { .. } | NodeCommand::Scan { .. } | NodeCommand::Explore { .. }
-    )
+    matches!(command, NodeCommand::Service { .. })
 }
 
 /// Standard CLI arguments for all nodes
