@@ -724,16 +724,16 @@ impl ReplayExecutionEngine {
     }
 
     async fn execute(&self, operation_id: Uuid, executor_name: String) -> Result<ReplayOperation> {
-        if !self
+        let Some(_execution_lock) = self
             .replay
             .acquire_execution_lock(operation_id, NodeName::new(executor_name.clone()))
             .await?
-        {
+        else {
             return Err(eyre!(
                 "Operation {} is already executing on another node",
                 operation_id
             ));
-        }
+        };
 
         info!(
             operation_id = %operation_id,
@@ -760,10 +760,6 @@ impl ReplayExecutionEngine {
             {
                 warn!(?mark_err, "Failed to mark replay operation as failed");
             }
-        }
-
-        if let Err(err) = self.replay.release_execution_lock(operation_id).await {
-            warn!(?err, "Failed to release replay execution lock");
         }
     }
 
