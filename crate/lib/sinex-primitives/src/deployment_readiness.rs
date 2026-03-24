@@ -17,6 +17,12 @@ pub struct DeploymentReadinessDescriptor {
     #[serde(default)]
     pub target: Option<DeploymentTarget>,
     #[serde(default)]
+    pub database: DeploymentDatabaseRuntime,
+    #[serde(default)]
+    pub gateway: DeploymentGatewayRuntime,
+    #[serde(default)]
+    pub nats: DeploymentNatsRuntime,
+    #[serde(default)]
     pub filesystem: DeploymentSurface,
     #[serde(default)]
     pub terminal: TerminalDeploymentSurface,
@@ -48,6 +54,38 @@ pub struct DeploymentTarget {
     pub uid: Option<u32>,
     #[serde(default)]
     pub home: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct DeploymentDatabaseRuntime {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub local_auth: Option<String>,
+    #[serde(default)]
+    pub password_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct DeploymentGatewayRuntime {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub require_client_tls: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct DeploymentNatsRuntime {
+    #[serde(default)]
+    pub servers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -115,7 +153,21 @@ pub struct DeploymentSecrets {
     #[serde(default)]
     pub gateway_tls_key_file: Option<PathBuf>,
     #[serde(default)]
+    pub gateway_tls_trust_anchor_file: Option<PathBuf>,
+    #[serde(default)]
     pub gateway_tls_client_ca_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_ca_cert_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_client_cert_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_client_key_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_token_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_creds_file: Option<PathBuf>,
+    #[serde(default)]
+    pub nats_nkey_seed_file: Option<PathBuf>,
 }
 
 impl DeploymentReadinessDescriptor {

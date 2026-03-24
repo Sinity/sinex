@@ -143,11 +143,21 @@ fn resolve_runtime_metrics_database_url(database_url: Option<&str>) -> Result<Op
 
 fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<RuntimeMetrics> {
     match runtime_db_url {
-        Ok(Some(url)) => tokio::runtime::Builder::new_current_thread()
+        Ok(Some(url)) => match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .ok()
-            .map(|rt| rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url))),
+        {
+            Ok(rt) => Some(rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url))),
+            Err(error) => Some(RuntimeMetrics {
+                ingestd_status: IngestdStatus::Unknown,
+                last_heartbeat_age_secs: None,
+                consumer_lag_pending: None,
+                consumer_lag_age_secs: None,
+                last_batch_latency_ms: None,
+                last_batch_latency_age_secs: None,
+                query_error: Some(format!("failed to build runtime probe executor: {error}")),
+            }),
+        },
         Ok(None) => None,
         Err(error) => Some(RuntimeMetrics {
             ingestd_status: IngestdStatus::Unknown,
@@ -221,6 +231,45 @@ struct SummaryOutput {
     files_changed: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     uncommitted_count: Option<usize>,
+}
+
+fn classify_summary_health(
+    pg_ready: bool,
+    nats_ready: bool,
+    history_available: bool,
+    history_diag_errors: usize,
+    history_diag_warnings: usize,
+    history_synthetic: bool,
+    has_job_issues: bool,
+    last_test_failed: bool,
+    last_check_failed: bool,
+    has_warnings: bool,
+) -> (&'static str, &'static str) {
+    let health = if !pg_ready
+        || !nats_ready
+        || !history_available
+        || history_diag_errors > 0
+        || last_test_failed
+        || last_check_failed
+    {
+        "unhealthy"
+    } else if has_warnings {
+        "degraded"
+    } else {
+        "healthy"
+    };
+
+    let indicator = if !pg_ready || !nats_ready {
+        "infra"
+    } else if !history_available || history_diag_errors > 0 {
+        "error"
+    } else if history_synthetic || has_job_issues || history_diag_warnings > 0 || has_warnings {
+        "warn"
+    } else {
+        "ok"
+    };
+
+    (health, indicator)
 }
 
 #[derive(Debug, Serialize)]
@@ -877,36 +926,22 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         warnings.extend(runtime_metrics.assessment().warnings);
     }
 
-    // Health
-    let health = if !data.pg_probe.ready()
-        || !data.nats_probe.ready()
-        || last_test
+    let (health, health_indicator) = classify_summary_health(
+        data.pg_probe.ready(),
+        data.nats_probe.ready(),
+        data.history.available,
+        data.history.diag_counts.errors,
+        data.history.diag_counts.warnings,
+        data.history.is_synthetic,
+        !data.job_issues.is_empty(),
+        last_test
             .as_ref()
-            .is_some_and(|t| matches!(t.status, InvocationStatus::Failed))
-        || last_check
+            .is_some_and(|t| matches!(t.status, InvocationStatus::Failed)),
+        last_check
             .as_ref()
-            .is_some_and(|c| matches!(c.status, InvocationStatus::Failed))
-    {
-        "unhealthy"
-    } else if !warnings.is_empty() {
-        "degraded"
-    } else {
-        "healthy"
-    };
-
-    let health_indicator = if !data.pg_probe.ready() || !data.nats_probe.ready() {
-        "infra"
-    } else if !data.history.available || data.history.diag_counts.errors > 0 {
-        "error"
-    } else if data.history.is_synthetic
-        || !data.job_issues.is_empty()
-        || data.history.diag_counts.warnings > 0
-        || !warnings.is_empty()
-    {
-        "warn"
-    } else {
-        "ok"
-    };
+            .is_some_and(|c| matches!(c.status, InvocationStatus::Failed)),
+        !warnings.is_empty(),
+    );
 
     // Summary line (always computed for JSON)
     let warns_str = if data.history.diag_counts.errors > 0 {
@@ -2304,6 +2339,26 @@ mod tests {
         assert_eq!(json["uncommitted_count"], 5);
         // stash_count=None should be absent
         assert!(json.get("stash_count").is_none() || json["stash_count"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_summary_health_promotes_history_errors_to_unhealthy()
+    -> ::xtask::sandbox::TestResult<()> {
+        let (health, indicator) =
+            classify_summary_health(true, true, false, 1, 0, false, false, false, false, true);
+        assert_eq!(health, "unhealthy");
+        assert_eq!(indicator, "error");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_summary_health_marks_warning_only_state_degraded()
+    -> ::xtask::sandbox::TestResult<()> {
+        let (health, indicator) =
+            classify_summary_health(true, true, true, 0, 1, false, false, false, false, true);
+        assert_eq!(health, "degraded");
+        assert_eq!(indicator, "warn");
         Ok(())
     }
 

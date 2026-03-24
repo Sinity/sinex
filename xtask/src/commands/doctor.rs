@@ -84,6 +84,17 @@ pub(crate) struct TlsCheck {
     /// Whether the server cert's private key matches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_matches: Option<bool>,
+    /// Error reported by TLS validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl TlsCheck {
+    fn is_healthy(&self) -> bool {
+        self.error.is_none()
+            && !self.server_expired.unwrap_or(false)
+            && self.key_matches.unwrap_or(true)
+    }
 }
 
 fn resolve_tls_artifact(dir: &Path, candidates: &[&str]) -> Option<PathBuf> {
@@ -111,22 +122,25 @@ fn detect_tls_check() -> Option<TlsCheck> {
     let client_cert_exists = resolve_tls_artifact(active_dir, &["client.pem"]).is_some();
     let ca_exists = resolve_tls_artifact(active_dir, &["ca.pem"]).is_some();
 
-    let (server_expires_days, server_expired, key_matches) =
+    let (server_expires_days, server_expired, key_matches, error) =
         if let Some(cert_path) = server_cert_path.as_ref() {
             let opts = crate::tls::TlsCheckOptions {
                 cert_path: Some(cert_path.clone()),
                 key_path: server_key_path.clone(),
                 ..Default::default()
             };
-            if let Ok(result) = crate::tls::check_tls_config(&opts) {
-                let days = result.certificate.as_ref().map(|c| c.days_until_expiry);
-                let expired = result.certificate.as_ref().map(|c| c.is_expired);
-                (days, expired, result.key_matches)
-            } else {
-                (None, None, None)
+            match crate::tls::check_tls_config(&opts) {
+                Ok(result) => {
+                    let days = result.certificate.as_ref().map(|c| c.days_until_expiry);
+                    let expired = result.certificate.as_ref().map(|c| c.is_expired);
+                    let error = (!result.valid && !result.issues.is_empty())
+                        .then(|| result.issues.join("; "));
+                    (days, expired, result.key_matches, error)
+                }
+                Err(error) => (None, None, None, Some(error.to_string())),
             }
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
 
     Some(TlsCheck {
@@ -136,6 +150,7 @@ fn detect_tls_check() -> Option<TlsCheck> {
         server_expires_days,
         server_expired,
         key_matches,
+        error,
     })
 }
 
@@ -333,6 +348,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     // Check TLS certificates from env vars or .sinex/tls/
     let tls_check = detect_tls_check();
+    if tls_check.as_ref().is_some_and(|check| !check.is_healthy()) {
+        all_ok = false;
+    }
 
     // Collect environment configuration
     let cfg = config();
@@ -440,6 +458,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
                 print_check("Key/cert match", matches, None);
             }
             print_check("Client certificate", tls.client_cert_exists, None);
+            if let Some(error) = tls.error.as_deref() {
+                println!("  {} TLS validation failed: {error}", style("✗").red());
+            }
         }
 
         // Extensions
@@ -2486,6 +2507,7 @@ mod tests {
                 server_expires_days: None,
                 server_expired: None,
                 key_matches: None,
+                error: None,
             }),
             postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
             overall: false,
@@ -2552,6 +2574,7 @@ mod tests {
             server_expires_days: None,
             server_expired: None,
             key_matches: None,
+            error: None,
         };
         let json = serde_json::to_value(&check)?;
         assert_eq!(json["ca_exists"], true);
@@ -2574,6 +2597,24 @@ mod tests {
 
         let check = detect_tls_check().expect("TLS check should resolve active directory");
         assert!(check.server_cert_exists);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_detect_tls_check_reports_validation_errors() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let cert = temp.path().join("gateway.crt");
+        let key = temp.path().join("gateway.key");
+        std::fs::write(&cert, "not-a-real-cert")?;
+        std::fs::write(&key, "not-a-real-key")?;
+
+        let mut env = EnvGuard::new();
+        env.set("SINEX_GATEWAY_TLS_CERT", cert.display().to_string());
+
+        let check = detect_tls_check().expect("TLS check should resolve active directory");
+        assert!(check.server_cert_exists);
+        assert!(check.error.is_some());
+        assert!(!check.is_healthy());
         Ok(())
     }
 
