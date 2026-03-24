@@ -186,3 +186,27 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     Ok(())
 }
+
+#[sinex_test]
+async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> TestResult<()> {
+    let error = handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 0 }))
+        .await
+        .expect_err("non-positive telemetry limits must be rejected");
+    assert!(error.to_string().contains("telemetry limit must be positive"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> TestResult<()> {
+    let error = handle_telemetry_window_focus(
+        ctx.pool(),
+        json!({
+            "from": "2026-01-02T00:00:00Z",
+            "to": "2026-01-01T00:00:00Z"
+        }),
+    )
+    .await
+    .expect_err("inverted telemetry time ranges must be rejected");
+    assert!(error.to_string().contains("from' must be earlier"));
+    Ok(())
+}

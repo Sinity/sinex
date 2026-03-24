@@ -1,7 +1,7 @@
-//! Fish shell history parser
+//! Fish SQLite history reader.
 //!
-//! Fish stores its history in an `SQLite` database at `~/.local/share/fish/fish_history`.
-//! This module provides functionality to read command history from that database.
+//! Native Fish history is a YAML-like text file at `~/.local/share/fish/fish_history`.
+//! This module only handles explicitly SQLite-backed Fish history sources.
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{is_sqlite_with_tables, max_row_id_for_query, read_rows_after};

@@ -18,6 +18,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
 
     let tags = params
         .optional_array("tags")
+        ?
         .map(|arr| {
             arr.iter()
                 .filter_map(|value| value.as_str().map(String::from))
@@ -27,6 +28,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
 
     let created_by = params
         .optional_str("created_by")
+        ?
         .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annotation_id = service
@@ -41,6 +43,7 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
 
     let entities = params
         .optional_array("entities")
+        ?
         .map(|arr| {
             arr.iter()
                 .map(|value| {
@@ -62,6 +65,7 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
 
     let created_by = params
         .optional_str("created_by")
+        ?
         .unwrap_or(DEFAULT_CREATOR_GATEWAY);
 
     let entity_ids = service
@@ -81,6 +85,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
     let relationship_type = params.require_str("relationship_type")?;
     let properties = params
         .optional_object("properties")
+        ?
         .map(|obj| {
             obj.iter()
                 .map(|(key, value)| (key.clone(), value.clone()))

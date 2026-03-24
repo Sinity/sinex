@@ -35,16 +35,7 @@ impl ShellRelated for shell::KittySessionEndedPayload {}
 impl ShellRelated for shell::AtuinCommandExecutedPayload {}
 impl ShellRelated for shell::AtuinCommandCompletedPayload {}
 impl ShellRelated for shell::HistoryCommandImportedPayload {}
-impl ShellRelated for shell::AtuinEntryPayload {}
-impl ShellRelated for shell::CommandImportedPayload {}
-impl ShellRelated for shell::BashHistoryEntryPayload {}
-impl ShellRelated for shell::BashHistoricalCommandPayload {}
-impl ShellRelated for shell::ZshHistoricalCommandPayload {}
-impl ShellRelated for shell::FishHistoricalCommandPayload {}
 impl ShellRelated for shell::TerminalMonitoringStartedPayload {}
-impl ShellRelated for shell::TerminalCommandHistoricalPayload {}
-impl ShellRelated for shell::TerminalHistoryHistoricalPayload {}
-impl ShellRelated for shell::TerminalSnapshotPayload {}
 impl ShellRelated for shell::KittyProcessChangedPayload {}
 impl ShellRelated for shell::KittyTabFocusedPayload {}
 impl ShellRelated for shell::KittyContentStreamedPayload {}

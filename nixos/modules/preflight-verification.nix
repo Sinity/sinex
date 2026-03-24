@@ -4,8 +4,15 @@ with lib;
 
 let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   inherit (systemdHardening) mkHelperServiceConfig;
+  inherit (databaseRuntime)
+    mkDatabasePasswordExec
+    mkDatabasePasswordUnitConfig
+    renderDatabaseUrl
+    ;
   cfg = config.services.sinex;
+  nodesCfg = cfg.nodes;
   lifecycle = cfg.lifecycle;
   preflight = lifecycle.preflight;
   updates = lifecycle.updates;
@@ -33,8 +40,59 @@ let
   ingestSpool = cfg.core.ingestd.spoolDir;
   nodeSpool = "${cfg.stateRoot}/spool/nodes";
   dlqCfg = cfg.storage.dlq;
+  serviceUser = cfg.users.nodes;
 
-  databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
+  databaseUrl = renderDatabaseUrl cfg.database;
+  natsUrl = concatStringsSep "," nodesCfg.nats.servers;
+  secretPaths = config.sinex.secrets.paths or {};
+  resolveSecretPath = explicit: names:
+    if explicit != null then explicit else
+    let
+      match = findFirst (name: builtins.hasAttr name secretPaths) null names;
+    in
+    if match == null then null else builtins.getAttr match secretPaths;
+  natsTlsCfg = nodesCfg.nats.tls;
+  natsAuthCfg = nodesCfg.nats.auth;
+  effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
+    "sinex-nats-ca"
+    "nats-ca"
+  ];
+  effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
+    "sinex-nats-client-cert"
+    "nats-client-cert"
+  ];
+  effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
+    "sinex-nats-client-key"
+    "nats-client-key"
+  ];
+  effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
+    "sinex-nats-token"
+    "nats-token"
+  ];
+  effectiveNatsCredsFile = resolveSecretPath natsAuthCfg.credsFile [
+    "sinex-nats-client-creds"
+    "nats-client-creds"
+  ];
+  effectiveNatsNkeySeedFile = resolveSecretPath natsAuthCfg.nkeySeedFile [
+    "sinex-nats-client-nkey"
+    "nats-client-nkey"
+  ];
+  inferredNatsTls =
+    natsTlsCfg.requireTls
+    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
+  preflightEnvironment =
+    optional cfg.database.enable "DATABASE_URL=${databaseUrl}"
+    ++ [
+      "SINEX_ENVIRONMENT=${cfg.nats.environment}"
+      "SINEX_NATS_URL=${natsUrl}"
+    ]
+    ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
+    ++ optional (effectiveNatsCaCertFile != null) "SINEX_NATS_CA_CERT=${toString effectiveNatsCaCertFile}"
+    ++ optional (effectiveNatsClientCertFile != null) "SINEX_NATS_CLIENT_CERT=${toString effectiveNatsClientCertFile}"
+    ++ optional (effectiveNatsClientKeyFile != null) "SINEX_NATS_CLIENT_KEY=${toString effectiveNatsClientKeyFile}"
+    ++ optional (effectiveNatsTokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString effectiveNatsTokenFile}"
+    ++ optional (effectiveNatsCredsFile != null) "SINEX_NATS_CREDS_FILE=${toString effectiveNatsCredsFile}"
+    ++ optional (effectiveNatsNkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString effectiveNatsNkeySeedFile}";
   sanitizeName = lib.strings.sanitizeDerivationName;
 
   skipArgs = concatMapStringsSep " " (phase: "--skip ${phase}") preflight.skip;
@@ -194,12 +252,17 @@ in
         wants = [ "network-online.target" ];
         after = [ "network-online.target" ] ++ localPostgresUnits;
         requires = localPostgresUnits;
+        unitConfig = mkDatabasePasswordUnitConfig cfg.database.passwordFile;
         serviceConfig = {
-          ExecStart = schemaApplyScript;
+          ExecStart = mkDatabasePasswordExec {
+            name = "schema-apply";
+            command = schemaApplyScript;
+            passwordFile = cfg.database.passwordFile;
+          };
           TimeoutStartSec = preflight.timeoutSec;
         } // mkHelperServiceConfig {
-          user = cfg.database.user;
-          group = cfg.database.user;
+          user = serviceUser;
+          group = serviceUser;
           remainAfterExit = true;
         };
       };
@@ -226,10 +289,10 @@ in
             serviceConfig = {
               Type = "oneshot";
               TimeoutStartSec = preflight.timeoutSec;
-              User = cfg.database.user;
-              Group = cfg.database.user;
+              User = serviceUser;
+              Group = serviceUser;
               ProtectSystem = "strict";
-              ProtectHome = true;
+              ProtectHome = lib.mkForce "read-only";
               PrivateTmp = true;
               NoNewPrivileges = true;
               RestrictSUIDSGID = true;
@@ -240,9 +303,14 @@ in
               LockPersonality = true;
               SystemCallFilter = [ "@system-service" "~@privileged" ];
               ReadOnlyPaths = [ stateRoot logDir ingestSpool nodeSpool ];
-              Environment = [ "DATABASE_URL=${databaseUrl}" ];
-              ExecStart = runPreflightScript;
+              Environment = preflightEnvironment;
+              ExecStart = mkDatabasePasswordExec {
+                name = "preflight";
+                command = runPreflightScript;
+                passwordFile = cfg.database.passwordFile;
+              };
             };
+            unitConfig = mkDatabasePasswordUnitConfig cfg.database.passwordFile;
           };
         };
 

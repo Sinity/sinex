@@ -3,7 +3,7 @@ use sinex_node_sdk::prelude::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{IngestorNodeAdapter, Node};
 use sinex_primitives::Id;
-use tempfile::NamedTempFile;
+use tempfile::{Builder, NamedTempFile};
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
 
@@ -15,7 +15,7 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
         .await?;
     let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
 
-    let mut temp = NamedTempFile::new()?;
+    let mut temp = Builder::new().suffix(".txt").tempfile()?;
     use std::io::Write;
     writeln!(temp, "sample document payload")?;
 
@@ -66,6 +66,166 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
     assert!(
         record.is_none(),
         "material unexpectedly persisted; ingestd should be the sole DB writer"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_rejects_unsupported_mime_targets(ctx: TestContext) -> TestResult<()> {
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(false)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let mut temp = NamedTempFile::new()?;
+    use std::io::Write;
+    writeln!(temp, "{{\"json\":true}}")?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.supported_mime_types = vec!["text/plain".to_string()];
+    config.allowed_roots = vec![
+        temp.path()
+            .parent()
+            .expect("temp file should have a parent")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let mut scan_args = ScanArgs::default();
+    scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
+
+    let report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(report.failed_targets.len(), 1);
+    assert!(
+        report.failed_targets[0]
+            .1
+            .contains("Unsupported MIME type"),
+        "unexpected failure: {:?}",
+        report.failed_targets
+    );
+    assert!(
+        timeout(Duration::from_millis(200), runtime.event_rx.recv())
+            .await
+            .is_err(),
+        "unsupported MIME target must not emit an event"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_historical_dry_run_stays_side_effect_free(ctx: TestContext) -> TestResult<()> {
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(true)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let mut temp = NamedTempFile::new()?;
+    use std::io::Write;
+    writeln!(temp, "sample document payload")?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.allowed_roots = vec![
+        temp.path()
+            .parent()
+            .expect("temp file should have a parent")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let mut scan_args = ScanArgs::default();
+    scan_args.dry_run = true;
+    scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
+
+    let report = node
+        .scan(
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: sinex_primitives::Timestamp::now(),
+            },
+            scan_args,
+        )
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert!(report.successful_targets.is_empty());
+    assert!(report.failed_targets.is_empty());
+    assert_eq!(
+        report.warnings,
+        vec!["Dry-run mode enabled; skipped 1 document target(s)".to_string()]
+    );
+    assert!(
+        timeout(Duration::from_millis(200), runtime.event_rx.recv())
+            .await
+            .is_err(),
+        "historical dry-run must not emit events"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_skipped_targets_are_not_reported_as_success(ctx: TestContext) -> TestResult<()> {
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(false)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let mut temp = NamedTempFile::new()?;
+    use std::io::Write;
+    temp.write_all(&vec![b'x'; 2048])?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.max_document_size = 1024;
+    config.allowed_roots = vec![
+        temp.path()
+            .parent()
+            .expect("temp file should have a parent")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let mut scan_args = ScanArgs::default();
+    scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
+
+    let report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert!(report.successful_targets.is_empty());
+    assert!(report.failed_targets.is_empty());
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Skipped target"))
+    );
+    assert!(
+        timeout(Duration::from_millis(200), runtime.event_rx.recv())
+            .await
+            .is_err(),
+        "skipped oversized target must not emit an event"
     );
 
     Ok(())

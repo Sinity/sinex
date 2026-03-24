@@ -76,6 +76,40 @@ async fn ledger_reader_staged_at_provides_fallback() -> color_eyre::Result<()> {
 }
 
 #[sinex_test]
+async fn ledger_reader_prefers_realtime_capture_over_staged_at() -> color_eyre::Result<()> {
+    let staged_ts = Timestamp::now();
+    let capture_ts = staged_ts + ::time::Duration::seconds(10);
+    let reader = LedgerReader::new(
+        Uuid::now_v7(),
+        vec![
+            LedgerEntry {
+                offset_start: 0,
+                offset_end: i64::MAX,
+                ts_capture: staged_ts,
+                precision: TemporalPrecision::Bounded,
+                source_type: TemporalSourceType::StagedAt,
+            },
+            LedgerEntry {
+                offset_start: 0,
+                offset_end: 128,
+                ts_capture: capture_ts,
+                precision: TemporalPrecision::Bounded,
+                source_type: TemporalSourceType::RealtimeCapture,
+            },
+        ],
+    );
+
+    let (ts, source_type) = reader
+        .derive_ts_orig(42, None)
+        .expect("should prefer the precise realtime capture entry");
+
+    assert_eq!(source_type, TemporalSourceType::RealtimeCapture);
+    assert_eq!(ts, capture_ts);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn ledger_reader_returns_none_without_entries_or_intrinsic() -> color_eyre::Result<()> {
     let reader = LedgerReader::new(Uuid::now_v7(), vec![]);
     let result = reader.derive_ts_orig(0, None);

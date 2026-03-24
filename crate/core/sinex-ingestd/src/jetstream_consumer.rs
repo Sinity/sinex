@@ -209,7 +209,6 @@ struct ConsumerStats {
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
-    suspicious_timestamps: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -224,7 +223,6 @@ impl ConsumerStats {
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
-            suspicious_timestamps = self.suspicious_timestamps.load(Ordering::Relaxed),
             "JetStream consumer stats"
         );
     }
@@ -652,23 +650,6 @@ impl JetStreamConsumer {
                 .await?;
             return Ok(None);
         };
-
-        // Soft warning for suspicious timestamps — catches buggy timestamp parsing
-        // during historical imports. Does not reject the event.
-        if let Some(ts_orig) = &event.ts_orig {
-            let now = Timestamp::now();
-            let one_hour_future = now + ::time::Duration::hours(1);
-            if *ts_orig > one_hour_future {
-                warn!(
-                    event_id = ?event.id,
-                    ts_orig = %ts_orig,
-                    "Event ts_orig is more than 1 hour in the future — possible timestamp parsing error"
-                );
-                self.stats
-                    .suspicious_timestamps
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-        }
 
         Ok(Some(PreparedEvent {
             event,

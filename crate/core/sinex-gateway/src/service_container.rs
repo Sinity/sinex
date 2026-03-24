@@ -310,6 +310,7 @@ impl ServiceContainer {
         }
 
         let healthy = db_ok && nats.connected && replay.connected;
+        let serving = db_ok;
         let status = if !db_ok {
             GatewayHealthStatus::Unhealthy
         } else if healthy {
@@ -323,7 +324,7 @@ impl ServiceContainer {
             nats,
             replay,
             healthy,
-            serving: healthy,
+            serving,
             degradation_reasons,
         }
     }

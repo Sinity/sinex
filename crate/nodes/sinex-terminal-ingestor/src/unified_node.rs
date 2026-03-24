@@ -1575,13 +1575,13 @@ async fn process_command(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = Uuid::now_v7();
     let mut handle = ctx
         .acquisition
         .build_material(ctx.path.as_str())
         .begin()
         .await
         .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
+    let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, &bytes)
@@ -1890,13 +1890,10 @@ impl TerminalNode {
                 "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
                     HistorySourceMode::FishSqlite
                 }
-                "fish" => {
-                    debug!(
-                        path = %source.path,
-                        "Fish history file is not SQLite format; will attempt text parsing"
-                    );
-                    HistorySourceMode::Text
-                }
+                "fish" => HistorySourceMode::ConfiguredError(format!(
+                    "configured Fish history source {} is not SQLite-backed; native Fish YAML history is not supported",
+                    source.path
+                )),
                 "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
                     Ok(()) => HistorySourceMode::AtuinSqlite,
                     Err(error) => HistorySourceMode::ConfiguredError(format!(
@@ -1904,6 +1901,10 @@ impl TerminalNode {
                         source.path
                     )),
                 },
+                "elvish" => HistorySourceMode::ConfiguredError(format!(
+                    "configured Elvish history source {} uses Elvish's native database format, which is not supported",
+                    source.path
+                )),
                 _ => HistorySourceMode::Text,
             };
 
@@ -2176,26 +2177,11 @@ impl ExplorationProvider for TerminalNode {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(Timestamp, Timestamp)>,
+        _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
-        let time_range = time_range.unwrap_or_else(|| {
-            let now = Timestamp::now();
-            let one_hour_ago = Timestamp::now() - time::Duration::hours(1);
-            (one_hour_ago, now)
-        });
-
-        Ok(CoverageAnalysis {
-            time_range,
-            coverage_percentage: 1.0,
-            missing_count: 0,
-            duplicate_count: 0,
-            source_total: self.config.history_sources.len() as u64,
-            sinex_total: 0,
-            missing_samples: Vec::new(),
-            recommendations: vec![
-                "Ensure history files are readable by the terminal ingestor".to_string(),
-            ],
-        })
+        sinex_node_sdk::exploration::coverage_analysis_unavailable(
+            "coverage analysis is not implemented for terminal history sources",
+        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -2253,6 +2239,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2279,9 +2266,14 @@ mod tests {
         // Wait for MaterialAssembler consumers before publishing
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2352,10 +2344,10 @@ mod tests {
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        "SELECT MAX(offset_end) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'realtime_capture'",
                     )
                     .bind(material_uuid)
-                    .fetch_optional(&pool)
+                    .fetch_one(&pool)
                     .await
                     .map_err(|e| color_eyre::eyre::eyre!("database error: {e}"))?;
                     Ok::<bool, color_eyre::eyre::Report>(
@@ -2376,10 +2368,10 @@ mod tests {
         assert_eq!(record.status.as_str(), "completed");
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+            "SELECT MAX(offset_end) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'realtime_capture'",
         )
         .bind(material_uuid)
-        .fetch_optional(&ctx.pool)
+        .fetch_one(&ctx.pool)
         .await?;
 
         assert_eq!(total_bytes.unwrap_or_default(), expected_bytes);
@@ -2423,6 +2415,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2448,9 +2441,14 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2512,7 +2510,10 @@ mod tests {
         };
         assert_eq!(
             material_uuid,
-            sinex_node_sdk::stable_material_id(watcher_ctx.path.as_str(), &entry.history_id)
+            Uuid::new_v5(
+                &Uuid::NAMESPACE_URL,
+                format!("{}#{}", watcher_ctx.path, entry.history_id).as_bytes()
+            )
         );
 
         ingest_handle.stop().await?;
@@ -2521,6 +2522,7 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_watcher_tails_incrementally(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime { runtime, nats, .. } =
             TestRuntimeBuilder::new(&ctx, "terminal-watcher-incremental")
                 .with_dry_run(false)
@@ -2648,6 +2650,7 @@ mod tests {
 
     #[sinex_test]
     async fn process_atuin_entry_rejects_invalid_duration(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -2673,9 +2676,14 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
-            .await?;
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -2787,6 +2795,65 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scan_historical_reports_unsupported_fish_history_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-fish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("fish_history");
+        tokio::fs::write(&invalid_history, "- cmd: echo hello\n  when: 1234567890\n").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history.clone(),
+                shell: "fish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("fish:{invalid_history}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("native Fish YAML history is not supported"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn run_continuous_rejects_all_invalid_terminal_sources(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -2829,6 +2896,166 @@ mod tests {
             "unexpected error: {error}"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_rejects_unsupported_fish_history(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-invalid-fish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("fish_history");
+        tokio::fs::write(&invalid_history, "- cmd: echo hello\n  when: 1234567890\n").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history,
+                shell: "fish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .await
+            .expect_err("continuous mode should fail when Fish history is unsupported");
+        assert!(
+            error.to_string().contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_reports_unsupported_elvish_history_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-elvish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("elvish.db");
+        tokio::fs::write(&invalid_history, "sqlite-like-or-binary-does-not-matter").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Elvish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history.clone(),
+                shell: "elvish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("elvish:{invalid_history}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("native database format, which is not supported"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_rejects_unsupported_elvish_history(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-invalid-elvish")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_history = temp_dir.path().join("elvish.db");
+        tokio::fs::write(&invalid_history, "sqlite-like-or-binary-does-not-matter").await?;
+        let invalid_history = Utf8PathBuf::from_path_buf(invalid_history).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Elvish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_history,
+                shell: "elvish".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .await
+            .expect_err("continuous mode should fail when Elvish history is unsupported");
+        assert!(
+            error.to_string().contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
+        let node = TerminalNode::new();
+        let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
+            .expect_err("terminal node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 
@@ -2918,6 +3145,7 @@ mod tests {
     /// binary data or corrupted history entries, not shell commands.
     #[sinex_test]
     async fn history_rejects_null_byte_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "null-byte-filter", 4096).await?;
         tokio::fs::write(&fix.history_path, "echo hello\necho\x00null\ngit status\n").await?;
 
@@ -2959,6 +3187,7 @@ mod tests {
     /// escape sequences that were erroneously written to the history file.
     #[sinex_test]
     async fn history_rejects_ansi_escape_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "ansi-escape-filter", 4096).await?;
         // \x1b = ESC (start of ANSI escape sequence like \x1b[A = cursor up)
         tokio::fs::write(
@@ -3000,6 +3229,7 @@ mod tests {
     /// exactly one captured event — the dedup window prevents duplicate ingestion.
     #[sinex_test]
     async fn history_deduplicates_repeated_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "dedup-filter", 4096).await?;
         tokio::fs::write(&fix.history_path, "git status\ngit diff\ngit status\n").await?;
 
@@ -3037,6 +3267,7 @@ mod tests {
     /// This prevents capturing half-written commands that are still being typed.
     #[sinex_test]
     async fn history_withholds_incomplete_trailing_line(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let mut fix = make_watcher(&ctx, "incomplete-line", 4096).await?;
         // "echo complete" has a newline; "echo incomplete" does not
         tokio::fs::write(&fix.history_path, "echo complete\necho incomplete").await?;
@@ -3101,6 +3332,7 @@ mod tests {
     /// entirely — the ingestor does not truncate silently, it skips and logs.
     #[sinex_test]
     async fn history_rejects_oversized_commands(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
         let max_bytes = 64u64;
         let mut fix = make_watcher(&ctx, "oversized-cmd", max_bytes).await?;
 

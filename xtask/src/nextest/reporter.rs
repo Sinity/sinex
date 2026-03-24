@@ -212,7 +212,9 @@ impl TestReporter {
         });
 
         let mut stats = TestStats::default();
+        let mut suite_totals = TestStats::default();
         let mut suite_started = false;
+        let mut suite_finished = false;
 
         for line_res in stdout.lines() {
             let line = line_res?;
@@ -236,13 +238,19 @@ impl TestReporter {
                         );
                     }
                     Message::SuiteFinished(s) => {
+                        suite_finished = true;
+                        suite_totals.passed += s.passed;
+                        suite_totals.failed += s.failed;
+                        suite_totals.ignored += s.ignored;
+                        suite_totals.total += s.passed + s.failed + s.ignored;
+
                         // Each test binary emits suite-finished with its own counts.
                         // Cross-validate: if nextest reports failures we missed via
                         // streaming, log a warning so the discrepancy is visible.
-                        if s.failed > 0 && stats.failed == 0 {
+                        if suite_totals.failed > stats.failed {
                             let msg = format!(
-                                "  ⚠ Suite reports {} failed but streaming saw 0 — possible parse gap",
-                                s.failed
+                                "  ⚠ Suite reports {} failed but streaming saw {} — using suite totals as authoritative",
+                                suite_totals.failed, stats.failed
                             );
                             self.emit_line(&msg);
                         }
@@ -358,6 +366,29 @@ impl TestReporter {
             self.pb.finish_with_message("done");
         }
 
+        if suite_finished {
+            if stats.passed != suite_totals.passed
+                || stats.failed != suite_totals.failed
+                || stats.ignored != suite_totals.ignored
+            {
+                let msg = format!(
+                    "  ⚠ Adjusted streamed test counts to suite totals: passed {}→{}, failed {}→{}, ignored {}→{}",
+                    stats.passed,
+                    suite_totals.passed,
+                    stats.failed,
+                    suite_totals.failed,
+                    stats.ignored,
+                    suite_totals.ignored
+                );
+                self.emit_line(&msg);
+            }
+
+            stats.passed = suite_totals.passed;
+            stats.failed = suite_totals.failed;
+            stats.ignored = suite_totals.ignored;
+            stats.total = stats.total.max(suite_totals.total);
+        }
+
         // Detect test discovery failures: if no suite-started message was received,
         // something went wrong (invalid profile, compilation error, etc.)
         if !suite_started {
@@ -370,5 +401,32 @@ impl TestReporter {
         }
 
         Ok(stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TestReporter;
+    use std::io::Cursor;
+
+    #[test]
+    fn suite_totals_backfill_stream_parse_gaps() {
+        let stdout = Cursor::new(
+            concat!(
+                "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
+                "{\"type\":\"suite\",\"event\":\"failed\",\"passed\":0,\"failed\":1,\"ignored\":0}\n",
+            )
+            .as_bytes(),
+        );
+        let stderr = Cursor::new(Vec::<u8>::new());
+
+        let stats = TestReporter::new(false)
+            .run(stdout, stderr, None)
+            .expect("suite-only failure output should still produce stats");
+
+        assert_eq!(stats.failed, 1);
+        assert_eq!(stats.passed, 0);
+        assert_eq!(stats.ignored, 0);
+        assert_eq!(stats.total, 1);
     }
 }

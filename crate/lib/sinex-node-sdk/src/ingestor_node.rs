@@ -11,7 +11,6 @@
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::automaton_node::NodeAdapterConfig;
 use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
@@ -152,7 +151,6 @@ pub trait IngestorNode: Send + Sync + 'static {
 pub struct IngestorNodeAdapter<I: IngestorNode> {
     ingestor: I,
     state: IngestorState<I::State>,
-    config: NodeAdapterConfig,
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
@@ -164,17 +162,11 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         Self {
             ingestor,
             state: IngestorState::default(),
-            config: NodeAdapterConfig::default(),
             shutdown_config: ShutdownConfig::default(),
             runtime: None,
             checkpoint_manager: None,
             shutdown_tx: None,
         }
-    }
-
-    pub fn with_config(mut self, config: NodeAdapterConfig) -> Self {
-        self.config = config;
-        self
     }
 
     pub fn with_shutdown_config(mut self, config: ShutdownConfig) -> Self {

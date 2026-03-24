@@ -102,8 +102,8 @@ async fn maximally_invalid_config_fails_validation() -> TestResult<()> {
         .expect_err("config with multiple violations must fail validation");
     // Bail-fast: returns the first error (path validation), which is a configuration error.
     assert!(
-        err.is_client_error(),
-        "validation error should be a client error, got: {err}"
+        matches!(err, sinex_primitives::SinexError::Configuration(_)),
+        "validation error should be a configuration error, got: {err}"
     );
     Ok(())
 }

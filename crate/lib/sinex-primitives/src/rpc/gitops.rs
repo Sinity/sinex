@@ -2,7 +2,7 @@ use crate::Uuid;
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GitOpsListSourcesRequest {
     #[serde(default)]
     pub include_disabled: bool,

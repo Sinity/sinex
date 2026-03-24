@@ -10,11 +10,14 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::DeploymentReadinessDescriptor;
+use sinex_primitives::DeploymentReadinessMode;
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
-use super::{VerificationStatus, run_command_with_timeout};
+use super::{
+    VerificationStatus, deployment_descriptor_result, run_command_with_timeout,
+    runtime_database_expected,
+};
 
 /// `SystemD` service status enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -99,20 +102,34 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("systemd_services", systemd_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ SystemD service verification warning: {e}"));
-            has_warnings = true;
+            messages.push(format!("✗ SystemD service verification failed: {e}"));
+            has_failures = true;
         }
     }
 
-    // PostgreSQL service verification
-    match verify_postgresql_service(&mut messages).await {
-        Ok(postgres_info) => {
-            details.insert("postgresql", postgres_info);
+    if runtime_database_expected()? {
+        match verify_postgresql_service(&mut messages).await {
+            Ok(postgres_info) => {
+                details.insert("postgresql", postgres_info);
+            }
+            Err(e) => {
+                messages.push(format!("✗ PostgreSQL service verification failed: {e}"));
+                has_failures = true;
+            }
         }
-        Err(e) => {
-            messages.push(format!("✗ PostgreSQL service verification failed: {e}"));
-            has_failures = true;
-        }
+    } else {
+        details.insert(
+            "postgresql",
+            json!({
+                "available": false,
+                "skipped": true,
+                "reason": "runtime database verification is disabled for this deployment"
+            }),
+        );
+        messages.push(
+            "ℹ PostgreSQL service verification skipped because this deployment does not expect a runtime database"
+                .to_string(),
+        );
     }
 
     // External dependencies verification
@@ -155,15 +172,28 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
 async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut binary_info = HashMap::new();
     let mut missing_binaries = Vec::new();
+    let descriptor = deployment_descriptor_result("service verification")?;
+    let require_service_binaries = descriptor.is_none();
 
-    // Required binaries for Sinex operation
-    let required_binaries = vec![
-        ("sinex-ingestd", "Ingestion daemon", true),
-        ("sinex-gateway", "API gateway", true),
-        ("sinex-preflight", "Pre-flight verification service", true),
-        ("psql", "PostgreSQL client", true),
-        ("systemctl", "SystemD control", true),
-    ];
+    let mut required_binaries = vec![("systemctl", "SystemD control", true)];
+    if runtime_database_expected()? {
+        required_binaries.push(("psql", "PostgreSQL client", true));
+    }
+    if require_service_binaries {
+        required_binaries.splice(
+            0..0,
+            [
+                ("sinex-ingestd", "Ingestion daemon", true),
+                ("sinex-gateway", "API gateway", true),
+                ("sinex-preflight", "Pre-flight verification service", true),
+            ],
+        );
+    } else {
+        messages.push(
+            "ℹ Deployment descriptor loaded; skipping PATH-based Sinex service binary checks"
+                .to_string(),
+        );
+    }
 
     // Optional but recommended binaries
     let optional_binaries = vec![
@@ -300,11 +330,19 @@ async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
 
 async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_info = HashMap::new();
-    let sinex_services = deployment_managed_units();
-    let descriptor_loaded = sinex_services.is_some();
+    let descriptor = deployment_descriptor_result("managed systemd verification")?;
+    let descriptor_loaded = descriptor.is_some();
+    let sinex_services = descriptor
+        .as_ref()
+        .filter(|value| !value.managed_units.is_empty())
+        .map(|value| value.managed_units.clone());
+    let enforce_declared_units = descriptor
+        .as_ref()
+        .is_some_and(|value| value.mode == DeploymentReadinessMode::Enabled);
 
     // System services that Sinex depends on
     let dependency_services = vec!["postgresql.service", "systemd-resolved.service"];
+    let mut missing_declared_units = Vec::new();
 
     if let Some(sinex_services) = sinex_services {
         for service_name in sinex_services {
@@ -322,9 +360,17 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                     if service_name.starts_with("sinex-") && is_available {
                         messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
                     } else if service_name.starts_with("sinex-") {
-                        messages.push(format!(
-                            "ℹ Sinex service '{service_name}' not yet configured (load state: {load_state})"
-                        ));
+                        if enforce_declared_units {
+                            missing_declared_units
+                                .push(format!("{service_name} (load state: {load_state})"));
+                            messages.push(format!(
+                                "✗ Declared Sinex service '{service_name}' is missing or unloaded (load state: {load_state})"
+                            ));
+                        } else {
+                            messages.push(format!(
+                                "ℹ Sinex service '{service_name}' not yet configured (load state: {load_state})"
+                            ));
+                        }
                     } else {
                         messages.push(format!("✓ Service '{service_name}' is available"));
                     }
@@ -339,9 +385,16 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                     );
 
                     if service_name.starts_with("sinex-") {
-                        messages.push(format!(
-                            "ℹ Sinex service '{service_name}' not yet configured (expected)"
-                        ));
+                        if enforce_declared_units {
+                            missing_declared_units.push(format!("{service_name} ({e})"));
+                            messages.push(format!(
+                                "✗ Declared Sinex service '{service_name}' could not be verified: {e}"
+                            ));
+                        } else {
+                            messages.push(format!(
+                                "ℹ Sinex service '{service_name}' not yet configured (expected)"
+                            ));
+                        }
                     } else {
                         messages.push(format!("⚠ Service '{service_name}' check failed: {e}"));
                     }
@@ -385,21 +438,17 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
         }
     }
 
+    if !missing_declared_units.is_empty() {
+        return Err(SinexError::processing(format!(
+            "Declared managed units are missing or unloaded: {}",
+            missing_declared_units.join(", ")
+        )));
+    }
+
     Ok(json!({
         "services": service_info,
         "deployment_descriptor_loaded": descriptor_loaded,
     }))
-}
-
-fn deployment_managed_units() -> Option<Vec<String>> {
-    match DeploymentReadinessDescriptor::load() {
-        Ok(Some(descriptor)) if !descriptor.managed_units.is_empty() => Some(descriptor.managed_units),
-        Ok(_) => None,
-        Err(error) => {
-            debug!("Ignoring deployment descriptor for service verification: {error}");
-            None
-        }
-    }
 }
 
 async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
@@ -562,23 +611,6 @@ async fn verify_external_dependencies(messages: &mut Vec<String>) -> NodeResult<
         }
     }
 
-    // Event source dependencies
-    match verify_event_source_dependencies().await {
-        Ok(event_deps) => {
-            deps_info.insert("event_sources", event_deps);
-            messages.push("✓ Event source dependencies checked".to_string());
-        }
-        Err(e) => {
-            deps_info.insert(
-                "event_sources",
-                json!({
-                    "error": e.to_string()
-                }),
-            );
-            messages.push(format!("⚠ Event source dependencies warning: {e}"));
-        }
-    }
-
     Ok(json!(deps_info))
 }
 
@@ -635,67 +667,6 @@ async fn verify_git_dependencies() -> NodeResult<Value> {
     }
 
     Ok(json!(git_info))
-}
-
-async fn verify_event_source_dependencies() -> NodeResult<Value> {
-    let mut event_deps = HashMap::new();
-
-    // Check clipboard tools
-    let clipboard_tools = vec!["xclip", "wl-clipboard"];
-    let mut clipboard_available = false;
-
-    for tool in clipboard_tools {
-        if check_binary_availability(tool).await.is_ok() {
-            clipboard_available = true;
-            break;
-        }
-    }
-
-    event_deps.insert(
-        "clipboard",
-        json!({
-            "available": clipboard_available,
-            "note": if clipboard_available {
-                "Clipboard monitoring available"
-            } else {
-                "No clipboard tools found - clipboard monitoring disabled"
-            }
-        }),
-    );
-
-    // Check Hyprland
-    let hyprland_available = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || check_binary_availability("hyprctl").await.is_ok();
-
-    event_deps.insert(
-        "hyprland",
-        json!({
-            "available": hyprland_available,
-            "note": if hyprland_available {
-                "Hyprland integration available"
-            } else {
-                "Hyprland not detected - window manager integration disabled"
-            }
-        }),
-    );
-
-    // Check Kitty
-    let kitty_available = std::env::var("KITTY_LISTEN_ON").is_ok()
-        || check_binary_availability("kitty").await.is_ok();
-
-    event_deps.insert(
-        "kitty",
-        json!({
-            "available": kitty_available,
-            "note": if kitty_available {
-                "Kitty terminal integration available"
-            } else {
-                "Kitty not detected - terminal integration may be limited"
-            }
-        }),
-    );
-
-    Ok(json!(event_deps))
 }
 
 async fn verify_service_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {

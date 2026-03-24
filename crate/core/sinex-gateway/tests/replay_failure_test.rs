@@ -362,6 +362,108 @@ async fn replay_list_filters_by_state(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn replay_list_state_filter_applies_before_limit(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("SINEX_NATS_URL", &nats_url);
+
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let nats = services
+        .nats_client()
+        .expect("NATS required for replay test")
+        .clone();
+    let control_subject = services.environment().nats_subject("sinex.control.replay");
+
+    let ts = Timestamp::now();
+    let scope_start = ts - time::Duration::seconds(1);
+    let scope_end = ts + time::Duration::seconds(1);
+
+    let cancelled_req = json!({
+        "command": "plan",
+        "actor": "admin:test-user",
+        "scope": {
+            "node_id": "test-node-cancelled",
+            "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
+            "filters": {}
+        }
+    });
+    let cancelled_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&cancelled_req)?.into(),
+        )
+        .await?;
+    let cancelled_resp: serde_json::Value = serde_json::from_slice(&cancelled_msg.payload)?;
+    let cancelled_id = cancelled_resp["operation"]["operation_id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("cancelled operation id missing"))?
+        .to_string();
+
+    let cancel_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&json!({
+                "command": "cancel",
+                "operation_id": cancelled_id,
+                "canceller": "admin:test-user"
+            }))?
+            .into(),
+        )
+        .await?;
+    let cancel_resp: serde_json::Value = serde_json::from_slice(&cancel_msg.payload)?;
+    if cancel_resp["status"].as_str() == Some("error") {
+        bail!("cancel failed: {cancel_resp:?}");
+    }
+
+    let planning_req = json!({
+        "command": "plan",
+        "actor": "admin:test-user",
+        "scope": {
+            "node_id": "test-node-planning",
+            "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
+            "filters": {}
+        }
+    });
+    let planning_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&planning_req)?.into(),
+        )
+        .await?;
+    let planning_resp: serde_json::Value = serde_json::from_slice(&planning_msg.payload)?;
+    if planning_resp["status"].as_str() == Some("error") {
+        bail!("planning request failed: {planning_resp:?}");
+    }
+
+    let list_cancelled_msg = nats
+        .request(
+            control_subject,
+            serde_json::to_vec(&json!({
+                "command": "list",
+                "state": "Cancelled",
+                "limit": 1
+            }))?
+            .into(),
+        )
+        .await?;
+    let list_cancelled_resp: serde_json::Value =
+        serde_json::from_slice(&list_cancelled_msg.payload)?;
+    let cancelled_ops = list_cancelled_resp["operations"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("operations array missing"))?;
+    assert_eq!(cancelled_ops.len(), 1);
+    assert_eq!(
+        cancelled_ops[0]["state"].as_str(),
+        Some("Cancelled"),
+        "state filter should be applied before the result limit"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
@@ -401,6 +503,109 @@ async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> Te
     assert!(
         plan_resp["message"].as_str().is_some(),
         "error response should have a message"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_dry_run_persists_preview_before_cancellation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("SINEX_NATS_URL", &nats_url);
+
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let nats = services
+        .nats_client()
+        .expect("NATS required for replay dry-run test")
+        .clone();
+    let control_subject = services.environment().nats_subject("sinex.control.replay");
+
+    let ts = Timestamp::now();
+    let scope_start = ts - time::Duration::seconds(1);
+    let scope_end = ts + time::Duration::seconds(1);
+
+    let plan_req = json!({
+        "command": "plan",
+        "actor": "admin:test-user",
+        "scope": {
+            "node_id": "dry-run-node",
+            "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
+            "filters": {}
+        }
+    });
+    let plan_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&plan_req)?.into(),
+        )
+        .await?;
+    let plan_resp: serde_json::Value = serde_json::from_slice(&plan_msg.payload)?;
+    if plan_resp["status"].as_str() == Some("error") {
+        bail!("plan failed: {plan_resp:?}");
+    }
+    let op_id = plan_resp["operation"]["operation_id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("operation id missing"))?
+        .to_string();
+
+    let execute_req = json!({
+        "command": "execute",
+        "operation_id": op_id,
+        "executor": "service:dry-run-worker",
+        "dry_run": true,
+    });
+    let execute_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&execute_req)?.into(),
+        )
+        .await?;
+    let execute_resp: serde_json::Value = serde_json::from_slice(&execute_msg.payload)?;
+    if execute_resp["status"].as_str() == Some("error") {
+        bail!("dry-run execute failed: {execute_resp:?}");
+    }
+
+    assert_eq!(
+        execute_resp["operation"]["state"].as_str(),
+        Some("Cancelled"),
+        "dry-run execute should leave the operation cancelled"
+    );
+    assert_eq!(
+        execute_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),
+        Some("reexecute_material_roots_via_node_scan")
+    );
+
+    let status_req = json!({
+        "command": "status",
+        "operation_id": op_id,
+    });
+    let status_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&status_req)?.into(),
+        )
+        .await?;
+    let status_resp: serde_json::Value = serde_json::from_slice(&status_msg.payload)?;
+    if status_resp["status"].as_str() == Some("error") {
+        bail!("status failed: {status_resp:?}");
+    }
+
+    assert_eq!(
+        status_resp["operation"]["state"].as_str(),
+        Some("Cancelled")
+    );
+    assert_eq!(
+        status_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),
+        Some("reexecute_material_roots_via_node_scan")
+    );
+    assert!(
+        status_resp["operation"]["preview_summary"]["total_events"]
+            .as_i64()
+            .is_some(),
+        "dry-run status should keep the persisted preview summary"
     );
 
     Ok(())

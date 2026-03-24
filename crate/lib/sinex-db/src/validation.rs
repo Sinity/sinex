@@ -36,6 +36,7 @@ use uuid::Uuid;
 /// daemon to keep caps consistent across tests.
 pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 512 * 1024; // 512 KiB
 const MAX_ID_DRIFT_SECS: i64 = 5 * 60; // 5 minutes
+const MAX_FUTURE_TS_ORIG_SECS: i64 = 60 * 60; // 1 hour
 /// Structured validation errors surfaced to tests.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
@@ -249,6 +250,7 @@ impl EventValidator {
         self.check_payload_size(&event.payload)?;
         self.ensure_object_payload(&event.payload)?;
         self.validate_domain_specific_rules(event)?;
+        self.validate_temporal_bounds(event)?;
         self.validate_id_timestamp(event)?;
         self.validate_provenance(event.provenance())?;
         if !self.validation_enabled {
@@ -346,6 +348,23 @@ impl EventValidator {
                 )));
             }
         }
+        Ok(())
+    }
+    fn validate_temporal_bounds(&self, event: &Event<JsonValue>) -> ValidationResult {
+        let Some(ts_orig) = event.ts_orig else {
+            return Ok(());
+        };
+
+        let upper_bound = Timestamp::now() + ::time::Duration::seconds(MAX_FUTURE_TS_ORIG_SECS);
+        if ts_orig > upper_bound {
+            return Err(ValidationError::InvalidValue {
+                field: "ts_orig".to_string(),
+                reason: format!(
+                    "timestamp is more than {MAX_FUTURE_TS_ORIG_SECS} seconds in the future"
+                ),
+            });
+        }
+
         Ok(())
     }
     fn validate_provenance(&self, provenance: &Provenance) -> ValidationResult {

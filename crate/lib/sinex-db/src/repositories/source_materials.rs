@@ -317,6 +317,37 @@ impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
     type Table = SourceMaterialRegistry;
 }
 impl SourceMaterialRepository<'_> {
+    async fn update_material_state<'e, E>(
+        &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+        status: &str,
+        blob_id: Option<Id<crate::Blob>>,
+        metadata_update: JsonValue,
+    ) -> DbResult<()>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        sqlx::query!(
+            r#"
+            UPDATE raw.source_material_registry
+            SET optional_blob_id = COALESCE($2::uuid, optional_blob_id),
+                metadata = core.jsonb_merge_deep(metadata, $3),
+                status = $4,
+                end_time = COALESCE(end_time, NOW())
+            WHERE id = $1
+            "#,
+            id.to_uuid(),
+            blob_id.map(|bid| bid.to_uuid()),
+            metadata_update,
+            status
+        )
+        .execute(executor)
+        .await
+        .map_err(|e| db_error(e, "update material state"))?;
+        Ok(())
+    }
+
     async fn insert_material_with_id(
         &self,
         id: Id<SourceMaterial>,
@@ -826,23 +857,51 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        sqlx::query!(
-            r#"
-            UPDATE raw.source_material_registry
-            SET metadata = core.jsonb_merge_deep(metadata, $2),
-                status = $3,
-                end_time = COALESCE(end_time, NOW())
-            WHERE id = $1
-            "#,
-            id.to_uuid(),
-            metadata_update,
-            status::FAILED
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "mark material as failed"))?;
-        Ok(())
+        self.update_material_state(self.pool, id, status::FAILED, None, metadata_update)
+            .await
     }
+
+    /// Mark an in-flight source material as partially recovered.
+    pub async fn mark_as_recovered_partial(
+        &self,
+        id: Id<SourceMaterialRecord>,
+        recovery_reason: &str,
+        metadata_update: JsonValue,
+    ) -> DbResult<()> {
+        let mut update = json!({
+            "recovery_info": {
+                "recovered_at": Timestamp::now(),
+                "recovery_reason": recovery_reason,
+                "original_status": status::SENSING,
+            }
+        });
+        match metadata_update {
+            JsonValue::Object(extra) => {
+                let target = update
+                    .as_object_mut()
+                    .expect("recovery metadata literal must be an object");
+                for (key, value) in extra {
+                    target.insert(key, value);
+                }
+            }
+            JsonValue::Null => {}
+            other => {
+                update
+                    .as_object_mut()
+                    .expect("recovery metadata literal must be an object")
+                    .insert("_meta".to_string(), other);
+            }
+        }
+        self.update_material_state(
+            self.pool,
+            id,
+            status::RECOVERED_PARTIAL,
+            None,
+            update,
+        )
+        .await
+    }
+
     /// Finalize in-flight source material
     pub async fn finalize_in_flight(
         &self,
@@ -891,24 +950,14 @@ impl SourceMaterialRepository<'_> {
             }
             JsonValue::Object(map)
         };
-        sqlx::query!(
-            r#"
-            UPDATE raw.source_material_registry
-            SET optional_blob_id = $2::uuid,
-                metadata = core.jsonb_merge_deep(metadata, $3),
-                status = $4,
-                end_time = COALESCE(end_time, NOW())
-            WHERE id = $1
-            "#,
-            id.to_uuid(),
-            blob_id.map(|bid| bid.to_uuid()),
+        self.update_material_state(
+            executor,
+            id,
+            status::COMPLETED,
+            blob_id,
             metadata_update,
-            status::COMPLETED
         )
-        .execute(executor)
         .await
-        .map_err(|e| db_error(e, "finalize in-flight material"))?;
-        Ok(())
     }
     // ========== Temporal Ledger ==========
     /// Append an entry to the temporal ledger for a source material.

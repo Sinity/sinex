@@ -57,7 +57,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
     )
     .await;
 
-    // The loop is infinite; timeout cancels it. What matters is the side effect.
+    // Timeout bounds the test; clean loop exit is also acceptable.
     assert!(processed.load(Ordering::SeqCst));
 
     Ok(())
@@ -138,7 +138,7 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
 
     let (result1, result2, result3) = tokio::join!(handle1, handle2, handle3);
 
-    // All tasks should complete (the timeout just cancels the infinite loop)
+    // All tasks should complete; timeout only bounds the coordination window.
     result1.unwrap();
     result2.unwrap();
     result3.unwrap();

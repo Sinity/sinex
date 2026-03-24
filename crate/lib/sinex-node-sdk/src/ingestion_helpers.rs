@@ -129,7 +129,13 @@ impl LedgerReader {
     pub fn find_entry_for_offset(&self, offset: i64) -> Option<&LedgerEntry> {
         self.entries
             .iter()
-            .find(|e| offset >= e.offset_start && offset < e.offset_end)
+            .filter(|e| offset >= e.offset_start && offset < e.offset_end)
+            .min_by_key(|entry| {
+                (
+                    temporal_source_precedence(entry.source_type),
+                    entry.offset_end - entry.offset_start,
+                )
+            })
     }
 
     /// Derive `ts_orig` and source type based on temporal ledger precedence.
@@ -188,6 +194,17 @@ impl LedgerReader {
              missing staged_at ledger entry?"
         );
         None
+    }
+}
+
+fn temporal_source_precedence(source_type: TemporalSourceType) -> u8 {
+    match source_type {
+        TemporalSourceType::RealtimeCapture => 0,
+        TemporalSourceType::IntrinsicContent => 1,
+        TemporalSourceType::InferredMtime => 2,
+        TemporalSourceType::InferredCtime => 3,
+        TemporalSourceType::InferredUser => 4,
+        TemporalSourceType::StagedAt => 5,
     }
 }
 

@@ -51,7 +51,8 @@ pub mod prelude {
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
 pub use deployment_readiness::{
-    DeploymentExpectations, DeploymentReadinessDescriptor, DeploymentReadinessMode,
+    DeploymentDatabaseRuntime, DeploymentExpectations, DeploymentGatewayRuntime,
+    DeploymentNatsRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
     TerminalDeploymentSurface, TerminalHistorySource,
 };

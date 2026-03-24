@@ -104,10 +104,10 @@ pub struct TimeRange {
 impl TimeRange {
     pub fn new(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<Self, SinexError> {
         if let (Some(start), Some(end)) = (start, end)
-            && start > end
+            && start >= end
         {
             return Err(
-                SinexError::validation("start_time must be earlier than end_time")
+                SinexError::validation("start_time must be strictly earlier than end_time")
                     .with_context("start_time", start)
                     .with_context("end_time", end),
             );
@@ -218,6 +218,10 @@ impl EventQuery {
     /// Validate and clamp query parameters.
     pub fn validate(&mut self) -> Result<(), SinexError> {
         self.limit = self.limit.clamp(1, Pagination::MAX_LIMIT);
+
+        if let Some(time_range) = self.time_range {
+            TimeRange::new(time_range.start(), time_range.end())?;
+        }
 
         if let Some(ref payload) = self.payload {
             payload.validate_depth(0)?;

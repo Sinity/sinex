@@ -866,7 +866,7 @@ async fn handle_rpc(
     if !state.rate_limiter.check(&token).await {
         let token_prefix = &token[..8.min(token.len())];
         warn!(token_prefix, "Request rejected: rate limit exceeded");
-        state.metrics.record_rate_limited(token_prefix);
+        state.metrics.record_rate_limited();
         log_access_audit(
             "rpc",
             &request.method,
