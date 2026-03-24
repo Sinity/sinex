@@ -105,7 +105,7 @@ impl CoordinationPrimitive {
 
 | Lock Type | Use Case | Location |
 |-----------|----------|----------|
-| `std::sync::Mutex` | Simple, blocking, infrequent access | ServiceStatus |
+| `std::sync::Mutex` | Simple, blocking, infrequent access | Small in-process control state |
 | `tokio::sync::RwLock` | Async hot paths, read-heavy | WorkTracker, Assembler state |
 | `parking_lot::Mutex` | Fast uncontended, no poisoning | Heartbeat metrics |
 | `AtomicUsize` | Lock-free counters | In-flight operations, events processed |

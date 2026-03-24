@@ -1,14 +1,18 @@
 //! Tests for audit handler request/response behavior.
 
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::handle_audit_get;
 use sinex_primitives::Id;
 use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::Event;
+use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, OperationRecord,
 };
 use sinex_primitives::rpc::ops::Operation;
+use sinex_primitives::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -72,5 +76,124 @@ async fn missing_operation_returns_not_found(ctx: TestContext) -> TestResult<()>
         .expect_err("missing operation should return not found");
     let message = err.to_string();
     assert!(message.contains("not found") || message.contains("Not found"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn audit_get_uses_explicit_lifecycle_summary_across_tiers(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let material_id = ctx.create_source_material(Some("audit-test")).await?;
+
+    let live = pool
+        .events()
+        .insert(
+            DynamicPayload::new("audit-test", "audit.live", json!({ "tier": "live" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let archived = pool
+        .events()
+        .insert(
+            DynamicPayload::new("audit-test", "audit.archive", json!({ "tier": "archive" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let tombstoned = pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "audit-test",
+                "audit.tombstone",
+                json!({ "tier": "tombstone" }),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let live_id = live.id.expect("live event should have an id");
+    let archived_id = archived.id.expect("archived event should have an id");
+    let tombstoned_id = tombstoned.id.expect("tombstoned event should have an id");
+
+    let archive_op = Uuid::now_v7().to_string();
+    pool.events()
+        .execute_cascade_archive(&[*archived_id.as_uuid()], "archive test row", &archive_op, "test")
+        .await?;
+
+    let tombstone_archive_op = Uuid::now_v7().to_string();
+    pool.events()
+        .execute_cascade_archive(
+            &[*tombstoned_id.as_uuid()],
+            "archive before tombstone",
+            &tombstone_archive_op,
+            "test",
+        )
+        .await?;
+    pool.events()
+        .execute_cascade_tombstone(
+            &[*tombstoned_id.as_uuid()],
+            "tombstone test row",
+            Uuid::now_v7(),
+        )
+        .await?;
+
+    let operation = pool
+        .state()
+        .start_operation("archive", "tester", json!({ "source": "audit-test" }))
+        .await?;
+    let summary = LifecycleOperationSummary {
+        dry_run: false,
+        root_event_count: 3,
+        cascade_total: 3,
+        cascade_depth: 1,
+        affected_event_ids: vec![
+            live_id.to_string(),
+            archived_id.to_string(),
+            tombstoned_id.to_string(),
+        ],
+        message: Some("explicit audit summary".into()),
+        ..Default::default()
+    };
+    pool.state()
+        .update_operation_meta(
+            &operation.id,
+            OperationStatus::Running,
+            Some("explicit audit summary"),
+            serde_json::to_value(summary)?,
+        )
+        .await?;
+
+    let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation.id }))
+        .await?;
+    let response: AuditGetResponse = serde_json::from_value(response)?;
+    assert_eq!(response.event_count, 3);
+
+    let events_by_id = response
+        .audit_trail
+        .affected_events
+        .into_iter()
+        .map(|event| (event.id.to_string(), event))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(
+        events_by_id
+            .get(&live_id.to_string())
+            .and_then(|event| event.tier),
+        Some(sinex_primitives::domain::DataTier::Live)
+    );
+    assert_eq!(
+        events_by_id
+            .get(&archived_id.to_string())
+            .and_then(|event| event.tier),
+        Some(sinex_primitives::domain::DataTier::Archive)
+    );
+    assert_eq!(
+        events_by_id
+            .get(&tombstoned_id.to_string())
+            .and_then(|event| event.tier),
+        Some(sinex_primitives::domain::DataTier::Tombstone)
+    );
+
     Ok(())
 }

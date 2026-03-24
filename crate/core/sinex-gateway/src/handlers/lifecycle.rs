@@ -2,7 +2,7 @@
 //!
 //! Implements the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
@@ -22,6 +22,79 @@ fn parse_uuid_str(raw: &str) -> Result<Uuid> {
 fn parse_operation_uuid(raw: &str) -> Result<Uuid> {
     Uuid::from_str(raw)
         .map_err(|_| SinexError::validation(format!("Invalid tombstone operation ID: {raw}")))
+}
+
+fn stringify_event_ids(event_ids: &[Uuid]) -> Vec<String> {
+    event_ids
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
+}
+
+fn fresh_cascade_session_id(prefix: &str) -> String {
+    format!("{prefix}_{}", Uuid::now_v7().simple())
+}
+
+fn lifecycle_audit_summary(
+    affected_event_ids: &[Uuid],
+    cascade_depth: usize,
+    cascade_total: usize,
+    root_event_count: usize,
+    dry_run: bool,
+) -> Value {
+    json!({
+        "affected_event_ids": stringify_event_ids(affected_event_ids),
+        "cascade_depth": cascade_depth,
+        "cascade_total": cascade_total,
+        "root_event_count": root_event_count,
+        "dry_run": dry_run,
+    })
+}
+
+async fn collect_cascade_ids(
+    pool: &PgPool,
+    session_prefix: &str,
+    root_ids: &[Uuid],
+    source: CascadeSource,
+) -> Result<(Vec<Uuid>, usize)> {
+    let mut tx = pool.begin().await.map_err(|e| {
+        SinexError::database("Failed to begin cascade analysis transaction").with_source(e.to_string())
+    })?;
+    let repo = pool.events();
+    let mut repo_tx = repo.as_tx(&mut tx);
+    let session_id = fresh_cascade_session_id(session_prefix);
+
+    let table_name = repo_tx
+        .prepare_cascade_session(&session_id, true)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
+        })?;
+    repo_tx
+        .populate_cascade_roots_from(&table_name, root_ids, source)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
+        })?;
+    let cascade_depth = repo_tx
+        .expand_cascade_from(&table_name, 100, source)
+        .await
+        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
+    let cascade_ids = repo_tx.get_cascade_ids(&table_name).await.map_err(|e| {
+        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
+    })?;
+
+    repo_tx
+        .cleanup_cascade_session(&table_name)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
+        })?;
+    tx.commit().await.map_err(|e| {
+        SinexError::database("Failed to commit cascade analysis transaction").with_source(e.to_string())
+    })?;
+
+    Ok((cascade_ids, cascade_depth))
 }
 
 /// Handle lifecycle.status - get status of all lifecycle tiers
@@ -106,44 +179,53 @@ pub async fn handle_lifecycle_archive(
         ));
     }
 
-    // Create cascade session and analyze dependencies
-    let session_id = Uuid::now_v7().to_string();
-    let table_name = repo
-        .prepare_cascade_session(&session_id, true)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
-        })?;
-
-    // Populate with live event roots
-    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Live)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
-        })?;
-
-    // Expand cascade to find all dependent events
-    let cascade_depth = repo
-        .expand_cascade_from(&table_name, 100, CascadeSource::Live)
-        .await
-        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
-
-    // Get all cascade IDs
-    let cascade_ids = repo.get_cascade_ids(&table_name).await.map_err(|e| {
-        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
-    })?;
+    let (cascade_ids, cascade_depth) =
+        collect_cascade_ids(pool, "archive", &event_ids, CascadeSource::Live).await?;
     let cascade_total = cascade_ids.len();
 
-    // Cleanup cascade session
-    repo.cleanup_cascade_session(&table_name)
+    let preview_summary =
+        lifecycle_audit_summary(&cascade_ids, cascade_depth, cascade_total, event_ids.len(), request.dry_run);
+    let scope = json!({
+        "source": request.source.as_ref().map(|source| source.to_string()),
+        "before": request.before.clone(),
+        "requested_event_ids": request.event_ids.clone(),
+        "limit": request.limit,
+        "reason": request.reason.clone(),
+        "dry_run": request.dry_run,
+    });
+    let operation = pool
+        .state()
+        .start_operation("archive", &auth.token_prefix, scope)
         .await
         .map_err(|e| {
-            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
+            SinexError::database("Failed to persist archive operation").with_source(e.to_string())
         })?;
-
-    let operation_id = Uuid::now_v7();
+    pool.state()
+        .update_operation_meta(
+            &operation.id,
+            OperationStatus::Running,
+            Some("Archive preview computed"),
+            preview_summary.clone(),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to persist archive preview").with_source(e.to_string())
+        })?;
+    let operation_id = operation.id.to_uuid();
 
     if request.dry_run {
+        pool.state()
+            .complete_operation(
+                &operation.id,
+                json!({
+                    "message": "Lifecycle archive dry run completed",
+                    "archived_count": 0,
+                }),
+            )
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to finalize archive dry run").with_source(e.to_string())
+            })?;
         let response = LifecycleArchiveResponse {
             archived_count: 0,
             cascade_depth,
@@ -159,7 +241,7 @@ pub async fn handle_lifecycle_archive(
         .reason
         .as_deref()
         .unwrap_or("Lifecycle archive operation");
-    let archived_count = repo
+    let archived_count = match repo
         .execute_cascade_archive(
             &cascade_ids,
             reason,
@@ -167,8 +249,34 @@ pub async fn handle_lifecycle_archive(
             &auth.token_prefix,
         )
         .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            let _ = pool
+                .state()
+                .fail_operation(
+                    &operation.id,
+                    json!({
+                        "error": format!("Failed to execute cascade archive: {error}"),
+                    }),
+                )
+                .await;
+            return Err(
+                SinexError::database("Failed to execute cascade archive").with_source(error.to_string())
+            );
+        }
+    };
+    pool.state()
+        .complete_operation(
+            &operation.id,
+            json!({
+                "message": "Lifecycle archive completed",
+                "archived_count": archived_count,
+            }),
+        )
+        .await
         .map_err(|e| {
-            SinexError::database("Failed to execute cascade archive").with_source(e.to_string())
+            SinexError::database("Failed to finalize archive operation").with_source(e.to_string())
         })?;
 
     info!(
@@ -217,44 +325,49 @@ pub async fn handle_lifecycle_restore(
         .map(|s| parse_uuid_str(s))
         .collect::<Result<Vec<_>>>()?;
 
-    // Analyze cascade from archived events
-    let session_id = Uuid::now_v7().to_string();
-    let table_name = repo
-        .prepare_cascade_session(&session_id, true)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
-        })?;
-
-    // Populate with archived event roots
-    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
-        })?;
-
-    // Expand cascade
-    let max_depth = repo
-        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
-        .await
-        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
-
-    // Get all cascade IDs
-    let cascade_ids = repo.get_cascade_ids(&table_name).await.map_err(|e| {
-        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
-    })?;
+    let (cascade_ids, max_depth) =
+        collect_cascade_ids(pool, "restore", &event_ids, CascadeSource::Archive).await?;
     let cascade_total = cascade_ids.len();
 
-    // Cleanup cascade table
-    repo.cleanup_cascade_session(&table_name)
+    let preview_summary =
+        lifecycle_audit_summary(&cascade_ids, max_depth, cascade_total, event_ids.len(), request.dry_run);
+    let scope = json!({
+        "requested_event_ids": request.event_ids.clone(),
+        "dry_run": request.dry_run,
+    });
+    let operation = pool
+        .state()
+        .start_operation("restore", &auth.token_prefix, scope)
         .await
         .map_err(|e| {
-            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
+            SinexError::database("Failed to persist restore operation").with_source(e.to_string())
         })?;
-
-    let operation_id = Uuid::now_v7();
+    pool.state()
+        .update_operation_meta(
+            &operation.id,
+            OperationStatus::Running,
+            Some("Restore preview computed"),
+            preview_summary.clone(),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to persist restore preview").with_source(e.to_string())
+        })?;
+    let operation_id = operation.id.to_uuid();
 
     if request.dry_run {
+        pool.state()
+            .complete_operation(
+                &operation.id,
+                json!({
+                    "message": "Lifecycle restore dry run completed",
+                    "restored_count": 0,
+                }),
+            )
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to finalize restore dry run").with_source(e.to_string())
+            })?;
         let response = LifecycleRestoreResponse {
             restored_count: 0,
             cascade_depth: max_depth,
@@ -266,11 +379,37 @@ pub async fn handle_lifecycle_restore(
     }
 
     // Execute restore
-    let restored_count = repo
+    let restored_count = match repo
         .execute_cascade_restore(&cascade_ids, &operation_id.to_string())
         .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            let _ = pool
+                .state()
+                .fail_operation(
+                    &operation.id,
+                    json!({
+                        "error": format!("Failed to execute cascade restore: {error}"),
+                    }),
+                )
+                .await;
+            return Err(
+                SinexError::database("Failed to execute cascade restore").with_source(error.to_string())
+            );
+        }
+    };
+    pool.state()
+        .complete_operation(
+            &operation.id,
+            json!({
+                "message": "Lifecycle restore completed",
+                "restored_count": restored_count,
+            }),
+        )
+        .await
         .map_err(|e| {
-            SinexError::database("Failed to execute cascade restore").with_source(e.to_string())
+            SinexError::database("Failed to finalize restore operation").with_source(e.to_string())
         })?;
 
     info!(
@@ -357,6 +496,94 @@ fn operation_record_to_tombstone(
     }
 }
 
+fn tombstone_preview_summary(
+    root_event_ids: &[Uuid],
+    cascade_event_ids: &[Uuid],
+    cascade_analysis: &TombstoneCascadeAnalysis,
+    limit: i64,
+) -> Value {
+    json!({
+        "root_event_ids": stringify_event_ids(root_event_ids),
+        "affected_event_ids": stringify_event_ids(cascade_event_ids),
+        "root_event_count": cascade_analysis.root_event_count,
+        "cascade_total": cascade_analysis.cascade_total,
+        "cascade_depth": cascade_analysis.cascade_depth,
+        "limit": limit,
+    })
+}
+
+fn merge_preview_summary(preview_summary: Option<Value>, extra: Value) -> Option<Value> {
+    match (preview_summary, extra) {
+        (Some(mut summary @ Value::Object(_)), Value::Object(extra_fields)) => {
+            let Value::Object(summary_fields) = &mut summary else {
+                unreachable!();
+            };
+            summary_fields.extend(extra_fields);
+            Some(summary)
+        }
+        (Some(summary), _) => Some(summary),
+        (None, extra) => Some(extra),
+    }
+}
+
+fn parse_previewed_event_ids(record: &sinex_db::repositories::state::OperationRecord) -> Result<Vec<Uuid>> {
+    let Some(summary) = record.preview_summary.as_ref() else {
+        return Err(SinexError::invalid_state(
+            "Tombstone operation is missing preview_summary",
+        ));
+    };
+    let Some(event_ids) = summary.get("affected_event_ids").and_then(Value::as_array) else {
+        return Err(SinexError::invalid_state(
+            "Tombstone preview_summary is missing affected_event_ids",
+        ));
+    };
+
+    event_ids
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| {
+                    SinexError::invalid_state("Tombstone preview_summary contains non-string event IDs")
+                })
+                .and_then(parse_uuid_str)
+        })
+        .collect()
+}
+
+async fn reconcile_tombstone_expiry(
+    pool: &PgPool,
+    operation_id: &str,
+    operation: &mut TombstoneOperation,
+    preview_summary: Option<Value>,
+) -> Result<bool> {
+    let now = Timestamp::now();
+    if !operation.state.is_terminal()
+        && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+    {
+        operation.state = TombstoneOperationState::Expired;
+        sync_tombstone_phase(operation);
+        let scope = serde_json::to_value(&*operation)?;
+        pool.state()
+            .update_tombstone_operation(
+                operation_id,
+                phase_to_result_status(operation.phase),
+                scope,
+                preview_summary,
+                Some("Tombstone operation expired"),
+                None,
+            )
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to persist tombstone expiration").with_source(e.to_string())
+            })?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 /// Handle lifecycle.tombstone.create
 ///
 /// Creates a new tombstone operation with cascade preview.
@@ -407,35 +634,8 @@ pub async fn handle_tombstone_create(
         ));
     }
 
-    // Analyze cascade
-    let session_id = Uuid::now_v7().to_string();
-    let table_name = repo
-        .prepare_cascade_session(&session_id, true)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
-        })?;
-
-    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
-        })?;
-
-    let cascade_depth = repo
-        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
-        .await
-        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
-
-    let cascade_ids = repo.get_cascade_ids(&table_name).await.map_err(|e| {
-        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
-    })?;
-
-    repo.cleanup_cascade_session(&table_name)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
-        })?;
+    let (cascade_ids, cascade_depth) =
+        collect_cascade_ids(pool, "tombstone", &event_ids, CascadeSource::Archive).await?;
 
     // Build cascade analysis
     let cascade_analysis = TombstoneCascadeAnalysis {
@@ -457,6 +657,7 @@ pub async fn handle_tombstone_create(
         before: request.before.clone(),
         source: request.source.clone(),
         event_ids: request.event_ids.clone(),
+        limit: request.limit,
         reason: request.reason.clone(),
         cascade_analysis: Some(cascade_analysis),
         created_by: auth.token_prefix.clone(),
@@ -472,8 +673,17 @@ pub async fn handle_tombstone_create(
 
     // Persist operation to database
     let scope = serde_json::to_value(&operation)?;
+    let preview_summary = tombstone_preview_summary(
+        &event_ids,
+        &cascade_ids,
+        operation
+            .cascade_analysis
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("Missing tombstone cascade analysis"))?,
+        operation.limit,
+    );
     pool.state()
-        .create_tombstone_operation(&operation_id, &auth.token_prefix, scope)
+        .create_tombstone_operation(&operation_id, &auth.token_prefix, scope, preview_summary)
         .await
         .map_err(|e| {
             SinexError::database("Failed to persist tombstone operation").with_source(e.to_string())
@@ -518,25 +728,14 @@ pub async fn handle_tombstone_preview(
     let mut operation = operation_record_to_tombstone(&record)
         .ok_or_else(|| SinexError::invalid_state("Failed to deserialize tombstone operation"))?;
 
-    // Check for expiration
-    let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
-        && now > expires_at
-        && !operation.state.is_terminal()
+    if reconcile_tombstone_expiry(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        record.preview_summary.clone(),
+    )
+    .await?
     {
-        // Mark as expired and persist
-        operation.state = TombstoneOperationState::Expired;
-        sync_tombstone_phase(&mut operation);
-        let scope = serde_json::to_value(&operation)?;
-        let _ = pool
-            .state()
-            .update_tombstone_operation(
-                &request.operation_id,
-                phase_to_result_status(operation.phase),
-                scope,
-                None,
-            )
-            .await;
         return Err(SinexError::invalid_state(format!(
             "Tombstone operation {} has expired",
             request.operation_id
@@ -579,6 +778,7 @@ pub async fn handle_tombstone_approve(
 
     let mut operation = operation_record_to_tombstone(&record)
         .ok_or_else(|| SinexError::invalid_state("Failed to deserialize tombstone operation"))?;
+    let preview_summary = record.preview_summary.clone();
 
     // Validate state
     if !operation.state.can_approve() {
@@ -588,30 +788,63 @@ pub async fn handle_tombstone_approve(
         )));
     }
 
-    // Check expiration
     let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
-        && now > expires_at
+    if reconcile_tombstone_expiry(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        preview_summary.clone(),
+    )
+    .await?
     {
-        operation.state = TombstoneOperationState::Expired;
-        sync_tombstone_phase(&mut operation);
-        let scope = serde_json::to_value(&operation)?;
-        let _ = pool
-            .state()
-            .update_tombstone_operation(
-                &request.operation_id,
-                phase_to_result_status(operation.phase),
-                scope,
-                None,
-            )
-            .await;
         return Err(SinexError::invalid_state(format!(
             "Tombstone operation {} has expired. Create a new operation.",
             request.operation_id
         )));
     }
 
-    // Mark as approved and executing
+    let previewed_event_ids = parse_previewed_event_ids(&record)?;
+    let archived_count = pool
+        .state()
+        .count_archived_event_ids(&previewed_event_ids)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to validate tombstone preview set").with_source(e.to_string())
+        })?;
+    if archived_count != previewed_event_ids.len() as i64 {
+        operation.state = TombstoneOperationState::Failed;
+        operation.finished_at = Some(now.format_rfc3339());
+        operation.error_details = Some(format!(
+            "Preview drift detected: expected {} archived events, found {}",
+            previewed_event_ids.len(),
+            archived_count
+        ));
+        sync_tombstone_phase(&mut operation);
+        let scope = serde_json::to_value(&operation)?;
+        pool.state()
+            .update_tombstone_operation(
+                &request.operation_id,
+                phase_to_result_status(operation.phase),
+                scope,
+                merge_preview_summary(
+                    preview_summary.clone(),
+                    json!({
+                        "message": "Tombstone preview is no longer valid",
+                    }),
+                ),
+                Some("Tombstone preview is no longer valid"),
+                None,
+            )
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to persist tombstone preview drift").with_source(e.to_string())
+            })?;
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} no longer matches the archived preview set",
+            request.operation_id
+        )));
+    }
+
     operation.state = TombstoneOperationState::Executing;
     operation.approved_by = Some(auth.token_prefix.clone());
     operation.approved_at = Some(now.format_rfc3339());
@@ -625,6 +858,8 @@ pub async fn handle_tombstone_approve(
             &request.operation_id,
             phase_to_result_status(operation.phase),
             scope,
+            preview_summary.clone(),
+            Some("Tombstone operation executing"),
             None,
         )
         .await
@@ -638,67 +873,20 @@ pub async fn handle_tombstone_approve(
         "Tombstone operation approved, executing..."
     );
 
-    // Execute the tombstone
     let repo = pool.events();
-    let before_ts = if let Some(before_str) = &operation.before {
-        parse_duration_to_timestamp(before_str)?
-    } else {
-        None
-    };
-
-    let event_ids = if let Some(ids) = &operation.event_ids {
-        ids.iter()
-            .map(|s| parse_uuid_str(s))
-            .collect::<Result<Vec<_>>>()?
-    } else {
-        repo.get_archived_event_ids(operation.source.as_ref(), before_ts, 1000)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to get archived event IDs").with_source(e.to_string())
-            })?
-    };
     let operation_uuid = parse_operation_uuid(&request.operation_id)?;
-
-    // Recompute cascade (IDs may have changed since preview)
-    let session_id = Uuid::now_v7().to_string();
-    let table_name = repo
-        .prepare_cascade_session(&session_id, true)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
-        })?;
-
-    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
-        })?;
-
-    repo.expand_cascade_from(&table_name, 100, CascadeSource::Archive)
-        .await
-        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
-
-    let cascade_ids = repo.get_cascade_ids(&table_name).await.map_err(|e| {
-        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
-    })?;
-
-    repo.cleanup_cascade_session(&table_name)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
-        })?;
-
     let start_time = std::time::Instant::now();
 
     // Execute tombstone
     let tombstoned_count = match repo
-        .execute_cascade_tombstone(&cascade_ids, &operation.reason, operation_uuid)
+        .execute_cascade_tombstone(&previewed_event_ids, &operation.reason, operation_uuid)
         .await
     {
         Ok(count) => count,
         Err(e) => {
             // Mark as failed and persist
             operation.state = TombstoneOperationState::Failed;
+            operation.finished_at = Some(Timestamp::now().format_rfc3339());
             operation.error_details = Some(e.to_string());
             sync_tombstone_phase(&mut operation);
             let scope = serde_json::to_value(&operation)?;
@@ -708,6 +896,14 @@ pub async fn handle_tombstone_approve(
                     &request.operation_id,
                     phase_to_result_status(operation.phase),
                     scope,
+                    merge_preview_summary(
+                        preview_summary.clone(),
+                        json!({
+                            "message": "Failed to execute tombstone",
+                            "error": e.to_string(),
+                        }),
+                    ),
+                    Some("Failed to execute tombstone"),
                     None,
                 )
                 .await;
@@ -732,6 +928,14 @@ pub async fn handle_tombstone_approve(
             &request.operation_id,
             phase_to_result_status(operation.phase),
             scope,
+            merge_preview_summary(
+                preview_summary,
+                json!({
+                    "message": "Tombstone operation completed",
+                    "tombstoned_count": tombstoned_count,
+                }),
+            ),
+            Some("Tombstone operation completed"),
             Some(duration_ms),
         )
         .await
@@ -799,6 +1003,8 @@ pub async fn handle_tombstone_cancel(
             &request.operation_id,
             phase_to_result_status(operation.phase),
             scope,
+            record.preview_summary.clone(),
+            Some("Tombstone operation cancelled"),
             None,
         )
         .await
@@ -839,22 +1045,21 @@ pub async fn handle_tombstone_list(
         })?;
 
     // Convert records to TombstoneOperations
-    let now = Timestamp::now();
-    let mut operations: Vec<TombstoneOperation> = records
-        .iter()
-        .filter_map(operation_record_to_tombstone)
-        .map(|mut op| {
-            // Check for expiration on non-terminal operations
-            if !op.state.is_terminal()
-                && let Ok(expires_at) = Timestamp::parse_rfc3339(&op.expires_at)
-                && now > expires_at
-            {
-                op.state = TombstoneOperationState::Expired;
-                // Note: We don't persist this on list - it will be lazily updated on access
-            }
-            op
-        })
-        .collect();
+    let mut operations = Vec::new();
+    for record in &records {
+        let Some(mut operation) = operation_record_to_tombstone(record) else {
+            continue;
+        };
+        let operation_id = operation.operation_id.clone();
+        let _ = reconcile_tombstone_expiry(
+            pool,
+            &operation_id,
+            &mut operation,
+            record.preview_summary.clone(),
+        )
+        .await;
+        operations.push(operation);
+    }
 
     // Apply state filter (needed because DB filter is on result_status, not full state)
     if let Some(filter_state) = request.state {
@@ -892,8 +1097,15 @@ pub async fn handle_tombstone_status(
             ))
         })?;
 
-    let operation = operation_record_to_tombstone(&record)
+    let mut operation = operation_record_to_tombstone(&record)
         .ok_or_else(|| SinexError::invalid_state("Failed to deserialize tombstone operation"))?;
+    let _ = reconcile_tombstone_expiry(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        record.preview_summary.clone(),
+    )
+    .await?;
 
     let response = TombstoneStatusResponse { operation };
     Ok(serde_json::to_value(response)?)

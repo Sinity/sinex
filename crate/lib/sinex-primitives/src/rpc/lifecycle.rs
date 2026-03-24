@@ -238,6 +238,42 @@ pub struct TombstoneCascadeAnalysis {
     pub sample_ids: Vec<String>,
 }
 
+/// Persisted lifecycle summary stored in `operations_log.preview_summary`.
+///
+/// This is the operator-facing audit payload used by `audit.get` to reconstruct
+/// the exact event set a lifecycle operation targeted, without inferring from
+/// timestamps or current tier placement.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LifecycleOperationSummary {
+    /// Whether this operation was only a dry-run preview.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Root events that matched the original filter.
+    #[serde(default)]
+    pub root_event_count: usize,
+    /// Total events in the affected cascade.
+    #[serde(default)]
+    pub cascade_total: usize,
+    /// Maximum dependency depth in the cascade.
+    #[serde(default)]
+    pub cascade_depth: usize,
+    /// Exact event IDs affected by this lifecycle operation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_event_ids: Vec<String>,
+    /// Number of events archived by execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_count: Option<u64>,
+    /// Number of events restored by execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_count: Option<u64>,
+    /// Number of events permanently tombstoned by execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tombstoned_count: Option<u64>,
+    /// Human-readable execution summary or error context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 /// A tombstone operation record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TombstoneOperation {
@@ -256,6 +292,9 @@ pub struct TombstoneOperation {
     /// Filter: specific event IDs
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_ids: Option<Vec<String>>,
+    /// Maximum archived root events considered when recomputing the preview.
+    #[serde(default = "default_batch_limit")]
+    pub limit: i64,
     /// Reason for tombstoning
     pub reason: String,
     /// Cascade analysis (populated after preview)

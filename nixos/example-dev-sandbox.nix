@@ -34,6 +34,7 @@
 
     core = {
       enable = true;
+      gateway.autoGenerateTls = true;
       ingestd = {
         batch = {
           size = 500;

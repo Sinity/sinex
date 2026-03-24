@@ -31,13 +31,6 @@ pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> No
     }
 }
 
-/// Check if a command succeeds within the preflight timeout. Returns false on timeout or error.
-pub(crate) async fn command_succeeds(program: &str, args: &[&str]) -> bool {
-    run_command_with_timeout(program, args)
-        .await
-        .is_ok_and(|output| output.status.success())
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VerificationStatus {
     Pass,

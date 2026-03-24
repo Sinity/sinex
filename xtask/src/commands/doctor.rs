@@ -2,6 +2,7 @@
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
+use crate::infra::probe::{probe_nats, probe_postgres};
 use crate::output::Status;
 use crate::tools::{ToolInfo, ToolManager};
 use color_eyre::eyre::{Result, WrapErr};
@@ -17,14 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-fn current_nats_port() -> u16 {
-    crate::infra::stack::StackConfig::for_current_checkout()
-        .map(|config| config.nats.port)
-        .unwrap_or(4222)
-}
-
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
+const RUNTIME_LAG_WARN_THRESHOLD: f64 = 1000.0;
+const RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS: f64 = 5000.0;
 
 #[derive(clap::Args)]
 pub struct DoctorCommand {
@@ -97,7 +94,30 @@ impl XtaskCommand for DoctorCommand {
         let mut result = execute_doctor(self.pipelines, ctx)?;
 
         if self.runtime {
-            execute_runtime_check(ctx).await?;
+            let runtime = execute_runtime_check(ctx).await?;
+            let runtime_value = serde_json::to_value(&runtime)?;
+            let existing_data = result.data.take();
+            result.data = Some(match existing_data {
+                Some(mut existing) => {
+                    if let Some(map) = existing.as_object_mut() {
+                        map.insert("runtime".to_string(), runtime_value);
+                        existing
+                    } else {
+                        serde_json::json!({
+                            "doctor": existing,
+                            "runtime": runtime_value,
+                        })
+                    }
+                }
+                None => serde_json::json!({
+                    "runtime": runtime_value,
+                }),
+            });
+
+            if !runtime.overall && result.status == Status::Success {
+                result.status = Status::Partial;
+            }
+            result.warnings.extend(runtime.warnings.clone());
         }
 
         if self.deployment_readiness {
@@ -136,21 +156,17 @@ impl XtaskCommand for DoctorCommand {
             }
 
             // Check infra status and restart if needed
-            let pg_ready = std::process::Command::new("pg_isready")
-                .arg("-q")
-                .status()
-                .is_ok_and(|s| s.success());
-            let nats_port = current_nats_port();
-            let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+            let pg_probe = probe_postgres();
+            let nats_probe = probe_nats();
 
-            if !pg_ready || !nats_ready {
+            if !pg_probe.ready() || !nats_probe.ready() {
                 let stack_config = crate::infra::stack::StackConfig::for_current_checkout().ok();
                 if let Some(cfg) = stack_config {
                     let verbose = ctx.is_human();
-                    if !pg_ready {
+                    if !pg_probe.ready() {
                         let _ = crate::infra::stack::pg_start(&cfg, verbose);
                     }
-                    if !nats_ready {
+                    if !nats_probe.ready() {
                         let _ = crate::infra::stack::nats_start(&cfg, verbose);
                     }
                 }
@@ -176,25 +192,31 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     let mut all_ok = true;
 
     // Check Postgres
-    let pg_ready = std::process::Command::new("pg_isready")
-        .arg("-q")
-        .status()
-        .is_ok_and(|s| s.success());
-    let pg_msg = if pg_ready {
+    let pg_probe = probe_postgres();
+    let pg_msg = if pg_probe.ready() {
         None
     } else {
         all_ok = false;
-        Some("pg_isready failed - is Postgres running?".to_string())
+        Some(
+            pg_probe
+                .message
+                .clone()
+                .unwrap_or_else(|| "Postgres is not ready".to_string()),
+        )
     };
 
     // Check NATS
-    let nats_port = current_nats_port();
-    let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-    let nats_msg = if nats_ready {
+    let nats_probe = probe_nats();
+    let nats_msg = if nats_probe.ready() {
         None
     } else {
         all_ok = false;
-        Some(format!("Cannot connect to NATS on port {nats_port}"))
+        Some(
+            nats_probe
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("Cannot connect to NATS on port {}", nats_probe.port)),
+        )
     };
 
     // Check required tools
@@ -236,7 +258,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     // Check Postgres extensions
     let mut pg_extensions = None;
-    if pg_ready {
+    if pg_probe.ready() {
         let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
         if let Some(cfg) = config {
             let output = std::process::Command::new("psql")
@@ -320,11 +342,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     let report = DoctorReport {
         postgres: DoctorServiceCheck {
-            available: pg_ready,
+            available: pg_probe.ready(),
             message: pg_msg,
         },
         nats: DoctorServiceCheck {
-            available: nats_ready,
+            available: nats_probe.ready(),
             message: nats_msg,
         },
         tools: tool_checks,
@@ -475,7 +497,56 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
 }
 
-async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeCheckReport {
+    overall: bool,
+    metrics: crate::runtime_metrics::RuntimeMetrics,
+    warnings: Vec<String>,
+}
+
+fn runtime_warnings(metrics: &crate::runtime_metrics::RuntimeMetrics) -> Vec<String> {
+    use crate::runtime_metrics::IngestdStatus;
+
+    let mut warnings = Vec::new();
+    match metrics.ingestd_status {
+        IngestdStatus::Healthy => {}
+        IngestdStatus::Stale => warnings.push("Runtime health: ingestd heartbeat is stale".into()),
+        IngestdStatus::Down => warnings.push("Runtime health: ingestd is down".into()),
+        IngestdStatus::Unknown => warnings.push("Runtime health: ingestd status is unknown".into()),
+    }
+
+    if let Some(lag) = metrics.fresh_consumer_lag_pending()
+        && lag > RUNTIME_LAG_WARN_THRESHOLD
+    {
+        warnings.push(format!(
+            "Runtime health: consumer lag is high ({lag:.0} pending)"
+        ));
+    }
+    if metrics.consumer_lag_is_stale() {
+        warnings.push(format!(
+            "Runtime health: consumer lag telemetry is stale ({}s old)",
+            metrics.consumer_lag_age_secs.unwrap_or_default()
+        ));
+    }
+
+    if let Some(latency) = metrics.fresh_batch_latency_ms()
+        && latency > RUNTIME_BATCH_LATENCY_WARN_THRESHOLD_MS
+    {
+        warnings.push(format!(
+            "Runtime health: batch latency is high ({latency:.0}ms)"
+        ));
+    }
+    if metrics.batch_latency_is_stale() {
+        warnings.push(format!(
+            "Runtime health: batch latency telemetry is stale ({}s old)",
+            metrics.last_batch_latency_age_secs.unwrap_or_default()
+        ));
+    }
+
+    warnings
+}
+
+async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckReport> {
     use crate::config::config;
     use crate::runtime_metrics::{IngestdStatus, query_runtime_metrics};
 
@@ -490,11 +561,23 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
                     style("⚠").yellow()
                 );
             }
-            return Ok(());
+            return Ok(RuntimeCheckReport {
+                overall: true,
+                metrics: crate::runtime_metrics::RuntimeMetrics {
+                    ingestd_status: crate::runtime_metrics::IngestdStatus::Unknown,
+                    last_heartbeat_age_secs: None,
+                    consumer_lag_pending: None,
+                    consumer_lag_age_secs: None,
+                    last_batch_latency_ms: None,
+                    last_batch_latency_age_secs: None,
+                },
+                warnings: vec!["Runtime health skipped: DATABASE_URL not set".into()],
+            });
         }
     };
 
     let metrics = query_runtime_metrics(&db_url).await;
+    let warnings = runtime_warnings(&metrics);
 
     if ctx.is_human() {
         println!("\n{}", style("Runtime Health:").bold());
@@ -550,7 +633,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(RuntimeCheckReport {
+        overall: warnings.is_empty(),
+        metrics,
+        warnings,
+    })
 }
 
 /// Result of a single deployment readiness check.
@@ -624,12 +711,15 @@ fn path_from_env_or_default(env_key: &str, default_path: PathBuf) -> Option<Path
         .or_else(|| default_path.exists().then_some(default_path))
 }
 
-fn load_deployment_descriptor() -> (Option<DeploymentReadinessDescriptor>, DeploymentReadinessItem) {
+fn load_deployment_descriptor() -> (
+    Option<DeploymentReadinessDescriptor>,
+    DeploymentReadinessItem,
+) {
     let configured_path = DeploymentReadinessDescriptor::configured_path();
     match DeploymentReadinessDescriptor::load() {
         Ok(Some(descriptor)) => {
-            let source = configured_path
-                .unwrap_or_else(DeploymentReadinessDescriptor::default_path);
+            let source =
+                configured_path.unwrap_or_else(DeploymentReadinessDescriptor::default_path);
             let mode = match descriptor.mode {
                 DeploymentReadinessMode::Prepared => "prepared",
                 DeploymentReadinessMode::Enabled => "enabled",
@@ -652,17 +742,14 @@ fn load_deployment_descriptor() -> (Option<DeploymentReadinessDescriptor>, Deplo
         }
         Ok(None) => (
             None,
-            DeploymentReadinessItem::skip(
+            DeploymentReadinessItem::fail(
                 "deployment-descriptor",
-                "No deployment readiness descriptor found; using environment fallbacks",
+                "No deployment readiness descriptor found; deployment readiness requires a config-derived descriptor from /etc/sinex/deployment-readiness.json or SINEX_DEPLOYMENT_READINESS_CONFIG",
             ),
         ),
         Err(error) => (
             None,
-            DeploymentReadinessItem::fail(
-                "deployment-descriptor",
-                error.to_string(),
-            ),
+            DeploymentReadinessItem::fail("deployment-descriptor", error.to_string()),
         ),
     }
 }
@@ -693,7 +780,12 @@ fn command_output(command: &str, args: &[&str], description: &str) -> Result<Str
     let output = Command::new(command)
         .args(args)
         .output()
-        .wrap_err_with(|| format!("failed to run `{command} {}` for {description}", args.join(" ")))?;
+        .wrap_err_with(|| {
+            format!(
+                "failed to run `{command} {}` for {description}",
+                args.join(" ")
+            )
+        })?;
     if !output.status.success() {
         color_eyre::eyre::bail!(
             "`{command} {}` failed with status {} while resolving {description}",
@@ -712,17 +804,22 @@ fn resolve_target_identity(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<TargetIdentity> {
     let descriptor_target = descriptor.and_then(|value| value.target.as_ref());
-    let explicit_target_user = descriptor_target
-        .map(|target| target.user.clone())
-        .or_else(|| std::env::var("SINEX_TARGET_USER").ok())
-        .filter(|value| !value.trim().is_empty());
-    let current_user = std::env::var("USER")
+    let env_target_user = std::env::var("SINEX_TARGET_USER")
         .ok()
         .filter(|value| !value.trim().is_empty());
+    let explicit_target_user = descriptor_target
+        .map(|target| target.user.clone())
+        .or_else(|| env_target_user.clone());
 
-    let user = match explicit_target_user.clone().or(current_user.clone()) {
-        Some(user) => user,
-        None => command_output("id", &["-un"], "deployment readiness target user")?,
+    if descriptor.is_some() && descriptor_target.is_none() && env_target_user.is_none() {
+        color_eyre::eyre::bail!(
+            "deployment descriptor is present but does not declare target.user; set SINEX_TARGET_USER or fix the descriptor"
+        );
+    }
+    let Some(user) = explicit_target_user.clone() else {
+        color_eyre::eyre::bail!(
+            "deployment readiness refuses to guess the target user; set SINEX_TARGET_USER or provide a deployment descriptor with target.user"
+        );
     };
     let passwd_entry = read_passwd_entry(&user)?;
 
@@ -746,10 +843,6 @@ fn resolve_target_identity(
         home
     } else if let Ok(home) = std::env::var("SINEX_TARGET_HOME") {
         PathBuf::from(home)
-    } else if explicit_target_user.is_none() {
-        dirs::home_dir()
-            .or_else(|| passwd_entry.as_ref().map(|(_, home)| home.clone()))
-            .unwrap_or_else(|| PathBuf::from(format!("/home/{user}")))
     } else {
         passwd_entry
             .as_ref()
@@ -808,44 +901,181 @@ fn validate_atuin_history_db(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn activitywatch_db_for_target(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> PathBuf {
+    descriptor
+        .and_then(|value| value.desktop.activitywatch_db_path.clone())
+        .unwrap_or_else(|| {
+            target
+                .home
+                .join(".local/share/activitywatch/aw-server-rust/sqlite.db")
+        })
+}
+
+fn validate_activitywatch_db(path: &Path) -> Result<()> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).wrap_err_with(
+        || {
+            format!(
+                "failed to open ActivityWatch database at {}",
+                path.display()
+            )
+        },
+    )?;
+    let has_events_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='events')",
+            [],
+            |row| row.get(0),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "failed to inspect ActivityWatch events table at {}",
+                path.display()
+            )
+        })?;
+    let has_buckets_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='buckets')",
+            [],
+            |row| row.get(0),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "failed to inspect ActivityWatch buckets table at {}",
+                path.display()
+            )
+        })?;
+    if !has_events_table || !has_buckets_table {
+        color_eyre::eyre::bail!("missing `events`/`buckets` tables");
+    }
+
+    Ok(())
+}
+
 fn runtime_dir_for_target(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> PathBuf {
     descriptor
         .and_then(|value| value.desktop.runtime_dir.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+                .ok()
+                .map(PathBuf::from)
+        })
         .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
 }
 
-/// Check 1: deployment binaries exist in PATH.
-fn check_node_binaries() -> DeploymentReadinessItem {
-    let nodes = [
-        "sinex-ingestd",
-        "sinex-gateway",
-        "sinex-fs-ingestor",
-        "sinex-terminal-ingestor",
-        "sinex-desktop-ingestor",
-        "sinex-system-ingestor",
-    ];
-    let missing: Vec<&str> = nodes
-        .iter()
-        .copied()
-        .filter(|bin| which::which(bin).is_err())
-        .collect();
+fn check_node_entrypoints(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    let Some(descriptor) = descriptor else {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            "Deployment readiness requires a descriptor-declared managed unit set",
+        );
+    };
+    let units = &descriptor.managed_units;
 
-    if missing.is_empty() {
-        DeploymentReadinessItem::pass(
-            "node-binaries",
-            "All node binaries found on PATH",
-        )
-    } else {
-        DeploymentReadinessItem::fail(
-            "node-binaries",
-            format!("Missing node binaries: {}", missing.join(", ")),
-        )
+    if units.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            "Deployment descriptor does not declare managed units",
+        );
     }
+
+    let mut unavailable = Vec::new();
+    let mut notify_contract_violations = Vec::new();
+
+    for unit in units {
+        let output = match std::process::Command::new("systemctl")
+            .args(["show", unit, "--property=LoadState,Type,NotifyAccess"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                return DeploymentReadinessItem::fail(
+                    "node-entrypoints",
+                    format!("Could not query systemd for {unit}: {error}"),
+                );
+            }
+        };
+
+        let properties = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            unavailable.push(unit.clone());
+            continue;
+        }
+
+        let mut load_state = None;
+        let mut unit_type = None;
+        let mut notify_access = None;
+        for line in properties.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                match key {
+                    "LoadState" => load_state = Some(value.to_string()),
+                    "Type" => unit_type = Some(value.to_string()),
+                    "NotifyAccess" => notify_access = Some(value.to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        if load_state.as_deref().is_none_or(|value| value == "not-found" || value.is_empty()) {
+            unavailable.push(unit.clone());
+            continue;
+        }
+
+        if descriptor.mode == DeploymentReadinessMode::Enabled {
+            let type_value = unit_type.as_deref().unwrap_or("<unset>");
+            if type_value != "notify" {
+                notify_contract_violations.push(format!("{unit} type={type_value}"));
+            }
+
+            let notify_access_value = notify_access.as_deref().unwrap_or("<unset>");
+            if notify_access_value != "main" {
+                notify_contract_violations
+                    .push(format!("{unit} notify_access={notify_access_value}"));
+            }
+        }
+    }
+
+    if !unavailable.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            format!(
+                "Managed Sinex units are missing or not loaded: {}",
+                unavailable.join(", ")
+            ),
+        );
+    }
+
+    if !notify_contract_violations.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "node-entrypoints",
+            format!(
+                "Managed units violate the notify service contract: {}",
+                notify_contract_violations.join(", ")
+            ),
+        );
+    }
+
+    DeploymentReadinessItem::pass(
+        "node-entrypoints",
+        if descriptor.mode == DeploymentReadinessMode::Enabled {
+            format!(
+                "Managed Sinex units are present in systemd with notify contract intact: {}",
+                units.join(", ")
+            )
+        } else {
+            format!("Managed Sinex units are present in systemd: {}", units.join(", "))
+        },
+    )
 }
 
 /// Check 2: /realm is readable by the current user.
@@ -872,9 +1102,10 @@ fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.terminal.surface.enabled)
-        .unwrap_or(false)
+    let terminal_enabled = descriptor
+        .map(|value| value.terminal.surface.enabled)
+        .unwrap_or(true);
+    if !terminal_enabled
     {
         return DeploymentReadinessItem::skip(
             "terminal-sources",
@@ -922,10 +1153,10 @@ fn check_terminal_sources(
             ),
         )
     } else {
-        DeploymentReadinessItem::skip(
+        DeploymentReadinessItem::fail(
             "terminal-sources",
             format!(
-                "No terminal history sources found under {} for target user {}",
+                "No readable terminal history sources found under {} for target user {}",
                 target.home.display(),
                 target.user
             ),
@@ -938,9 +1169,10 @@ fn check_hyprland_socket(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.desktop.surface.enabled)
-        .unwrap_or(false)
+    let desktop_enabled = descriptor
+        .map(|value| value.desktop.surface.enabled)
+        .unwrap_or(true);
+    if !desktop_enabled
     {
         return DeploymentReadinessItem::skip(
             "hyprland-socket",
@@ -950,11 +1182,19 @@ fn check_hyprland_socket(
 
     if let Some(event_socket) = descriptor
         .and_then(|value| value.desktop.hyprland_event_socket.clone())
-        .or_else(|| std::env::var("SINEX_HYPRLAND_EVENT_SOCKET").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
+                .ok()
+                .map(PathBuf::from)
+        })
     {
         let command_socket = descriptor
             .and_then(|value| value.desktop.hyprland_command_socket.clone())
-            .or_else(|| std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET").ok().map(PathBuf::from));
+            .or_else(|| {
+                std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
+                    .ok()
+                    .map(PathBuf::from)
+            });
         if event_socket.exists() {
             return DeploymentReadinessItem::pass(
                 "hyprland-socket",
@@ -977,10 +1217,10 @@ fn check_hyprland_socket(
 
     let hypr_dir = runtime_dir_for_target(target, descriptor).join("hypr");
     if !hypr_dir.exists() {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!(
-                "{} does not exist for target user {} (Hyprland not running or different UID)",
+                "{} does not exist for target user {} (Hyprland runtime is unavailable)",
                 hypr_dir.display(),
                 target.user
             ),
@@ -1025,10 +1265,7 @@ fn check_hyprland_socket(
             match candidates.as_slice() {
                 [candidate] => DeploymentReadinessItem::pass(
                     "hyprland-socket",
-                    format!(
-                        "Found Hyprland event socket under {}",
-                        candidate.display()
-                    ),
+                    format!("Found Hyprland event socket under {}", candidate.display()),
                 ),
                 [] => DeploymentReadinessItem::fail(
                     "hyprland-socket",
@@ -1049,6 +1286,53 @@ fn check_hyprland_socket(
         Err(e) => DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!("Could not read {}: {e}", hypr_dir.display()),
+        ),
+    }
+}
+
+fn check_activitywatch_db(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    let desktop_enabled = descriptor
+        .map(|value| value.desktop.surface.enabled)
+        .unwrap_or(true);
+    if !desktop_enabled
+    {
+        return DeploymentReadinessItem::skip(
+            "activitywatch-db",
+            "Desktop ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    let path = activitywatch_db_for_target(target, descriptor);
+    if !path.exists() {
+        return DeploymentReadinessItem::fail(
+            "activitywatch-db",
+            format!(
+                "No ActivityWatch SQLite database found at {} for target user {}",
+                path.display(),
+                target.user
+            ),
+        );
+    }
+
+    match validate_activitywatch_db(&path) {
+        Ok(()) => DeploymentReadinessItem::pass(
+            "activitywatch-db",
+            format!(
+                "ActivityWatch SQLite history is readable at {} for target user {}",
+                path.display(),
+                target.user
+            ),
+        ),
+        Err(error) => DeploymentReadinessItem::fail(
+            "activitywatch-db",
+            format!(
+                "Unreadable ActivityWatch history for {} at {} ({error})",
+                target.user,
+                path.display()
+            ),
         ),
     }
 }
@@ -1097,10 +1381,7 @@ fn check_inotify_limit(
     };
 
     if value >= RECOMMENDED_INOTIFY_MAX_USER_WATCHES {
-        DeploymentReadinessItem::pass(
-            "inotify-max-user-watches",
-            format!("Configured to {value}"),
-        )
+        DeploymentReadinessItem::pass("inotify-max-user-watches", format!("Configured to {value}"))
     } else {
         DeploymentReadinessItem::fail(
             "inotify-max-user-watches",
@@ -1186,8 +1467,8 @@ async fn check_schema_apply(
         }
     };
 
-    use sqlx::postgres::PgPoolOptions;
     use sqlx::Row;
+    use sqlx::postgres::PgPoolOptions;
 
     let pool = match PgPoolOptions::new()
         .max_connections(1)
@@ -1222,10 +1503,9 @@ async fn check_schema_apply(
                 )
             }
         }
-        Err(e) => DeploymentReadinessItem::fail(
-            "schema-apply",
-            format!("Database query failed: {e}"),
-        ),
+        Err(e) => {
+            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
+        }
     }
 }
 
@@ -1355,7 +1635,9 @@ fn check_secret_materials(
         });
     let gateway_cert = descriptor
         .and_then(|value| value.secrets.gateway_tls_cert_file.clone())
-        .or_else(|| path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem")));
+        .or_else(|| {
+            path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem"))
+        });
     let gateway_key = descriptor
         .and_then(|value| value.secrets.gateway_tls_key_file.clone())
         .or_else(|| {
@@ -1386,7 +1668,10 @@ fn check_secret_materials(
         if path.is_file() {
             present.push(format!("gateway-admin-token={}", path.display()));
         } else {
-            missing.push(format!("gateway-admin-token unreadable: {}", path.display()));
+            missing.push(format!(
+                "gateway-admin-token unreadable: {}",
+                path.display()
+            ));
         }
     } else if !descriptor_present {
         missing.push(
@@ -1418,10 +1703,16 @@ fn check_secret_materials(
             key.display()
         )),
         (Some(cert), None) => {
-            missing.push(format!("gateway-tls missing key for cert {}", cert.display()));
+            missing.push(format!(
+                "gateway-tls missing key for cert {}",
+                cert.display()
+            ));
         }
         (None, Some(key)) => {
-            missing.push(format!("gateway-tls missing cert for key {}", key.display()));
+            missing.push(format!(
+                "gateway-tls missing cert for key {}",
+                key.display()
+            ));
         }
         (None, None) => {
             if !descriptor_present {
@@ -1462,11 +1753,7 @@ fn check_secret_materials(
         let description = if present.is_empty() {
             missing.join("; ")
         } else {
-            format!(
-                "{}; present: {}",
-                missing.join("; "),
-                present.join(", ")
-            )
+            format!("{}; present: {}", missing.join("; "), present.join(", "))
         };
         DeploymentReadinessItem::fail("secret-materials", description)
     }
@@ -1487,28 +1774,38 @@ async fn build_gateway_probe_client(base_url: &str) -> Result<GatewayProbeClient
                 "gateway readiness over HTTPS requires a trusted CA; set SINEX_RPC_CA_CERT or provide .sinex/tls/ca.pem"
             );
         };
-        let pem = tokio::fs::read(&ca_path)
-            .await
-            .wrap_err_with(|| format!("failed to read RPC CA certificate from {}", ca_path.display()))?;
-        let cert = reqwest::Certificate::from_pem(&pem)
-            .wrap_err_with(|| format!("failed to parse RPC CA certificate at {}", ca_path.display()))?;
+        let pem = tokio::fs::read(&ca_path).await.wrap_err_with(|| {
+            format!(
+                "failed to read RPC CA certificate from {}",
+                ca_path.display()
+            )
+        })?;
+        let cert = reqwest::Certificate::from_pem(&pem).wrap_err_with(|| {
+            format!(
+                "failed to parse RPC CA certificate at {}",
+                ca_path.display()
+            )
+        })?;
         builder = builder.add_root_certificate(cert);
     }
 
     let client_cert =
         path_from_env_or_default("SINEX_RPC_CLIENT_CERT", default_tls_dir.join("client.pem"));
-    let client_key =
-        path_from_env_or_default("SINEX_RPC_CLIENT_KEY", default_tls_dir.join("client-key.pem"));
+    let client_key = path_from_env_or_default(
+        "SINEX_RPC_CLIENT_KEY",
+        default_tls_dir.join("client-key.pem"),
+    );
     let client_identity_path = match (client_cert, client_key) {
         (Some(cert_path), Some(key_path)) => {
-            let mut pem = tokio::fs::read(&cert_path)
-                .await
-                .wrap_err_with(|| format!("failed to read RPC client certificate from {}", cert_path.display()))?;
-            pem.extend_from_slice(
-                &tokio::fs::read(&key_path)
-                    .await
-                    .wrap_err_with(|| format!("failed to read RPC client key from {}", key_path.display()))?,
-            );
+            let mut pem = tokio::fs::read(&cert_path).await.wrap_err_with(|| {
+                format!(
+                    "failed to read RPC client certificate from {}",
+                    cert_path.display()
+                )
+            })?;
+            pem.extend_from_slice(&tokio::fs::read(&key_path).await.wrap_err_with(|| {
+                format!("failed to read RPC client key from {}", key_path.display())
+            })?);
             let identity = reqwest::Identity::from_pem(&pem).wrap_err_with(|| {
                 format!(
                     "failed to parse client identity from {} and {}",
@@ -1551,8 +1848,7 @@ async fn check_gateway_ready(
         );
     }
 
-    let base_url =
-        normalize_gateway_base_url(gateway_url.unwrap_or("https://127.0.0.1:9999"));
+    let base_url = normalize_gateway_base_url(gateway_url.unwrap_or("https://127.0.0.1:9999"));
     let ready_url = format!("{base_url}/ready");
 
     let mtls_expected = env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
@@ -1560,10 +1856,7 @@ async fn check_gateway_ready(
     let probe_client = match build_gateway_probe_client(&base_url).await {
         Ok(client) => client,
         Err(error) => {
-            return DeploymentReadinessItem::fail(
-                "gateway-ready",
-                error.to_string(),
-            );
+            return DeploymentReadinessItem::fail("gateway-ready", error.to_string());
         }
     };
 
@@ -1572,9 +1865,7 @@ async fn check_gateway_ready(
         Err(error) => {
             return DeploymentReadinessItem::fail(
                 "gateway-ready",
-                if mtls_expected
-                    && probe_client.client_identity_path.is_none()
-                {
+                if mtls_expected && probe_client.client_identity_path.is_none() {
                     format!(
                         "Cannot reach {ready_url}: {error}; gateway mTLS appears enabled, but no RPC client identity was available from SINEX_RPC_CLIENT_CERT/SINEX_RPC_CLIENT_KEY or .sinex/tls/client.pem + client-key.pem"
                     )
@@ -1619,7 +1910,11 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     let cfg = crate::config::config();
     let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![descriptor_item, check_node_binaries(), check_realm_accessible()];
+    let mut items = vec![
+        descriptor_item,
+        check_node_entrypoints(descriptor.as_ref()),
+        check_realm_accessible(),
+    ];
 
     match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
@@ -1640,6 +1935,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             ));
             items.push(check_terminal_sources(&target, descriptor.as_ref()));
             items.push(check_hyprland_socket(&target, descriptor.as_ref()));
+            items.push(check_activitywatch_db(&target, descriptor.as_ref()));
         }
         Err(error) => {
             items.push(DeploymentReadinessItem::fail(
@@ -1652,6 +1948,10 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             ));
             items.push(DeploymentReadinessItem::skip(
                 "hyprland-socket",
+                "Skipped because target identity resolution failed",
+            ));
+            items.push(DeploymentReadinessItem::skip(
+                "activitywatch-db",
                 "Skipped because target identity resolution failed",
             ));
         }
@@ -1718,6 +2018,22 @@ mod tests {
                 uid: Some(4242),
                 home: Some(PathBuf::from("/tmp/probe-home")),
             }),
+            ..Default::default()
+        }
+    }
+
+    fn sample_nixos_descriptor() -> DeploymentReadinessDescriptor {
+        DeploymentReadinessDescriptor {
+            source: Some("nixos".to_string()),
+            managed_units: vec![
+                "sinex-ingestd.service".to_string(),
+                "sinex-gateway.service".to_string(),
+                "sinex-filesystem-1.service".to_string(),
+                "sinex-terminal-1.service".to_string(),
+                "sinex-terminal-2.service".to_string(),
+                "sinex-system-1.service".to_string(),
+                "sinex-health-automaton.service".to_string(),
+            ],
             ..Default::default()
         }
     }
@@ -1833,8 +2149,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_normalize_gateway_base_url_strips_rpc_suffix(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_normalize_gateway_base_url_strips_rpc_suffix() -> ::xtask::sandbox::TestResult<()>
+    {
         assert_eq!(
             normalize_gateway_base_url("https://127.0.0.1:9999/rpc"),
             "https://127.0.0.1:9999"
@@ -1847,8 +2163,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_deployment_readiness_report_serialization(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_deployment_readiness_report_serialization() -> ::xtask::sandbox::TestResult<()> {
         let report = DeploymentReadinessReport {
             items: vec![
                 DeploymentReadinessItem::pass("gateway-ready", "ready"),
@@ -1865,8 +2180,51 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_target_identity_prefers_explicit_target_env(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_runtime_warnings_capture_degraded_signals()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = crate::runtime_metrics::RuntimeMetrics {
+            ingestd_status: crate::runtime_metrics::IngestdStatus::Stale,
+            last_heartbeat_age_secs: Some(300),
+            consumer_lag_pending: Some(1500.0),
+            consumer_lag_age_secs: Some(10),
+            last_batch_latency_ms: Some(6000.0),
+            last_batch_latency_age_secs: Some(10),
+        };
+
+        let warnings = runtime_warnings(&metrics);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("ingestd heartbeat is stale"))
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("consumer lag is high")));
+        assert!(warnings.iter().any(|warning| warning.contains("batch latency is high")));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_warnings_capture_stale_telemetry()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = crate::runtime_metrics::RuntimeMetrics {
+            ingestd_status: crate::runtime_metrics::IngestdStatus::Healthy,
+            last_heartbeat_age_secs: Some(5),
+            consumer_lag_pending: Some(42.0),
+            consumer_lag_age_secs: Some(600),
+            last_batch_latency_ms: Some(125.0),
+            last_batch_latency_age_secs: Some(600),
+        };
+
+        let warnings = runtime_warnings(&metrics);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("consumer lag telemetry is stale"))
+        );
+        assert!(
+            warnings.iter().any(|warning| warning.contains("batch latency telemetry is stale"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_target_identity_prefers_explicit_target_env()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TARGET_USER", "probe-user");
         env.set("SINEX_TARGET_UID", "4242");
@@ -1883,8 +2241,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_target_identity_prefers_descriptor_target(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_resolve_target_identity_prefers_descriptor_target()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TARGET_USER", "env-user");
         env.set("SINEX_TARGET_UID", "1000");
@@ -1898,8 +2256,25 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_terminal_sources_accepts_atuin_sqlite_history(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_resolve_target_identity_rejects_implicit_shell_user()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.clear("SINEX_TARGET_USER");
+        env.clear("SINEX_TARGET_UID");
+        env.clear("SINEX_TARGET_HOME");
+        env.set("USER", "current-user");
+        env.set("UID", "1000");
+        env.set("HOME", "/tmp/current-home");
+
+        let error = resolve_target_identity(None)
+            .expect_err("deployment readiness should not guess the shell user");
+        assert!(error.to_string().contains("refuses to guess the target user"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_terminal_sources_accepts_atuin_sqlite_history()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let home = temp.path().join("home");
         std::fs::create_dir_all(home.join(".local/share/atuin"))?;
@@ -1922,11 +2297,14 @@ mod tests {
             [],
         )?;
 
-        let item = check_terminal_sources(&TargetIdentity {
-            user: "probe-user".to_string(),
-            uid: 1000,
-            home,
-        }, None);
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            None,
+        );
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("atuin:"));
         assert!(item.description.contains("bash:"));
@@ -1934,8 +2312,109 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_hyprland_socket_rejects_multiple_instances_without_signature(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_terminal_sources_fails_when_enabled_sources_are_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home)?;
+
+        let item = check_terminal_sources(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                terminal: sinex_primitives::TerminalDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    kitty_enabled: false,
+                    history_sources: vec![sinex_primitives::TerminalHistorySource {
+                        path: PathBuf::from("/tmp/probe-home/.bash_history"),
+                        shell: "bash".to_string(),
+                    }],
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("No readable terminal history sources"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_activitywatch_db_accepts_valid_sqlite_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        let aw_dir = home.join(".local/share/activitywatch/aw-server-rust");
+        std::fs::create_dir_all(&aw_dir)?;
+
+        let aw_db = aw_dir.join("sqlite.db");
+        let conn = rusqlite::Connection::open(&aw_db)?;
+        conn.execute(
+            "CREATE TABLE buckets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE events (
+                bucketrow INTEGER NOT NULL,
+                starttime INTEGER NOT NULL,
+                endtime INTEGER NOT NULL,
+                data TEXT
+            )",
+            [],
+        )?;
+
+        let item = check_activitywatch_db(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            None,
+        );
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("ActivityWatch SQLite history"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_activitywatch_db_fails_when_enabled_path_is_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home)?;
+        let missing_db = home.join(".local/share/activitywatch/aw-server-rust/sqlite.db");
+
+        let item = check_activitywatch_db(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home,
+            },
+            Some(&DeploymentReadinessDescriptor {
+                desktop: sinex_primitives::DesktopDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    activitywatch_db_path: Some(missing_db.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains(&missing_db.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_hyprland_socket_rejects_multiple_instances_without_signature()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let runtime_dir = temp.path();
         let hypr_dir = runtime_dir.join("hypr");
@@ -1952,19 +2431,51 @@ mod tests {
         env.clear("SINEX_HYPRLAND_INSTANCE_SIGNATURE");
         env.clear("HYPRLAND_INSTANCE_SIGNATURE");
 
-        let item = check_hyprland_socket(&TargetIdentity {
-            user: "probe-user".to_string(),
-            uid: 1000,
-            home: runtime_dir.to_path_buf(),
-        }, None);
+        let item = check_hyprland_socket(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: runtime_dir.to_path_buf(),
+            },
+            None,
+        );
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_build_gateway_probe_client_allows_http_without_ca(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_hyprland_socket_fails_when_enabled_runtime_is_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let runtime_dir = temp.path().join("missing-runtime");
+
+        let item = check_hyprland_socket(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: temp.path().to_path_buf(),
+            },
+            Some(&DeploymentReadinessDescriptor {
+                desktop: sinex_primitives::DesktopDeploymentSurface {
+                    surface: sinex_primitives::DeploymentSurface {
+                        enabled: true,
+                        instances: Some(1),
+                    },
+                    runtime_dir: Some(runtime_dir),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("Hyprland runtime is unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_gateway_probe_client_allows_http_without_ca()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.clear("SINEX_RPC_CA_CERT");
         env.clear("SINEX_RPC_CLIENT_CERT");
@@ -1975,8 +2486,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_build_gateway_probe_client_requires_readable_ca_for_https(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_gateway_probe_client_requires_readable_ca_for_https()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let missing_ca = temp.path().join("missing-ca.pem");
 
@@ -1988,13 +2499,17 @@ mod tests {
         let error = build_gateway_probe_client("https://127.0.0.1:9999")
             .await
             .expect_err("HTTPS readiness probing should fail without a readable CA");
-        assert!(error.to_string().contains("failed to read RPC CA certificate"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read RPC CA certificate")
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_required_nats_stream_names_follow_environment(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_required_nats_stream_names_follow_environment() -> ::xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set("SINEX_ENVIRONMENT", "prod");
 
@@ -2006,8 +2521,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_secret_materials_requires_gateway_admin_token(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_secret_materials_requires_gateway_admin_token()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let cert = temp.path().join("server.pem");
         let key = temp.path().join("server-key.pem");
@@ -2029,8 +2544,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_secret_materials_respects_descriptor_declared_paths_only(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_secret_materials_respects_descriptor_declared_paths_only()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let db = temp.path().join("db-password");
         std::fs::write(&db, "password")?;
@@ -2053,8 +2568,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_check_singleton_workstation_topology_flags_fanout(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_singleton_workstation_topology_flags_fanout()
+    -> ::xtask::sandbox::TestResult<()> {
         let descriptor = DeploymentReadinessDescriptor {
             filesystem: sinex_primitives::DeploymentSurface {
                 enabled: true,
@@ -2065,6 +2580,7 @@ mod tests {
                     enabled: true,
                     instances: Some(1),
                 },
+                kitty_enabled: false,
                 history_sources: Vec::new(),
             },
             ..Default::default()
@@ -2073,6 +2589,21 @@ mod tests {
         let item = check_singleton_workstation_topology(Some(&descriptor));
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("filesystem=2"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nixos_descriptor_managed_units_are_consumed_directly()
+    -> ::xtask::sandbox::TestResult<()> {
+        let units = sample_nixos_descriptor().managed_units;
+        assert!(units.contains(&"sinex-ingestd.service".to_string()));
+        assert!(units.contains(&"sinex-gateway.service".to_string()));
+        assert!(units.contains(&"sinex-filesystem-1.service".to_string()));
+        assert!(units.contains(&"sinex-terminal-1.service".to_string()));
+        assert!(units.contains(&"sinex-terminal-2.service".to_string()));
+        assert!(units.contains(&"sinex-system-1.service".to_string()));
+        assert!(units.contains(&"sinex-health-automaton.service".to_string()));
+        assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));
         Ok(())
     }
 }

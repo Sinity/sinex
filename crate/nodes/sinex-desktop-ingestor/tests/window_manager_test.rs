@@ -112,6 +112,10 @@ async fn desktop_config_defaults_are_sane() -> TestResult<()> {
         !config.require_hyprland,
         "Hyprland should not be required by default (degraded mode allowed)"
     );
+    assert!(
+        config.activitywatch_db_path.is_some(),
+        "ActivityWatch DB path should default to the user's XDG data directory when available"
+    );
 
     Ok(())
 }
@@ -132,6 +136,10 @@ async fn desktop_config_serde_roundtrip() -> TestResult<()> {
         original.window_manager_type
     );
     assert_eq!(deserialized.require_hyprland, original.require_hyprland);
+    assert_eq!(
+        deserialized.activitywatch_db_path,
+        original.activitywatch_db_path
+    );
 
     Ok(())
 }

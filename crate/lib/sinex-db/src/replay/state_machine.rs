@@ -1,20 +1,15 @@
-use crate::repositories::DbPoolExt;
+use crate::advisory_lock::AdvisoryLock;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
+use sinex_primitives::utils::ResourceGuard;
+use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::{HashMap, HashSet};
+use std::ops::Bound;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-
-/// Helper function to extract lock ID from UUID for advisory locks
-fn uuid_to_lock_id(uuid: Uuid) -> i64 {
-    let bytes = uuid.as_bytes();
-    i64::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ])
-}
 
 /// Replay operation states with well-defined transitions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
@@ -310,6 +305,20 @@ impl ReplayStateMachine {
         scope: ReplayScope,
         actor: String,
     ) -> Result<ReplayOperation> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT pg_advisory_xact_lock(hashtext($1)::bigint) as "lock!""#,
+            &scope.node_id
+        )
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to acquire replay creation guard")
+                    .with_source(e.to_string())
+                    .with_context("node_id", &scope.node_id)
+                    .with_operation("create_replay_operation")
+            })?;
+
         // Idempotency guard: reject if an active operation exists for this node.
         // All non-terminal replay states map to result_status = 'running'.
         let existing = sqlx::query!(
@@ -323,7 +332,7 @@ impl ReplayStateMachine {
             "#,
             &scope.node_id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(|e| {
             SinexError::database("Failed to check for active replay operations")
@@ -340,16 +349,24 @@ impl ReplayStateMachine {
         }
 
         let now = sinex_primitives::temporal::now();
-        let state_repo = self.pool.state();
-        let op_id = state_repo
-            .start_replay_operation(&actor, serde_json::to_value(&scope)?, scope.time_window)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to start replay operation")
-                    .with_source(e.to_string())
-                    .with_operation("start_replay_operation")
-            })?;
-        let operation_id = op_id.to_uuid();
+        let scope_json = serde_json::to_value(&scope)?;
+        let scope_window_range = scope.time_window.map(|(start, end)| {
+            PgRange::from((Bound::Included(start.inner()), Bound::Included(end.inner())))
+        });
+        let operation_id = sqlx::query_scalar!(
+            r#"SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as "id!: Uuid""#,
+            "replay",
+            actor,
+            scope_json,
+            scope_window_range
+        )
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to start replay operation")
+                .with_source(e.to_string())
+                .with_operation("start_replay_operation")
+        })?;
 
         let mut operation = ReplayOperation {
             operation_id,
@@ -385,20 +402,33 @@ impl ReplayStateMachine {
         let meta_json = serde_json::to_value(&meta)?;
         operation.preview_summary = Some(meta_json.clone());
 
-        state_repo
-            .update_operation_meta(
-                &op_id,
-                OperationStatus::Running,
-                Some("planning"),
-                meta_json,
-            )
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to update operation metadata")
-                    .with_source(e.to_string())
-                    .with_operation("update_operation_meta")
-                    .with_id("operation_id", op_id.to_string())
-            })?;
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            OperationStatus::Running.to_string(),
+            Some("planning"),
+            meta_json
+        )
+        .execute(tx.as_mut())
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to update operation metadata")
+                .with_source(e.to_string())
+                .with_operation("update_operation_meta")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
+        tx.commit().await.map_err(|e| {
+            SinexError::database("Failed to commit replay operation creation")
+                .with_source(e.to_string())
+                .with_operation("create_replay_operation")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
 
         info!(
             "Created replay operation {} in Planning state",
@@ -996,85 +1026,50 @@ impl ReplayStateMachine {
         &self,
         operation_id: Uuid,
         executor_node: NodeName,
-    ) -> Result<bool> {
-        // Use PostgreSQL advisory lock based on operation_id hash
-        let lock_id = uuid_to_lock_id(operation_id);
+    ) -> Result<Option<ResourceGuard<AdvisoryLock>>> {
+        let lock_key = format!("replay-execution:{operation_id}");
+        let Some(lock_guard) = AdvisoryLock::try_acquire(&self.pool, &lock_key).await? else {
+            return Ok(None);
+        };
 
-        // KNOWN LIMITATION: pg_try_advisory_lock is session-scoped and acquired here on a
-        // pooled connection. The lock is held for the lifetime of the connection session, not
-        // the transaction, meaning it survives transaction rollbacks and is not automatically
-        // released when the transaction ends. Using pg_try_advisory_xact_lock (transaction-scoped)
-        // would require acquiring the lock inside the transaction below, but the lock check and
-        // executor_node update are separate concerns. Callers must ensure release_execution_lock
-        // is called explicitly (not relying on transaction end for cleanup).
-        let acquired = sqlx::query!(
+        let mut tx = self.pool.begin().await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
+        // Update executor_node in meta JSON while the advisory lock is held.
+        let row = sqlx::query!(
             r#"
-            SELECT pg_try_advisory_lock($1) as acquired
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
             "#,
-            lock_id,
+            operation_id
         )
-        .fetch_one(&self.pool)
-        .await?
-        .acquired
-        .unwrap_or(false);
-
-        if acquired {
-            let mut tx = self.pool.begin().await?;
-            // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
-            // read-modify-write. REPEATABLE READ causes spurious serialization
-            // errors when the row was recently modified by a prior transaction.
-            // Update executor_node in meta JSON
-            let row = sqlx::query!(
-                r#"
-                SELECT preview_summary
-                FROM core.operations_log
-                WHERE id = $1::uuid
-                FOR UPDATE
-                "#,
-                operation_id
-            )
-            .fetch_one(tx.as_mut())
-            .await?;
-            let mut meta = Self::decode_meta_json(row.preview_summary)?;
-            meta.executor_node = Some(executor_node.clone());
-            let meta_json = serde_json::to_value(&meta)?;
-            sqlx::query!(
-                r#"
-                UPDATE core.operations_log
-                SET preview_summary = $2
-                WHERE id = $1::uuid
-                "#,
-                operation_id,
-                meta_json
-            )
-            .execute(tx.as_mut())
-            .await?;
-            tx.commit().await?;
-
-            info!(
-                "Node {} acquired lock for operation {}",
-                executor_node, operation_id
-            );
-        }
-
-        Ok(acquired)
-    }
-
-    /// Release execution lock
-    pub async fn release_execution_lock(&self, operation_id: Uuid) -> Result<()> {
-        let lock_id = uuid_to_lock_id(operation_id);
-
+        .fetch_one(tx.as_mut())
+        .await?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        meta.executor_node = Some(executor_node.clone());
+        let meta_json = serde_json::to_value(&meta)?;
         sqlx::query!(
             r#"
-            SELECT pg_advisory_unlock($1) as released
+            UPDATE core.operations_log
+            SET preview_summary = $2
+            WHERE id = $1::uuid
             "#,
-            lock_id,
+            operation_id,
+            meta_json
         )
-        .fetch_one(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
-        debug!("Released lock for operation {}", operation_id);
-        Ok(())
+        info!(
+            "Node {} acquired lock for operation {}",
+            executor_node, operation_id
+        );
+
+        Ok(Some(lock_guard))
     }
 
     /// Recover operations stuck in Executing state, likely due to process crash.
@@ -1157,6 +1152,7 @@ impl ReplayStateMachine {
             meta.state = ReplayState::Failed;
             meta.finished_at = Some(sinex_primitives::temporal::now());
             meta.outcome = Some(ReplayOutcome::Failed);
+            meta.executor_node = None;
             meta.error_details = Some(
                 "recovered from stale executing state (likely process crash)".to_string(),
             );

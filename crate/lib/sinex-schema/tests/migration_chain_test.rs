@@ -1,5 +1,7 @@
 //! Declarative schema invariants and operation-id safety gate tests.
 
+use std::time::Duration;
+
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -127,6 +129,76 @@ async fn delete_with_operation_id_succeeds(ctx: TestContext) -> TestResult<()> {
             .fetch_one(pool)
             .await?;
     assert_eq!(count_archived.0, 1, "Event should be moved to archive");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> TestResult<()> {
+    let pool = &ctx.pool;
+
+    async fn insert_health_status(
+        ctx: &TestContext,
+        component: &str,
+        status: &str,
+        reason: &str,
+    ) -> TestResult<()> {
+        let material_id = ctx.create_source_material(Some("sinex")).await?;
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                id,
+                source,
+                event_type,
+                host,
+                payload,
+                ts_orig,
+                source_material_id,
+                anchor_byte
+            )
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)
+            "#,
+            uuid::Uuid::now_v7(),
+            "sinex",
+            "health.status",
+            "test-host",
+            serde_json::json!({
+                "component": component,
+                "current_status": status,
+                "reason": reason,
+            }),
+            *sinex_primitives::temporal::now(),
+            material_id.to_uuid(),
+            0_i64,
+        )
+        .execute(ctx.pool())
+        .await?;
+        Ok(())
+    }
+
+    insert_health_status(&ctx, "ingestd", "healthy", "fresh heartbeat").await?;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    insert_health_status(&ctx, "gateway", "degraded", "warming caches").await?;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    insert_health_status(&ctx, "ingestd", "failed", "lost database").await?;
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT component, status, reason
+        FROM sinex_telemetry.current_health
+        ORDER BY component ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    assert_eq!(rows.len(), 2, "current_health must retain one row per component");
+    assert_eq!(rows[0].component.as_deref(), Some("gateway"));
+    assert_eq!(rows[0].status.as_deref(), Some("degraded"));
+    assert_eq!(rows[0].reason.as_deref(), Some("warming caches"));
+    assert_eq!(rows[1].component.as_deref(), Some("ingestd"));
+    assert_eq!(rows[1].status.as_deref(), Some("failed"));
+    assert_eq!(rows[1].reason.as_deref(), Some("lost database"));
 
     Ok(())
 }

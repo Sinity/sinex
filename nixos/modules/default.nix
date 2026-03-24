@@ -651,7 +651,7 @@ in
                 };
                 tlsCertFile = mkOption {
                   type = nullOr path;
-                  default = null;
+                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/gateway.crt" else null;
                   description = ''
                     Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_GATEWAY_TLS_CERT</literal>.
@@ -659,7 +659,7 @@ in
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
-                  default = null;
+                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/gateway.key" else null;
                   description = ''
                     Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_GATEWAY_TLS_KEY</literal>.
@@ -1015,6 +1015,22 @@ in
                   };
                   default = {};
                   description = "Desktop node host-access configuration.";
+                };
+                history = mkOption {
+                  type = submodule {
+                    options = {
+                      activitywatchDbPath = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Optional ActivityWatch SQLite database path used for desktop historical
+                          import. Exported as <literal>SINEX_ACTIVITYWATCH_DB_PATH</literal>.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Desktop historical-import configuration.";
                 };
                 env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
@@ -1463,6 +1479,66 @@ in
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
+      deploymentManagedUnits = lib.unique (
+        (lib.optionals cfg.core.enable [ "sinex-ingestd.service" ])
+        ++ (lib.optionals (cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
+        ++ map (name: "${name}.service") (config.sinex._generatedUnits or [])
+      );
+      resolveNodeInstances = nodeInstances:
+        if nodeInstances == null then cfg.nodes.defaults.instances else nodeInstances;
+      mkDeploymentSurface = enabled: instances: {
+        inherit enabled;
+        instances = if enabled then resolveNodeInstances instances else null;
+      };
+      deploymentReadinessDescriptor = {
+        version = 1;
+        mode = "enabled";
+        source = "nixos";
+        managed_units = deploymentManagedUnits;
+        target =
+          if targetUser == null then null
+          else {
+            user = targetUser;
+            uid = targetUid;
+            home = targetHome;
+          };
+        filesystem = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.filesystem.enable) cfg.nodes.filesystem.instances;
+        terminal =
+          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
+          // {
+            kitty_enabled = cfg.shell.kitty.enable;
+            history_sources = map (source: {
+              path = source.path;
+              shell = source.shell;
+            }) cfg.nodes.terminal.historySources;
+          };
+        desktop =
+          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.desktop.enable) cfg.nodes.desktop.instances)
+          // {
+            clipboard_enabled = cfg.nodes.desktop.clipboard.enable;
+            activitywatch_db_path = cfg.nodes.desktop.history.activitywatchDbPath;
+            runtime_dir = cfg.nodes.desktop.session.runtimeDir;
+            wayland_display = cfg.nodes.desktop.session.waylandDisplay;
+            hyprland_instance_signature = cfg.nodes.desktop.session.hyprlandInstanceSignature;
+            hyprland_event_socket = cfg.nodes.desktop.session.hyprlandEventSocket;
+            hyprland_command_socket = cfg.nodes.desktop.session.hyprlandCommandSocket;
+          };
+        system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
+        automata = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null;
+        expectations = {
+          schema_apply = cfg.enable;
+          nats_streams = cfg.enable;
+          gateway_ready = cfg.core.enable && cfg.core.gateway.enable;
+        };
+        secrets = {
+          database_password_file = cfg.database.passwordFile;
+          gateway_admin_token_file = gatewayAdminTokenFile;
+          gateway_tls_cert_file = gatewayTlsCertFile;
+          gateway_tls_key_file = gatewayTlsKeyFile;
+          gateway_tls_client_ca_file = gatewayTlsClientCAFile;
+        };
+      };
+      deploymentReadinessDescriptorJson = builtins.toJSON deploymentReadinessDescriptor;
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
@@ -1626,17 +1702,6 @@ in
         services.sinex.nats.autoSetup = mkDefault true;
       })
 
-      # When autoGenerateTls is on, point cert/key to the generated paths so the
-      # TLS assertion passes and the gateway picks up the right files.
-      # NB: guard only on cfg.enable — reading cfg.core.* here while writing to
-      # services.sinex.core.* creates an evaluation cycle.  mkDefault ensures
-      # these values are overridden by any explicit setting, and the assertions
-      # above catch misconfiguration at evaluation time.
-      (mkIf cfg.enable {
-        services.sinex.core.gateway.tlsCertFile = mkDefault "${stateRoot}/tls/gateway.crt";
-        services.sinex.core.gateway.tlsKeyFile  = mkDefault "${stateRoot}/tls/gateway.key";
-      })
-
       # When the filesystem node is enabled with no explicit watchPaths and a
       # target user is configured, default to watching that user's home directory.
       # NB: guard only on cfg.enable + cfg.users.target — reading cfg.nodes.*
@@ -1669,9 +1734,25 @@ in
         ];
       })
 
+      (mkIf cfg.enable {
+        environment.etc."sinex/deployment-readiness.json".text = deploymentReadinessDescriptorJson;
+      })
+
+      (mkIf cfg.enable {
+        services.sinex.nodes.filesystem.instances = mkDefault 1;
+        services.sinex.nodes.terminal.instances = mkDefault 1;
+        services.sinex.nodes.desktop.instances = mkDefault 1;
+        services.sinex.nodes.system.instances = mkDefault 1;
+      })
+
       (mkIf (cfg.enable && targetUid != null) {
         services.sinex.nodes.desktop.session.runtimeDir =
           mkDefault "/run/user/${toString targetUid}";
+      })
+
+      (mkIf (cfg.enable && targetHome != null) {
+        services.sinex.nodes.desktop.history.activitywatchDbPath =
+          mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
       })
 
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {

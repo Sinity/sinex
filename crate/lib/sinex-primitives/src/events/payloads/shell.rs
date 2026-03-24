@@ -385,6 +385,61 @@ impl AtuinCommandExecutedPayload {
         self.atuin_session_id = session_id.into();
         self
     }
+
+    /// Construct a validated payload from raw Atuin history fields.
+    pub fn from_raw_history(
+        command_string: impl Into<CommandText>,
+        cwd: RecordedPath,
+        exit_code: i64,
+        duration_ns: i64,
+        history_id: impl Into<String>,
+        session_id: impl Into<String>,
+        timestamp_ns: i64,
+        hostname: impl Into<String>,
+    ) -> crate::Result<Self> {
+        if duration_ns < 0 {
+            return Err(
+                crate::SinexError::validation("Atuin history duration must not be negative")
+                    .with_context("duration_ns", duration_ns.to_string()),
+            );
+        }
+
+        let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_ns))
+            .ok_or_else(|| {
+                crate::SinexError::validation("Atuin history timestamp is out of range")
+                    .with_context("timestamp_ns", timestamp_ns.to_string())
+            })?;
+        let ts_end_nanos = i128::from(timestamp_ns)
+            .checked_add(i128::from(duration_ns))
+            .ok_or_else(|| {
+                crate::SinexError::validation("Atuin history end timestamp overflowed")
+                    .with_context("timestamp_ns", timestamp_ns.to_string())
+                    .with_context("duration_ns", duration_ns.to_string())
+            })?;
+        let ts_end_orig = Timestamp::from_unix_timestamp_nanos(ts_end_nanos).ok_or_else(|| {
+            crate::SinexError::validation("Atuin history end timestamp is out of range")
+                .with_context("timestamp_ns", timestamp_ns.to_string())
+                .with_context("duration_ns", duration_ns.to_string())
+        })?;
+        let exit_code = i32::try_from(exit_code).map_err(|_| {
+            crate::SinexError::validation("Atuin exit code is out of i32 range")
+                .with_context("exit_code", exit_code.to_string())
+        })?;
+
+        Ok(Self {
+            command_string: command_string.into(),
+            cwd,
+            exit_code: ExitCode::from_raw(exit_code),
+            duration_ns: Nanoseconds::from_nanos(duration_ns),
+            atuin_history_id: history_id.into(),
+            atuin_session_id: session_id.into(),
+            timestamp: timestamp_ns,
+            ts_start_orig,
+            ts_end_orig,
+            hostname: HostName::new(hostname.into()),
+            terminal_session_uuid: None,
+        })
+    }
 }
 
 impl KittySessionStartedPayload {

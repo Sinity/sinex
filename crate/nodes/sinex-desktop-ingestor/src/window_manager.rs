@@ -168,8 +168,14 @@ fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
     let base_path = select_hyprland_base_path(&runtime_dir, explicit_signature)?;
 
     Ok(HyprlandSocketPaths {
-        event_socket: base_path.join(".socket2.sock").to_string_lossy().into_owned(),
-        command_socket: base_path.join(".socket.sock").to_string_lossy().into_owned(),
+        event_socket: base_path
+            .join(".socket2.sock")
+            .to_string_lossy()
+            .into_owned(),
+        command_socket: base_path
+            .join(".socket.sock")
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
@@ -301,7 +307,10 @@ impl WindowManagerWatcher {
         // Test command socket connection
         if UnixStream::connect(&sockets.command_socket).await.is_ok() {
             self.command_socket_path = Some(sockets.command_socket.clone());
-            info!("Found Hyprland command socket at: {}", sockets.command_socket);
+            info!(
+                "Found Hyprland command socket at: {}",
+                sockets.command_socket
+            );
         } else {
             warn!(
                 "Cannot connect to Hyprland command socket: {}",
@@ -1219,7 +1228,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn select_hyprland_base_path_requires_override_for_multiple_instances() -> TestResult<()> {
+    async fn select_hyprland_base_path_requires_override_for_multiple_instances() -> TestResult<()>
+    {
         let runtime_dir = std::env::temp_dir().join(format!("sinex-wm-{}", Uuid::now_v7()));
         let first = runtime_dir.join("hypr").join("instance-a");
         let second = runtime_dir.join("hypr").join("instance-b");
@@ -1229,9 +1239,11 @@ mod tests {
         std::fs::write(second.join(".socket2.sock"), b"stub")?;
 
         let error = select_hyprland_base_path(&runtime_dir, None).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("SINEX_HYPRLAND_INSTANCE_SIGNATURE"));
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
+        );
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())

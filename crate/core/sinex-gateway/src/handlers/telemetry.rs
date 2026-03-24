@@ -55,38 +55,51 @@ fn resolve_time_range(
 #[derive(sqlx::FromRow)]
 struct WindowFocusRow {
     bucket: OffsetDateTime,
-    app_name: Option<String>,
-    focus_count: i64,
-    total_duration_secs: Option<f64>,
+    workspace: Option<String>,
+    window_class: Option<String>,
+    window_title: Option<String>,
+    window_id: Option<String>,
+    last_focus_time: Option<OffsetDateTime>,
+    focus_event_count: i64,
 }
 
 #[derive(sqlx::FromRow)]
 struct CommandFrequencyRow {
     command: String,
-    total_count: i64,
-    bucket_count: i64,
+    shell: Option<String>,
+    total_executions: i64,
+    successful_executions: i64,
+    failed_executions: i64,
+    avg_duration_ms: Option<f64>,
 }
 
 #[derive(sqlx::FromRow)]
 struct FileActivityRow {
     bucket: OffsetDateTime,
     directory: Option<String>,
-    event_count: i64,
+    event_type: String,
+    total_events: i64,
+    unique_files: i64,
 }
 
 #[derive(sqlx::FromRow)]
 struct RecentActivityRow {
     activity_type: String,
-    summary: Option<String>,
-    recorded_at: Option<OffsetDateTime>,
+    context: Option<String>,
+    detail: Option<String>,
+    timestamp: Option<OffsetDateTime>,
 }
 
 #[derive(sqlx::FromRow)]
 struct SystemStateRow {
     bucket: OffsetDateTime,
-    avg_cpu_pct: Option<f64>,
-    avg_memory_bytes: Option<f64>,
-    avg_disk_io_bps: Option<f64>,
+    avg_cpu_percent: Option<f64>,
+    max_cpu_percent: Option<f64>,
+    avg_memory_percent: Option<f64>,
+    max_memory_percent: Option<f64>,
+    avg_disk_percent: Option<f64>,
+    current_active_units: Option<i32>,
+    sample_count: i64,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -109,9 +122,12 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
         r#"
         SELECT
             bucket,
-            app_name,
-            focus_count,
-            total_duration_secs
+            workspace,
+            window_class,
+            window_title,
+            window_id,
+            last_focus_time,
+            focus_event_count
         FROM sinex_telemetry.current_window_focus
         WHERE bucket >= $1
           AND bucket <= $2
@@ -130,9 +146,12 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
         .into_iter()
         .map(|r| WindowFocusBucket {
             bucket: fmt_rfc3339(r.bucket),
-            app_name: r.app_name,
-            focus_count: r.focus_count,
-            total_duration_secs: r.total_duration_secs,
+            workspace: r.workspace,
+            window_class: r.window_class,
+            window_title: r.window_title,
+            window_id: r.window_id,
+            last_focus_time: r.last_focus_time.map(fmt_rfc3339),
+            focus_event_count: r.focus_event_count,
         })
         .collect();
 
@@ -155,13 +174,16 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         r#"
         SELECT
             command,
-            SUM(execution_count)::bigint AS total_count,
-            COUNT(*)::bigint AS bucket_count
+            shell,
+            SUM(total_executions)::bigint AS total_executions,
+            SUM(successful_executions)::bigint AS successful_executions,
+            SUM(failed_executions)::bigint AS failed_executions,
+            AVG(avg_duration_ms)::float8 AS avg_duration_ms
         FROM sinex_telemetry.command_frequency_hourly
         WHERE bucket >= $1
           AND bucket <= $2
-        GROUP BY command
-        ORDER BY total_count DESC
+        GROUP BY command, shell
+        ORDER BY total_executions DESC, command ASC
         LIMIT $3
         "#,
     )
@@ -176,8 +198,11 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         .into_iter()
         .map(|r| CommandFrequencyEntry {
             command: r.command,
-            total_count: r.total_count,
-            bucket_count: r.bucket_count,
+            shell: r.shell,
+            total_executions: r.total_executions,
+            successful_executions: r.successful_executions,
+            failed_executions: r.failed_executions,
+            avg_duration_ms: r.avg_duration_ms,
         })
         .collect();
 
@@ -201,11 +226,13 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
         SELECT
             bucket,
             directory,
-            event_count
+            event_type,
+            total_events,
+            unique_files
         FROM sinex_telemetry.file_activity_summary
         WHERE bucket >= $1
           AND bucket <= $2
-        ORDER BY bucket DESC, event_count DESC
+        ORDER BY bucket DESC, total_events DESC, event_type ASC
         LIMIT $3
         "#,
     )
@@ -221,7 +248,9 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
         .map(|r| FileActivityEntry {
             bucket: fmt_rfc3339(r.bucket),
             directory: r.directory,
-            event_count: r.event_count,
+            event_type: r.event_type,
+            total_events: r.total_events,
+            unique_files: r.unique_files,
         })
         .collect();
 
@@ -242,10 +271,11 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         r#"
         SELECT
             activity_type,
-            summary,
-            recorded_at
+            context,
+            detail,
+            timestamp
         FROM sinex_telemetry.recent_activity_summary
-        ORDER BY recorded_at DESC
+        ORDER BY timestamp DESC
         LIMIT $1
         "#,
     )
@@ -258,8 +288,9 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         .into_iter()
         .map(|r| RecentActivityEntry {
             activity_type: r.activity_type,
-            summary: r.summary,
-            recorded_at: r.recorded_at.map(fmt_rfc3339),
+            context: r.context,
+            detail: r.detail,
+            timestamp: r.timestamp.map(fmt_rfc3339),
         })
         .collect();
 
@@ -282,9 +313,13 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         r#"
         SELECT
             bucket,
-            avg_cpu_pct,
-            avg_memory_bytes,
-            avg_disk_io_bps
+            avg_cpu_percent,
+            max_cpu_percent,
+            avg_memory_percent,
+            max_memory_percent,
+            avg_disk_percent,
+            current_active_units,
+            sample_count
         FROM sinex_telemetry.current_system_state
         WHERE bucket >= $1
           AND bucket <= $2
@@ -303,9 +338,13 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         .into_iter()
         .map(|r| SystemStateBucket {
             bucket: fmt_rfc3339(r.bucket),
-            avg_cpu_pct: r.avg_cpu_pct,
-            avg_memory_bytes: r.avg_memory_bytes,
-            avg_disk_io_bps: r.avg_disk_io_bps,
+            avg_cpu_percent: r.avg_cpu_percent,
+            max_cpu_percent: r.max_cpu_percent,
+            avg_memory_percent: r.avg_memory_percent,
+            max_memory_percent: r.max_memory_percent,
+            avg_disk_percent: r.avg_disk_percent,
+            current_active_units: r.current_active_units.map(i64::from),
+            sample_count: r.sample_count,
         })
         .collect();
 

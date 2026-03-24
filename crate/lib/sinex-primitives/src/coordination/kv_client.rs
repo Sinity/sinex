@@ -7,6 +7,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
+const INSTANCE_STALE_SECS: Seconds = Seconds::from_secs(20);
 
 /// Client for interacting with the Coordination KV Store.
 /// Handles node registration, heartbeats, and leader election.
@@ -50,10 +51,25 @@ impl CoordinationKvClient {
     }
 
     async fn instances_bucket(&self) -> Result<Store, SinexError> {
-        self.js
-            .get_key_value(&self.instances_bucket)
-            .await
-            .map_err(|e| SinexError::kv(format!("Failed to get instances bucket: {e}")))
+        let config = async_nats::jetstream::kv::Config {
+            bucket: self.instances_bucket.clone(),
+            history: 5,
+            max_age: Duration::from_secs(INSTANCE_STALE_SECS.as_secs()),
+            ..Default::default()
+        };
+
+        match self.js.create_key_value(config).await {
+            Ok(store) => Ok(store),
+            Err(create_err) => self
+                .js
+                .get_key_value(&self.instances_bucket)
+                .await
+                .map_err(|e| {
+                    SinexError::kv(format!(
+                        "Failed to get instances bucket (create: {create_err}, open: {e})"
+                    ))
+                }),
+        }
     }
 
     async fn leadership_bucket(&self) -> Result<Store, SinexError> {
@@ -261,7 +277,16 @@ impl CoordinationKvClient {
                 && let Ok(Some(entry)) = bucket.get(&key).await
                 && let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry)
             {
-                instances.push(metadata);
+                if self.instance_is_fresh(&metadata) {
+                    instances.push(metadata);
+                } else {
+                    warn!(
+                        service = %self.service_name,
+                        instance = %metadata.instance_id,
+                        last_heartbeat = metadata.last_heartbeat,
+                        "Ignoring stale coordination instance metadata"
+                    );
+                }
             }
         }
 
@@ -309,9 +334,18 @@ impl CoordinationKvClient {
             let metadata = serde_json::from_slice::<InstanceMetadata>(&entry).map_err(|e| {
                 SinexError::serialization(format!("Failed to deserialize instance metadata: {e}"))
             })?;
-            Ok(Some(metadata))
+            if self.instance_is_fresh(&metadata) {
+                Ok(Some(metadata))
+            } else {
+                Ok(None)
+            }
         } else {
             Ok(None)
         }
+    }
+
+    fn instance_is_fresh(&self, metadata: &InstanceMetadata) -> bool {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        now.saturating_sub(metadata.last_heartbeat) <= INSTANCE_STALE_SECS.as_secs() as i64
     }
 }

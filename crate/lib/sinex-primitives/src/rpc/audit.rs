@@ -1,6 +1,6 @@
 //! Audit trail types
 
-use crate::domain::{EventSource, EventType, OperationStatus};
+use crate::domain::{DataTier, EventSource, EventType, OperationStatus};
 use crate::events::Event;
 use crate::ids::Id;
 use crate::rpc::ops::Operation;
@@ -38,6 +38,8 @@ pub struct EventSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts_orig: Option<Timestamp>,
     pub ts_coided: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<DataTier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_operation_id: Option<Id<Operation>>,
 }

@@ -56,19 +56,13 @@ impl Drop for WatchdogGuard {
 /// Check if Postgres is available.
 #[must_use]
 pub fn is_postgres_ready() -> bool {
-    std::process::Command::new("pg_isready")
-        .arg("-q")
-        .status()
-        .is_ok_and(|s| s.success())
+    crate::infra::probe::probe_postgres().ready()
 }
 
 /// Check if NATS is available on the configured port.
 #[must_use]
 pub fn is_nats_ready() -> bool {
-    let nats_port = crate::infra::stack::StackConfig::for_current_checkout()
-        .map(|config| config.nats.port)
-        .unwrap_or(4222);
-    std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok()
+    crate::infra::probe::probe_nats().ready()
 }
 
 /// Check if TLS certificates exist in `.sinex/tls/`.

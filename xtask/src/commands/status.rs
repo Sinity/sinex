@@ -11,6 +11,7 @@ use crate::history::{
     HistoryAnalysis, HistoryDb, InvocationStatus, Recommendation, VelocityTrend,
     WorkspaceHealthReport,
 };
+use crate::infra::probe::{current_nats_port, probe_nats, probe_postgres};
 use crate::jobs::JobManager;
 use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
 use crate::session::{WatchAction, WatchLoop};
@@ -326,21 +327,17 @@ struct SummaryData {
 
 /// Collect all data for --summary in parallel threads.
 fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
-    let nats_port = current_nats_port();
     let cfg = config();
 
     std::thread::scope(|s| {
         // Thread 1: Infrastructure + services
         let infra_handle = s.spawn(move || {
-            let pg = std::process::Command::new("pg_isready")
-                .arg("-q")
-                .status()
-                .is_ok_and(|s| s.success());
-            let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+            let pg = probe_postgres();
+            let nats = probe_nats();
 
             let services = collect_core_service_statuses();
 
-            (pg, nats, services)
+            (pg.ready(), nats.ready(), services)
         });
 
         // Thread 2: Runtime metrics from Postgres
@@ -1312,12 +1309,6 @@ fn format_age(mins: i64) -> String {
 
 // ─── Full Status ────────────────────────────────────────────────────────────
 
-fn current_nats_port() -> u16 {
-    crate::infra::stack::StackConfig::for_current_checkout()
-        .map(|config| config.nats.port)
-        .unwrap_or(4222)
-}
-
 /// Collect one round of workspace status data.
 fn collect_status_data(ctx: &CommandContext) -> (
     bool,
@@ -1337,20 +1328,12 @@ fn collect_status_data(ctx: &CommandContext) -> (
         std::thread::scope(|s| {
             // Thread 1: Infrastructure + services (subprocesses)
             let infra_handle = s.spawn(move || {
-                let pg_start = std::time::Instant::now();
-                let pg = std::process::Command::new("pg_isready")
-                    .arg("-q")
-                    .status()
-                    .is_ok_and(|s| s.success());
-                let pg_lat = pg_start.elapsed().as_millis() as u64;
-
-                let nats_start = std::time::Instant::now();
-                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-                let nats_lat = nats_start.elapsed().as_millis() as u64;
+                let pg = probe_postgres();
+                let nats = probe_nats();
 
                 let svcs = collect_core_service_statuses();
 
-                (pg, pg_lat, nats, nats_lat, svcs)
+                (pg.ready(), pg.latency_ms, nats.ready(), nats.latency_ms, svcs)
             });
 
             // Main thread: local operations (jobs + history)

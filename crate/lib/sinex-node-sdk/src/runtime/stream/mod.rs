@@ -40,6 +40,7 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
+use sd_notify::NotifyState;
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
     non_empty::NonEmptyVec,
@@ -51,7 +52,6 @@ use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
-use sd_notify::NotifyState;
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaBroadcastCache {

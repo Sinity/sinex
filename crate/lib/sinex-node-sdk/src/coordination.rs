@@ -175,6 +175,124 @@ mod tests {
         assert_eq!(after, before + 1);
         Ok(())
     }
+
+    #[sinex_test]
+    async fn current_metadata_refreshes_last_heartbeat(ctx: TestContext) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-heartbeat").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+
+        let first = coordination.current_metadata();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let second = coordination.current_metadata();
+
+        assert!(
+            second.last_heartbeat > first.last_heartbeat,
+            "current_metadata should refresh last_heartbeat"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_instances_filters_stale_metadata(ctx: TestContext) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-filter").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let fresh = coordination.current_metadata();
+        coordination.kv_client.register_instance(&fresh).await?;
+
+        let stale = InstanceMetadata {
+            instance_id: "stale-instance".to_string(),
+            hostname: fresh.hostname.clone(),
+            version: fresh.version.clone(),
+            started_at: fresh.started_at,
+            last_heartbeat: fresh.last_heartbeat - 600,
+        };
+        coordination.kv_client.register_instance(&stale).await?;
+
+        let listed = coordination.kv_client.list_instances().await?;
+        assert!(
+            listed.iter().any(|meta| meta.instance_id == fresh.instance_id),
+            "fresh instance should remain visible"
+        );
+        assert!(
+            listed.iter().all(|meta| meta.instance_id != stale.instance_id),
+            "stale instance should be filtered out"
+        );
+        assert!(
+            coordination
+                .kv_client
+                .get_instance(&stale.instance_id)
+                .await?
+                .is_none(),
+            "stale instance lookup should behave as missing"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn maybe_initiate_handoff_ignores_stale_older_version(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-handoff-filter").await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let fresh = coordination.current_metadata();
+
+        coordination
+            .kv_client
+            .register_instance(&InstanceMetadata {
+                instance_id: "stale-old-version".to_string(),
+                hostname: fresh.hostname.clone(),
+                version: "0.0.0".to_string(),
+                started_at: fresh.started_at - 600,
+                last_heartbeat: fresh.last_heartbeat - 600,
+            })
+            .await?;
+
+        assert!(
+            !coordination.maybe_initiate_handoff().await?,
+            "stale older instances must not trigger startup handoff"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn leader_maintenance_heartbeat_refreshes_registered_metadata(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-leader-heartbeat").await?;
+        let mut coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let initial_last_heartbeat = coordination.current_metadata().last_heartbeat;
+        let instance_id = coordination.instance.instance_id.clone();
+        let kv_client = coordination.kv_client.clone();
+
+        let run_handle = tokio::spawn(async move {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(14),
+                coordination.run_coordination_loop(|| async {
+                    tokio::time::sleep(Duration::from_secs(14)).await;
+                    Ok::<(), SinexError>(())
+                }),
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_secs(11)).await;
+        let metadata = kv_client
+            .get_instance(&instance_id)
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("instance metadata missing from KV"))?;
+        assert!(
+            metadata.last_heartbeat >= initial_last_heartbeat + 5,
+            "leader maintenance should keep refreshing last_heartbeat beyond startup registration"
+        );
+
+        run_handle.abort();
+        let _ = run_handle.await;
+        Ok(())
+    }
 }
 
 /// Handoff request from newer version
@@ -344,23 +462,31 @@ impl Default for WorkTracker {
 
 impl From<&NodeInstance> for InstanceMetadata {
     fn from(instance: &NodeInstance) -> Self {
-        let started_at = instance
-            .start_time
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        Self {
-            instance_id: instance.instance_id.clone(),
-            hostname: instance.host_name.clone(),
-            version: instance.version.full_version.clone(),
-            started_at,
-            last_heartbeat: started_at,
-        }
+        instance_metadata_at(instance, None)
+    }
+}
+
+fn instance_started_at(instance: &NodeInstance) -> i64 {
+    instance
+        .start_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn instance_metadata_at(instance: &NodeInstance, last_heartbeat: Option<i64>) -> InstanceMetadata {
+    let started_at = instance_started_at(instance);
+    InstanceMetadata {
+        instance_id: instance.instance_id.clone(),
+        hostname: instance.host_name.clone(),
+        version: instance.version.full_version.clone(),
+        started_at,
+        last_heartbeat: last_heartbeat.unwrap_or(started_at),
     }
 }
 
 /// Leadership coordination for a node service
-pub struct NodeCoordination {
+    pub struct NodeCoordination {
     instance: NodeInstance,
     kv_client: CoordinationKvClient,
     nats_client: async_nats::Client,
@@ -373,9 +499,10 @@ pub struct NodeCoordination {
 
 impl NodeCoordination {
     fn current_metadata(&self) -> InstanceMetadata {
-        let mut meta: InstanceMetadata = (&self.instance).into();
-        meta.last_heartbeat = sinex_primitives::temporal::Timestamp::now().unix_timestamp();
-        meta
+        instance_metadata_at(
+            &self.instance,
+            Some(sinex_primitives::temporal::Timestamp::now().unix_timestamp()),
+        )
     }
 
     pub async fn new(
@@ -590,6 +717,9 @@ impl NodeCoordination {
 
         // Heartbeat/Lease Maintenance Interval
         let mut maintenance_interval = tokio::time::interval(Duration::from_secs(5));
+        let kv_client = self.kv_client.clone();
+        let instance_id = self.instance.instance_id.clone();
+        let instance = self.instance.clone();
         let handoff_rx = self
             .handoff_receiver
             .as_mut()
@@ -601,7 +731,7 @@ impl NodeCoordination {
                _ = maintenance_interval.tick() => {
                    // Check leadership inside the maintenance loop to avoid TOCTOU races.
                    // Renew leadership / Heartbeat
-                   match self.kv_client.acquire_leadership(&self.instance.instance_id).await {
+                   match kv_client.acquire_leadership(&instance_id).await {
                        Ok(true) => {
                            // Still leader, continue
                        }
@@ -614,7 +744,11 @@ impl NodeCoordination {
                            return Err(SinexError::service("Lost connection to coordination"));
                        }
                    }
-                   let _ = self.kv_client.heartbeat(&self.instance.instance_id, &(&self.instance).into()).await;
+                   let heartbeat_metadata = instance_metadata_at(
+                       &instance,
+                       Some(sinex_primitives::temporal::Timestamp::now().unix_timestamp()),
+                   );
+                   let _ = kv_client.heartbeat(&instance_id, &heartbeat_metadata).await;
                }
 
                // Process Events

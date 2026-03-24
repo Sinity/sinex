@@ -10,6 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
+use sinex_primitives::DeploymentReadinessDescriptor;
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
@@ -85,6 +86,16 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
     // SystemD service verification
     match verify_systemd_services(&mut messages).await {
         Ok(systemd_info) => {
+            if !systemd_info
+                .get("deployment_descriptor_loaded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                messages.push(
+                    "⚠ Deployment descriptor is missing; managed Sinex systemd unit verification was skipped".to_string(),
+                );
+                has_warnings = true;
+            }
             details.insert("systemd_services", systemd_info);
         }
         Err(e) => {
@@ -289,51 +300,59 @@ async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
 
 async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_info = HashMap::new();
-
-    // Sinex-related services that should be manageable
-    let sinex_services = vec![
-        "sinex-ingestd.service",
-        "sinex-gateway.service",
-        "sinex-fs-ingestor-1.service",
-        "sinex-terminal-ingestor-1.service",
-        "sinex-desktop-ingestor-1.service",
-        "sinex-system-ingestor-1.service",
-        "sinex-health-automaton.service",
-    ];
+    let sinex_services = deployment_managed_units();
+    let descriptor_loaded = sinex_services.is_some();
 
     // System services that Sinex depends on
     let dependency_services = vec!["postgresql.service", "systemd-resolved.service"];
 
-    for service_name in sinex_services {
-        match check_systemd_service(service_name).await {
-            Ok(service_data) => {
-                service_info.insert(service_name.to_string(), service_data);
+    if let Some(sinex_services) = sinex_services {
+        for service_name in sinex_services {
+            match check_systemd_service(&service_name).await {
+                Ok(service_data) => {
+                    service_info.insert(service_name.to_string(), service_data);
 
-                if service_name.starts_with("sinex-") {
-                    // For Sinex services, it's OK if they're not loaded yet (they will be after deployment)
-                    messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
-                } else {
-                    messages.push(format!("✓ Service '{service_name}' is available"));
+                    let is_available = service_info[&service_name]["available"]
+                        .as_bool()
+                        .unwrap_or(false);
+                    let load_state = service_info[&service_name]["load_state"]
+                        .as_str()
+                        .unwrap_or("unknown");
+
+                    if service_name.starts_with("sinex-") && is_available {
+                        messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
+                    } else if service_name.starts_with("sinex-") {
+                        messages.push(format!(
+                            "ℹ Sinex service '{service_name}' not yet configured (load state: {load_state})"
+                        ));
+                    } else {
+                        messages.push(format!("✓ Service '{service_name}' is available"));
+                    }
                 }
-            }
-            Err(e) => {
-                service_info.insert(
-                    service_name.to_string(),
-                    json!({
-                        "available": false,
-                        "error": e.to_string()
-                    }),
-                );
+                Err(e) => {
+                    service_info.insert(
+                        service_name.to_string(),
+                        json!({
+                            "available": false,
+                            "error": e.to_string()
+                        }),
+                    );
 
-                if service_name.starts_with("sinex-") {
-                    messages.push(format!(
-                        "ℹ Sinex service '{service_name}' not yet configured (expected)"
-                    ));
-                } else {
-                    messages.push(format!("⚠ Service '{service_name}' check failed: {e}"));
+                    if service_name.starts_with("sinex-") {
+                        messages.push(format!(
+                            "ℹ Sinex service '{service_name}' not yet configured (expected)"
+                        ));
+                    } else {
+                        messages.push(format!("⚠ Service '{service_name}' check failed: {e}"));
+                    }
                 }
             }
         }
+    } else {
+        messages.push(
+            "⚠ No deployment descriptor loaded; skipping managed Sinex systemd unit checks"
+                .to_string(),
+        );
     }
 
     for service_name in dependency_services {
@@ -367,8 +386,20 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
     }
 
     Ok(json!({
-        "services": service_info
+        "services": service_info,
+        "deployment_descriptor_loaded": descriptor_loaded,
     }))
+}
+
+fn deployment_managed_units() -> Option<Vec<String>> {
+    match DeploymentReadinessDescriptor::load() {
+        Ok(Some(descriptor)) if !descriptor.managed_units.is_empty() => Some(descriptor.managed_units),
+        Ok(_) => None,
+        Err(error) => {
+            debug!("Ignoring deployment descriptor for service verification: {error}");
+            None
+        }
+    }
 }
 
 async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
@@ -409,14 +440,15 @@ async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
         .get("LoadState")
         .cloned()
         .unwrap_or_else(|| "unknown".to_string());
+    let is_loaded = load_state == "loaded";
 
     Ok(json!({
-        "available": true,
+        "available": is_loaded,
         "status": active_state,
         "sub_status": sub_state,
         "load_state": load_state,
         "is_active": active_state == "active",
-        "is_loaded": load_state == "loaded"
+        "is_loaded": is_loaded
     }))
 }
 

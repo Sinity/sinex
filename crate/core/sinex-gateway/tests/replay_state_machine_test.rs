@@ -1,9 +1,11 @@
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::domain::NodeName;
 use sinex_primitives::domain::ReplayOutcome;
 use sinex_primitives::{Uuid, temporal::Timestamp};
 use std::collections::HashMap;
 use time::{Date, Month, Time};
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test]
 async fn state_transitions_follow_rules() -> Result<()> {
@@ -316,6 +318,127 @@ async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> 
     let completed = replay.load_operation(operation.operation_id).await?;
     assert_eq!(completed.state, ReplayState::Completed);
     assert_eq!(completed.outcome, Some(ReplayOutcome::Success));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+
+    let first_guard = replay
+        .acquire_execution_lock(operation.operation_id, NodeName::new("node-a"))
+        .await?;
+    assert!(first_guard.is_some());
+
+    let second_guard = replay
+        .acquire_execution_lock(operation.operation_id, NodeName::new("node-b"))
+        .await?;
+    assert!(second_guard.is_none(), "lock should be exclusive while held");
+
+    drop(first_guard);
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let operation_id = operation.operation_id;
+            async move {
+                let replay = sinex_gateway::ReplayStateMachine::new(pool);
+                let guard = replay
+                    .acquire_execution_lock(operation_id, NodeName::new("node-c"))
+                    .await?;
+                Ok::<bool, sinex_primitives::SinexError>(guard.is_some())
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+
+    let lock_guard = replay
+        .acquire_execution_lock(operation.operation_id, NodeName::new("node-a"))
+        .await?;
+    assert!(lock_guard.is_some());
+    drop(lock_guard);
+
+    let stale_started_at = sinex_primitives::temporal::now() - time::Duration::hours(2);
+    let executor_node = serde_json::to_value("node-a")?;
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET preview_summary = jsonb_set(
+                jsonb_set(
+                    preview_summary,
+                    '{started_at}',
+                    to_jsonb($2::timestamptz),
+                    true
+                ),
+                '{executor_node}',
+                $3::jsonb,
+                true
+            )
+        WHERE id = $1::uuid
+        "#,
+        operation.operation_id,
+        *stale_started_at,
+        executor_node
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let recovered = replay
+        .recover_stale_executing(std::time::Duration::from_secs(1))
+        .await?;
+    assert_eq!(recovered, 1);
+
+    let failed = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(failed.state, ReplayState::Failed);
+    assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
+    assert!(failed.executor_node.is_none());
+    assert!(
+        failed
+            .error_details
+            .as_deref()
+            .is_some_and(|details| details.contains("stale executing state"))
+    );
 
     Ok(())
 }
