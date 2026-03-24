@@ -596,6 +596,85 @@ async fn test_phase5_configuration_event_sources_do_not_assume_terminal_exists(
     Ok(())
 }
 
+/// Test Phase 5: Deployment descriptor overrides shell-home probing for configured sources
+#[sinex_test]
+async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let db_url = ctx.database_url().to_string();
+    let temp = tempfile::tempdir()?;
+    let empty_home = temp.path().join("home-empty");
+    let configured_home = temp.path().join("configured-home");
+    fs::create_dir_all(empty_home.join(".local/share"))?;
+    fs::create_dir_all(configured_home.join(".local/share/atuin"))?;
+    fs::write(configured_home.join(".bash_history"), "echo hello\n")?;
+    fs::write(configured_home.join(".local/share/atuin/history.db"), "")?;
+
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "source": "test",
+            "terminal": {
+                "enabled": true,
+                "instances": 1,
+                "history_sources": [
+                    {
+                        "path": configured_home.join(".bash_history"),
+                        "shell": "bash"
+                    },
+                    {
+                        "path": configured_home.join(".local/share/atuin/history.db"),
+                        "shell": "atuin"
+                    }
+                ]
+            }
+        }))?,
+    )?;
+
+    with_env_vars(
+        &[
+            ("DATABASE_URL", db_url),
+            ("HOME", empty_home.display().to_string()),
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+        ],
+        || async {
+            let (_status, details, _messages) =
+                configuration::verify_configuration_generation().await?;
+
+            let sources = details
+                .get("event_sources")
+                .and_then(|value| value.get("sources"))
+                .and_then(Value::as_object)
+                .expect("event source details should be present");
+
+            assert_eq!(
+                sources
+                    .get("terminal")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                sources
+                    .get("atuin")
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
 // ====== PHASE 6: SERVICE DEPENDENCIES TESTS ======
 
 /// Test Phase 6: Service dependencies verification

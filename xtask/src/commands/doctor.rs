@@ -8,7 +8,10 @@ use color_eyre::eyre::{Result, WrapErr};
 use console::style;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use sinex_primitives::{environment::SinexEnvironment, nats::NatsConnectionConfig};
+use sinex_primitives::{
+    DeploymentReadinessDescriptor, DeploymentReadinessMode, environment::SinexEnvironment,
+    nats::NatsConnectionConfig,
+};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -621,6 +624,49 @@ fn path_from_env_or_default(env_key: &str, default_path: PathBuf) -> Option<Path
         .or_else(|| default_path.exists().then_some(default_path))
 }
 
+fn load_deployment_descriptor() -> (Option<DeploymentReadinessDescriptor>, DeploymentReadinessItem) {
+    let configured_path = DeploymentReadinessDescriptor::configured_path();
+    match DeploymentReadinessDescriptor::load() {
+        Ok(Some(descriptor)) => {
+            let source = configured_path
+                .unwrap_or_else(DeploymentReadinessDescriptor::default_path);
+            let mode = match descriptor.mode {
+                DeploymentReadinessMode::Prepared => "prepared",
+                DeploymentReadinessMode::Enabled => "enabled",
+                DeploymentReadinessMode::Unknown => "unknown",
+            };
+            let declared_source = descriptor
+                .source
+                .clone()
+                .unwrap_or_else(|| "deployment descriptor".to_string());
+            (
+                Some(descriptor),
+                DeploymentReadinessItem::pass(
+                    "deployment-descriptor",
+                    format!(
+                        "Loaded {declared_source} ({mode} mode) from {}",
+                        source.display()
+                    ),
+                ),
+            )
+        }
+        Ok(None) => (
+            None,
+            DeploymentReadinessItem::skip(
+                "deployment-descriptor",
+                "No deployment readiness descriptor found; using environment fallbacks",
+            ),
+        ),
+        Err(error) => (
+            None,
+            DeploymentReadinessItem::fail(
+                "deployment-descriptor",
+                error.to_string(),
+            ),
+        ),
+    }
+}
+
 fn read_passwd_entry(username: &str) -> Result<Option<(u32, PathBuf)>> {
     let contents = match std::fs::read_to_string("/etc/passwd") {
         Ok(contents) => contents,
@@ -662,9 +708,13 @@ fn command_output(command: &str, args: &[&str], description: &str) -> Result<Str
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn resolve_target_identity() -> Result<TargetIdentity> {
-    let explicit_target_user = std::env::var("SINEX_TARGET_USER")
-        .ok()
+fn resolve_target_identity(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> Result<TargetIdentity> {
+    let descriptor_target = descriptor.and_then(|value| value.target.as_ref());
+    let explicit_target_user = descriptor_target
+        .map(|target| target.user.clone())
+        .or_else(|| std::env::var("SINEX_TARGET_USER").ok())
         .filter(|value| !value.trim().is_empty());
     let current_user = std::env::var("USER")
         .ok()
@@ -676,7 +726,9 @@ fn resolve_target_identity() -> Result<TargetIdentity> {
     };
     let passwd_entry = read_passwd_entry(&user)?;
 
-    let uid = if let Ok(uid) = std::env::var("SINEX_TARGET_UID") {
+    let uid = if let Some(uid) = descriptor_target.and_then(|target| target.uid) {
+        uid
+    } else if let Ok(uid) = std::env::var("SINEX_TARGET_UID") {
         uid.parse::<u32>()
             .wrap_err("failed to parse SINEX_TARGET_UID for deployment readiness")?
     } else if let Some((uid, _)) = passwd_entry.as_ref() {
@@ -690,7 +742,9 @@ fn resolve_target_identity() -> Result<TargetIdentity> {
             .wrap_err("failed to parse `id -u` output")?
     };
 
-    let home = if let Ok(home) = std::env::var("SINEX_TARGET_HOME") {
+    let home = if let Some(home) = descriptor_target.and_then(|target| target.home.clone()) {
+        home
+    } else if let Ok(home) = std::env::var("SINEX_TARGET_HOME") {
         PathBuf::from(home)
     } else if explicit_target_user.is_none() {
         dirs::home_dir()
@@ -706,12 +760,32 @@ fn resolve_target_identity() -> Result<TargetIdentity> {
     Ok(TargetIdentity { user, uid, home })
 }
 
-fn terminal_source_candidates(home: &Path) -> Vec<(&'static str, PathBuf)> {
+fn terminal_source_candidates(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> Vec<(String, PathBuf)> {
+    if let Some(descriptor) = descriptor
+        && !descriptor.terminal.history_sources.is_empty()
+    {
+        return descriptor
+            .terminal
+            .history_sources
+            .iter()
+            .map(|source| (source.shell.clone(), source.path.clone()))
+            .collect();
+    }
+
     vec![
-        ("bash", home.join(".bash_history")),
-        ("zsh", home.join(".zsh_history")),
-        ("atuin", home.join(".local/share/atuin/history.db")),
-        ("fish", home.join(".local/share/fish/fish_history")),
+        ("bash".to_string(), target.home.join(".bash_history")),
+        ("zsh".to_string(), target.home.join(".zsh_history")),
+        (
+            "atuin".to_string(),
+            target.home.join(".local/share/atuin/history.db"),
+        ),
+        (
+            "fish".to_string(),
+            target.home.join(".local/share/fish/fish_history"),
+        ),
     ]
 }
 
@@ -734,11 +808,15 @@ fn validate_atuin_history_db(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn runtime_dir_for_uid(uid: u32) -> PathBuf {
-    std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
-        .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(format!("/run/user/{uid}")))
+fn runtime_dir_for_target(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> PathBuf {
+    descriptor
+        .and_then(|value| value.desktop.runtime_dir.clone())
+        .or_else(|| std::env::var("SINEX_HYPRLAND_RUNTIME_DIR").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
 }
 
 /// Check 1: deployment binaries exist in PATH.
@@ -790,16 +868,29 @@ fn check_realm_accessible() -> DeploymentReadinessItem {
 }
 
 /// Check 3: terminal history sources currently consumed by the node are readable.
-fn check_terminal_sources(target: &TargetIdentity) -> DeploymentReadinessItem {
+fn check_terminal_sources(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.terminal.surface.enabled)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "terminal-sources",
+            "Terminal ingestion is disabled in the deployment descriptor",
+        );
+    }
+
     let mut readable = Vec::new();
     let mut unreadable = Vec::new();
 
-    for (label, path) in terminal_source_candidates(&target.home) {
+    for (label, path) in terminal_source_candidates(target, descriptor) {
         if !path.exists() {
             continue;
         }
 
-        let check = match label {
+        let check = match label.as_str() {
             "atuin" => validate_atuin_history_db(&path),
             _ => std::fs::File::open(&path)
                 .map(|_| ())
@@ -843,8 +934,48 @@ fn check_terminal_sources(target: &TargetIdentity) -> DeploymentReadinessItem {
 }
 
 /// Check 4: Hyprland sockets exist under the resolved runtime directory.
-fn check_hyprland_socket(target: &TargetIdentity) -> DeploymentReadinessItem {
-    let hypr_dir = runtime_dir_for_uid(target.uid).join("hypr");
+fn check_hyprland_socket(
+    target: &TargetIdentity,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.desktop.surface.enabled)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "hyprland-socket",
+            "Desktop ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    if let Some(event_socket) = descriptor
+        .and_then(|value| value.desktop.hyprland_event_socket.clone())
+        .or_else(|| std::env::var("SINEX_HYPRLAND_EVENT_SOCKET").ok().map(PathBuf::from))
+    {
+        let command_socket = descriptor
+            .and_then(|value| value.desktop.hyprland_command_socket.clone())
+            .or_else(|| std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET").ok().map(PathBuf::from));
+        if event_socket.exists() {
+            return DeploymentReadinessItem::pass(
+                "hyprland-socket",
+                format!(
+                    "Configured Hyprland event socket {} is present (command socket present: {})",
+                    event_socket.display(),
+                    command_socket.as_ref().is_some_and(|path| path.exists())
+                ),
+            );
+        }
+
+        return DeploymentReadinessItem::fail(
+            "hyprland-socket",
+            format!(
+                "Configured Hyprland event socket {} is missing",
+                event_socket.display()
+            ),
+        );
+    }
+
+    let hypr_dir = runtime_dir_for_target(target, descriptor).join("hypr");
     if !hypr_dir.exists() {
         return DeploymentReadinessItem::skip(
             "hyprland-socket",
@@ -856,8 +987,9 @@ fn check_hyprland_socket(target: &TargetIdentity) -> DeploymentReadinessItem {
         );
     }
 
-    if let Some(signature) = std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
-        .ok()
+    if let Some(signature) = descriptor
+        .and_then(|value| value.desktop.hyprland_instance_signature.clone())
+        .or_else(|| std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE").ok())
         .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok())
     {
         let base = hypr_dir.join(&signature);
@@ -933,7 +1065,19 @@ fn check_git_annex() -> DeploymentReadinessItem {
 }
 
 /// Check 6: inotify watch limit is high enough for real filesystem deployment.
-fn check_inotify_limit() -> DeploymentReadinessItem {
+fn check_inotify_limit(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.filesystem.enabled)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "inotify-max-user-watches",
+            "Filesystem ingestion is disabled in the deployment descriptor",
+        );
+    }
+
     let path = "/proc/sys/fs/inotify/max_user_watches";
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -967,8 +1111,62 @@ fn check_inotify_limit() -> DeploymentReadinessItem {
     }
 }
 
+fn check_singleton_workstation_topology(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    let Some(descriptor) = descriptor else {
+        return DeploymentReadinessItem::skip(
+            "singleton-workstation-topology",
+            "No deployment descriptor available for planned instance validation",
+        );
+    };
+
+    let surfaces = [
+        ("filesystem", &descriptor.filesystem),
+        ("terminal", &descriptor.terminal.surface),
+        ("desktop", &descriptor.desktop.surface),
+        ("system", &descriptor.system),
+    ];
+    let mut offenders = Vec::new();
+
+    for (name, surface) in surfaces {
+        let instances = surface.instances.unwrap_or(1);
+        if surface.enabled && instances != 1 {
+            offenders.push(format!("{name}={instances}"));
+        }
+    }
+
+    if offenders.is_empty() {
+        DeploymentReadinessItem::pass(
+            "singleton-workstation-topology",
+            "Workstation capture nodes are pinned to single-instance startup",
+        )
+    } else {
+        DeploymentReadinessItem::fail(
+            "singleton-workstation-topology",
+            format!(
+                "Workstation capture nodes must stay singleton for first enable: {}",
+                offenders.join(", ")
+            ),
+        )
+    }
+}
+
 /// Check 7: schema-apply readiness — connect to DB and run a simple query.
-async fn check_schema_apply(database_url: Option<&str>) -> DeploymentReadinessItem {
+async fn check_schema_apply(
+    database_url: Option<&str>,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.expectations.schema_apply)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "schema-apply",
+            "Schema bootstrap is not expected in the deployment descriptor",
+        );
+    }
+
     let Some(url) = database_url else {
         return DeploymentReadinessItem::skip(
             "schema-apply",
@@ -1044,7 +1242,20 @@ fn required_nats_stream_names() -> Result<Vec<String>> {
 }
 
 /// Check 8: NATS streams exist — connect and list streams.
-async fn check_nats_streams(nats_url: Option<&str>) -> DeploymentReadinessItem {
+async fn check_nats_streams(
+    nats_url: Option<&str>,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.expectations.nats_streams)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "nats-streams",
+            "JetStream runtime is not expected in the deployment descriptor",
+        );
+    }
+
     use futures::StreamExt;
 
     let mut nats_config = NatsConnectionConfig::from_env();
@@ -1121,50 +1332,83 @@ async fn check_nats_streams(nats_url: Option<&str>) -> DeploymentReadinessItem {
     }
 }
 
-fn check_secret_materials() -> DeploymentReadinessItem {
+fn check_secret_materials(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
     let default_tls_dir = Path::new(".sinex/tls");
-    let admin_token = path_from_env_or_default(
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
-        PathBuf::from("/run/agenix/sinex-gateway-admin-token"),
-    );
-    let db_password = path_from_env_or_default(
-        "SINEX_DATABASE_PASSWORD_FILE",
-        PathBuf::from("/run/agenix/sinex-local-db"),
-    );
-    let gateway_cert =
-        path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem"));
-    let gateway_key = path_from_env_or_default(
-        "SINEX_GATEWAY_TLS_KEY",
-        default_tls_dir.join("server-key.pem"),
-    );
-    let gateway_client_ca =
-        path_from_env_or_default("SINEX_GATEWAY_TLS_CLIENT_CA", default_tls_dir.join("ca.pem"));
+    let descriptor_present = descriptor.is_some();
+    let admin_token = descriptor
+        .and_then(|value| value.secrets.gateway_admin_token_file.clone())
+        .or_else(|| {
+            path_from_env_or_default(
+                "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+                PathBuf::from("/run/agenix/sinex-gateway-admin-token"),
+            )
+        });
+    let db_password = descriptor
+        .and_then(|value| value.secrets.database_password_file.clone())
+        .or_else(|| {
+            path_from_env_or_default(
+                "SINEX_DATABASE_PASSWORD_FILE",
+                PathBuf::from("/run/agenix/sinex-local-db"),
+            )
+        });
+    let gateway_cert = descriptor
+        .and_then(|value| value.secrets.gateway_tls_cert_file.clone())
+        .or_else(|| path_from_env_or_default("SINEX_GATEWAY_TLS_CERT", default_tls_dir.join("server.pem")));
+    let gateway_key = descriptor
+        .and_then(|value| value.secrets.gateway_tls_key_file.clone())
+        .or_else(|| {
+            path_from_env_or_default(
+                "SINEX_GATEWAY_TLS_KEY",
+                default_tls_dir.join("server-key.pem"),
+            )
+        });
+    let gateway_client_ca = descriptor
+        .and_then(|value| value.secrets.gateway_tls_client_ca_file.clone())
+        .or_else(|| {
+            path_from_env_or_default(
+                "SINEX_GATEWAY_TLS_CLIENT_CA",
+                default_tls_dir.join("ca.pem"),
+            )
+        });
 
-    let mtls_expected = env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
+    let mtls_expected = descriptor
+        .and_then(|value| value.secrets.gateway_tls_client_ca_file.as_ref())
+        .is_some()
+        || env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
         || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok();
 
     let mut missing = Vec::new();
     let mut present = Vec::new();
 
-    match admin_token {
-        Some(path) if path.is_file() => present.push(format!("gateway-admin-token={}", path.display())),
-        Some(path) => missing.push(format!("gateway-admin-token unreadable: {}", path.display())),
-        None => missing.push(
+    if let Some(path) = admin_token {
+        if path.is_file() {
+            present.push(format!("gateway-admin-token={}", path.display()));
+        } else {
+            missing.push(format!("gateway-admin-token unreadable: {}", path.display()));
+        }
+    } else if !descriptor_present {
+        missing.push(
             "gateway-admin-token missing (set SINEX_GATEWAY_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
                 .to_string(),
-        ),
+        );
     }
 
-    match db_password {
-        Some(path) if path.is_file() => present.push(format!("database-password={}", path.display())),
-        Some(path) => missing.push(format!("database-password unreadable: {}", path.display())),
-        None => missing.push(
+    if let Some(path) = db_password {
+        if path.is_file() {
+            present.push(format!("database-password={}", path.display()));
+        } else {
+            missing.push(format!("database-password unreadable: {}", path.display()));
+        }
+    } else if !descriptor_present {
+        missing.push(
             "database-password missing (set SINEX_DATABASE_PASSWORD_FILE or provide /run/agenix/sinex-local-db)"
                 .to_string(),
-        ),
+        );
     }
 
-    match (gateway_cert, gateway_key) {
+    match (gateway_cert.as_ref(), gateway_key.as_ref()) {
         (Some(cert), Some(key)) if cert.is_file() && key.is_file() => {
             present.push(format!("gateway-tls={}/{}", cert.display(), key.display()));
         }
@@ -1180,10 +1424,12 @@ fn check_secret_materials() -> DeploymentReadinessItem {
             missing.push(format!("gateway-tls missing cert for key {}", key.display()));
         }
         (None, None) => {
-            missing.push(
-                "gateway-tls missing (set SINEX_GATEWAY_TLS_CERT/SINEX_GATEWAY_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
-                    .to_string(),
-            );
+            if !descriptor_present {
+                missing.push(
+                    "gateway-tls missing (set SINEX_GATEWAY_TLS_CERT/SINEX_GATEWAY_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
+                        .to_string(),
+                );
+            }
         }
     }
 
@@ -1202,7 +1448,12 @@ fn check_secret_materials() -> DeploymentReadinessItem {
         }
     }
 
-    if missing.is_empty() {
+    if missing.is_empty() && present.is_empty() {
+        DeploymentReadinessItem::skip(
+            "secret-materials",
+            "No deployment secret materials were declared for readiness validation",
+        )
+    } else if missing.is_empty() {
         DeploymentReadinessItem::pass(
             "secret-materials",
             format!("Deployment secret files available: {}", present.join(", ")),
@@ -1286,7 +1537,20 @@ async fn build_gateway_probe_client(base_url: &str) -> Result<GatewayProbeClient
 }
 
 /// Check 9: gateway readiness endpoint responds and reports serving=true.
-async fn check_gateway_ready(gateway_url: Option<&str>) -> DeploymentReadinessItem {
+async fn check_gateway_ready(
+    gateway_url: Option<&str>,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    if descriptor
+        .map(|value| !value.expectations.gateway_ready)
+        .unwrap_or(false)
+    {
+        return DeploymentReadinessItem::skip(
+            "gateway-ready",
+            "Gateway runtime is not expected in the deployment descriptor",
+        );
+    }
+
     let base_url =
         normalize_gateway_base_url(gateway_url.unwrap_or("https://127.0.0.1:9999"));
     let ready_url = format!("{base_url}/ready");
@@ -1353,22 +1617,29 @@ async fn check_gateway_ready(gateway_url: Option<&str>) -> DeploymentReadinessIt
 
 async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<DeploymentReadinessReport> {
     let cfg = crate::config::config();
+    let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![check_node_binaries(), check_realm_accessible()];
+    let mut items = vec![descriptor_item, check_node_binaries(), check_realm_accessible()];
 
-    match resolve_target_identity() {
+    match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
+            let descriptor_suffix = descriptor
+                .as_ref()
+                .and_then(|value| value.source.as_deref())
+                .map(|source| format!(" via {source}"))
+                .unwrap_or_default();
             items.push(DeploymentReadinessItem::pass(
                 "target-identity",
                 format!(
-                    "Using target user {} (uid {}, home {}) for terminal/desktop checks",
+                    "Using target user {} (uid {}, home {}) for terminal/desktop checks{}",
                     target.user,
                     target.uid,
-                    target.home.display()
+                    target.home.display(),
+                    descriptor_suffix
                 ),
             ));
-            items.push(check_terminal_sources(&target));
-            items.push(check_hyprland_socket(&target));
+            items.push(check_terminal_sources(&target, descriptor.as_ref()));
+            items.push(check_hyprland_socket(&target, descriptor.as_ref()));
         }
         Err(error) => {
             items.push(DeploymentReadinessItem::fail(
@@ -1387,11 +1658,12 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     }
 
     items.push(check_git_annex());
-    items.push(check_inotify_limit());
-    items.push(check_secret_materials());
-    items.push(check_schema_apply(cfg.database_url.as_deref()).await);
-    items.push(check_nats_streams(cfg.nats_url.as_deref()).await);
-    items.push(check_gateway_ready(cfg.gateway_url.as_deref()).await);
+    items.push(check_singleton_workstation_topology(descriptor.as_ref()));
+    items.push(check_inotify_limit(descriptor.as_ref()));
+    items.push(check_secret_materials(descriptor.as_ref()));
+    items.push(check_schema_apply(cfg.database_url.as_deref(), descriptor.as_ref()).await);
+    items.push(check_nats_streams(cfg.nats_url.as_deref(), descriptor.as_ref()).await);
+    items.push(check_gateway_ready(cfg.gateway_url.as_deref(), descriptor.as_ref()).await);
 
     let overall_pass = items.iter().all(|i| i.status != "fail");
 
@@ -1435,6 +1707,20 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
     use ::xtask::sandbox::EnvGuard;
+
+    fn sample_descriptor() -> DeploymentReadinessDescriptor {
+        DeploymentReadinessDescriptor {
+            version: 1,
+            mode: DeploymentReadinessMode::Prepared,
+            source: Some("test".to_string()),
+            target: Some(sinex_primitives::DeploymentTarget {
+                user: "probe-user".to_string(),
+                uid: Some(4242),
+                home: Some(PathBuf::from("/tmp/probe-home")),
+            }),
+            ..Default::default()
+        }
+    }
 
     #[sinex_test]
     async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
@@ -1589,7 +1875,22 @@ mod tests {
         env.set("UID", "1000");
         env.set("HOME", "/tmp/current-home");
 
-        let identity = resolve_target_identity()?;
+        let identity = resolve_target_identity(None)?;
+        assert_eq!(identity.user, "probe-user");
+        assert_eq!(identity.uid, 4242);
+        assert_eq!(identity.home, PathBuf::from("/tmp/probe-home"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_target_identity_prefers_descriptor_target(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_TARGET_USER", "env-user");
+        env.set("SINEX_TARGET_UID", "1000");
+        env.set("SINEX_TARGET_HOME", "/tmp/env-home");
+
+        let identity = resolve_target_identity(Some(&sample_descriptor()))?;
         assert_eq!(identity.user, "probe-user");
         assert_eq!(identity.uid, 4242);
         assert_eq!(identity.home, PathBuf::from("/tmp/probe-home"));
@@ -1625,7 +1926,7 @@ mod tests {
             user: "probe-user".to_string(),
             uid: 1000,
             home,
-        });
+        }, None);
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("atuin:"));
         assert!(item.description.contains("bash:"));
@@ -1655,7 +1956,7 @@ mod tests {
             user: "probe-user".to_string(),
             uid: 1000,
             home: runtime_dir.to_path_buf(),
-        });
+        }, None);
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
         Ok(())
@@ -1721,9 +2022,57 @@ mod tests {
         env.set("SINEX_DATABASE_PASSWORD_FILE", db.display().to_string());
         env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
 
-        let item = check_secret_materials();
+        let item = check_secret_materials(None);
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("gateway-admin-token"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_secret_materials_respects_descriptor_declared_paths_only(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let db = temp.path().join("db-password");
+        std::fs::write(&db, "password")?;
+
+        let descriptor = DeploymentReadinessDescriptor {
+            secrets: sinex_primitives::DeploymentSecrets {
+                database_password_file: Some(db),
+                gateway_admin_token_file: None,
+                gateway_tls_cert_file: None,
+                gateway_tls_key_file: None,
+                gateway_tls_client_ca_file: None,
+            },
+            ..Default::default()
+        };
+
+        let item = check_secret_materials(Some(&descriptor));
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("database-password"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_singleton_workstation_topology_flags_fanout(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            filesystem: sinex_primitives::DeploymentSurface {
+                enabled: true,
+                instances: Some(2),
+            },
+            terminal: sinex_primitives::TerminalDeploymentSurface {
+                surface: sinex_primitives::DeploymentSurface {
+                    enabled: true,
+                    instances: Some(1),
+                },
+                history_sources: Vec::new(),
+            },
+            ..Default::default()
+        };
+
+        let item = check_singleton_workstation_topology(Some(&descriptor));
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("filesystem=2"));
         Ok(())
     }
 }

@@ -7,6 +7,7 @@ extern crate self as sinex_primitives;
 pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
+pub mod deployment_readiness;
 pub mod domain;
 pub mod environment;
 pub mod error;
@@ -49,6 +50,11 @@ pub mod prelude {
 
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
+pub use deployment_readiness::{
+    DeploymentExpectations, DeploymentReadinessDescriptor, DeploymentReadinessMode,
+    DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
+    TerminalDeploymentSurface, TerminalHistorySource,
+};
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
 pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};
