@@ -19,6 +19,89 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> TestResult<()> {
+    let pool = &ctx.pool;
+
+    sqlx::query("DROP VIEW IF EXISTS sinex_telemetry.recent_activity_summary")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.command_frequency_hourly")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        r#"
+        CREATE MATERIALIZED VIEW sinex_telemetry.command_frequency_hourly AS
+        SELECT
+            NOW() AS bucket,
+            'broken'::text AS command,
+            NULL::text AS shell,
+            0::bigint AS total_executions,
+            0::bigint AS successful_executions,
+            0::bigint AS failed_executions,
+            NULL::float8 AS avg_duration_ms
+        WITH NO DATA
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sinex_schema::apply::apply(pool).await?;
+
+    let relation_state = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT
+            c.relkind::text,
+            pg_get_viewdef(c.oid, true)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'sinex_telemetry'
+          AND c.relname = 'command_frequency_hourly'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        relation_state.0, "v",
+        "command_frequency_hourly must be restored as the Timescale continuous aggregate view surface, got relkind={} definition={}",
+        relation_state.0, relation_state.1
+    );
+
+    let definition = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT view_definition
+        FROM timescaledb_information.continuous_aggregates
+        WHERE view_schema = 'sinex_telemetry'
+          AND view_name = 'command_frequency_hourly'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        definition.contains("shell.command") && definition.contains("shell.command.canonical"),
+        "schema apply must restore the live command_frequency_hourly definition, got: {definition}"
+    );
+
+    let summary_exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_views
+            WHERE schemaname = 'sinex_telemetry'
+              AND viewname = 'recent_activity_summary'
+        )
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        summary_exists,
+        "schema apply must recreate recent_activity_summary after rebuilding telemetry dependencies"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn declarative_table_registry_is_non_empty(_ctx: TestContext) -> TestResult<()> {
     let tables = sinex_schema::schema::all_tables();
     assert!(

@@ -338,6 +338,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
+    recreate_telemetry_read_models(pool).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
     execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
@@ -355,6 +356,30 @@ async fn apply_roles_and_grants(pool: &PgPool) -> Result<(), ApplyError> {
 async fn execute_sql(pool: &PgPool, sql: &str) -> Result<(), ApplyError> {
     pool.execute(sql).await?;
     Ok(())
+}
+
+async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError> {
+    // Schema apply is hash-gated by xtask. When telemetry SQL changes, rebuild the read
+    // models decisively so stale materialized view definitions cannot survive.
+    execute_sql(
+        pool,
+        r#"
+        DROP VIEW IF EXISTS sinex_telemetry.recent_activity_summary;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.ingestd_batch_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_system_state;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.file_activity_summary;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.command_frequency_hourly;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_window_focus;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.metric_counters_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.node_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.assembly_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.stream_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.gateway_stats_1h;
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_device_state;
+        DROP VIEW IF EXISTS sinex_telemetry.current_health;
+        "#,
+    )
+    .await
 }
 
 fn render_table(stmt: TableCreateStatement) -> String {
