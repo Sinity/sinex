@@ -7,7 +7,7 @@
 //! - HTTP-level auth rejection on the SSE endpoint
 
 use serde_json::json;
-use sinex_gateway::sse_bus::{SseMessage, SubscriptionBus};
+use sinex_gateway::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionBus};
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
@@ -147,10 +147,14 @@ async fn register_and_unregister_updates_count() -> TestResult<()> {
     let bus = SubscriptionBus::new();
     assert_eq!(bus.active_count(), 0);
 
-    let (id1, _rx1) = bus.register(SubscriptionFilter::default());
+    let (id1, _rx1) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 1);
 
-    let (id2, _rx2) = bus.register(SubscriptionFilter::default());
+    let (id2, _rx2) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 2);
 
     bus.unregister(id1);
@@ -169,7 +173,9 @@ async fn register_and_unregister_updates_count() -> TestResult<()> {
 #[sinex_test]
 async fn drop_receiver_cleans_up_on_next_flush() -> TestResult<()> {
     let bus = SubscriptionBus::new();
-    let (id, rx) = bus.register(SubscriptionFilter::default());
+    let (id, rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 1);
 
     // Drop the receiver — the bus won't notice until the next send attempt.
@@ -178,6 +184,37 @@ async fn drop_receiver_cleans_up_on_next_flush() -> TestResult<()> {
     // Manual unregister still works.
     bus.unregister(id);
     assert_eq!(bus.active_count(), 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_enforces_active_subscription_limit() -> TestResult<()> {
+    let bus = SubscriptionBus::new();
+    let mut subscriptions = Vec::new();
+
+    for _ in 0..MAX_ACTIVE_SUBSCRIPTIONS {
+        subscriptions.push(
+            bus.register(SubscriptionFilter::default())
+                .expect("subscriptions below the hard cap should register"),
+        );
+    }
+
+    assert_eq!(bus.active_count(), MAX_ACTIVE_SUBSCRIPTIONS);
+    assert!(
+        bus.register(SubscriptionFilter::default()).is_none(),
+        "register should reject subscriptions beyond the configured cap"
+    );
+
+    let (sub_id, _rx) = subscriptions
+        .pop()
+        .expect("at least one subscription should exist");
+    bus.unregister(sub_id);
+
+    assert!(
+        bus.register(SubscriptionFilter::default()).is_some(),
+        "freeing a slot should allow a new subscription"
+    );
 
     Ok(())
 }
@@ -202,7 +239,9 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
 
     // Create bus, register with empty filter (matches everything).
     let bus = Arc::new(SubscriptionBus::new());
-    let (_, mut rx) = bus.register(SubscriptionFilter::default());
+    let (_, mut rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription to be active.
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
@@ -272,7 +311,7 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
         sources: vec![EventSource::from_static("wanted-source")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription.
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
@@ -352,7 +391,7 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
         event_types: vec![EventType::from_static("shell.command")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -425,7 +464,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
         }),
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -489,7 +528,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
         event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -543,7 +582,9 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
     let env_name = env.name().to_string();
 
     let bus = Arc::new(SubscriptionBus::new());
-    let (_, mut rx) = bus.register(SubscriptionFilter::default());
+    let (_, mut rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
@@ -631,14 +672,18 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
         sources: vec![EventSource::from_static("fs")],
         ..Default::default()
     };
-    let (_, mut rx_a) = bus.register(filter_a);
+    let (_, mut rx_a) = bus
+        .register(filter_a)
+        .expect("test subscription should register");
 
     // Subscriber B: only term events.
     let filter_b = SubscriptionFilter {
         sources: vec![EventSource::from_static("term")],
         ..Default::default()
     };
-    let (_, mut rx_b) = bus.register(filter_b);
+    let (_, mut rx_b) = bus
+        .register(filter_b)
+        .expect("test subscription should register");
 
     assert_eq!(bus.active_count(), 2);
 
@@ -699,8 +744,12 @@ async fn multiple_subscribers_keep_independent_sequence_numbers(
     let second_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 2})).await?;
 
     let bus = Arc::new(SubscriptionBus::new());
-    let (_, mut rx_a) = bus.register(SubscriptionFilter::default());
-    let (_, mut rx_b) = bus.register(SubscriptionFilter::default());
+    let (_, mut rx_a) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
+    let (_, mut rx_b) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();

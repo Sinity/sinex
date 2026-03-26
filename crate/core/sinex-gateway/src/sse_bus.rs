@@ -13,7 +13,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::{Id, JsonValue, Timestamp};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -25,6 +25,10 @@ const BATCH_MAX_IDS: usize = 32;
 
 /// Per-client channel capacity. Slow consumers get gap notifications.
 const CLIENT_CHANNEL_CAPACITY: usize = 256;
+
+/// Hard cap on concurrent SSE subscriptions. Each one owns a buffered channel,
+/// so leaving this unbounded makes memory exhaustion trivial.
+pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 512;
 
 /// Heartbeat interval for keepalive messages.
 pub const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -170,6 +174,7 @@ impl SubscriptionSlot {
 pub struct SubscriptionBus {
     subscriptions: DashMap<u64, Arc<SubscriptionSlot>>,
     next_sub_id: AtomicU64,
+    active_subscriptions: AtomicUsize,
 }
 
 impl SubscriptionBus {
@@ -179,21 +184,33 @@ impl SubscriptionBus {
         Self {
             subscriptions: DashMap::new(),
             next_sub_id: AtomicU64::new(1),
+            active_subscriptions: AtomicUsize::new(0),
         }
     }
 
     /// Register a new subscription. Returns `(sub_id, receiver)`.
-    pub fn register(&self, filter: SubscriptionFilter) -> (u64, mpsc::Receiver<SseMessage>) {
+    pub fn register(&self, filter: SubscriptionFilter) -> Option<(u64, mpsc::Receiver<SseMessage>)> {
+        if self
+            .active_subscriptions
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < MAX_ACTIVE_SUBSCRIPTIONS).then_some(current + 1)
+            })
+            .is_err()
+        {
+            return None;
+        }
+
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
         let (slot, rx) = SubscriptionSlot::new(filter);
         self.subscriptions.insert(id, slot);
         debug!(sub_id = id, "SSE subscription registered");
-        (id, rx)
+        Some((id, rx))
     }
 
     /// Unregister a subscription (client disconnected).
     pub fn unregister(&self, sub_id: u64) {
         if self.subscriptions.remove(&sub_id).is_some() {
+            self.active_subscriptions.fetch_sub(1, Ordering::AcqRel);
             debug!(sub_id, "SSE subscription unregistered");
         }
     }
@@ -201,7 +218,7 @@ impl SubscriptionBus {
     /// Number of active subscriptions.
     #[must_use]
     pub fn active_count(&self) -> usize {
-        self.subscriptions.len()
+        self.active_subscriptions.load(Ordering::Acquire)
     }
 
     /// Run the bus loop. Blocks until the shutdown signal fires.
