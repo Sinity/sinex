@@ -1569,6 +1569,85 @@ async fn record_processed_command_for_test(ctx: &HistoryWatcherContext, command:
     }
 }
 
+async fn stage_history_material(
+    ctx: &HistoryWatcherContext,
+    material_bytes: &[u8],
+    stable_key: Option<&str>,
+    error_context: &str,
+) -> NodeResult<Uuid> {
+    if let Some(stable_key) = stable_key {
+        return stage_stable_material(
+            ctx.acquisition.as_ref(),
+            ctx.path.as_str(),
+            stable_key,
+            material_bytes,
+            MATERIAL_REASON_HISTORY,
+            None,
+        )
+        .await
+        .map_err(|error| SinexError::service(error_context).with_source(error));
+    }
+
+    let mut handle = ctx
+        .acquisition
+        .build_material(ctx.path.as_str())
+        .begin()
+        .await
+        .map_err(|error| SinexError::service(error_context).with_source(error))?;
+    let material_id = handle.material_id;
+
+    ctx.acquisition
+        .append_slice(&mut handle, material_bytes)
+        .await
+        .map_err(|error| SinexError::service(error_context).with_source(error))?;
+
+    ctx.acquisition
+        .finalize(handle, MATERIAL_REASON_HISTORY)
+        .await
+        .map_err(|error| SinexError::service(error_context).with_source(error))?;
+
+    Ok(material_id)
+}
+
+fn build_material_json_event<P: EventPayload>(
+    payload: P,
+    material_id: Uuid,
+    material_len: usize,
+    build_error_context: &str,
+    encode_error_context: &str,
+) -> NodeResult<sinex_primitives::events::Event<serde_json::Value>> {
+    payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|error| SinexError::service(build_error_context).with_source(error))?
+        .with_offset_end(material_len as i64)
+        .map_err(|error| SinexError::service(build_error_context).with_source(error))?
+        .build()
+        .map_err(|error| SinexError::service(build_error_context).with_source(error))?
+        .to_json_event()
+        .map_err(|error| SinexError::serialization(encode_error_context).with_source(error))
+}
+
+async fn emit_history_event(
+    ctx: &HistoryWatcherContext,
+    event: sinex_primitives::events::Event<serde_json::Value>,
+    material_id: Uuid,
+    material_len: usize,
+    emit_error_context: &str,
+    line_number: u64,
+) -> NodeResult<()> {
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(material_len as i64))
+        .await
+        .map(|_| ())
+        .map_err(|error| SinexError::messaging(emit_error_context).with_source(error))?;
+
+    ctx.metrics
+        .record_command(&ctx.shell, &ctx.path, material_len, line_number);
+
+    Ok(())
+}
+
 async fn process_command(
     ctx: &HistoryWatcherContext,
     command: &str,
@@ -1580,27 +1659,17 @@ async fn process_command(
     else {
         return Ok(());
     };
-    let bytes = final_command.as_bytes().to_vec();
+    let material_bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let mut handle = ctx
-        .acquisition
-        .build_material(ctx.path.as_str())
-        .begin()
-        .await
-        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
-    let material_id = handle.material_id;
-
-    ctx.acquisition
-        .append_slice(&mut handle, &bytes)
-        .await
-        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
-
-    ctx.acquisition
-        .finalize(handle, MATERIAL_REASON_HISTORY)
-        .await
-        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
+    let material_id = stage_history_material(
+        ctx,
+        &material_bytes,
+        None,
+        "Failed to stage terminal history material",
+    )
+    .await?;
 
     let payload = HistoryCommandImportedPayload {
         command: final_command,
@@ -1610,27 +1679,23 @@ async fn process_command(
         line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
     };
 
-    let event = payload
-        .from_material(material_id)
-        .with_offset_start(0)
-        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
-        .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
-        .build()
-        .map_err(|e| SinexError::service(format!("Failed to build event: {e}")))?
-        .to_json_event()
-        .map_err(|e| SinexError::serialization("Failed to convert event to JSON").with_source(e))?;
+    let event = build_material_json_event(
+        payload,
+        material_id,
+        material_bytes.len(),
+        "Failed to build terminal history event",
+        "Failed to convert terminal history event to JSON",
+    )?;
 
-    ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
-        .await
-        .map(|_| ())
-        .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
-
-    ctx.metrics
-        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
-
-    Ok(())
+    emit_history_event(
+        ctx,
+        event,
+        material_id,
+        material_bytes.len(),
+        "Failed to emit terminal event",
+        line_number,
+    )
+    .await
 }
 
 async fn process_fish_entry(
@@ -1644,20 +1709,18 @@ async fn process_fish_entry(
     else {
         return Ok(());
     };
-    let bytes = final_command.as_bytes().to_vec();
+    let material_bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stage_stable_material(
-        ctx.acquisition.as_ref(),
-        ctx.path.as_str(),
-        &entry.row_id.to_string(),
-        &bytes,
-        MATERIAL_REASON_HISTORY,
-        None,
+    let stable_key = entry.row_id.to_string();
+    let material_id = stage_history_material(
+        ctx,
+        &material_bytes,
+        Some(&stable_key),
+        "Failed to stage Fish history material",
     )
-    .await
-    .map_err(|e| SinexError::service("Failed to stage Fish history material").with_source(e))?;
+    .await?;
 
     let payload = HistoryCommandImportedPayload {
         command: final_command,
@@ -1667,29 +1730,23 @@ async fn process_fish_entry(
         line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
     };
 
-    let event = payload
-        .from_material(material_id)
-        .with_offset_start(0)
-        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
-        .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
-        .build()
-        .map_err(|e| SinexError::service(format!("Failed to build Fish event: {e}")))?
-        .to_json_event()
-        .map_err(|e| {
-            SinexError::serialization("Failed to convert Fish event to JSON").with_source(e)
-        })?;
+    let event = build_material_json_event(
+        payload,
+        material_id,
+        material_bytes.len(),
+        "Failed to build Fish history event",
+        "Failed to convert Fish event to JSON",
+    )?;
 
-    ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
-        .await
-        .map(|_| ())
-        .map_err(|e| SinexError::messaging("Failed to emit Fish history event").with_source(e))?;
-
-    ctx.metrics
-        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
-
-    Ok(())
+    emit_history_event(
+        ctx,
+        event,
+        material_id,
+        material_bytes.len(),
+        "Failed to emit Fish history event",
+        line_number,
+    )
+    .await
 }
 
 async fn process_atuin_entry(
@@ -1726,44 +1783,35 @@ async fn process_atuin_entry(
             .with_source(error));
         }
     };
-    let bytes = final_command.as_bytes().to_vec();
+    let material_bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stage_stable_material(
-        ctx.acquisition.as_ref(),
-        ctx.path.as_str(),
-        &entry.history_id,
-        &bytes,
-        MATERIAL_REASON_HISTORY,
-        None,
+    let material_id = stage_history_material(
+        ctx,
+        &material_bytes,
+        Some(&entry.history_id),
+        "Failed to stage Atuin history material",
+    )
+    .await?;
+
+    let event = build_material_json_event(
+        payload,
+        material_id,
+        material_bytes.len(),
+        "Failed to build Atuin event",
+        "Failed to convert Atuin event to JSON",
+    )?;
+
+    emit_history_event(
+        ctx,
+        event,
+        material_id,
+        material_bytes.len(),
+        "Failed to emit Atuin event",
+        line_number,
     )
     .await
-    .map_err(|e| SinexError::service("Failed to stage Atuin history material").with_source(e))?;
-
-    let event = payload
-        .from_material(material_id)
-        .with_offset_start(0)
-        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
-        .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
-        .build()
-        .map_err(|e| SinexError::service(format!("Failed to build Atuin event: {e}")))?
-        .to_json_event()
-        .map_err(|e| {
-            SinexError::serialization("Failed to convert Atuin event to JSON").with_source(e)
-        })?;
-
-    ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
-        .await
-        .map(|_| ())
-        .map_err(|e| SinexError::messaging("Failed to emit Atuin event").with_source(e))?;
-
-    ctx.metrics
-        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
-
-    Ok(())
 }
 
 /// Terminal node that monitors history files.
