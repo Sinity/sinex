@@ -2817,7 +2817,15 @@ mod tests {
         );
 
         let stored = replay.load_operation(operation.operation_id).await?;
-        assert_eq!(stored.state, ReplayState::Approved);
+        assert_eq!(stored.state, ReplayState::Failed);
+        assert_eq!(
+            stored.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert_eq!(
+            stored.error_details.as_deref(),
+            Some(err.to_string().as_str())
+        );
         assert!(stored.executor_node.is_none());
 
         Ok(())

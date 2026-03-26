@@ -11,6 +11,7 @@ async fn state_transitions_follow_rules() -> Result<()> {
     assert!(ReplayState::Planning.can_transition_to(ReplayState::Previewed));
     assert!(ReplayState::Previewed.can_transition_to(ReplayState::Approved));
     assert!(ReplayState::Approved.can_transition_to(ReplayState::Executing));
+    assert!(ReplayState::Approved.can_transition_to(ReplayState::Failed));
     assert!(ReplayState::Executing.can_transition_to(ReplayState::Committing));
     assert!(ReplayState::Committing.can_transition_to(ReplayState::Completed));
 
@@ -218,7 +219,9 @@ async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn mark_failed_requires_valid_transition_path(ctx: TestContext) -> Result<()> {
+async fn mark_failed_persists_pre_execution_and_execution_failures(
+    ctx: TestContext,
+) -> Result<()> {
     let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
         node_id: "test-node".to_string(),
@@ -233,7 +236,7 @@ async fn mark_failed_requires_valid_transition_path(ctx: TestContext) -> Result<
     let invalid_err = replay
         .mark_failed(operation.operation_id, "pre-execution error".to_string())
         .await
-        .expect_err("mark_failed should reject non-executing/non-committing states");
+        .expect_err("planning operations should not be directly markable as failed");
     assert!(
         invalid_err
             .to_string()
@@ -251,13 +254,49 @@ async fn mark_failed_requires_valid_transition_path(ctx: TestContext) -> Result<
         .approve(operation.operation_id, "admin:approver".to_string())
         .await?;
     replay
-        .transition(operation.operation_id, ReplayState::Executing)
-        .await?;
-    replay
-        .mark_failed(operation.operation_id, "execution failed".to_string())
+        .mark_failed(operation.operation_id, "pre-execution error".to_string())
         .await?;
 
-    let failed = replay.load_operation(operation.operation_id).await?;
+    let failed_before_execution = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(failed_before_execution.state, ReplayState::Failed);
+    assert_eq!(
+        failed_before_execution.outcome,
+        Some(ReplayOutcome::Failed)
+    );
+    assert_eq!(
+        failed_before_execution.error_details.as_deref(),
+        Some("pre-execution error")
+    );
+    assert!(failed_before_execution.executor_node.is_none());
+
+    let second_operation = replay
+        .create_operation(
+            ReplayScope {
+                node_id: "test-node-2".to_string(),
+                time_window: None,
+                material_filter: None,
+                filters: HashMap::new(),
+            },
+            "test:planner".to_string(),
+        )
+        .await?;
+    replay
+        .update_preview(
+            second_operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(second_operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(second_operation.operation_id, ReplayState::Executing)
+        .await?;
+    replay
+        .mark_failed(second_operation.operation_id, "execution failed".to_string())
+        .await?;
+
+    let failed = replay.load_operation(second_operation.operation_id).await?;
     assert_eq!(failed.state, ReplayState::Failed);
     assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
     assert_eq!(failed.error_details.as_deref(), Some("execution failed"));

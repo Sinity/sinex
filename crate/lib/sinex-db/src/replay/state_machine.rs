@@ -58,6 +58,7 @@ impl ReplayState {
 
             // From Approved
             (ReplayState::Approved, ReplayState::Executing) => true,
+            (ReplayState::Approved, ReplayState::Failed) => true,
             (ReplayState::Approved, ReplayState::Cancelled) => true,
 
             // From Executing
