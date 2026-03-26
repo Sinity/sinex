@@ -233,6 +233,28 @@ struct SummaryOutput {
     uncommitted_count: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SummaryRuntimeImpact {
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
+
+fn classify_runtime_summary_impact(metrics: &RuntimeMetrics) -> SummaryRuntimeImpact {
+    if metrics.query_error.is_some()
+        || matches!(
+            metrics.ingestd_status,
+            IngestdStatus::Down | IngestdStatus::Unknown
+        )
+    {
+        SummaryRuntimeImpact::Unhealthy
+    } else if !metrics.assessment().warnings.is_empty() {
+        SummaryRuntimeImpact::Degraded
+    } else {
+        SummaryRuntimeImpact::Healthy
+    }
+}
+
 fn classify_summary_health(
     pg_ready: bool,
     nats_ready: bool,
@@ -243,14 +265,18 @@ fn classify_summary_health(
     has_job_issues: bool,
     last_test_failed: bool,
     last_check_failed: bool,
+    runtime_impact: Option<SummaryRuntimeImpact>,
     has_warnings: bool,
 ) -> (&'static str, &'static str) {
+    let runtime_unhealthy =
+        runtime_impact.is_some_and(|impact| matches!(impact, SummaryRuntimeImpact::Unhealthy));
     let health = if !pg_ready
         || !nats_ready
         || !history_available
         || history_diag_errors > 0
         || last_test_failed
         || last_check_failed
+        || runtime_unhealthy
     {
         "unhealthy"
     } else if has_warnings {
@@ -261,7 +287,7 @@ fn classify_summary_health(
 
     let indicator = if !pg_ready || !nats_ready {
         "infra"
-    } else if !history_available || history_diag_errors > 0 {
+    } else if !history_available || history_diag_errors > 0 || runtime_unhealthy {
         "error"
     } else if history_synthetic || has_job_issues || history_diag_warnings > 0 || has_warnings {
         "warn"
@@ -932,6 +958,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     if let Some(runtime_metrics) = data.runtime_metrics.as_ref() {
         warnings.extend(runtime_metrics.assessment().warnings);
     }
+    let runtime_impact = data
+        .runtime_metrics
+        .as_ref()
+        .map(classify_runtime_summary_impact);
 
     let (health, health_indicator) = classify_summary_health(
         data.pg_probe.ready(),
@@ -947,6 +977,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         last_check
             .as_ref()
             .is_some_and(|c| matches!(c.status, InvocationStatus::Failed)),
+        runtime_impact,
         !warnings.is_empty(),
     );
 
@@ -2355,8 +2386,19 @@ mod tests {
     #[sinex_test]
     async fn test_classify_summary_health_promotes_history_errors_to_unhealthy()
     -> ::xtask::sandbox::TestResult<()> {
-        let (health, indicator) =
-            classify_summary_health(true, true, false, 1, 0, false, false, false, false, true);
+        let (health, indicator) = classify_summary_health(
+            true,
+            true,
+            false,
+            1,
+            0,
+            false,
+            false,
+            false,
+            false,
+            None,
+            true,
+        );
         assert_eq!(health, "unhealthy");
         assert_eq!(indicator, "error");
         Ok(())
@@ -2365,10 +2407,61 @@ mod tests {
     #[sinex_test]
     async fn test_classify_summary_health_marks_warning_only_state_degraded()
     -> ::xtask::sandbox::TestResult<()> {
-        let (health, indicator) =
-            classify_summary_health(true, true, true, 0, 1, false, false, false, false, true);
+        let (health, indicator) = classify_summary_health(
+            true,
+            true,
+            true,
+            0,
+            1,
+            false,
+            false,
+            false,
+            false,
+            None,
+            true,
+        );
         assert_eq!(health, "degraded");
         assert_eq!(indicator, "warn");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_summary_health_promotes_runtime_failures_to_unhealthy()
+    -> ::xtask::sandbox::TestResult<()> {
+        let (health, indicator) = classify_summary_health(
+            true,
+            true,
+            true,
+            0,
+            0,
+            false,
+            false,
+            false,
+            false,
+            Some(SummaryRuntimeImpact::Unhealthy),
+            true,
+        );
+        assert_eq!(health, "unhealthy");
+        assert_eq!(indicator, "error");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_runtime_summary_impact_treats_ingestd_down_as_unhealthy()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Down,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: None,
+        };
+        assert_eq!(
+            classify_runtime_summary_impact(&metrics),
+            SummaryRuntimeImpact::Unhealthy
+        );
         Ok(())
     }
 
