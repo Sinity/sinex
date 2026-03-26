@@ -165,14 +165,17 @@ pub trait WindowedNode: Send + Sync + 'static {
         Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send {
         async move {
+            let mut rebuilt_state = Self::State::default();
             for event in events {
-                self.accumulate(state, event, context).await?;
+                self.accumulate(&mut rebuilt_state, event, context).await?;
             }
-            if self.window_complete(state) {
-                self.emit(state, context).await
+            let output = if self.window_complete(&rebuilt_state) {
+                self.emit(&mut rebuilt_state, context).await?
             } else {
-                Ok(None)
-            }
+                None
+            };
+            *state = rebuilt_state;
+            Ok(output)
         }
     }
 
@@ -261,12 +264,17 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send
     {
         async move {
+            let mut recomputed_state = Self::State::default();
             let mut outputs = Vec::new();
             for input in working_set {
-                if let Some(output) = self.reconcile(state, scope_key, input, context).await? {
+                if let Some(output) = self
+                    .reconcile(&mut recomputed_state, scope_key, input, context)
+                    .await?
+                {
                     outputs.push(output);
                 }
             }
+            *state = recomputed_state;
             Ok(outputs)
         }
     }

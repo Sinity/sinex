@@ -232,6 +232,55 @@ impl ScopeReconcilerNode for TestReconciler {
     }
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct DefaultReconcilerState {
+    total: i64,
+    count: usize,
+}
+
+struct DefaultStatefulReconciler;
+
+impl ScopeReconcilerNode for DefaultStatefulReconciler {
+    type State = DefaultReconcilerState;
+    type Input = RInput;
+    type Output = ROutput;
+
+    fn name(&self) -> &'static str {
+        "default-stateful-reconciler"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "measurement.taken"
+    }
+    fn output_event_type(&self) -> &'static str {
+        "measurement.aggregate"
+    }
+
+    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+        vec!["default".into()]
+    }
+
+    async fn reconcile(
+        &mut self,
+        state: &mut Self::State,
+        scope_key: &str,
+        input: Self::Input,
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+        state.total += input.value;
+        state.count += 1;
+
+        Ok(Some(DerivedOutput::reconciled(
+            ROutput {
+                total: state.total,
+                count: state.count,
+            },
+            context.ts_orig.unwrap_or_else(Timestamp::now),
+            vec![*context.trigger_event_id.as_uuid()],
+            scope_key.to_string(),
+        )))
+    }
+}
+
 #[sinex_test]
 async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
     use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
@@ -353,6 +402,37 @@ async fn reconciler_recomputes_scope_from_working_set() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn default_reconciler_recompute_starts_from_fresh_state() -> TestResult<()> {
+    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+
+    let mut wrapper = ScopeReconcilerWrapper(DefaultStatefulReconciler);
+    let mut state = DefaultReconcilerState {
+        total: 1_000,
+        count: 99,
+    };
+    let ctx = make_context();
+
+    let working_set: Vec<sinex_primitives::Event<JsonValue>> = vec![
+        event_stub(serde_json::json!({ "value": 10 })),
+        event_stub(serde_json::json!({ "value": 20 })),
+    ];
+
+    let results = wrapper
+        .process_invalidation_derived(&mut state, "fresh-scope", working_set, &ctx)
+        .await?;
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].payload["total"], 10);
+    assert_eq!(results[0].payload["count"], 1);
+    assert_eq!(results[1].payload["total"], 30);
+    assert_eq!(results[1].payload["count"], 2);
+    assert_eq!(state.total, 30);
+    assert_eq!(state.count, 2);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn reconciler_empty_working_set_produces_no_output() -> TestResult<()> {
     use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
 
@@ -448,7 +528,9 @@ async fn windowed_recomputes_from_working_set() -> TestResult<()> {
     use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, WindowedWrapper};
 
     let mut wrapper = WindowedWrapper(TestWindowed);
-    let mut state = WindowState::default();
+    let mut state = WindowState {
+        values: vec![999, 1_000],
+    };
     let ctx = make_context();
 
     let working_set: Vec<sinex_primitives::Event<JsonValue>> = vec![
@@ -464,6 +546,7 @@ async fn windowed_recomputes_from_working_set() -> TestResult<()> {
     let output: serde_json::Value = results[0].payload.clone();
     assert_eq!(output["sum"], 20);
     assert_eq!(output["window_size"], 2);
+    assert!(state.values.is_empty(), "rebuilt window state should replace stale data");
 
     Ok(())
 }
