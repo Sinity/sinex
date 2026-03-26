@@ -573,7 +573,7 @@ impl IngestorNode for DesktopNode {
         &mut self,
         state: &mut Self::State,
         from: Checkpoint,
-        _until: TimeHorizon,
+        until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         info!(
@@ -608,8 +608,8 @@ impl IngestorNode for DesktopNode {
         })?;
 
         let start_row_id = Self::historical_activitywatch_start_row(state, &from);
-        let (entries, last_row_id) =
-            read_activitywatch_history(&db_path, start_row_id).map_err(|error| {
+        let (entries, last_row_id) = read_activitywatch_history(&db_path, start_row_id, until.end_time())
+            .map_err(|error| {
                 SinexError::io(format!(
                     "Failed to read ActivityWatch history from {db_path}: {error}"
                 ))

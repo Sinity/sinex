@@ -709,6 +709,7 @@ impl HistoryWatcherContext {
     async fn scan_history_once_from_state(
         &self,
         state_override: Option<HistoryState>,
+        historical_end_time: Option<Timestamp>,
     ) -> HistoryScanOutcome {
         match &self.source_mode {
             HistorySourceMode::FishSqlite => {
@@ -725,7 +726,11 @@ impl HistoryWatcherContext {
                     .unwrap_or_default();
                 let mut processed = 0usize;
                 let mut warnings = Vec::new();
-                match crate::fish_history::read_fish_history(&self.path, sqlite_row_id) {
+                match crate::fish_history::read_fish_history(
+                    &self.path,
+                    sqlite_row_id,
+                    historical_end_time,
+                ) {
                     Ok((entries, last_row_id)) => {
                         for entry in entries {
                             if entry.command.trim().is_empty() {
@@ -787,7 +792,11 @@ impl HistoryWatcherContext {
                     .unwrap_or_default();
                 let mut processed = 0usize;
                 let mut warnings = Vec::new();
-                match crate::atuin_history::read_atuin_history(&self.path, sqlite_row_id) {
+                match crate::atuin_history::read_atuin_history(
+                    &self.path,
+                    sqlite_row_id,
+                    historical_end_time,
+                ) {
                     Ok((entries, last_row_id)) => {
                         for entry in entries {
                             if entry.command.trim().is_empty() {
@@ -1359,7 +1368,7 @@ impl HistoryWatcherContext {
             .map(|metadata| metadata.len())
             .unwrap_or_default();
 
-        match fish_history::read_fish_history(&self.path, *sqlite_row_id) {
+        match fish_history::read_fish_history(&self.path, *sqlite_row_id, None) {
             Ok((entries, last_row_id)) => {
                 for entry in entries {
                     if entry.command.trim().is_empty() {
@@ -1413,7 +1422,7 @@ impl HistoryWatcherContext {
             .map(|metadata| metadata.len())
             .unwrap_or_default();
 
-        match atuin_history::read_atuin_history(&self.path, *sqlite_row_id) {
+        match atuin_history::read_atuin_history(&self.path, *sqlite_row_id, None) {
             Ok((entries, last_row_id)) => {
                 for entry in entries {
                     if entry.command.trim().is_empty() {
@@ -2066,7 +2075,9 @@ impl IngestorNode for TerminalNode {
                     ctx.load_state().await
                 }
             };
-            let outcome = ctx.scan_history_once_from_state(state_override).await;
+            let outcome = ctx
+                .scan_history_once_from_state(state_override, _until.end_time())
+                .await;
             events_processed = events_processed.saturating_add(outcome.processed as u64);
             warnings.extend(outcome.warnings);
             if let Some(error) = outcome.failure {
