@@ -38,6 +38,43 @@ struct MaterialDlqPayload {
 }
 
 impl MaterialAssembler {
+    async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> bool {
+        if let Some(state_handle) = self.get_state_handle(&material_id).await {
+            let mut state = state_handle.lock().await;
+            if state.phase == AssemblyPhase::Finalizing {
+                debug!(
+                    material_id = %material_id,
+                    failure_reason = reason,
+                    "Skipping failed-material cleanup because terminal transition is already in progress"
+                );
+                return false;
+            }
+            state.phase = AssemblyPhase::Finalizing;
+            return true;
+        }
+
+        match self.material_is_terminal(material_id).await {
+            Ok(true) => {
+                debug!(
+                    material_id = %material_id,
+                    failure_reason = reason,
+                    "Skipping failed-material cleanup because material is already terminal"
+                );
+                false
+            }
+            Ok(false) => true,
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    failure_reason = reason,
+                    error = %error,
+                    "Failed to confirm material terminal state before failure cleanup; proceeding"
+                );
+                true
+            }
+        }
+    }
+
     /// Revert a finalization attempt back to the Accumulating phase.
     ///
     /// Called when a step inside `try_finalize_pending_end` fails after the phase was
@@ -276,6 +313,10 @@ impl MaterialAssembler {
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
+        if !self.begin_failure_cleanup(material_id, reason).await {
+            return;
+        }
+
         self.stats_inc_failed(); // Track failed assembly
         tracing::warn!(
             target: "sinex_metrics",
@@ -706,5 +747,125 @@ impl MaterialAssembler {
 
         self.try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MaterialReadySet;
+    use camino::Utf8PathBuf;
+    use serde_json::json;
+    use sinex_db::repositories::{DbPoolExt, source_materials::status};
+    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use std::sync::Arc;
+    use xtask::sandbox::prelude::*;
+
+    async fn test_assembler(
+        ctx: &TestContext,
+    ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("finalize-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            300,
+            3_600,
+            90,
+        )?;
+
+        Ok((assembler, annex_dir, state_dir))
+    }
+
+    #[sinex_test]
+    async fn finalize_failed_material_skips_material_already_finalizing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://finalizing"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.phase = AssemblyPhase::Finalizing;
+        assembler.insert_state_handle(material_id, state).await;
+
+        assembler
+            .finalize_failed_material(material_id, "slice_arrival_timeout")
+            .await;
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_uuid(material_id))
+            .await?
+            .expect("material should exist");
+        assert_eq!(material.status.as_str(), status::SENSING);
+        assert!(assembler.assembler_state.contains_key(&material_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalize_failed_material_skips_terminal_material_without_state(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::from_uuid(material_id);
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://completed"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+        ctx.pool
+            .source_materials()
+            .finalize_in_flight(material_id_typed, None, None, None, Some(42))
+            .await?;
+
+        assembler
+            .finalize_failed_material(material_id, "slice_arrival_timeout")
+            .await;
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+        assert_eq!(material.status.as_str(), status::COMPLETED);
+        Ok(())
     }
 }
