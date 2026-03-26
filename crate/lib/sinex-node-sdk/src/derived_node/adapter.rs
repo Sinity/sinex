@@ -787,7 +787,7 @@ where
             model = %self.node.node_model(),
             input_type = %self.node.input_event_type(),
             output_type = %self.node.output_event_type(),
-            "DerivedNode initialized — awaiting events via process_batch()"
+            "DerivedNode initialized — running invalidation-driven continuous loop"
         );
 
         // Subscribe to scope invalidation signals via NATS queue group.
