@@ -859,7 +859,7 @@ in
               options = {
                 instances = mkOption {
                   type = positive;
-                  default = 2;
+                  default = 1;
                   description = "Default number of instances per node.";
                 };
                 logLevel = mkOption {
