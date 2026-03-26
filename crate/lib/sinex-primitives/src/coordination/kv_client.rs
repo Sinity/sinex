@@ -167,6 +167,11 @@ impl CoordinationKvClient {
     }
 
     #[must_use]
+    pub fn instance_stale_timeout(&self) -> Duration {
+        self.timing.instance_stale_timeout()
+    }
+
+    #[must_use]
     pub fn handoff_timeout_secs(&self) -> Seconds {
         self.timing.handoff_timeout_secs()
     }

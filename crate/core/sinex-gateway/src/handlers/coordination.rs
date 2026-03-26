@@ -62,7 +62,8 @@ pub async fn handle_coordination_instance_health(
         Some(meta) => {
             let now = temporal::now().unix_timestamp();
             let heartbeat_age_secs = now - meta.last_heartbeat;
-            let is_healthy = heartbeat_age_secs < 60;
+            let is_healthy =
+                heartbeat_age_secs < kv_client.instance_stale_timeout().as_secs() as i64;
             let is_leader = meta.instance_id == leader;
 
             Ok(serde_json::to_value(InstanceHealthResponse {
