@@ -319,7 +319,7 @@ impl StageAsYouGoContext {
         info!(
             blob_id = %material_id,
             material_type = material_type,
-            "Registered in-flight source material via JetStream"
+            "Opened in-flight source material handle"
         );
 
         let info = StageMaterialInfo {
@@ -337,11 +337,11 @@ impl StageAsYouGoContext {
 
     /// Get the `started_at` timestamp for an in-flight material.
     ///
-    /// This is the wall-clock time recorded when the material capture began,
-    /// and is the same value persisted as the `staged_at` ledger entry by ingestd.
-    /// Use it as the fallback `ts_orig` for events that lack an intrinsic
-    /// timestamp — it is reproducible on replay because it traces to a persisted
-    /// ledger row.
+    /// This is the wall-clock time recorded when the material capture began.
+    /// Once the material emits durably, ingestd persists the same value as the
+    /// `staged_at` ledger entry. Use it as the fallback `ts_orig` for events that
+    /// lack an intrinsic timestamp — it is reproducible on replay because it
+    /// traces to a persisted ledger row after the material actually starts.
     pub async fn material_started_at(
         &self,
         material_id: Uuid,

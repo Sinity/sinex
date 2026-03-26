@@ -145,7 +145,7 @@ impl LedgerReader {
     ///
     /// Returns `None` only when both the temporal ledger and intrinsic timestamp
     /// are missing — this indicates a bug (a `staged_at` ledger entry should have
-    /// been written at material-begin time).
+    /// been written when the material first emitted durably).
     #[must_use]
     pub fn derive_ts_orig(
         &self,
@@ -184,9 +184,9 @@ impl LedgerReader {
         }
 
         // No persisted temporal evidence and no intrinsic timestamp.
-        // A `staged_at` ledger entry should have been written at material-begin
-        // time. Returning None forces the caller to handle this explicitly rather
-        // than silently using an ephemeral Timestamp::now().
+        // A `staged_at` ledger entry should have been written once the material
+        // began emitting durably. Returning None forces the caller to handle this
+        // explicitly rather than silently using an ephemeral Timestamp::now().
         warn!(
             material_id = %self.material_id,
             offset,
