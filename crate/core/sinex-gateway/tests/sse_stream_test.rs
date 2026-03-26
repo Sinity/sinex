@@ -533,6 +533,87 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
 }
 
 #[sinex_test]
+async fn slow_consumer_gap_arrives_before_resumed_event(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+    let env_name = env.name().to_string();
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (_, mut rx) = bus.register(SubscriptionFilter::default());
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+
+    let nats_pub = ctx.nats_client();
+    for i in 0..300 {
+        let id = insert_test_event(
+            &pool,
+            "gap-source",
+            "gap.event",
+            "localhost",
+            json!({ "seq": i }),
+        )
+        .await?;
+        publish_confirmation(&nats_pub, &env_name, &id).await?;
+    }
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    for _ in 0..2 {
+        match recv_timeout(&mut rx, Duration::from_secs(2)).await {
+            Some(SseMessage::Event { .. }) => {}
+            other => panic!("expected buffered event before resumption, got {other:?}"),
+        }
+    }
+
+    let resumed_id = insert_test_event(
+        &pool,
+        "gap-source",
+        "gap.event",
+        "localhost",
+        json!({ "seq": "resumed" }),
+    )
+    .await?;
+    publish_confirmation(&nats_pub, &env_name, &resumed_id).await?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut gap_seen = None;
+    let mut resumed_seen = false;
+    while tokio::time::Instant::now() < deadline {
+        match recv_timeout(&mut rx, Duration::from_millis(200)).await {
+            Some(SseMessage::Gap {
+                from_seq,
+                to_seq,
+                dropped,
+            }) => {
+                gap_seen = Some((from_seq, to_seq, dropped));
+            }
+            Some(SseMessage::Event { event, .. }) => {
+                if event.id.as_ref().map(|id| *id.as_uuid()) == Some(resumed_id) {
+                    assert!(gap_seen.is_some(), "gap marker must precede resumed event");
+                    resumed_seen = true;
+                    break;
+                }
+            }
+            Some(SseMessage::Heartbeat { .. }) | None => {}
+        }
+    }
+
+    let (from_seq, to_seq, dropped) =
+        gap_seen.ok_or_else(|| color_eyre::eyre::eyre!("expected a gap marker after saturation"))?;
+    assert!(to_seq >= from_seq, "gap range should be ordered");
+    assert!(dropped > 0, "gap marker should report dropped events");
+    assert!(resumed_seen, "resumed event should eventually be delivered after gap");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();

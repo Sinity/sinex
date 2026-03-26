@@ -278,26 +278,37 @@ impl SubscriptionBus {
                 }
 
                 let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                if let Some(from_seq) = slot.gap_start {
+                    let gap_count = slot.gap_count;
+                    let gap = SseMessage::Gap {
+                        from_seq,
+                        to_seq: seq.saturating_sub(1),
+                        dropped: gap_count,
+                    };
+
+                    match slot.tx.try_send(gap) {
+                        Ok(()) => {
+                            slot.gap_start = None;
+                            slot.gap_count = 0;
+                        }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            slot.gap_count += 1;
+                            continue;
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            to_remove.push(sub_id);
+                            break;
+                        }
+                    }
+                }
+
                 let msg = SseMessage::Event {
                     seq,
                     event: Arc::clone(event),
                 };
 
                 match slot.tx.try_send(msg) {
-                    Ok(()) => {
-                        // If we were in a gap, send the gap notification first
-                        if let Some(from_seq) = slot.gap_start.take() {
-                            let gap_count = slot.gap_count;
-                            slot.gap_count = 0;
-                            let gap = SseMessage::Gap {
-                                from_seq,
-                                to_seq: seq.saturating_sub(1),
-                                dropped: gap_count,
-                            };
-                            // Best-effort gap notification
-                            let _ = slot.tx.try_send(gap);
-                        }
-                    }
+                    Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         // Slow consumer — track gap
                         if slot.gap_start.is_none() {
