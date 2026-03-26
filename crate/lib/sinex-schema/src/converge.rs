@@ -49,7 +49,10 @@ use std::collections::HashSet;
 
 use crate::apply::ApplyError;
 use crate::schema::{Events, NodeManifests, TableMeta};
-use sea_query::{Alias, ColumnDef, ColumnSpec, PostgresQueryBuilder, Table, TableCreateStatement};
+use sea_query::{
+    Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
+    TableCreateStatement,
+};
 use sqlx::{Executor, PgPool};
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -62,6 +65,15 @@ use sqlx::{Executor, PgPool};
 pub struct NamedConstraint {
     pub name: &'static str,
     pub expression: &'static str,
+}
+
+/// A named foreign key managed by the convergence engine.
+///
+/// Foreign keys declared inline in `CREATE TABLE` statements do not get added to
+/// long-lived existing tables unless convergence handles them explicitly.
+pub struct NamedForeignKey {
+    pub name: &'static str,
+    pub statement_fn: fn() -> ForeignKeyCreateStatement,
 }
 
 /// Specification for a mirror table that tracks a primary table's column set.
@@ -93,6 +105,8 @@ pub struct ConvergibleTable {
     pub statement_fn: fn() -> TableCreateStatement,
     /// Named CHECK constraints that the convergence engine should ensure exist.
     pub named_constraints: Vec<NamedConstraint>,
+    /// Named foreign keys that the convergence engine should ensure exist.
+    pub foreign_keys: Vec<NamedForeignKey>,
     /// Columns that are no longer part of the schema and should be dropped.
     pub columns_to_drop: &'static [&'static str],
     /// Optional mirror table (e.g., audit.archived_events for core.events).
@@ -172,6 +186,25 @@ async fn actual_named_constraints(
          JOIN pg_class r ON c.conrelid = r.oid
          JOIN pg_namespace n ON r.relnamespace = n.oid
          WHERE n.nspname = $1 AND r.relname = $2 AND c.contype = 'c'",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+async fn actual_named_foreign_keys(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, ApplyError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT c.conname
+         FROM pg_constraint c
+         JOIN pg_class r ON c.conrelid = r.oid
+         JOIN pg_namespace n ON r.relnamespace = n.oid
+         WHERE n.nspname = $1 AND r.relname = $2 AND c.contype = 'f'",
     )
     .bind(schema)
     .bind(table)
@@ -280,6 +313,34 @@ async fn converge_named_constraints(
     Ok(())
 }
 
+/// Ensures all named foreign keys are present on the table.
+///
+/// Missing foreign keys are added exactly once. Changed definitions are not
+/// auto-converged; this matches the current named CHECK behavior.
+async fn converge_named_foreign_keys(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    foreign_keys: &[(String, String)],
+) -> Result<(), ApplyError> {
+    if foreign_keys.is_empty() {
+        return Ok(());
+    }
+
+    let existing: HashSet<String> = actual_named_foreign_keys(pool, schema, table)
+        .await?
+        .into_iter()
+        .collect();
+
+    for (name, sql) in foreign_keys {
+        if !existing.contains(name) {
+            pool.execute(sql.as_str()).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Drops indexes that have been renamed or superseded, in a single round trip.
 ///
 /// These are one-time cleanup operations. The `IF NOT EXISTS` on the replacement
@@ -370,6 +431,10 @@ pub fn convergible_tables() -> Vec<ConvergibleTable> {
                     expression: "node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')",
                 },
             ],
+            foreign_keys: vec![NamedForeignKey {
+                name: "events_node_run_id_fkey",
+                statement_fn: Events::create_node_run_foreign_key,
+            }],
             // node_version was the predecessor to node_run_id.
             columns_to_drop: &["node_version"],
             // audit.archived_events was created with LIKE core.events INCLUDING ALL.
@@ -391,6 +456,7 @@ pub fn convergible_tables() -> Vec<ConvergibleTable> {
             meta: find_meta("core.node_manifests"),
             statement_fn: NodeManifests::create_table_statement,
             named_constraints: vec![],
+            foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
         },
@@ -425,6 +491,16 @@ pub async fn converge_tables(
             });
             (primary, mirror)
         };
+        let declared_foreign_keys: Vec<(String, String)> = ct
+            .foreign_keys
+            .iter()
+            .map(|foreign_key| {
+                (
+                    foreign_key.name.to_string(),
+                    (foreign_key.statement_fn)().to_string(PostgresQueryBuilder),
+                )
+            })
+            .collect();
 
         // Phase 2 (async): apply DDL using only Send-safe String data.
         // One existence check per table — helpers skip the check since we gate here.
@@ -435,6 +511,13 @@ pub async fn converge_tables(
             drop_legacy_columns(pool, ct.meta.schema, ct.meta.name, ct.columns_to_drop).await?;
             converge_named_constraints(pool, ct.meta.schema, ct.meta.name, &ct.named_constraints)
                 .await?;
+            converge_named_foreign_keys(
+                pool,
+                ct.meta.schema,
+                ct.meta.name,
+                &declared_foreign_keys,
+            )
+            .await?;
         }
 
         if let Some((mirror, mirror_col_sqls)) = mirror_cols {
@@ -498,6 +581,18 @@ pub async fn report_column_gaps(
         for nc in &ct.named_constraints {
             if !existing_constraints.contains(nc.name) {
                 gaps.push(format!("missing {qname} constraint {}", nc.name));
+            }
+        }
+
+        let existing_foreign_keys: HashSet<String> =
+            actual_named_foreign_keys(pool, ct.meta.schema, ct.meta.name)
+                .await?
+                .into_iter()
+                .collect();
+
+        for foreign_key in &ct.foreign_keys {
+            if !existing_foreign_keys.contains(foreign_key.name) {
+                gaps.push(format!("missing {qname} foreign key {}", foreign_key.name));
             }
         }
     }

@@ -84,6 +84,44 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
+async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-node-run-integrity-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/node-run-integrity.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None))
+        .with_node_run_id(Uuid::now_v7());
+
+    let error = ctx
+        .pool
+        .events()
+        .insert(event)
+        .await
+        .expect_err("unknown node_run_id must be rejected");
+    let message = error.to_string();
+    let normalized_message = message.to_lowercase();
+    assert!(
+        normalized_message.contains("node_run")
+            || normalized_message.contains("foreign key")
+            || normalized_message.contains("constraint violation"),
+        "unexpected error message: {message}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = uuid::Uuid::now_v7();
     let identifier = format!("test-material-{forced_id}");
