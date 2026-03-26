@@ -215,6 +215,7 @@ impl NatsConnectionConfig {
     /// Connect to the NATS server using this configuration.
     pub async fn connect(&self) -> Result<Client, SinexError> {
         self.validate()?;
+        self.ensure_rustls_crypto_provider()?;
         let opts = self.to_options().await?;
 
         info!(
@@ -241,6 +242,60 @@ impl NatsConnectionConfig {
         } else {
             "none"
         }
+    }
+
+    fn ensure_rustls_crypto_provider(&self) -> Result<(), SinexError> {
+        let uses_tls = self.require_tls
+            || self.ca_cert.is_some()
+            || self.client_cert.is_some()
+            || self.client_key.is_some()
+            || self.url.starts_with("tls://")
+            || self.url.starts_with("wss://");
+        if !uses_tls {
+            return Ok(());
+        }
+
+        if rustls::crypto::CryptoProvider::get_default().is_some() {
+            return Ok(());
+        }
+
+        match rustls::crypto::aws_lc_rs::default_provider().install_default() {
+            Ok(()) => Ok(()),
+            Err(_) if rustls::crypto::CryptoProvider::get_default().is_some() => Ok(()),
+            Err(_) => Err(SinexError::configuration(
+                "Failed to install Rustls crypto provider for TLS-enabled NATS connection"
+                    .to_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are justified here because they exercise private TLS
+    // provider installation behavior directly.
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn tls_provider_installation_is_idempotent() -> xtask::sandbox::TestResult<()> {
+        let cfg = NatsConnectionConfig {
+            url: "tls://localhost:4222".to_string(),
+            require_tls: true,
+            ..Default::default()
+        };
+
+        cfg.ensure_rustls_crypto_provider()?;
+        cfg.ensure_rustls_crypto_provider()?;
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn non_tls_config_skips_provider_installation() -> xtask::sandbox::TestResult<()> {
+        let cfg = NatsConnectionConfig::default();
+        cfg.ensure_rustls_crypto_provider()?;
+        Ok(())
     }
 }
 

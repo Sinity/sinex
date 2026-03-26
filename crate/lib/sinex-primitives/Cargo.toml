@@ -9,12 +9,13 @@ default = []
 testing = []
 proptest = ["dep:proptest"]
 sqlx = ["dep:sqlx"]
-nats = ["dep:async-nats", "dep:nkeys", "dep:futures"]
+nats = ["dep:async-nats", "dep:nkeys", "dep:futures", "dep:rustls"]
 
 [dependencies]
 # Core dependencies
 async-nats = { workspace = true, optional = true }
 nkeys = { version = "0.3", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"], optional = true }
 urlencoding = "2.1"
 percent-encoding = "2.3"
 bytes = "1.5"
