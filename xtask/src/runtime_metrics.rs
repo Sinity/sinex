@@ -1,6 +1,6 @@
 //! Runtime metrics from the Sinex Postgres database.
 //!
-//! Provides single-shot queries against `core.node_manifests` and telemetry
+//! Provides single-shot queries against runtime heartbeat state and telemetry
 //! events to surface ingestd health, consumer lag, and batch latency in
 //! xtask status/doctor/run commands.
 
@@ -16,7 +16,7 @@ pub enum IngestdStatus {
     Healthy,
     /// Heartbeat older than stale threshold
     Stale,
-    /// No node_manifests row or status != 'active'
+    /// No live runtime row was found
     Down,
     /// Could not query Postgres
     Unknown,
@@ -225,16 +225,43 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         .connect(db_url)
         .await?;
 
-    // 1. Heartbeat status from node_manifests
+    // 1. Heartbeat status from concrete node runs when present, falling back
+    // to manifest heartbeats for core services that have not adopted run
+    // registration yet.
     let heartbeat_row = sqlx::query_as!(
         HeartbeatRow,
         r#"
+        WITH run_candidate AS (
+            SELECT
+                nr.status,
+                EXTRACT(EPOCH FROM (NOW() - nr.last_heartbeat_at))::bigint AS age_secs,
+                0 AS priority
+            FROM core.node_runs nr
+            JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+            WHERE nm.node_name = 'sinex-ingestd'
+              AND nr.status = 'running'
+            ORDER BY nr.last_heartbeat_at DESC NULLS LAST
+            LIMIT 1
+        ),
+        manifest_candidate AS (
+            SELECT
+                nm.status,
+                EXTRACT(EPOCH FROM (NOW() - nm.last_heartbeat_at))::bigint AS age_secs,
+                1 AS priority
+            FROM core.node_manifests nm
+            WHERE nm.node_name = 'sinex-ingestd'
+            ORDER BY nm.last_heartbeat_at DESC NULLS LAST
+            LIMIT 1
+        )
         SELECT
             status,
-            EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::bigint AS "age_secs: i64"
-        FROM core.node_manifests
-        WHERE node_name = 'sinex-ingestd'
-        ORDER BY last_heartbeat_at DESC NULLS LAST
+            age_secs as "age_secs: i64"
+        FROM (
+            SELECT * FROM run_candidate
+            UNION ALL
+            SELECT * FROM manifest_candidate
+        ) candidates
+        ORDER BY priority
         LIMIT 1
         "#,
     )

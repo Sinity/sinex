@@ -935,36 +935,107 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Get active nodes based on status column and recent heartbeat.
-    ///
-    /// Returns nodes where `status = 'active'` AND `last_heartbeat_at`
-    /// is within the last 5 minutes (or configured stale threshold).
-    pub async fn get_active_nodes(&self) -> DbResult<Vec<NodeManifest>> {
-        let stale_secs = node_heartbeat_stale_after().as_secs() as i64;
+    /// List live node presence, preferring concrete run rows and falling back
+    /// to manifest heartbeats for services that do not yet register runs.
+    pub async fn list_live_node_presence(
+        &self,
+        stale_after: Duration,
+    ) -> DbResult<Vec<LiveNodePresence>> {
+        let stale_secs = stale_after.as_secs() as f64;
         sqlx::query_as!(
-            NodeManifest,
+            LiveNodePresence,
             r#"
+            WITH active_runs AS (
+                SELECT
+                    nm.node_name::text as node_name,
+                    nm.node_type::text as node_type,
+                    nm.version,
+                    nm.description,
+                    nr.service_name,
+                    nr.instance_id,
+                    nr.id as node_run_id,
+                    nr.host,
+                    nr.status,
+                    nr.last_heartbeat_at,
+                    nr.started_at,
+                    'run'::text as heartbeat_source
+                FROM core.node_runs nr
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                WHERE nr.status = 'running'
+                  AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
+            )
             SELECT
-                id,
-                node_name,
-                node_type,
-                version,
+                live_nodes.node_name as "node_name!: NodeName",
+                live_nodes.node_type as "node_type!: NodeType",
+                live_nodes.version as "version!",
                 description,
-                anchor_rule_version,
-                config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
-                status,
-                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests
-            WHERE status = 'active'
-              AND last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
-            ORDER BY node_name, version
+                service_name,
+                instance_id,
+                node_run_id as "node_run_id: uuid::Uuid",
+                host,
+                live_nodes.status as "status!",
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                started_at as "started_at: sinex_primitives::temporal::Timestamp",
+                live_nodes.heartbeat_source as "heartbeat_source!"
+            FROM (
+                SELECT
+                    node_name,
+                    node_type,
+                    version,
+                    description,
+                    service_name,
+                    instance_id,
+                    node_run_id,
+                    host,
+                    status,
+                    last_heartbeat_at,
+                    started_at,
+                    heartbeat_source
+                FROM active_runs
+
+                UNION ALL
+
+                SELECT
+                    nm.node_name::text as node_name,
+                    nm.node_type::text as node_type,
+                    nm.version,
+                    nm.description,
+                    NULL::text as service_name,
+                    NULL::text as instance_id,
+                    NULL::uuid as node_run_id,
+                    NULL::text as host,
+                    nm.status,
+                    nm.last_heartbeat_at,
+                    NULL::timestamptz as started_at,
+                    'manifest'::text as heartbeat_source
+                FROM core.node_manifests nm
+                WHERE nm.status = 'active'
+                  AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM active_runs ar
+                      WHERE ar.node_name = nm.node_name::text
+                        AND ar.version = nm.version
+                  )
+            ) live_nodes
             "#,
-            stale_secs as f64
+            stale_secs
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get active nodes"))
+        .map_err(|e| db_error(e, "list live node presence"))
+        .map(|mut nodes| {
+            nodes.sort_by(|left, right| {
+                left.node_name
+                    .as_ref()
+                    .cmp(right.node_name.as_ref())
+                    .then_with(|| left.version.cmp(&right.version))
+                    .then_with(|| left.service_name.cmp(&right.service_name))
+                    .then_with(|| left.instance_id.cmp(&right.instance_id))
+                    .then_with(|| left.started_at.cmp(&right.started_at))
+            });
+            nodes
+        })
     }
 
     /// Get node health status
@@ -974,23 +1045,59 @@ impl StateRepository<'_> {
 
         let row = sqlx::query!(
             r#"
-            WITH node_status AS (
+            WITH active_runs AS (
                 SELECT
-                    node_name,
-                    BOOL_OR(
-                        status = 'active'
-                        AND last_heartbeat_at IS NOT NULL
-                        AND last_heartbeat_at >= $1
-                    ) AS has_live_version,
-                    MAX(last_heartbeat_at) AS latest_heartbeat_at
+                    nm.node_name,
+                    COUNT(*)::bigint AS active_run_count,
+                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
+                FROM core.node_runs nr
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                WHERE nr.status = 'running'
+                  AND nr.last_heartbeat_at IS NOT NULL
+                  AND nr.last_heartbeat_at >= $1
+                GROUP BY nm.node_name
+            ),
+            manifest_only_live AS (
+                SELECT
+                    nm.node_name,
+                    MAX(nm.last_heartbeat_at) AS latest_heartbeat_at
+                FROM core.node_manifests nm
+                WHERE nm.status = 'active'
+                  AND nm.last_heartbeat_at IS NOT NULL
+                  AND nm.last_heartbeat_at >= $1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM active_runs ar
+                      WHERE ar.node_name = nm.node_name
+                  )
+                GROUP BY nm.node_name
+            ),
+            node_inventory AS (
+                SELECT DISTINCT node_name
                 FROM core.node_manifests
-                GROUP BY node_name
+
+                UNION
+
+                SELECT DISTINCT nm.node_name
+                FROM core.node_runs nr
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+            ),
+            node_status AS (
+                SELECT
+                    ni.node_name,
+                    COALESCE(ar.active_run_count, 0) AS active_run_count,
+                    COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
+                    (ar.node_name IS NOT NULL OR mol.node_name IS NOT NULL) AS has_live_instance
+                FROM node_inventory ni
+                LEFT JOIN active_runs ar ON ar.node_name = ni.node_name
+                LEFT JOIN manifest_only_live mol ON mol.node_name = ni.node_name
             )
             SELECT
-                COUNT(*) FILTER (WHERE has_live_version) as "active_count!",
-                COUNT(*) FILTER (WHERE NOT has_live_version) as "inactive_count!",
+                COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
+                COUNT(*) FILTER (WHERE NOT has_live_instance) as "inactive_count!",
                 COUNT(*) as "unique_nodes!",
-                MIN(latest_heartbeat_at) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
+                COALESCE(SUM(active_run_count), 0)::bigint as "active_run_count!",
+                MIN(latest_heartbeat_at) FILTER (WHERE has_live_instance) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
             FROM node_status
             "#,
             *cutoff
@@ -1003,6 +1110,7 @@ impl StateRepository<'_> {
             active_count: row.active_count,
             inactive_count: row.inactive_count,
             unique_nodes: row.unique_nodes,
+            active_run_count: row.active_run_count,
             oldest_heartbeat: row.oldest_heartbeat,
         })
     }
@@ -1174,12 +1282,30 @@ pub struct NodeRun {
     pub effective_config: Option<JsonValue>,
 }
 
+/// Live node presence for operator-facing status surfaces.
+#[derive(Debug, sqlx::FromRow)]
+pub struct LiveNodePresence {
+    pub node_name: NodeName,
+    pub node_type: NodeType,
+    pub version: String,
+    pub description: Option<String>,
+    pub service_name: Option<String>,
+    pub instance_id: Option<String>,
+    pub node_run_id: Option<Uuid>,
+    pub host: Option<String>,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub started_at: Option<Timestamp>,
+    pub heartbeat_source: String,
+}
+
 /// Node health summary
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeHealthSummary {
     pub active_count: i64,
     pub inactive_count: i64,
     pub unique_nodes: i64,
+    pub active_run_count: i64,
     pub oldest_heartbeat: Option<Timestamp>,
 }
 

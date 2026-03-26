@@ -57,10 +57,7 @@ pub use coordination::{
     handle_coordination_get_leader, handle_coordination_instance_health,
     handle_coordination_list_instances,
 };
-pub use node_registry::{
-    handle_nodes_health, handle_nodes_heartbeat, handle_nodes_list_active,
-    handle_nodes_mark_inactive,
-};
+pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use system::handle_system_health;
 pub use telemetry::{

@@ -356,10 +356,10 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_gitops_create_source,
         handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_heartbeat,
-        handle_nodes_list, handle_nodes_list_active, handle_nodes_mark_inactive,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_replay_approve_operation,
+        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
+        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_replay_approve_operation,
         handle_replay_cancel_operation, handle_replay_create_operation,
         handle_replay_execute_operation, handle_replay_list_operations,
         handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
@@ -522,17 +522,6 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "nodes.set_horizon",
             Role::Write,
             boxed!(handle_nodes_set_horizon, 4),
-        )
-        // Node registry lifecycle (Write - updates node status)
-        .pool_rpc(
-            "nodes.heartbeat",
-            Role::Write,
-            boxed!(handle_nodes_heartbeat),
-        )
-        .pool_rpc(
-            "nodes.mark_inactive",
-            Role::Write,
-            boxed!(handle_nodes_mark_inactive),
         )
         // Operations log write (Write)
         .pool_auth_rpc("ops.start", Role::Write, boxed!(handle_ops_start, 3))

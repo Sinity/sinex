@@ -276,15 +276,18 @@ async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext
         "heartbeat should only be persisted for the requested version"
     );
 
-    let active_nodes = repo.get_active_nodes().await?;
-    assert_eq!(active_nodes.len(), 1);
-    assert_eq!(active_nodes[0].node_name, node_name);
-    assert_eq!(active_nodes[0].version, "2.0.0");
+    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    assert_eq!(live_nodes.len(), 1);
+    assert_eq!(live_nodes[0].node_name, node_name);
+    assert_eq!(live_nodes[0].version, "2.0.0");
+    assert!(live_nodes[0].node_run_id.is_none());
+    assert_eq!(live_nodes[0].heartbeat_source, "manifest");
 
     let health = repo.get_node_health(Duration::from_secs(120)).await?;
     assert_eq!(health.unique_nodes, 1);
     assert_eq!(health.active_count, 1);
     assert_eq!(health.inactive_count, 0);
+    assert_eq!(health.active_run_count, 0);
 
     Ok(())
 }
@@ -326,9 +329,10 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
         "marking one version inactive must not clear the other version heartbeat"
     );
 
-    let active_nodes = repo.get_active_nodes().await?;
-    assert_eq!(active_nodes.len(), 1);
-    assert_eq!(active_nodes[0].version, "2.0.0");
+    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    assert_eq!(live_nodes.len(), 1);
+    assert_eq!(live_nodes[0].version, "2.0.0");
+    assert_eq!(live_nodes[0].heartbeat_source, "manifest");
 
     Ok(())
 }
