@@ -28,6 +28,9 @@ pub enum ReplayState {
     /// Active replay in progress
     #[sqlx(rename = "executing")]
     Executing,
+    /// Operator requested cancellation; executor is still unwinding.
+    #[sqlx(rename = "cancelling")]
+    Cancelling,
     /// Finalizing changes
     #[sqlx(rename = "committing")]
     Committing,
@@ -58,13 +61,19 @@ impl ReplayState {
 
             // From Approved
             (ReplayState::Approved, ReplayState::Executing) => true,
+            (ReplayState::Approved, ReplayState::Failed) => true,
             (ReplayState::Approved, ReplayState::Cancelled) => true,
 
             // From Executing
+            (ReplayState::Executing, ReplayState::Cancelling) => true,
             (ReplayState::Executing, ReplayState::Committing) => true,
             (ReplayState::Executing, ReplayState::Failed) => true,
-            (ReplayState::Executing, ReplayState::Cancelled) => true,
             (ReplayState::Executing, ReplayState::Executing) => true, // Pause/resume
+
+            // From Cancelling
+            (ReplayState::Cancelling, ReplayState::Cancelled) => true,
+            (ReplayState::Cancelling, ReplayState::Committing) => true,
+            (ReplayState::Cancelling, ReplayState::Failed) => true,
 
             // From Committing
             (ReplayState::Committing, ReplayState::Completed) => true,
@@ -238,6 +247,7 @@ impl ReplayStateMachine {
             ReplayState::Previewed => "Previewed",
             ReplayState::Approved => "Approved",
             ReplayState::Executing => "Executing",
+            ReplayState::Cancelling => "Cancelling",
             ReplayState::Committing => "Committing",
             ReplayState::Completed => "Completed",
             ReplayState::Failed => "Failed",
@@ -1024,7 +1034,13 @@ impl ReplayStateMachine {
             tx.commit().await?;
             return Ok(());
         }
-        if !meta.state.can_transition_to(ReplayState::Cancelled) {
+        let target_state = if meta.state == ReplayState::Executing {
+            ReplayState::Cancelling
+        } else {
+            ReplayState::Cancelled
+        };
+
+        if !meta.state.can_transition_to(target_state) {
             tx.commit().await?;
             return Err(SinexError::invalid_state(
                 "Operation cannot transition to Cancelled from current state",
@@ -1033,10 +1049,15 @@ impl ReplayStateMachine {
             .with_id("operation_id", operation_id.to_string())
             .with_operation("cancel_operation"));
         }
-        meta.state = ReplayState::Cancelled;
-        meta.finished_at = Some(sinex_primitives::temporal::now());
-        meta.outcome = Some(ReplayOutcome::Cancelled);
+        meta.state = target_state;
         meta.error_details = Some(reason.clone());
+        if target_state == ReplayState::Cancelled {
+            meta.finished_at = Some(sinex_primitives::temporal::now());
+            meta.outcome = Some(ReplayOutcome::Cancelled);
+        } else {
+            meta.finished_at = None;
+            meta.outcome = None;
+        }
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
         let duration_ms = Self::meta_duration_ms(&meta);
@@ -1059,7 +1080,72 @@ impl ReplayStateMachine {
         .await?;
         tx.commit().await?;
 
-        info!("Operation {} cancelled: {}", operation_id, reason);
+        match target_state {
+            ReplayState::Cancelled => info!("Operation {} cancelled: {}", operation_id, reason),
+            ReplayState::Cancelling => info!(
+                "Operation {} cancellation requested while executing: {}",
+                operation_id, reason
+            ),
+            _ => unreachable!("cancel target state must be cancelled or cancelling"),
+        }
+        Ok(())
+    }
+
+    /// Finalize a previously requested cancellation after execution has actually stopped.
+    pub async fn finish_cancellation(&self, operation_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
+            "#,
+            operation_id
+        )
+        .fetch_one(tx.as_mut())
+        .await?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        if meta.state == ReplayState::Cancelled {
+            tx.commit().await?;
+            return Ok(());
+        }
+        if meta.state != ReplayState::Cancelling {
+            tx.commit().await?;
+            return Err(SinexError::invalid_state(
+                "Operation is not awaiting cancellation finalization",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("finish_cancel_operation"));
+        }
+
+        meta.state = ReplayState::Cancelled;
+        meta.finished_at = Some(sinex_primitives::temporal::now());
+        meta.outcome = Some(ReplayOutcome::Cancelled);
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        let duration_ms = Self::meta_duration_ms(&meta);
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4,
+                duration_ms = COALESCE($5, duration_ms)
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            status,
+            msg,
+            meta_json,
+            duration_ms,
+        )
+        .execute(tx.as_mut())
+        .await?;
+        tx.commit().await?;
+
+        info!("Operation {} cancellation finalized", operation_id);
         Ok(())
     }
 
@@ -1146,7 +1232,7 @@ impl ReplayStateMachine {
             FROM core.operations_log
             WHERE operation_type = 'replay'
               AND result_status = 'running'
-              AND result_message IN ('executing', 'committing')
+              AND result_message IN ('executing', 'cancelling', 'committing')
               AND (preview_summary->>'started_at')::timestamptz
                   < NOW() - make_interval(secs => $1)
             "#,
@@ -1194,7 +1280,10 @@ impl ReplayStateMachine {
             // Re-check state after acquiring the row lock — another gateway instance
             // may have recovered or completed this operation between our initial scan
             // and this transaction.
-            if !matches!(meta.state, ReplayState::Executing | ReplayState::Committing) {
+            if !matches!(
+                meta.state,
+                ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
+            ) {
                 tx.rollback().await.ok();
                 continue;
             }
@@ -1337,6 +1426,7 @@ impl ReplayStateMachine {
             ReplayState::Previewed => ("running", "previewed"),
             ReplayState::Approved => ("running", "approved"),
             ReplayState::Executing => ("running", "executing"),
+            ReplayState::Cancelling => ("running", "cancelling"),
             ReplayState::Committing => ("running", "committing"),
         }
     }

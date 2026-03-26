@@ -658,7 +658,7 @@ where
                     event_type: EventType::new(self.node.output_event_type())?,
                     payload: output_payload,
                     ts_orig: Some(output_result.ts_orig),
-                    host: HostName::new(&self.host),
+                    host: HostName::new(&self.host)?,
                     node_run_id: None,
                     payload_schema_id: None,
                     provenance: Provenance::Synthesis {

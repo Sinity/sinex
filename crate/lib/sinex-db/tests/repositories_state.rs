@@ -3,6 +3,7 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::{Id, Uuid};
+use std::time::Duration;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -237,5 +238,97 @@ async fn update_tombstone_operation_rejects_missing_operation(ctx: TestContext) 
         .expect_err("missing tombstone operation updates must fail");
 
     assert!(err.to_string().contains("Tombstone operation not found"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("versioned-heartbeat-node");
+
+    repo.register_node(&node_name, NodeType::Service, "1.0.0", Some("older build"))
+        .await?;
+    repo.register_node(&node_name, NodeType::Service, "2.0.0", Some("newer build"))
+        .await?;
+
+    assert!(repo
+        .mark_node_inactive_for_version(&node_name, "1.0.0")
+        .await?);
+    assert!(repo
+        .update_node_heartbeat_for_version(&node_name, "2.0.0")
+        .await?);
+
+    let manifests = repo.get_all_nodes().await?;
+    let older = manifests
+        .iter()
+        .find(|manifest| manifest.node_name == node_name && manifest.version == "1.0.0")
+        .expect("older manifest version should exist");
+    let newer = manifests
+        .iter()
+        .find(|manifest| manifest.node_name == node_name && manifest.version == "2.0.0")
+        .expect("newer manifest version should exist");
+
+    assert_eq!(older.status, "inactive");
+    assert!(older.last_heartbeat_at.is_none());
+    assert_eq!(newer.status, "active");
+    assert!(
+        newer.last_heartbeat_at.is_some(),
+        "heartbeat should only be persisted for the requested version"
+    );
+
+    let active_nodes = repo.get_active_nodes().await?;
+    assert_eq!(active_nodes.len(), 1);
+    assert_eq!(active_nodes[0].node_name, node_name);
+    assert_eq!(active_nodes[0].version, "2.0.0");
+
+    let health = repo.get_node_health(Duration::from_secs(120)).await?;
+    assert_eq!(health.unique_nodes, 1);
+    assert_eq!(health.active_count, 1);
+    assert_eq!(health.inactive_count, 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("versioned-inactive-node");
+
+    repo.register_node(&node_name, NodeType::Service, "1.0.0", Some("older build"))
+        .await?;
+    repo.register_node(&node_name, NodeType::Service, "2.0.0", Some("newer build"))
+        .await?;
+    assert!(repo
+        .update_node_heartbeat_for_version(&node_name, "1.0.0")
+        .await?);
+    assert!(repo
+        .update_node_heartbeat_for_version(&node_name, "2.0.0")
+        .await?);
+
+    assert!(repo
+        .mark_node_inactive_for_version(&node_name, "1.0.0")
+        .await?);
+
+    let manifests = repo.get_all_nodes().await?;
+    let older = manifests
+        .iter()
+        .find(|manifest| manifest.node_name == node_name && manifest.version == "1.0.0")
+        .expect("older manifest version should exist");
+    let newer = manifests
+        .iter()
+        .find(|manifest| manifest.node_name == node_name && manifest.version == "2.0.0")
+        .expect("newer manifest version should exist");
+
+    assert_eq!(older.status, "inactive");
+    assert_eq!(newer.status, "active");
+    assert!(
+        newer.last_heartbeat_at.is_some(),
+        "marking one version inactive must not clear the other version heartbeat"
+    );
+
+    let active_nodes = repo.get_active_nodes().await?;
+    assert_eq!(active_nodes.len(), 1);
+    assert_eq!(active_nodes[0].version, "2.0.0");
+
     Ok(())
 }

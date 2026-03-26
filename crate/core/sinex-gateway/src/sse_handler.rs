@@ -140,7 +140,20 @@ pub(crate) async fn handle_sse_stream(
     };
 
     // ── Register ──
-    let (sub_id, rx) = bus.register(filter);
+    let Some((sub_id, rx)) = bus.register(filter) else {
+        log_access_audit(
+            "sse",
+            "events.stream",
+            AccessOutcome::Rejected,
+            Some(&auth_ctx),
+            Some("too many active subscriptions"),
+        );
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many active event streams. Retry after existing subscriptions drain.",
+        )
+            .into_response();
+    };
     log_access_audit(
         "sse",
         "events.stream",

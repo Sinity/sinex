@@ -340,6 +340,14 @@ pub async fn run_cli() -> Result<()> {
             std::env::remove_var("XTASK_JOB_DIR");
         }
     }
+    let claimed_bg_job = std::env::var("XTASK_BG_JOB_ID")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok());
+    if claimed_bg_job.is_some() {
+        unsafe {
+            std::env::remove_var("XTASK_BG_JOB_ID");
+        }
+    }
 
     // Handle --list-commands before normal dispatch
     if cli.global.list_commands {
@@ -498,7 +506,7 @@ pub async fn run_cli() -> Result<()> {
 
     // Update history
     if let Some(id) = invocation_id
-        && let Ok(db) = history_db
+        && let Ok(db) = history_db.as_ref()
     {
         let status = match &result {
             Ok(res)
@@ -551,6 +559,28 @@ pub async fn run_cli() -> Result<()> {
             std::path::Path::new(&job_dir).join("exit_code"),
             format!("{invocation_exit_code}\n"),
         );
+
+        if let Some(job_id) = claimed_bg_job
+            && let Ok(db) = history_db.as_ref()
+        {
+            let stdout_path = std::path::Path::new(&job_dir).join("stdout.log");
+            let stderr_path = std::path::Path::new(&job_dir).join("stderr.log");
+            let job_status = if invocation_exit_code == 0 {
+                crate::history::JobLifecycleStatus::Completed
+            } else if invocation_exit_code == 124 {
+                crate::history::JobLifecycleStatus::Killed
+            } else {
+                crate::history::JobLifecycleStatus::Failed
+            };
+            let _ = db.finish_background_job(
+                job_id,
+                job_status,
+                Some(invocation_exit_code),
+                ctx.elapsed().as_secs_f64(),
+                stdout_path.exists().then_some(stdout_path.as_path()),
+                stderr_path.exists().then_some(stderr_path.as_path()),
+            );
+        }
 
         // W3: Desktop notification when running as a background subprocess.
         // Only fires when XTASK_JOB_DIR is set (we ARE the bg subprocess) and

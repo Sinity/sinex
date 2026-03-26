@@ -295,7 +295,7 @@ impl EventRepository<'_> {
 
         let mut qb = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         qb.push_bind(interval);
-        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
+        qb.push("::interval, ts_orig) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY bucket");
 

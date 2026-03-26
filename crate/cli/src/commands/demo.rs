@@ -101,7 +101,7 @@ impl DemoCommand {
         let started = Instant::now();
 
         let mut rng = SmallRng::seed_from_u64(self.seed);
-        let host = HostName::new("sinexctl-demo-host");
+        let host = HostName::from_static("sinexctl-demo-host");
         let source = EventSource::from_static(DEMO_SOURCE);
 
         let mut total_inserted: usize = 0;

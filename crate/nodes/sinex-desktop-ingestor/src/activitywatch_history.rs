@@ -7,6 +7,7 @@ use rusqlite::types::Type;
 use serde_json::{Value as JsonValue, json};
 use sinex_node_sdk::{
     SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, read_rows_after,
+    read_rows_with_params,
 };
 use sinex_primitives::Timestamp;
 use std::io::{Error as IoError, ErrorKind};
@@ -82,54 +83,86 @@ pub fn ensure_activitywatch_sqlite(path: &Utf8PathBuf) -> Result<(), SqliteTable
 pub fn read_activitywatch_history(
     path: &Utf8PathBuf,
     from_row_id: i64,
+    end_time: Option<Timestamp>,
 ) -> Result<(Vec<ActivityWatchHistoryEntry>, i64), rusqlite::Error> {
-    read_rows_after(
-        path,
-        "SELECT
-            e.ROWID,
-            b.name,
-            e.starttime,
-            e.endtime,
-            e.data
-         FROM events e
-         JOIN buckets b ON b.id = e.bucketrow
-         WHERE e.ROWID > ?
-           AND (
-             b.name LIKE 'aw-watcher-window_%'
-             OR b.name LIKE 'aw-watcher-web_%'
-             OR b.name LIKE 'aw-watcher-afk_%'
-           )
-         ORDER BY e.ROWID ASC",
-        from_row_id,
-        |row| {
-            let row_id: i64 = row.get(0)?;
-            let bucket_id: String = row.get(1)?;
-            let (kind, host) = classify_bucket(&bucket_id);
-            let start_ns: i64 = row.get(2)?;
-            let end_ns: i64 = row.get(3)?;
-            let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
-            let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
-            let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
-            let duration_ms = u64::try_from(duration_ns / 1_000_000).unwrap_or(0);
+    fn map_activitywatch_row(
+        row: &rusqlite::Row<'_>,
+    ) -> Result<ActivityWatchHistoryEntry, rusqlite::Error> {
+        let row_id: i64 = row.get(0)?;
+        let bucket_id: String = row.get(1)?;
+        let (kind, host) = classify_bucket(&bucket_id);
+        let start_ns: i64 = row.get(2)?;
+        let end_ns: i64 = row.get(3)?;
+        let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
+        let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
+        let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
+        let duration_ms = u64::try_from(duration_ns / 1_000_000).unwrap_or(0);
 
-            let payload = row
-                .get::<_, Option<String>>(4)?
-                .map(|value| parse_activitywatch_payload(row_id, &value))
-                .transpose()?
-                .unwrap_or(JsonValue::Null);
+        let payload = row
+            .get::<_, Option<String>>(4)?
+            .map(|value| parse_activitywatch_payload(row_id, &value))
+            .transpose()?
+            .unwrap_or(JsonValue::Null);
 
-            Ok(ActivityWatchHistoryEntry {
-                row_id,
-                bucket_id,
-                kind,
-                host,
-                started_at,
-                ended_at,
-                duration_ms,
-                data: payload,
-            })
-        },
-    )
+        Ok(ActivityWatchHistoryEntry {
+            row_id,
+            bucket_id,
+            kind,
+            host,
+            started_at,
+            ended_at,
+            duration_ms,
+            data: payload,
+        })
+    }
+
+    if let Some(end_time) = end_time {
+        let end_time_ns =
+            i64::try_from(end_time.inner().unix_timestamp_nanos()).unwrap_or(i64::MAX);
+        read_rows_with_params(
+            path,
+            "SELECT
+                e.ROWID,
+                b.name,
+                e.starttime,
+                e.endtime,
+                e.data
+             FROM events e
+             JOIN buckets b ON b.id = e.bucketrow
+             WHERE e.ROWID > ?1
+               AND e.starttime <= ?2
+               AND (
+                 b.name LIKE 'aw-watcher-window_%'
+                 OR b.name LIKE 'aw-watcher-web_%'
+                 OR b.name LIKE 'aw-watcher-afk_%'
+               )
+             ORDER BY e.ROWID ASC",
+            (from_row_id, end_time_ns),
+            from_row_id,
+            map_activitywatch_row,
+        )
+    } else {
+        read_rows_after(
+            path,
+            "SELECT
+                e.ROWID,
+                b.name,
+                e.starttime,
+                e.endtime,
+                e.data
+             FROM events e
+             JOIN buckets b ON b.id = e.bucketrow
+             WHERE e.ROWID > ?
+               AND (
+                 b.name LIKE 'aw-watcher-window_%'
+                 OR b.name LIKE 'aw-watcher-web_%'
+                 OR b.name LIKE 'aw-watcher-afk_%'
+               )
+             ORDER BY e.ROWID ASC",
+            from_row_id,
+            map_activitywatch_row,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -240,7 +273,7 @@ mod tests {
     #[sinex_test]
     async fn activitywatch_history_reader_parses_all_supported_bucket_types() -> TestResult<()> {
         let path = fixture_db()?;
-        let (entries, last_row_id) = read_activitywatch_history(&path, 0)?;
+        let (entries, last_row_id) = read_activitywatch_history(&path, 0, None)?;
 
         assert_eq!(entries.len(), 3);
         assert_eq!(last_row_id, 3);
@@ -259,9 +292,23 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn activitywatch_history_reader_respects_end_time_boundary() -> TestResult<()> {
+        let path = fixture_db()?;
+        let end_time = super::Timestamp::from_unix_timestamp(4)
+            .ok_or_else(|| eyre!("valid ActivityWatch end time"))?;
+
+        let (entries, last_row_id) = read_activitywatch_history(&path, 0, Some(end_time))?;
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, ActivityWatchEntryKind::Window);
+        assert_eq!(last_row_id, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn activitywatch_history_reader_respects_row_checkpoint() -> TestResult<()> {
         let path = fixture_db()?;
-        let (entries, last_row_id) = read_activitywatch_history(&path, 1)?;
+        let (entries, last_row_id) = read_activitywatch_history(&path, 1, None)?;
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].row_id, 2);
@@ -289,7 +336,7 @@ mod tests {
             ),
         )?;
 
-        let (entries, last_row_id) = read_activitywatch_history(&path, 3)?;
+        let (entries, last_row_id) = read_activitywatch_history(&path, 3, None)?;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(
@@ -324,7 +371,7 @@ mod tests {
             ),
         )?;
 
-        let (entries, last_row_id) = read_activitywatch_history(&path, 3)?;
+        let (entries, last_row_id) = read_activitywatch_history(&path, 3, None)?;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(

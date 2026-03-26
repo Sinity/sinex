@@ -2565,7 +2565,7 @@ mod tests {
             id: Some(Id::new()),
             source: EventSource::new("test.source")?,
             event_type: EventType::new("test.event")?,
-            host: HostName::new("localhost"),
+            host: HostName::from_static("localhost"),
             payload: json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             node_run_id: None,

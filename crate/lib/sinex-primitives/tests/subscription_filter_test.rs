@@ -10,11 +10,16 @@ use xtask::sandbox::sinex_test;
 
 /// Build a test event with the given source, type, host, and payload.
 fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::Value) -> Event {
+    let host = match HostName::new(host) {
+        Ok(host) => host,
+        Err(error) => panic!("test host should be valid: {error}"),
+    };
+
     Event {
         id: None,
         source: source.into(),
         event_type: event_type.into(),
-        host: HostName::new(host),
+        host,
         payload,
         ts_orig: Some(Timestamp::now()),
         node_run_id: None,
@@ -86,7 +91,7 @@ async fn event_type_filter_matches() -> ::xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn host_filter_matches() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
-        hosts: vec![HostName::new("server01")],
+        hosts: vec![HostName::from_static("server01")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("x", "x", "server01", json!({}))));

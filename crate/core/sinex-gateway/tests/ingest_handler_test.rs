@@ -101,6 +101,26 @@ async fn events_ingest_rejects_invalid_rfc3339_timestamp(ctx: TestContext) -> Te
 }
 
 #[sinex_test]
+async fn events_ingest_rejects_invalid_host(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    let error = handle_events_ingest(
+        &harness.services,
+        json!({
+            "source": "gateway.test",
+            "event_type": "inline.event",
+            "host": "bad_host",
+            "payload": { "value": 42 }
+        }),
+    )
+    .await
+    .expect_err("invalid host should be rejected by the gateway");
+
+    assert!(error.to_string().contains("invalid `host`"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn events_ingest_marks_material_failed_when_publish_fails(
     ctx: TestContext,
 ) -> TestResult<()> {

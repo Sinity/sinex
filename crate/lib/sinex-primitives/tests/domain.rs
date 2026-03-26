@@ -2,7 +2,8 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    AnnexKey, EventSource, EventType, JobId, NatsSubject, SanitizedPath, SchemaVersion, ServiceName,
+    AnnexKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath,
+    SchemaVersion, ServiceName,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -56,6 +57,24 @@ async fn event_source_validation_preserves_rules() -> TestResult<()> {
     assert!(EventSource::new("").is_err());
     assert!(EventSource::new("FS-Watcher").is_err());
     assert!(EventSource::new("fs watcher").is_err());
+    Ok(())
+}
+
+#[sinex_test]
+async fn hostname_validation_enforces_format() -> TestResult<()> {
+    assert!(HostName::new("localhost").is_ok());
+    assert!(HostName::new("sinnix-prime").is_ok());
+    assert!(HostName::new("node01.example.net").is_ok());
+
+    assert!(HostName::new("").is_err());
+    assert!(HostName::new(".leading-dot").is_err());
+    assert!(HostName::new("trailing-dot.").is_err());
+    assert!(HostName::new("double..dot").is_err());
+    assert!(HostName::new("-leading-hyphen").is_err());
+    assert!(HostName::new("trailing-hyphen-").is_err());
+    assert!(HostName::new("bad_host").is_err());
+    assert!(HostName::new("test\0host").is_err());
+
     Ok(())
 }
 

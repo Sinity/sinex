@@ -225,9 +225,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             event_type,
             payload: json,
             ts_orig: Some(Timestamp::now()),
-            host: sinex_primitives::domain::HostName::new(
-                gethostname::gethostname().to_string_lossy().to_string(),
-            ),
+            host: crate::sandbox::local_test_host(),
             node_run_id: Some(sinex_primitives::Uuid::now_v7()),
             payload_schema_id: None,
             provenance: sinex_primitives::events::Provenance::Material {
@@ -327,9 +325,7 @@ impl<'ctx> TestCoreStack<'ctx> {
                 event_type: EventType::new(event_type)?,
                 payload: serde_json::json!({ "index": i, "seeded": true }),
                 ts_orig: Some(Timestamp::now()),
-                host: sinex_primitives::domain::HostName::new(
-                    gethostname::gethostname().to_string_lossy().to_string(),
-                ),
+                host: crate::sandbox::local_test_host(),
                 node_run_id: Some(sinex_primitives::Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: sinex_primitives::events::Provenance::Material {

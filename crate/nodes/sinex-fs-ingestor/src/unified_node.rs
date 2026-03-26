@@ -412,8 +412,11 @@ impl FilesystemNode {
 
     fn snapshot_state(&self) -> FilesystemState {
         let host = self.service_info().map_or_else(
-            |_| HostName::new("unknown-host"),
-            |info| HostName::new(info.host().to_string()),
+            |_| HostName::from_static("unknown-host"),
+            |info| {
+                HostName::new(info.host().to_string())
+                    .unwrap_or_else(|_| HostName::from_static("unknown-host"))
+            },
         );
 
         FilesystemState {

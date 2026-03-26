@@ -142,6 +142,25 @@ async fn mark_inactive_removes_from_active_list(ctx: TestContext) -> TestResult<
     Ok(())
 }
 
+#[sinex_test]
+async fn mark_inactive_rejects_unregistered_manifest(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+
+    let error = handle_nodes_mark_inactive(
+        pool,
+        json!({ "node_name": "missing-node", "version": "9.9.9-test" }),
+    )
+    .await
+    .expect_err("mark_inactive without a registered manifest must fail loudly");
+    assert!(
+        error
+            .to_string()
+            .contains("Node manifest missing-node@9.9.9-test is not registered")
+    );
+
+    Ok(())
+}
+
 // ─── Health summary: empty registry ─────────────────────────────────────
 
 #[sinex_test]

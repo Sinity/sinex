@@ -646,7 +646,7 @@ mod tests {
             source: EventSource::from_static("test.source"),
             event_type: EventType::from_static("test.event"),
             ts_orig: Timestamp::now(),
-            host: sinex_primitives::domain::HostName::new("localhost"),
+            host: sinex_primitives::domain::HostName::from_static("localhost"),
             payload: json!({"ok": true}),
             source_material_id: None,
             anchor_byte: None,

@@ -1,5 +1,7 @@
 //! Development sandbox and infrastructure modules.
 
+use sinex_primitives::HostName;
+
 /// Result type for test functions. Used by `#[sinex_test]` macro expansion.
 ///
 /// Uses `color_eyre::Result` for rich error reporting: colorized backtraces,
@@ -74,4 +76,9 @@ pub fn sinex_prop_runner_config(
         proptest::test_runner::FileFailurePersistence::default(),
     ));
     config
+}
+
+pub(crate) fn local_test_host() -> HostName {
+    HostName::new(gethostname::gethostname().to_string_lossy().to_string())
+        .unwrap_or_else(|_| HostName::from_static("unknown-host"))
 }

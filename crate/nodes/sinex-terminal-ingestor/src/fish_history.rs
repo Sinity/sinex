@@ -5,6 +5,8 @@
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{is_sqlite_with_tables, max_row_id_for_query, read_rows_after};
+use sinex_primitives::Timestamp;
+use sinex_node_sdk::read_rows_with_params;
 
 /// Represents a single command from Fish history
 #[derive(Debug, Clone)]
@@ -30,19 +32,35 @@ pub fn is_fish_sqlite_history(path: &Utf8PathBuf) -> bool {
 pub fn read_fish_history(
     path: &Utf8PathBuf,
     from_row_id: i64,
+    end_time: Option<Timestamp>,
 ) -> Result<(Vec<FishHistoryEntry>, i64), rusqlite::Error> {
-    read_rows_after(
-        path,
-        "SELECT ROWID, command, \"when\" FROM history WHERE ROWID > ? ORDER BY ROWID ASC",
-        from_row_id,
-        |row| {
-            Ok(FishHistoryEntry {
-                row_id: row.get(0)?,
-                command: row.get(1)?,
-                when: row.get::<_, Option<i64>>(2).ok().flatten(),
-            })
-        },
-    )
+    fn map_fish_row(row: &rusqlite::Row<'_>) -> Result<FishHistoryEntry, rusqlite::Error> {
+        Ok(FishHistoryEntry {
+            row_id: row.get(0)?,
+            command: row.get(1)?,
+            when: row.get::<_, Option<i64>>(2).ok().flatten(),
+        })
+    }
+
+    if let Some(end_time) = end_time {
+        read_rows_with_params(
+            path,
+            "SELECT ROWID, command, \"when\"
+             FROM history
+             WHERE ROWID > ?1 AND (\"when\" IS NULL OR \"when\" <= ?2)
+             ORDER BY ROWID ASC",
+            (from_row_id, end_time.inner().unix_timestamp()),
+            from_row_id,
+            map_fish_row,
+        )
+    } else {
+        read_rows_after(
+            path,
+            "SELECT ROWID, command, \"when\" FROM history WHERE ROWID > ? ORDER BY ROWID ASC",
+            from_row_id,
+            map_fish_row,
+        )
+    }
 }
 
 /// Get the current maximum row ID from the Fish history database

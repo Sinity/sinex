@@ -69,6 +69,7 @@ fn format_replay_status(state: &ReplayState) -> String {
         ReplayState::Previewed => style("previewed").blue().to_string(),
         ReplayState::Approved => style("approved").blue().to_string(),
         ReplayState::Executing => style("executing").yellow().to_string(),
+        ReplayState::Cancelling => style("cancelling").yellow().to_string(),
         ReplayState::Committing => style("committing").yellow().to_string(),
         ReplayState::Completed => style("completed").green().to_string(),
         ReplayState::Cancelled => style("cancelled").dim().to_string(),
@@ -282,7 +283,7 @@ mod tests {
         let node = InstanceInfo {
             instance_id: InstanceId::new("01HXYZ123456789ABCDEFGHIJK"),
             node_type: NodeType::Ingestor,
-            hostname: Some(HostName::new("testhost")),
+            hostname: Some(HostName::from_static("testhost")),
             last_heartbeat: Some(Timestamp::now()),
             is_leader: true,
         };

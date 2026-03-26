@@ -5758,6 +5758,7 @@ dependencies = [
  "mimalloc",
  "notify",
  "once_cell",
+ "parking_lot",
  "petgraph 0.7.1",
  "rcgen",
  "reqwest 0.12.24",

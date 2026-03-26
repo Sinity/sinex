@@ -136,6 +136,7 @@ const DEFAULT_MAX_ACK_PENDING: i64 = 100;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
+const DLQ_DUPLICATE_WINDOW: Duration = Duration::from_hours(1);
 const DLQ_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
@@ -196,6 +197,26 @@ struct PreparedEvent {
     event: Event<JsonValue>,
     parsed_id: Uuid,
     message: jetstream::Message,
+}
+
+fn dlq_publish_msg_id(
+    msg: &jetstream::Message,
+    original_nats_msg_id: Option<&str>,
+    original_payload: &JsonValue,
+) -> String {
+    if let Some(event_id) = original_payload.get("id").and_then(|value| value.as_str()) {
+        return format!("dlq.{event_id}");
+    }
+
+    match original_nats_msg_id {
+        Some(original_id) => format!("dlq.msg.{original_id}"),
+        None => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(msg.subject.as_str().as_bytes());
+            hasher.update(&msg.payload);
+            format!("dlq.hash.{}", hasher.finalize().to_hex())
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -371,7 +392,7 @@ impl JetStreamConsumer {
         // 90 days retention to support full operational history replay
         let events_stream = self.topology.events_stream.clone();
         self.js
-            .get_or_create_stream(jetstream::stream::Config {
+            .create_or_update_stream(jetstream::stream::Config {
                 name: events_stream.clone(),
                 subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
@@ -387,7 +408,7 @@ impl JetStreamConsumer {
         // Short retention since confirmations are ephemeral operational state
         let confirmations_stream = self.topology.confirmations_stream.clone();
         self.js
-            .get_or_create_stream(jetstream::stream::Config {
+            .create_or_update_stream(jetstream::stream::Config {
                 name: confirmations_stream.clone(),
                 subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
@@ -404,13 +425,14 @@ impl JetStreamConsumer {
         // DLQ stream
         let dlq_stream = self.topology.dlq_stream.clone();
         self.js
-            .get_or_create_stream(jetstream::stream::Config {
+            .create_or_update_stream(jetstream::stream::Config {
                 name: dlq_stream.clone(),
                 subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 1_000_000,
                 max_age: Duration::from_hours(720), // 30 days
                 storage: jetstream::stream::StorageType::File,
+                duplicate_window: DLQ_DUPLICATE_WINDOW,
                 ..Default::default()
             })
             .await
@@ -920,7 +942,15 @@ impl JetStreamConsumer {
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
         let strict_mode = guard.is_strict_mode();
+        Self::resolve_validation_result(validation, strict_mode, &event.source, &event.event_type)
+    }
 
+    fn resolve_validation_result(
+        validation: ValidationResult,
+        strict_mode: bool,
+        source: &sinex_primitives::domain::EventSource,
+        event_type: &sinex_primitives::domain::EventType,
+    ) -> IngestdResult<Option<Uuid>> {
         match validation {
             ValidationResult::Valid { schema_id } => Ok(Some(schema_id)),
             ValidationResult::Skipped => Ok(None),
@@ -928,7 +958,7 @@ impl JetStreamConsumer {
                 if strict_mode {
                     Err(SinexError::validation(format!(
                         "Strict validation enabled: event has no registered schema (source={}, event_type={})",
-                        event.source, event.event_type
+                        source, event_type
                     ))
                     .with_operation("jetstream_consumer.validate_event")
                     .with_context("strict_mode", "enabled"))
@@ -937,14 +967,13 @@ impl JetStreamConsumer {
                 }
             }
             ValidationResult::SchemaNotFound { schema_id } => {
-                // Fail closed: reject events when their schema cannot be found.
-                // This prevents invalid payloads from being ingested silently.
-                Err(SinexError::validation(format!(
-                    "Schema '{}' not found for {}.{} — rejecting event (fail-closed)",
-                    schema_id, event.source, event.event_type
-                ))
-                .with_operation("jetstream_consumer.validate_event")
-                .with_context("schema_id", schema_id.to_string()))
+                warn!(
+                    schema_id = %schema_id,
+                    source = %source,
+                    event_type = %event_type,
+                    "Schema referenced by validator lookup is missing from cache; accepting event without payload schema id"
+                );
+                Ok(None)
             }
             ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
                 "Schema validation failed: {}",
@@ -1159,6 +1188,12 @@ impl JetStreamConsumer {
     /// is responsible for deciding whether to NAK the original message in that case.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
     async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> IngestdResult<()> {
+        let original_nats_msg_id = msg
+            .headers
+            .as_ref()
+            .and_then(|h| h.get("Nats-Msg-Id"))
+            .map(|v| v.as_str().to_string());
+
         let original_payload = match serde_json::from_slice(&msg.payload) {
             Ok(json) => json,
             Err(parse_err) => {
@@ -1173,13 +1208,11 @@ impl JetStreamConsumer {
                 })
             }
         };
+        let dlq_publish_msg_id =
+            dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
 
         let dlq_entry = DlqEntry {
-            nats_msg_id: msg
-                .headers
-                .as_ref()
-                .and_then(|h| h.get("Nats-Msg-Id"))
-                .map_or_else(|| "unknown".to_string(), |v| v.as_str().to_string()),
+            nats_msg_id: original_nats_msg_id.unwrap_or_else(|| "unknown".to_string()),
             error,
             original_payload,
             failed_at: Timestamp::now(),
@@ -1188,14 +1221,17 @@ impl JetStreamConsumer {
         let payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
             SinexError::serialization(format!("Failed to serialize DLQ entry: {e}"))
         })?;
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", dlq_publish_msg_id.as_str());
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
         for attempt in 1..=DLQ_PUBLISH_MAX_ATTEMPTS {
             match self
                 .js
-                .publish(
+                .publish_with_headers(
                     self.topology.dlq_publish_subject.clone(),
+                    headers.clone(),
                     payload.clone().into(),
                 )
                 .await
@@ -1314,5 +1350,40 @@ impl JetStreamConsumer {
                 debug!("Failed to check stream capacity for {}: {}", stream_name, e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because the behavior under test is a private validation-mapping helper.
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn schema_not_found_is_accepted_leniently() -> TestResult<()> {
+        let accepted = JetStreamConsumer::resolve_validation_result(
+            ValidationResult::SchemaNotFound {
+                schema_id: Uuid::now_v7(),
+            },
+            false,
+            &sinex_primitives::domain::EventSource::from_static("test"),
+            &sinex_primitives::domain::EventType::from_static("schema.missing"),
+        )?;
+        assert!(accepted.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn strict_mode_still_rejects_missing_schema_bindings() -> TestResult<()> {
+        let err = JetStreamConsumer::resolve_validation_result(
+            ValidationResult::NoSchema,
+            true,
+            &sinex_primitives::domain::EventSource::from_static("test"),
+            &sinex_primitives::domain::EventType::from_static("schema.missing"),
+        )
+        .expect_err("strict mode must reject events without schema bindings");
+
+        assert!(err.to_string().contains("Strict validation enabled"));
+        Ok(())
     }
 }

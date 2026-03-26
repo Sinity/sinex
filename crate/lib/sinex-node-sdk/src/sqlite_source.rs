@@ -1,7 +1,7 @@
 #[cfg(feature = "messaging")]
 use crate::{NodeResult, acquisition_manager::AcquisitionManager};
 use camino::{Utf8Path, Utf8PathBuf};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Row};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Params, Row};
 #[cfg(feature = "messaging")]
 use serde_json::Value as JsonValue;
 use sinex_primitives::Uuid;
@@ -112,16 +112,30 @@ pub fn read_rows_after<T, F>(
     path: &Utf8Path,
     query: &str,
     from_row_id: i64,
-    mut map: F,
+    map: F,
 ) -> Result<(Vec<T>, i64), rusqlite::Error>
 where
     F: FnMut(&Row<'_>) -> Result<T, rusqlite::Error>,
 {
+    read_rows_with_params(path, query, [from_row_id], from_row_id, map)
+}
+
+pub fn read_rows_with_params<T, P, F>(
+    path: &Utf8Path,
+    query: &str,
+    params: P,
+    initial_row_id: i64,
+    mut map: F,
+) -> Result<(Vec<T>, i64), rusqlite::Error>
+where
+    P: Params,
+    F: FnMut(&Row<'_>) -> Result<T, rusqlite::Error>,
+{
     let conn = open_read_only(path)?;
     let mut stmt = conn.prepare(query)?;
-    let mut rows = stmt.query([from_row_id])?;
+    let mut rows = stmt.query(params)?;
     let mut items = Vec::new();
-    let mut last_row_id = from_row_id;
+    let mut last_row_id = initial_row_id;
 
     while let Some(row) = rows.next()? {
         let row_id = row.get::<_, i64>(0)?;
@@ -176,7 +190,7 @@ pub async fn stage_stable_material(
 
     if let Some(metadata_value) = metadata {
         acquisition
-            .finalize_with_metadata(handle, reason, metadata_value)
+            .finalize_with_metadata(&mut handle, reason, metadata_value)
             .await?;
     } else {
         acquisition.finalize(handle, reason).await?;

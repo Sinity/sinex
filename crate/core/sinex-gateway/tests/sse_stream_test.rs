@@ -7,7 +7,7 @@
 //! - HTTP-level auth rejection on the SSE endpoint
 
 use serde_json::json;
-use sinex_gateway::sse_bus::{SseMessage, SubscriptionBus};
+use sinex_gateway::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionBus};
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
@@ -147,10 +147,14 @@ async fn register_and_unregister_updates_count() -> TestResult<()> {
     let bus = SubscriptionBus::new();
     assert_eq!(bus.active_count(), 0);
 
-    let (id1, _rx1) = bus.register(SubscriptionFilter::default());
+    let (id1, _rx1) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 1);
 
-    let (id2, _rx2) = bus.register(SubscriptionFilter::default());
+    let (id2, _rx2) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 2);
 
     bus.unregister(id1);
@@ -169,7 +173,9 @@ async fn register_and_unregister_updates_count() -> TestResult<()> {
 #[sinex_test]
 async fn drop_receiver_cleans_up_on_next_flush() -> TestResult<()> {
     let bus = SubscriptionBus::new();
-    let (id, rx) = bus.register(SubscriptionFilter::default());
+    let (id, rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
     assert_eq!(bus.active_count(), 1);
 
     // Drop the receiver — the bus won't notice until the next send attempt.
@@ -178,6 +184,37 @@ async fn drop_receiver_cleans_up_on_next_flush() -> TestResult<()> {
     // Manual unregister still works.
     bus.unregister(id);
     assert_eq!(bus.active_count(), 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_enforces_active_subscription_limit() -> TestResult<()> {
+    let bus = SubscriptionBus::new();
+    let mut subscriptions = Vec::new();
+
+    for _ in 0..MAX_ACTIVE_SUBSCRIPTIONS {
+        subscriptions.push(
+            bus.register(SubscriptionFilter::default())
+                .expect("subscriptions below the hard cap should register"),
+        );
+    }
+
+    assert_eq!(bus.active_count(), MAX_ACTIVE_SUBSCRIPTIONS);
+    assert!(
+        bus.register(SubscriptionFilter::default()).is_none(),
+        "register should reject subscriptions beyond the configured cap"
+    );
+
+    let (sub_id, _rx) = subscriptions
+        .pop()
+        .expect("at least one subscription should exist");
+    bus.unregister(sub_id);
+
+    assert!(
+        bus.register(SubscriptionFilter::default()).is_some(),
+        "freeing a slot should allow a new subscription"
+    );
 
     Ok(())
 }
@@ -202,7 +239,9 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
 
     // Create bus, register with empty filter (matches everything).
     let bus = Arc::new(SubscriptionBus::new());
-    let (_, mut rx) = bus.register(SubscriptionFilter::default());
+    let (_, mut rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription to be active.
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
@@ -272,7 +311,7 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
         sources: vec![EventSource::from_static("wanted-source")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription.
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
@@ -352,7 +391,7 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
         event_types: vec![EventType::from_static("shell.command")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -425,7 +464,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
         }),
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -489,7 +528,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
         event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
-    let (_, mut rx) = bus.register(filter);
+    let (_, mut rx) = bus.register(filter).expect("test subscription should register");
 
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
@@ -533,6 +572,89 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
 }
 
 #[sinex_test]
+async fn slow_consumer_gap_arrives_before_resumed_event(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+    let env_name = env.name().to_string();
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (_, mut rx) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+
+    let nats_pub = ctx.nats_client();
+    for i in 0..300 {
+        let id = insert_test_event(
+            &pool,
+            "gap-source",
+            "gap.event",
+            "localhost",
+            json!({ "seq": i }),
+        )
+        .await?;
+        publish_confirmation(&nats_pub, &env_name, &id).await?;
+    }
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    for _ in 0..2 {
+        match recv_timeout(&mut rx, Duration::from_secs(2)).await {
+            Some(SseMessage::Event { .. }) => {}
+            other => panic!("expected buffered event before resumption, got {other:?}"),
+        }
+    }
+
+    let resumed_id = insert_test_event(
+        &pool,
+        "gap-source",
+        "gap.event",
+        "localhost",
+        json!({ "seq": "resumed" }),
+    )
+    .await?;
+    publish_confirmation(&nats_pub, &env_name, &resumed_id).await?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut gap_seen = None;
+    let mut resumed_seen = false;
+    while tokio::time::Instant::now() < deadline {
+        match recv_timeout(&mut rx, Duration::from_millis(200)).await {
+            Some(SseMessage::Gap {
+                from_seq,
+                to_seq,
+                dropped,
+            }) => {
+                gap_seen = Some((from_seq, to_seq, dropped));
+            }
+            Some(SseMessage::Event { event, .. }) => {
+                if event.id.as_ref().map(|id| *id.as_uuid()) == Some(resumed_id) {
+                    assert!(gap_seen.is_some(), "gap marker must precede resumed event");
+                    resumed_seen = true;
+                    break;
+                }
+            }
+            Some(SseMessage::Heartbeat { .. }) | None => {}
+        }
+    }
+
+    let (from_seq, to_seq, dropped) =
+        gap_seen.ok_or_else(|| color_eyre::eyre::eyre!("expected a gap marker after saturation"))?;
+    assert!(to_seq >= from_seq, "gap range should be ordered");
+    assert!(dropped > 0, "gap marker should report dropped events");
+    assert!(resumed_seen, "resumed event should eventually be delivered after gap");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
@@ -550,14 +672,18 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
         sources: vec![EventSource::from_static("fs")],
         ..Default::default()
     };
-    let (_, mut rx_a) = bus.register(filter_a);
+    let (_, mut rx_a) = bus
+        .register(filter_a)
+        .expect("test subscription should register");
 
     // Subscriber B: only term events.
     let filter_b = SubscriptionFilter {
         sources: vec![EventSource::from_static("term")],
         ..Default::default()
     };
-    let (_, mut rx_b) = bus.register(filter_b);
+    let (_, mut rx_b) = bus
+        .register(filter_b)
+        .expect("test subscription should register");
 
     assert_eq!(bus.active_count(), 2);
 
@@ -597,6 +723,83 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
 
     assert_eq!(a_sources, vec!["fs"], "Sub A should only get fs events");
     assert_eq!(b_sources, vec!["term"], "Sub B should only get term events");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn multiple_subscribers_keep_independent_sequence_numbers(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+    let env_name = env.name().to_string();
+
+    let first_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 1})).await?;
+    let second_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 2})).await?;
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (_, mut rx_a) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
+    let (_, mut rx_b) = bus
+        .register(SubscriptionFilter::default())
+        .expect("test subscription should register");
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+
+    let nats_pub = ctx.nats_client();
+    publish_confirmation(&nats_pub, &env_name, &first_id).await?;
+    publish_confirmation(&nats_pub, &env_name, &second_id).await?;
+
+    let mut seen_a = Vec::new();
+    let mut seen_b = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && (seen_a.len() < 2 || seen_b.len() < 2) {
+        if seen_a.len() < 2
+            && let Some(SseMessage::Event { seq, event }) =
+                recv_timeout(&mut rx_a, Duration::from_millis(200)).await
+            && let Some(id) = event.id.as_ref().map(|value| *value.as_uuid())
+        {
+            seen_a.push((seq, id));
+        }
+
+        if seen_b.len() < 2
+            && let Some(SseMessage::Event { seq, event }) =
+                recv_timeout(&mut rx_b, Duration::from_millis(200)).await
+            && let Some(id) = event.id.as_ref().map(|value| *value.as_uuid())
+        {
+            seen_b.push((seq, id));
+        }
+    }
+
+    assert_eq!(
+        seen_a.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        vec![1, 2],
+        "subscriber A should observe a local 1,2 sequence regardless of DB fetch order"
+    );
+    assert_eq!(
+        seen_b.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        vec![1, 2],
+        "subscriber B should observe a local 1,2 sequence regardless of DB fetch order"
+    );
+    assert_eq!(
+        seen_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        seen_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        "both subscribers should observe the same event ordering"
+    );
+    assert_eq!(
+        seen_a
+            .iter()
+            .map(|(_, id)| *id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [first_id, second_id].into_iter().collect(),
+        "subscriber A should receive the full event set"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;

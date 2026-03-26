@@ -499,7 +499,6 @@ impl TombstoneCancelCommand {
 enum TombstoneStateArg {
     Pending,
     Previewed,
-    Approved,
     Executing,
     Completed,
     Cancelled,
@@ -512,7 +511,6 @@ impl TombstoneStateArg {
         match self {
             Self::Pending => TombstoneOperationState::Pending,
             Self::Previewed => TombstoneOperationState::Previewed,
-            Self::Approved => TombstoneOperationState::Approved,
             Self::Executing => TombstoneOperationState::Executing,
             Self::Completed => TombstoneOperationState::Completed,
             Self::Cancelled => TombstoneOperationState::Cancelled,
@@ -525,7 +523,7 @@ impl TombstoneStateArg {
 /// List all tombstone operations
 #[derive(Debug, Args)]
 pub struct TombstoneListCommand {
-    /// Filter by state (pending, previewed, approved, executing, completed, cancelled, failed, expired)
+    /// Filter by state (pending, previewed, executing, completed, cancelled, failed, expired)
     #[arg(long, value_enum)]
     state: Option<TombstoneStateArg>,
 

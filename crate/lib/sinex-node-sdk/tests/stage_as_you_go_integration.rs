@@ -1,5 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::{
+    io,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use async_nats::jetstream;
 use serde_json::json;
@@ -11,12 +16,52 @@ use sinex_node_sdk::{EventBatcherConfig, EventTransport, spawn_event_batcher};
 // Channel size constant - not in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::JsonValue;
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{TestIngestdConfig, start_test_ingestd_with_config};
+
+struct FailingReader {
+    bytes: Vec<u8>,
+    offset: usize,
+    failed: bool,
+}
+
+impl FailingReader {
+    fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+            offset: 0,
+            failed: false,
+        }
+    }
+}
+
+impl AsyncRead for FailingReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.offset < self.bytes.len() {
+            let remaining = &self.bytes[self.offset..];
+            let to_copy = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..to_copy]);
+            self.offset += to_copy;
+            return Poll::Ready(Ok(()));
+        }
+
+        if !self.failed {
+            self.failed = true;
+            return Poll::Ready(Err(io::Error::other("synthetic read failure")));
+        }
+
+        Poll::Ready(Ok(()))
+    }
+}
 
 #[sinex_test]
 async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
@@ -219,5 +264,50 @@ async fn stage_as_you_go_reconciliation_cancels_stale_materials(ctx: TestContext
     assert_eq!(second_summary.cancelled, 0);
 
     info!(material_id = %material_id, "Reconciliation cancelled stale material");
+    Ok(())
+}
+
+#[sinex_test]
+async fn stage_as_you_go_stream_failure_retains_reconcilable_state(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    let acquisition = Arc::new(AcquisitionManager::with_defaults(
+        nats_client.clone(),
+        "stream-failure-log",
+        "/tmp/stream-failure.log",
+    ));
+
+    let (event_tx, _event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+    let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
+    let material_id = context
+        .register_in_flight("stream-failure", None, json!({ "case": "reader-error" }))
+        .await?;
+
+    let mut reader = FailingReader::new(b"partial payload".to_vec());
+    let error = context
+        .finalize_source_material_stream(material_id, &mut reader, Some("text/plain"), None)
+        .await
+        .expect_err("reader failure should abort streaming finalization");
+    assert!(
+        error.to_string().contains("synthetic read failure"),
+        "unexpected error: {error}"
+    );
+
+    assert!(
+        context.material_started_at(material_id).await.is_some(),
+        "failed stream finalization must retain the acquisition handle for reconciliation"
+    );
+
+    let summary = context
+        .reconcile_inflight_older_than(Duration::from_millis(0))
+        .await?;
+    assert_eq!(summary.cancelled, 1);
+    assert_eq!(summary.errors, 0);
+    assert_eq!(summary.skipped, 0);
+
     Ok(())
 }

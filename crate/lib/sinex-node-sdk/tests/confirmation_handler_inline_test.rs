@@ -28,7 +28,11 @@ async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_confirmation_buffer_timeout() -> TestResult<()> {
-    let buffer = ConfirmationBuffer::new(std::time::Duration::from_millis(100));
+    let buffer = ConfirmationBuffer::with_capacity_and_grace(
+        std::time::Duration::from_millis(100),
+        10,
+        std::time::Duration::from_secs(5),
+    );
 
     let event_id = EventId::new();
     let mut event = ProvisionalEvent {
@@ -47,8 +51,8 @@ async fn test_confirmation_buffer_timeout() -> TestResult<()> {
     assert_eq!(timed_out.len(), 1);
     assert_eq!(timed_out[0], event_id);
 
-    let removed = buffer.remove_timed_out(&timed_out).await;
-    assert_eq!(removed.len(), 1);
+    let confirmed = buffer.confirm(event_id).await;
+    assert!(confirmed.is_some(), "late confirmations should still match within grace");
     assert_eq!(buffer.len().await, 0);
     Ok(())
 }

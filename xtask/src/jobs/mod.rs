@@ -165,10 +165,10 @@ impl JobManager {
     fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) {
         let job_dir = self.jobs_dir.join(job.id.to_string());
         let (inv_status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir);
-        let job_status = match inv_status {
-            InvocationStatus::Success => JobLifecycleStatus::Completed,
-            InvocationStatus::Cancelled => JobLifecycleStatus::Killed,
-            _ => JobLifecycleStatus::Orphaned,
+        let job_status = if exit_code.is_some() {
+            JobLifecycleStatus::from_invocation_status(inv_status)
+        } else {
+            JobLifecycleStatus::Orphaned
         };
 
         let stdout_path = job_dir.join("stdout.log");
@@ -629,12 +629,17 @@ mod tests {
         assert!(matches!(status, InvocationStatus::Success));
         assert_eq!(code, Some(0));
         // Verify conversion to JobLifecycleStatus
-        let job_status = match status {
-            InvocationStatus::Success => JobLifecycleStatus::Completed,
-            InvocationStatus::Cancelled => JobLifecycleStatus::Killed,
-            _ => JobLifecycleStatus::Orphaned,
-        };
+        let job_status = JobLifecycleStatus::from_invocation_status(status);
         assert!(matches!(job_status, JobLifecycleStatus::Completed));
+
+        fs::write(dir.path().join("exit_code"), "1\n")?;
+        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path());
+        assert!(matches!(status, InvocationStatus::Failed));
+        assert_eq!(code, Some(1));
+        assert!(matches!(
+            JobLifecycleStatus::from_invocation_status(status),
+            JobLifecycleStatus::Failed
+        ));
         Ok(())
     }
 }
