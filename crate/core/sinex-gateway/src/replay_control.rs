@@ -687,6 +687,7 @@ struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
     env: SinexEnvironment,
+    scan_ack_timeout: Duration,
     scan_completion_timeout: Duration,
 }
 
@@ -704,8 +705,15 @@ impl ReplayExecutionEngine {
             replay,
             nats_client,
             env: environment(),
+            scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
         }
+    }
+
+    #[cfg(test)]
+    fn with_scan_ack_timeout(mut self, scan_ack_timeout: Duration) -> Self {
+        self.scan_ack_timeout = scan_ack_timeout;
+        self
     }
 
     #[cfg(test)]
@@ -1235,6 +1243,24 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
+    async fn abort_before_scan_ack(
+        &self,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+        operation_id: Uuid,
+        error: color_eyre::eyre::Report,
+    ) -> Result<u64> {
+        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
+            return Err(error.wrap_err(format!(
+                "Replay dispatch failed before node acknowledgement, and restoring the archived cascade also failed: {restore_error}"
+            )));
+        }
+
+        Err(error.wrap_err(
+            "Replay dispatch failed before node acknowledgement; restored archived cascade",
+        ))
+    }
+
     /// Timeout for the node to acknowledge the scan command.
     const SCAN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
     /// Timeout for the entire scan operation to complete.
@@ -1442,11 +1468,19 @@ impl ReplayExecutionEngine {
             .env
             .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
-        let mut progress_sub = self
-            .nats_client
-            .subscribe(progress_subject.clone())
-            .await
-            .map_err(|e| eyre!("Failed to subscribe to replay progress: {e}"))?;
+        let mut progress_sub = match self.nats_client.subscribe(progress_subject.clone()).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("Failed to subscribe to replay progress: {error}"),
+                    )
+                    .await;
+            }
+        };
 
         // Build MaterialReplayContext so the node knows this is a replay scan
         let replay_context = MaterialReplayContext {
@@ -1479,34 +1513,67 @@ impl ReplayExecutionEngine {
             .map_err(|e| eyre!("Failed to serialize NodeScanCommand: {e}"))?;
 
         // Step 3: Send via NATS request-reply and wait for acknowledgement
-        let ack_msg = tokio::time::timeout(
-            Self::SCAN_ACK_TIMEOUT,
+        let ack_msg = match tokio::time::timeout(
+            self.scan_ack_timeout,
             self.nats_client
                 .request(scan_subject.clone(), command_payload.into()),
         )
         .await
-        .map_err(|_| {
-            eyre!(
-                "Timed out waiting for scan ack from node '{}' after {:?}. \
-                 Is the node running?",
-                scope.node_id,
-                Self::SCAN_ACK_TIMEOUT
-            )
-        })?
-        .map_err(|e| eyre!("NATS request to {} failed: {e}", scan_subject))?;
+        {
+            Ok(Ok(message)) => message,
+            Ok(Err(error)) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("NATS request to {} failed: {error}", scan_subject),
+                    )
+                    .await;
+            }
+            Err(_) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!(
+                            "Timed out waiting for scan ack from node '{}' after {:?}. Is the node running?",
+                            scope.node_id,
+                            self.scan_ack_timeout
+                        ),
+                    )
+                    .await;
+            }
+        };
 
-        let ack: NodeScanAck = serde_json::from_slice(&ack_msg.payload)
-            .map_err(|e| eyre!("Failed to deserialize NodeScanAck: {e}"))?;
+        let ack: NodeScanAck = match serde_json::from_slice(&ack_msg.payload) {
+            Ok(ack) => ack,
+            Err(error) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("Failed to deserialize NodeScanAck: {error}"),
+                    )
+                    .await;
+            }
+        };
 
         if !ack.accepted {
-            // Node rejected the command — restore the cascade
-            self.restore_cascade(pool, &cascade_ids, operation_id)
-                .await?;
-            return Err(eyre!(
-                "Node '{}' rejected scan command: {}",
-                ack.node_name,
-                ack.error.unwrap_or_else(|| "unknown reason".to_string())
-            ));
+            return self
+                .abort_before_scan_ack(
+                    pool,
+                    &cascade_ids,
+                    operation_id,
+                    eyre!(
+                        "Node '{}' rejected scan command: {}",
+                        ack.node_name,
+                        ack.error.unwrap_or_else(|| "unknown reason".to_string())
+                    ),
+                )
+                .await;
         }
 
         info!(
@@ -2622,6 +2689,90 @@ mod tests {
         scan_handle
             .await
             .map_err(|e| eyre!("fake timeout-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_ack(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx.create_source_material(Some("replay-pre-ack-failure")).await?;
+        let event = DynamicPayload::new(
+            "pre-ack-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-pre-ack-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_ack_timeout(Duration::from_millis(100));
+        ReplayTelemetry::new(replay.clone()).spawn();
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30));
+
+        let mut scope = sample_scope();
+        scope.node_id = "pre-ack-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+        let err = client
+            .execute(approved.operation_id, "service:executor-node".into(), false)
+            .await
+            .expect_err("execute should fail before scan ack when no node responder exists");
+        assert!(
+            err.to_string().contains("restored archived cascade"),
+            "pre-ack dispatch failures must explain that the archived cascade was restored: {err}"
+        );
+
+        let operation = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(operation.state, ReplayState::Failed);
+        assert_eq!(operation.checkpoint.processed_events, 0);
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "pre-ack dispatch failures must restore the live row"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "pre-ack dispatch failures must not leave the archived cascade behind"
+        );
 
         Ok(())
     }
