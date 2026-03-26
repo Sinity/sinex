@@ -565,7 +565,7 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
         PayloadFilter::TextSearch { text } => {
             // Substring search across serialized payload
             let serialized = serde_json::to_string(payload).unwrap_or_default();
-            serialized.contains(text.as_str())
+            serialized.to_lowercase().contains(&text.to_lowercase())
         }
         PayloadFilter::HasKey { key } => payload.get(key.as_str()).is_some(),
         PayloadFilter::Path { path, op } => {

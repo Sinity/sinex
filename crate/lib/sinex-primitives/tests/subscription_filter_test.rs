@@ -157,6 +157,23 @@ async fn payload_text_search_filter() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn payload_text_search_filter_is_case_insensitive() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::TextSearch {
+            text: "important".to_string(),
+        }),
+        ..Default::default()
+    };
+    assert!(filter.matches(&test_event(
+        "x",
+        "x",
+        "h",
+        json!({"title": "IMPORTANT document"})
+    )));
+    Ok(())
+}
+
+#[sinex_test]
 async fn payload_has_key_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::HasKey {
