@@ -6,6 +6,7 @@
 
 use dashmap::DashMap;
 use futures::StreamExt;
+use parking_lot::Mutex;
 use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
@@ -85,15 +86,89 @@ pub(crate) struct SseErrorPayload {
 struct SubscriptionSlot {
     filter: SubscriptionFilter,
     tx: mpsc::Sender<SseMessage>,
+    state: Mutex<SubscriptionState>,
+}
+
+struct SubscriptionState {
     next_seq: u64,
     /// Running gap counter — when we fail to send, track how many events were dropped.
     gap_start: Option<u64>,
     gap_count: u64,
 }
 
+enum DeliveryOutcome {
+    Delivered,
+    Closed,
+}
+
+impl SubscriptionSlot {
+    fn new(filter: SubscriptionFilter) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
+        let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
+        let slot = Arc::new(Self {
+            filter,
+            tx,
+            state: Mutex::new(SubscriptionState {
+                next_seq: 1,
+                gap_start: None,
+                gap_count: 0,
+            }),
+        });
+        (slot, rx)
+    }
+
+    fn matches(&self, event: &Event<JsonValue>) -> bool {
+        self.filter.matches(event)
+    }
+
+    fn deliver(&self, event: &Arc<Event<JsonValue>>) -> DeliveryOutcome {
+        let mut state = self.state.lock();
+        let seq = state.next_seq;
+        state.next_seq = state.next_seq.saturating_add(1);
+
+        if let Some(from_seq) = state.gap_start {
+            let gap = SseMessage::Gap {
+                from_seq,
+                to_seq: seq.saturating_sub(1),
+                dropped: state.gap_count,
+            };
+
+            match self.tx.try_send(gap) {
+                Ok(()) => {
+                    state.gap_start = None;
+                    state.gap_count = 0;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    state.gap_count += 1;
+                    return DeliveryOutcome::Delivered;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return DeliveryOutcome::Closed;
+                }
+            }
+        }
+
+        let msg = SseMessage::Event {
+            seq,
+            event: Arc::clone(event),
+        };
+
+        match self.tx.try_send(msg) {
+            Ok(()) => DeliveryOutcome::Delivered,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if state.gap_start.is_none() {
+                    state.gap_start = Some(seq);
+                }
+                state.gap_count += 1;
+                DeliveryOutcome::Delivered
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => DeliveryOutcome::Closed,
+        }
+    }
+}
+
 /// Fan-out bus from NATS confirmations → per-client SSE streams.
 pub struct SubscriptionBus {
-    subscriptions: Arc<DashMap<u64, SubscriptionSlot>>,
+    subscriptions: DashMap<u64, Arc<SubscriptionSlot>>,
     next_sub_id: AtomicU64,
 }
 
@@ -102,7 +177,7 @@ impl SubscriptionBus {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            subscriptions: Arc::new(DashMap::new()),
+            subscriptions: DashMap::new(),
             next_sub_id: AtomicU64::new(1),
         }
     }
@@ -110,17 +185,8 @@ impl SubscriptionBus {
     /// Register a new subscription. Returns `(sub_id, receiver)`.
     pub fn register(&self, filter: SubscriptionFilter) -> (u64, mpsc::Receiver<SseMessage>) {
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
-        self.subscriptions.insert(
-            id,
-            SubscriptionSlot {
-                filter,
-                tx,
-                next_seq: 1,
-                gap_start: None,
-                gap_count: 0,
-            },
-        );
+        let (slot, rx) = SubscriptionSlot::new(filter);
+        self.subscriptions.insert(id, slot);
         debug!(sub_id = id, "SSE subscription registered");
         (id, rx)
     }
@@ -242,6 +308,13 @@ impl SubscriptionBus {
         conf.event_id.parse().ok()
     }
 
+    fn snapshot_subscriptions(&self) -> Vec<(u64, Arc<SubscriptionSlot>)> {
+        self.subscriptions
+            .iter()
+            .map(|slot| (*slot.key(), Arc::clone(slot.value())))
+            .collect()
+    }
+
     /// Fetch events from DB and fan out to all matching subscriptions.
     async fn flush_batch(&self, id_buffer: &mut Vec<Id<Event<JsonValue>>>, pool: &sqlx::PgPool) {
         let ids: Vec<_> = std::mem::take(id_buffer);
@@ -265,63 +338,19 @@ impl SubscriptionBus {
         // Wrap in Arc for zero-copy fan-out to multiple clients
         let events: Vec<Arc<Event<JsonValue>>> = events.into_iter().map(Arc::new).collect();
 
-        // Fan out to all subscriptions
+        // Snapshot handles so DashMap entry locks are not held during filter evaluation or send.
+        let subscriptions = self.snapshot_subscriptions();
         let mut to_remove = Vec::new();
 
-        for mut slot_ref in self.subscriptions.iter_mut() {
-            let sub_id = *slot_ref.key();
-            let slot = slot_ref.value_mut();
-
+        for (sub_id, slot) in subscriptions {
             for event in &events {
-                if !slot.filter.matches(event) {
+                if !slot.matches(event) {
                     continue;
                 }
 
-                let seq = slot.next_seq;
-                slot.next_seq = slot.next_seq.saturating_add(1);
-                if let Some(from_seq) = slot.gap_start {
-                    let gap_count = slot.gap_count;
-                    let gap = SseMessage::Gap {
-                        from_seq,
-                        to_seq: seq.saturating_sub(1),
-                        dropped: gap_count,
-                    };
-
-                    match slot.tx.try_send(gap) {
-                        Ok(()) => {
-                            slot.gap_start = None;
-                            slot.gap_count = 0;
-                        }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            slot.gap_count += 1;
-                            continue;
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            to_remove.push(sub_id);
-                            break;
-                        }
-                    }
-                }
-
-                let msg = SseMessage::Event {
-                    seq,
-                    event: Arc::clone(event),
-                };
-
-                match slot.tx.try_send(msg) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        // Slow consumer — track gap
-                        if slot.gap_start.is_none() {
-                            slot.gap_start = Some(seq);
-                        }
-                        slot.gap_count += 1;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        // Client disconnected
-                        to_remove.push(sub_id);
-                        break;
-                    }
+                if matches!(slot.deliver(event), DeliveryOutcome::Closed) {
+                    to_remove.push(sub_id);
+                    break;
                 }
             }
         }
