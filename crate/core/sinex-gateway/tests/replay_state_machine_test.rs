@@ -12,7 +12,9 @@ async fn state_transitions_follow_rules() -> Result<()> {
     assert!(ReplayState::Previewed.can_transition_to(ReplayState::Approved));
     assert!(ReplayState::Approved.can_transition_to(ReplayState::Executing));
     assert!(ReplayState::Approved.can_transition_to(ReplayState::Failed));
+    assert!(ReplayState::Executing.can_transition_to(ReplayState::Cancelling));
     assert!(ReplayState::Executing.can_transition_to(ReplayState::Committing));
+    assert!(ReplayState::Cancelling.can_transition_to(ReplayState::Cancelled));
     assert!(ReplayState::Committing.can_transition_to(ReplayState::Completed));
 
     assert!(!ReplayState::Planning.can_transition_to(ReplayState::Executing));
@@ -22,6 +24,7 @@ async fn state_transitions_follow_rules() -> Result<()> {
     assert!(ReplayState::Completed.is_terminal());
     assert!(ReplayState::Failed.is_terminal());
     assert!(ReplayState::Cancelled.is_terminal());
+    assert!(!ReplayState::Cancelling.is_terminal());
     assert!(!ReplayState::Executing.is_terminal());
 
     Ok(())
@@ -361,6 +364,55 @@ async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> 
 }
 
 #[sinex_test]
+async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
+    ctx: TestContext,
+) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+
+    replay
+        .cancel(operation.operation_id, "operator requested stop".to_string())
+        .await?;
+
+    let cancelling = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(cancelling.state, ReplayState::Cancelling);
+    assert_eq!(cancelling.error_details.as_deref(), Some("operator requested stop"));
+    assert!(cancelling.outcome.is_none());
+    assert!(cancelling.finished_at.is_none());
+
+    replay.finish_cancellation(operation.operation_id).await?;
+
+    let cancelled = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(cancelled.state, ReplayState::Cancelled);
+    assert_eq!(cancelled.outcome, Some(ReplayOutcome::Cancelled));
+    assert_eq!(cancelled.error_details.as_deref(), Some("operator requested stop"));
+    assert!(cancelled.finished_at.is_some());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result<()> {
     let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
@@ -566,6 +618,7 @@ async fn states_serialize_to_expected_strings() -> Result<()> {
         ReplayState::Previewed,
         ReplayState::Approved,
         ReplayState::Executing,
+        ReplayState::Cancelling,
         ReplayState::Committing,
         ReplayState::Completed,
         ReplayState::Failed,
@@ -581,6 +634,7 @@ async fn states_serialize_to_expected_strings() -> Result<()> {
             ReplayState::Previewed => assert_eq!(json, "\"Previewed\""),
             ReplayState::Approved => assert_eq!(json, "\"Approved\""),
             ReplayState::Executing => assert_eq!(json, "\"Executing\""),
+            ReplayState::Cancelling => assert_eq!(json, "\"Cancelling\""),
             ReplayState::Committing => assert_eq!(json, "\"Committing\""),
             ReplayState::Completed => assert_eq!(json, "\"Completed\""),
             ReplayState::Failed => assert_eq!(json, "\"Failed\""),

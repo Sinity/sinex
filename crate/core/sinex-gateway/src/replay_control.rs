@@ -745,7 +745,8 @@ impl ReplayExecutionEngine {
         match result {
             Ok(operation) => Ok(operation),
             Err(err) => match self.load_cancelled_operation(operation_id).await {
-                Ok(Some(cancelled)) => Ok(cancelled),
+                Ok(Some(cancelled)) if cancelled.started_at.is_some() => Ok(cancelled),
+                Ok(Some(_)) => Err(err),
                 Ok(None) => Err(err),
                 Err(load_err) => Err(err).wrap_err(format!(
                     "replay cancellation probe failed after execution error: {load_err}"
@@ -755,16 +756,33 @@ impl ReplayExecutionEngine {
     }
 
     async fn handle_execution_finish(&self, operation_id: Uuid, result: &Result<ReplayOperation>) {
-        match self.load_cancelled_operation(operation_id).await {
-            Ok(Some(cancelled)) => {
+        match self.replay.load_operation(operation_id).await {
+            Ok(operation) if operation.state == ReplayState::Cancelled => {
                 info!(
                     operation_id = %operation_id,
-                    state = ?cancelled.state,
+                    state = ?operation.state,
                     "Replay execution stopped after operator cancellation"
                 );
                 return;
             }
-            Ok(None) => {}
+            Ok(operation) if operation.state == ReplayState::Cancelling => {
+                if Self::execution_result_is_cancellation(result) {
+                    match self.replay.finish_cancellation(operation_id).await {
+                        Ok(()) => {
+                            info!(
+                                operation_id = %operation_id,
+                                state = ?ReplayState::Cancelled,
+                                "Replay execution stopped after operator cancellation"
+                            );
+                            return;
+                        }
+                        Err(err) => {
+                            warn!(?err, "Failed to finalize replay cancellation");
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
             Err(err) => {
                 warn!(?err, "Failed to load replay operation while checking for cancellation");
             }
@@ -932,6 +950,13 @@ impl ReplayExecutionEngine {
     ) -> Result<Option<ReplayOperation>> {
         let operation = self.replay.load_operation(operation_id).await?;
         Ok((operation.state == ReplayState::Cancelled).then_some(operation))
+    }
+
+    fn execution_result_is_cancellation(result: &Result<ReplayOperation>) -> bool {
+        result.as_ref().is_err_and(|err| {
+            err.downcast_ref::<SinexError>()
+                .is_some_and(|sinex_err| matches!(sinex_err, SinexError::Cancelled(_)))
+        })
     }
 
     /// Pagination batch size for collecting scope events from the database.
@@ -1662,12 +1687,18 @@ impl ReplayExecutionEngine {
                     _ = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
                         match replay.load_operation(operation_id).await {
                             Ok(operation) if operation.state == ReplayState::Executing => {}
-                            Ok(operation) if operation.state == ReplayState::Cancelled => {
+                            Ok(operation)
+                                if matches!(
+                                    operation.state,
+                                    ReplayState::Cancelling | ReplayState::Cancelled
+                                ) =>
+                            {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: eyre!(
+                                    error: SinexError::cancelled(format!(
                                         "Replay operation {} was cancelled during execution",
                                         operation_id
-                                    ),
+                                    ))
+                                    .into(),
                                     emitted_count: events_emitted,
                                     restore_archived_cascade: events_emitted == 0,
                                 });
@@ -2988,22 +3019,20 @@ mod tests {
             "replay operation should enter Executing before cancellation"
         );
 
-        let cancelled = control_client
+        let cancellation_requested = control_client
             .cancel(
                 operation_id,
                 "admin:approver".into(),
                 Some("operator requested stop".to_string()),
             )
             .await?;
-        assert_eq!(cancelled.state, ReplayState::Cancelled);
+        assert_eq!(cancellation_requested.state, ReplayState::Cancelling);
+        assert!(cancellation_requested.outcome.is_none());
         assert_eq!(
-            cancelled.outcome,
-            Some(sinex_primitives::domain::ReplayOutcome::Cancelled)
-        );
-        assert_eq!(
-            cancelled.error_details.as_deref(),
+            cancellation_requested.error_details.as_deref(),
             Some("operator requested stop")
         );
+        assert!(cancellation_requested.finished_at.is_none());
 
         let executed = execute_task
             .await

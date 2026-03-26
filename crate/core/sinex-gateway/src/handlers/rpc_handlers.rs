@@ -281,6 +281,7 @@ pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
         "previewed" => Ok(ReplayState::Previewed),
         "approved" => Ok(ReplayState::Approved),
         "executing" => Ok(ReplayState::Executing),
+        "cancelling" => Ok(ReplayState::Cancelling),
         "committing" => Ok(ReplayState::Committing),
         "completed" => Ok(ReplayState::Completed),
         "failed" => Ok(ReplayState::Failed),
@@ -333,6 +334,7 @@ mod tests {
             ("planning", ReplayState::Planning),
             ("PREVIEWED", ReplayState::Previewed),
             ("Approved", ReplayState::Approved),
+            ("cancelling", ReplayState::Cancelling),
         ];
         for (input, expected) in states {
             assert_eq!(parse_replay_state(input).unwrap(), expected);
