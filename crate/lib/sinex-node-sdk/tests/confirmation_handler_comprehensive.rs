@@ -264,6 +264,67 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn timed_out_events_still_confirm_within_grace_period() -> TestResult<()> {
+    let buffer = ConfirmationBuffer::with_capacity_and_grace(
+        std::time::Duration::from_millis(100),
+        16,
+        std::time::Duration::from_secs(30),
+    );
+
+    let event_id = Uuid::now_v7();
+    let event = ProvisionalEvent {
+        event_id: event_id.into(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("test.late_confirmation"),
+        payload: serde_json::json!({}),
+        ts_orig: Timestamp::now(),
+        received_at: Timestamp::now() - time::Duration::seconds(10),
+    };
+    buffer.add_provisional(event).await;
+
+    let timed_out = buffer.check_timeouts().await;
+    assert_eq!(timed_out, vec![event_id.into()]);
+
+    let confirmed = buffer.confirm(event_id.into()).await;
+    assert!(confirmed.is_some(), "late confirmation should still match within grace");
+    assert!(buffer.is_empty().await);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn purge_expired_removes_timed_out_events_after_grace() -> TestResult<()> {
+    let buffer = ConfirmationBuffer::with_capacity_and_grace(
+        std::time::Duration::from_millis(100),
+        16,
+        std::time::Duration::from_millis(1),
+    );
+
+    let event_id = Uuid::now_v7();
+    let event = ProvisionalEvent {
+        event_id: event_id.into(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("test.expired"),
+        payload: serde_json::json!({}),
+        ts_orig: Timestamp::now(),
+        received_at: Timestamp::now() - time::Duration::seconds(10),
+    };
+    buffer.add_provisional(event).await;
+
+    let timed_out = buffer.check_timeouts().await;
+    assert_eq!(timed_out, vec![event_id.into()]);
+
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+    let purged = buffer.purge_expired().await;
+    assert_eq!(purged.len(), 1);
+    assert_eq!(purged[0].event_id, event_id.into());
+    assert!(buffer.confirm(event_id.into()).await.is_none());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn remove_timed_out_with_empty_list_does_nothing() -> TestResult<()> {
     let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(Timeouts::STANDARD));
 

@@ -436,9 +436,10 @@ impl JetStreamEventConsumer {
 
             let timed_out_ids = buffer.check_timeouts().await;
             if !timed_out_ids.is_empty() {
-                warn!("Found {} timed-out events", timed_out_ids.len());
-
-                let timed_out_events = buffer.remove_timed_out(&timed_out_ids).await;
+                warn!(
+                    timed_out = timed_out_ids.len(),
+                    "Found timed-out provisional events; retaining them during the confirmation grace period"
+                );
 
                 for event_id in timed_out_ids {
                     if let Some(handler) = provisional_handler.as_ref()
@@ -447,8 +448,14 @@ impl JetStreamEventConsumer {
                         error!("Failed to rollback provisional event {}: {}", event_id, e);
                     }
                 }
+            }
 
-                info!("Removed {} timed-out events", timed_out_events.len());
+            let purged_events = buffer.purge_expired().await;
+            if !purged_events.is_empty() {
+                info!(
+                    purged = purged_events.len(),
+                    "Purged timed-out provisional events after confirmation grace period"
+                );
             }
         }
 

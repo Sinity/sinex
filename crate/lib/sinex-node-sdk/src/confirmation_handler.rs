@@ -34,6 +34,12 @@ pub struct ProvisionalEvent {
     pub received_at: sinex_primitives::temporal::Timestamp,
 }
 
+#[derive(Debug, Clone)]
+struct PendingEntry {
+    event: ProvisionalEvent,
+    timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
+}
+
 /// Event confirmation from ingestd
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventConfirmation {
@@ -82,9 +88,12 @@ pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
 /// - slow acquisition warnings are part of the regression signal and should stay intact
 pub struct ConfirmationBuffer {
     /// Provisional events indexed by `event_id`
-    pending: Arc<RwLock<HashMap<EventId, ProvisionalEvent>>>,
+    pending: Arc<RwLock<HashMap<EventId, PendingEntry>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
+    /// Additional grace period to retain timed-out events so delayed confirmations
+    /// can still be matched after temporary confirmation-path failures.
+    grace_period: std::time::Duration,
     /// Maximum number of pending events (prevents unbounded memory growth)
     max_capacity: usize,
     /// Counter for rejected events due to capacity limits
@@ -99,11 +108,21 @@ impl ConfirmationBuffer {
 
     #[must_use]
     pub fn with_capacity(timeout: std::time::Duration, max_capacity: usize) -> Self {
+        Self::with_capacity_and_grace(timeout, max_capacity, timeout)
+    }
+
+    #[must_use]
+    pub fn with_capacity_and_grace(
+        timeout: std::time::Duration,
+        max_capacity: usize,
+        grace_period: std::time::Duration,
+    ) -> Self {
         Self {
             pending: Arc::new(RwLock::new(HashMap::with_capacity(
                 max_capacity.min(1000), // Pre-allocate reasonably
             ))),
             timeout,
+            grace_period,
             max_capacity,
             rejected_count: std::sync::atomic::AtomicU64::new(0),
         }
@@ -149,7 +168,13 @@ impl ConfirmationBuffer {
             );
         }
 
-        pending.insert(event.event_id, event);
+        pending.insert(
+            event.event_id,
+            PendingEntry {
+                event,
+                timed_out_at: None,
+            },
+        );
         tracing::Span::current().record("buffer_size", pending.len());
         true
     }
@@ -164,35 +189,47 @@ impl ConfirmationBuffer {
             tracing::warn!(acquire_ms, "Slow lock acquisition in confirm");
         }
         let result = pending.remove(&event_id);
+        if let Some(entry) = result.as_ref()
+            && entry.timed_out_at.is_some()
+        {
+            tracing::warn!(
+                event_id = %event_id,
+                "Late confirmation arrived after provisional timeout; accepting during grace period"
+            );
+        }
         tracing::Span::current().record("buffer_size", pending.len());
-        result
+        result.map(|entry| entry.event)
     }
 
-    /// Check if an event has timed out
+    /// Identify newly timed-out events and retain them for the grace window.
     #[tracing::instrument(skip(self), fields(checked_count, timed_out_count))]
     pub async fn check_timeouts(&self) -> Vec<EventId> {
         let mut timed_out = Vec::new();
         let now = sinex_primitives::temporal::now();
         let acquire_start = std::time::Instant::now();
-        let pending = self.pending.read().await;
+        let mut pending = self.pending.write().await;
         let acquire_ms = acquire_start.elapsed().as_millis() as u64;
         if acquire_ms > 10 {
             tracing::warn!(acquire_ms, "Slow lock acquisition in check_timeouts");
         }
         tracing::Span::current().record("checked_count", pending.len());
 
-        for (event_id, event) in pending.iter() {
-            let age = now - event.received_at;
+        for (event_id, entry) in pending.iter_mut() {
+            if entry.timed_out_at.is_some() {
+                continue;
+            }
+            let age = now - entry.event.received_at;
             // Explicitly handle clock skew with a warning.
             match std::time::Duration::try_from(age) {
                 Ok(age_std) if age_std > self.timeout => {
+                    entry.timed_out_at = Some(now);
                     timed_out.push(*event_id);
                 }
                 Err(_) => {
                     // Negative duration indicates clock skew
                     tracing::warn!(
                         event_id = %event_id,
-                        received_at = %event.received_at,
+                        received_at = %entry.event.received_at,
                         now = %now,
                         "Clock skew detected: event received_at is in the future"
                     );
@@ -206,6 +243,45 @@ impl ConfirmationBuffer {
         timed_out
     }
 
+    /// Remove timed-out events whose grace period has elapsed.
+    #[tracing::instrument(skip(self), fields(purged_count))]
+    pub async fn purge_expired(&self) -> Vec<ProvisionalEvent> {
+        let now = sinex_primitives::temporal::now();
+        let acquire_start = std::time::Instant::now();
+        let mut pending = self.pending.write().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in purge_expired");
+        }
+
+        let expired_ids: Vec<_> = pending
+            .iter()
+            .filter_map(|(event_id, entry)| {
+                let timed_out_at = entry.timed_out_at?;
+                let age = now - timed_out_at;
+                match std::time::Duration::try_from(age) {
+                    Ok(age_std) if age_std >= self.grace_period => Some(*event_id),
+                    Err(_) => {
+                        tracing::warn!(
+                            event_id = %event_id,
+                            timed_out_at = %timed_out_at,
+                            now = %now,
+                            "Clock skew detected while purging timed-out provisional events"
+                        );
+                        None
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        tracing::Span::current().record("purged_count", expired_ids.len());
+
+        expired_ids
+            .into_iter()
+            .filter_map(|event_id| pending.remove(&event_id).map(|entry| entry.event))
+            .collect()
+    }
+
     /// Remove timed-out events
     #[tracing::instrument(skip(self, event_ids), fields(remove_count = event_ids.len()))]
     pub async fn remove_timed_out(&self, event_ids: &[EventId]) -> Vec<ProvisionalEvent> {
@@ -217,7 +293,7 @@ impl ConfirmationBuffer {
         }
         event_ids
             .iter()
-            .filter_map(|id| pending.remove(id))
+            .filter_map(|id| pending.remove(id).map(|entry| entry.event))
             .collect()
     }
 
