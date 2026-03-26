@@ -135,7 +135,7 @@ async fn insert_test_event(
     .bind("test.security")
     .bind(serde_json::json!({"test": "operation_id_guard"}))
     .bind("test-host")
-    .bind(Uuid::now_v7())
+    .bind(Option::<Uuid>::None)
     .bind(material_id.to_uuid())
     .bind(0_i64)
     .execute(pool)

@@ -122,7 +122,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: crate::sandbox::local_test_host(),
-            node_run_id: Some(Uuid::now_v7()),
+            node_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -182,9 +182,6 @@ impl EventPublisher for Sandbox {
             uuid
         };
 
-        if envelope.node_run_id.is_none() {
-            envelope.node_run_id = Some(Uuid::now_v7());
-        }
         let payload = serde_json::to_vec(&envelope)?;
 
         let base_subject = format!("events.raw.{}", event.source);
@@ -226,7 +223,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                node_run_id: Some(Uuid::now_v7()),
+                node_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -285,7 +282,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                node_run_id: Some(Uuid::now_v7()),
+                node_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
