@@ -17,7 +17,7 @@ fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> Instan
     InstanceInfo {
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service,
-        hostname: Some(HostName::new(&meta.hostname)),
+        hostname: HostName::new(&meta.hostname).ok(),
         last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,
     }

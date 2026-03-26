@@ -116,7 +116,7 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
         .len() as i64;
     let source = EventSource::new(req.source).wrap_err("invalid `source` value")?;
     let event_type = EventType::new(req.event_type).wrap_err("invalid `event_type` value")?;
-    let event_host = HostName::new(event_host);
+    let event_host = HostName::new(event_host).wrap_err("invalid `host` value")?;
     let payload = req.payload;
 
     let material = SourceMaterial::stream(format!("gateway://events.ingest/{event_id}"))

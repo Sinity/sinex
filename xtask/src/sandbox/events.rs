@@ -6,7 +6,7 @@ use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
-use sinex_primitives::{Event, HostName, Id, OffsetKind, Provenance, SourceMaterial, Timestamp};
+use sinex_primitives::{Event, Id, OffsetKind, Provenance, SourceMaterial, Timestamp};
 use sinex_primitives::{EventSource, EventType, Uuid};
 use std::collections::HashSet;
 
@@ -121,7 +121,7 @@ impl EventPublisher for Sandbox {
             event_type,
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
-            host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+            host: crate::sandbox::local_test_host(),
             node_run_id: Some(Uuid::now_v7()),
             payload_schema_id: None,
             provenance: Provenance::Material {
@@ -225,7 +225,7 @@ impl Sandbox {
                 event_type,
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
-                host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+                host: crate::sandbox::local_test_host(),
                 node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
@@ -284,7 +284,7 @@ impl Sandbox {
                 event_type,
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
-                host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+                host: crate::sandbox::local_test_host(),
                 node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {

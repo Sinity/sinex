@@ -1985,7 +1985,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             event_type: EventType::from(published.event_type),
             payload: published.event_payload,
             ts_orig: Some(provisional.ts_orig),
-            host: HostName::from(published.host),
+            host: HostName::new(published.host).map_err(|error| {
+                SinexError::processing("Invalid host in provisional event payload")
+                    .with_source(error)
+            })?,
             node_run_id: published
                 .node_run_id
                 .and_then(|s| s.parse::<sinex_primitives::Uuid>().ok()),

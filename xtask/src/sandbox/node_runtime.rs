@@ -108,7 +108,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
 
         let service_info = ServiceInfo::new(
             service_name,
-            gethostname::gethostname().to_string_lossy().to_string(),
+            crate::sandbox::local_test_host().into_string(),
             work_dir.clone().into_std_path_buf(),
             dry_run,
         );

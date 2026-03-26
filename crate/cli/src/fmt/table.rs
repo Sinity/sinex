@@ -282,7 +282,7 @@ mod tests {
         let node = InstanceInfo {
             instance_id: InstanceId::new("01HXYZ123456789ABCDEFGHIJK"),
             node_type: NodeType::Ingestor,
-            hostname: Some(HostName::new("testhost")),
+            hostname: Some(HostName::from_static("testhost")),
             last_heartbeat: Some(Timestamp::now()),
             is_leader: true,
         };

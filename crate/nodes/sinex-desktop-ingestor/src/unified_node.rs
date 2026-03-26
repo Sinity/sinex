@@ -342,7 +342,9 @@ impl DesktopNode {
         material_id: Uuid,
         material_len: usize,
     ) -> NodeResult<sinex_primitives::events::Event<serde_json::Value>> {
-        let host = HostName::new(entry.host.clone());
+        let host = HostName::new(entry.host.clone()).map_err(|error| {
+            SinexError::validation("invalid ActivityWatch hostname").with_source(error)
+        })?;
 
         match entry.kind {
             ActivityWatchEntryKind::Window => ActivityWatchWindowActivePayload {

@@ -32,19 +32,35 @@ fn event_payloads() -> impl Strategy<Value = Value> {
     ]
 }
 
+fn valid_event_type_strings() -> impl Strategy<Value = String> {
+    "[a-z][a-z0-9_.-]{2,99}".prop_filter(
+        "must not start/end with dot or contain consecutive dots",
+        |value| !value.starts_with('.') && !value.ends_with('.') && !value.contains(".."),
+    )
+}
+
 /// Strategy for generating arbitrary valid events
 fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     let source = "[a-z][a-z0-9_]{2,49}".prop_map(|raw| format!("prop_{raw}"));
     (
         source,                  // source
-        "[a-z][a-z0-9_.]{2,99}", // event_type
-        "[a-zA-Z0-9_.-]{1,255}", // host
+        valid_event_type_strings(),
+        "[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62}){0,3}", // host
         event_payloads(),        // payload
         prop::bool::ANY,         // random bool for ts_orig
     )
-        .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = event_fixture(source.into(), event_type.into(), payload);
-            event.host = HostName::new(host);
+        .prop_filter_map("strategy generates valid hostnames", |(
+            source,
+            event_type,
+            host,
+            payload,
+            has_ts_orig,
+        )| {
+            let source = EventSource::new(source).ok()?;
+            let event_type = EventType::new(event_type).ok()?;
+            let host = HostName::new(host).ok()?;
+            let mut event = event_fixture(source, event_type, payload);
+            event.host = host;
 
             // Simulate ingest by assigning an ID
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
@@ -58,21 +74,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                 event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
-            event
-        })
-}
-
-/// Strategy for generating events with empty source
-fn empty_source_event() -> impl Strategy<Value = RawEvent> {
-    (
-        Just(String::new()),     // empty source
-        "[a-z][a-z0-9_.]{2,99}", // event_type
-        event_payloads(),        // payload
-    )
-        .prop_map(|(source, event_type, payload)| {
-            let mut event = event_fixture(source.into(), event_type.into(), payload);
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
-            event
+            Some(event)
         })
 }
 
@@ -80,24 +82,26 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
 fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
     (
         "[a-z][a-z0-9_]{2,49}",  // source
-        "[a-z][a-z0-9_.]{2,99}", // event_type
+        valid_event_type_strings(),
     )
-        .prop_map(|(source, event_type)| {
+        .prop_filter_map("metadata event source/type must be valid", |(source, event_type)| {
+            let source = EventSource::new(source).ok()?;
+            let event_type = EventType::new(event_type).ok()?;
             let metadata_timestamp = (*Timestamp::now())
                 .format(&time::format_description::well_known::Rfc3339)
                 .unwrap_or_default();
             let payload = json!({
                 "data": "test",
                 "_metadata": {
-                    "source": source,
+                    "source": source.as_str(),
                     "timestamp": metadata_timestamp
                 }
             });
 
-            let mut event = event_fixture(source.into(), event_type.into(), payload);
+            let mut event = event_fixture(source, event_type, payload);
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-            event
+            Some(event)
         })
 }
 
@@ -192,11 +196,25 @@ sinex_proptest! {
     }
 
     fn test_empty_source_fails_validation(
-        event in empty_source_event()
+        event_type in valid_event_type_strings(),
+        payload in event_payloads()
     ) -> TestResult<()> {
-        let result = validate_event(&event);
-        prop_assert!(result.is_err(), "Event with empty source should fail validation");
+        let event = serde_json::json!({
+            "source": "",
+            "event_type": event_type,
+            "host": "localhost",
+            "payload": payload,
+            "provenance": {
+                "kind": "material",
+                "id": Uuid::now_v7(),
+                "anchor_byte": 0,
+                "offset_kind": "byte"
+            }
+        });
+        let result = serde_json::from_value::<RawEvent>(event);
+        prop_assert!(result.is_err(), "Event with empty source should fail deserialization");
         if let Err(e) = result {
+            let e = e.to_string();
             prop_assert!(
                 e.contains("source") || e.contains("empty"),
                 "Error should mention source issue: {}",
@@ -209,15 +227,24 @@ sinex_proptest! {
     fn test_event_field_constraints(
         source in "[a-z][a-z0-9_]{0,49}",
         event_type in "[a-z][a-z0-9_.]{0,99}",
-        host in "[a-zA-Z0-9_.-]{1,255}",
+        host in "[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62}){0,3}",
         payload in event_payloads()
     ) -> TestResult<()> {
+        let Ok(source) = EventSource::new(source) else {
+            return Ok(());
+        };
+        let Ok(event_type) = EventType::new(event_type) else {
+            return Ok(());
+        };
+        let Ok(host) = HostName::new(host) else {
+            return Ok(());
+        };
         let mut event = event_fixture(
-            source.into(),
-            event_type.into(),
+            source,
+            event_type,
             payload,
         );
-        event.host = HostName::new(host);
+        event.host = host;
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         prop_assert!(!event.source.is_empty());
@@ -550,37 +577,16 @@ mod performance_tests {
         fn property_validation_errors_deterministic(
             source in "[a-z]*", // May be empty
             event_type in "[a-z]*", // May be empty
-            payload in event_payloads()
         ) -> TestResult<()> {
             // Property: Same invalid input should always produce same error
-            if source.is_empty() || event_type.is_empty() {
-                let mut event1 = event_fixture(
-                    source.clone().into(),
-                    event_type.clone().into(),
-                    payload.clone(),
-                );
-                event1.id = Some(Id::from_uuid(Uuid::now_v7()));
+            let source_result_1 = EventSource::new(source.clone()).map_err(|error| error.to_string());
+            let source_result_2 = EventSource::new(source).map_err(|error| error.to_string());
+            prop_assert_eq!(source_result_1, source_result_2);
 
-                let mut event2 = event_fixture(
-                    source.into(),
-                    event_type.into(),
-                    payload,
-                );
-                event2.id = Some(Id::from_uuid(Uuid::now_v7()));
-
-                let result1 = validate_event(&event1);
-                let result2 = validate_event(&event2);
-
-                // Both should fail with similar errors
-                prop_assert!(result1.is_err() && result2.is_err());
-
-                // Error messages should be consistent
-                if let (Err(e1), Err(e2)) = (result1, result2) {
-                    let msg1 = e1.to_string();
-                    let msg2 = e2.to_string();
-                    prop_assert_eq!(msg1, msg2, "Validation errors should be deterministic");
-                }
-            }
+            let event_type_result_1 =
+                EventType::new(event_type.clone()).map_err(|error| error.to_string());
+            let event_type_result_2 = EventType::new(event_type).map_err(|error| error.to_string());
+            prop_assert_eq!(event_type_result_1, event_type_result_2);
             Ok(())
         }
 
