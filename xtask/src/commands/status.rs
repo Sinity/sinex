@@ -19,6 +19,7 @@ use color_eyre::eyre::{Result, WrapErr};
 use console::style;
 use serde::Serialize;
 use sinex_primitives::DeploymentReadinessDescriptor;
+use std::any::Any;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusCommand {
@@ -148,26 +149,34 @@ fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<Run
             .build()
         {
             Ok(rt) => Some(rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url))),
-            Err(error) => Some(RuntimeMetrics {
-                ingestd_status: IngestdStatus::Unknown,
-                last_heartbeat_age_secs: None,
-                consumer_lag_pending: None,
-                consumer_lag_age_secs: None,
-                last_batch_latency_ms: None,
-                last_batch_latency_age_secs: None,
-                query_error: Some(format!("failed to build runtime probe executor: {error}")),
-            }),
+            Err(error) => Some(RuntimeMetrics::query_failure(format!(
+                "failed to build runtime probe executor: {error}"
+            ))),
         },
         Ok(None) => None,
-        Err(error) => Some(RuntimeMetrics {
-            ingestd_status: IngestdStatus::Unknown,
-            last_heartbeat_age_secs: None,
-            consumer_lag_pending: None,
-            consumer_lag_age_secs: None,
-            last_batch_latency_ms: None,
-            last_batch_latency_age_secs: None,
-            query_error: Some(error.to_string()),
-        }),
+        Err(error) => Some(RuntimeMetrics::query_failure(error.to_string())),
+    }
+}
+
+fn describe_thread_panic(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else {
+        "non-string panic payload".to_string()
+    }
+}
+
+fn recover_runtime_metrics_thread(
+    result: std::thread::Result<Option<RuntimeMetrics>>,
+) -> Option<RuntimeMetrics> {
+    match result {
+        Ok(metrics) => metrics,
+        Err(payload) => Some(RuntimeMetrics::query_failure(format!(
+            "runtime metrics collection thread panicked: {}",
+            describe_thread_panic(&*payload)
+        ))),
     }
 }
 
@@ -388,6 +397,8 @@ struct SummaryGitState {
     dirty: bool,
     ahead: u32,
     behind: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 impl XtaskCommand for StatusCommand {
@@ -440,6 +451,7 @@ struct GitState {
     dirty: bool,
     ahead: u32,
     behind: u32,
+    probe_message: Option<String>,
     last_commit_hash: Option<String>,
     last_commit_message: Option<String>,
     last_commit_age_mins: Option<i64>,
@@ -768,6 +780,7 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 dirty,
                 ahead,
                 behind,
+                probe_message: None,
                 last_commit_hash: last_hash,
                 last_commit_message: last_msg,
                 last_commit_age_mins: last_age,
@@ -799,27 +812,38 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             .collect();
 
         // Collect thread results
-        let (pg_probe, nats_probe, services) = infra_handle.join().unwrap_or((
-            PostgresProbe {
-                running: false,
-                accepting_connections: false,
-                latency_ms: 0,
-                message: Some("infra probe thread panicked".to_string()),
-            },
-            NatsProbe {
-                running: false,
-                reachable: false,
-                latency_ms: 0,
-                port: 4222,
-                message: Some("infra probe thread panicked".to_string()),
-            },
-            vec![],
-        ));
-        let git = git_handle.join().unwrap_or_else(|_| GitState {
+        let (pg_probe, nats_probe, services) = match infra_handle.join() {
+            Ok(result) => result,
+            Err(payload) => {
+                let message =
+                    format!("infra probe thread panicked: {}", describe_thread_panic(&*payload));
+                (
+                    PostgresProbe {
+                        running: false,
+                        accepting_connections: false,
+                        latency_ms: 0,
+                        message: Some(message.clone()),
+                    },
+                    NatsProbe {
+                        running: false,
+                        reachable: false,
+                        latency_ms: 0,
+                        port: 4222,
+                        message: Some(message),
+                    },
+                    vec![],
+                )
+            }
+        };
+        let git = git_handle.join().unwrap_or_else(|payload| GitState {
             branch: None,
             dirty: false,
             ahead: 0,
             behind: 0,
+            probe_message: Some(format!(
+                "git probe thread panicked: {}",
+                describe_thread_panic(&*payload)
+            )),
             last_commit_hash: None,
             last_commit_message: None,
             last_commit_age_mins: None,
@@ -827,9 +851,12 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             files_changed: None,
             uncommitted_count: 0,
         });
-        let runtime_metrics = runtime_metrics_handle.join().unwrap_or(None);
-        let history = history_handle.join().unwrap_or_else(|_| {
-            HistorySnapshot::unavailable("history collection thread panicked".to_string())
+        let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
+        let history = history_handle.join().unwrap_or_else(|payload| {
+            HistorySnapshot::unavailable(format!(
+                "history collection thread panicked: {}",
+                describe_thread_panic(&*payload)
+            ))
         });
 
         SummaryData {
@@ -944,6 +971,9 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     if data.git.dirty {
         warnings.push("Uncommitted changes".to_string());
     }
+    if let Some(message) = &data.git.probe_message {
+        warnings.push(message.clone());
+    }
     if !stopped_services.is_empty() {
         warnings.push(format!(
             "Core services not running: {}",
@@ -1049,6 +1079,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             dirty: data.git.dirty,
             ahead: data.git.ahead,
             behind: data.git.behind,
+            message: data.git.probe_message.clone(),
         },
         warnings: warnings.clone(),
         history: data.history.output(),
@@ -1636,7 +1667,8 @@ impl<'a> MotdRenderer<'a> {
 
         // Show when there's something notable
         let has_commit = git.last_commit_hash.is_some();
-        let notable = git.dirty
+        let notable = git.probe_message.is_some()
+            || git.dirty
             || git.ahead > 0
             || git.behind > 0
             || git.stash_count > 0
@@ -1688,6 +1720,11 @@ impl<'a> MotdRenderer<'a> {
             let indent = " ".repeat(LABEL_COL);
             let sep = style("·").dim();
             println!("{indent}{}", stat_parts.join(&format!(" {sep} ")));
+        }
+
+        if let Some(message) = &git.probe_message {
+            let indent = " ".repeat(LABEL_COL);
+            println!("{indent}{}", style(message).yellow());
         }
     }
 }
@@ -1745,25 +1782,37 @@ fn collect_status_data(
             // Main thread: local operations (jobs)
             let jobs = collect_jobs_snapshot(20);
 
-            let (pg, nats, svcs) = infra_handle.join().unwrap_or((
-                PostgresProbe {
-                    running: false,
-                    accepting_connections: false,
-                    latency_ms: 0,
-                    message: Some("infra probe thread panicked".to_string()),
-                },
-                NatsProbe {
-                    running: false,
-                    reachable: false,
-                    latency_ms: 0,
-                    port: 4222,
-                    message: Some("infra probe thread panicked".to_string()),
-                },
-                vec![],
-            ));
-            let runtime_metrics = runtime_metrics_handle.join().unwrap_or(None);
-            let history = history_handle.join().unwrap_or_else(|_| {
-                HistorySnapshot::unavailable("history collection thread panicked".to_string())
+            let (pg, nats, svcs) = match infra_handle.join() {
+                Ok(result) => result,
+                Err(payload) => {
+                    let message = format!(
+                        "infra probe thread panicked: {}",
+                        describe_thread_panic(&*payload)
+                    );
+                    (
+                        PostgresProbe {
+                            running: false,
+                            accepting_connections: false,
+                            latency_ms: 0,
+                            message: Some(message.clone()),
+                        },
+                        NatsProbe {
+                            running: false,
+                            reachable: false,
+                            latency_ms: 0,
+                            port: 4222,
+                            message: Some(message),
+                        },
+                        vec![],
+                    )
+                }
+            };
+            let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
+            let history = history_handle.join().unwrap_or_else(|payload| {
+                HistorySnapshot::unavailable(format!(
+                    "history collection thread panicked: {}",
+                    describe_thread_panic(&*payload)
+                ))
             });
 
             (pg, nats, runtime_metrics, svcs, jobs, history)
@@ -2282,6 +2331,7 @@ mod tests {
                 dirty: true,
                 ahead: 2,
                 behind: 0,
+                message: None,
             },
             warnings: vec!["Uncommitted changes".into()],
             history: HistoryStatusOutput {
@@ -2352,6 +2402,7 @@ mod tests {
         assert_eq!(json["git"]["dirty"], true);
         assert_eq!(json["git"]["ahead"], 2);
         assert_eq!(json["git"]["behind"], 0);
+        assert!(json["git"].get("message").is_none() || json["git"]["message"].is_null());
         assert_eq!(json["diagnostics"]["errors"], 0);
         assert_eq!(json["diagnostics"]["warnings"], 2);
         assert_eq!(json["diagnostics"]["fixable"], 1);
@@ -2461,6 +2512,26 @@ mod tests {
         assert_eq!(
             classify_runtime_summary_impact(&metrics),
             SummaryRuntimeImpact::Unhealthy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_describe_thread_panic_handles_string_payload()
+    -> ::xtask::sandbox::TestResult<()> {
+        let payload: Box<dyn Any + Send> = Box::new(String::from("boom"));
+        assert_eq!(describe_thread_panic(&*payload), "boom");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_recover_runtime_metrics_thread_surfaces_panic_detail()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = recover_runtime_metrics_thread(Err(Box::new("boom")))
+            .unwrap_or_else(|| panic!("expected runtime metrics error payload"));
+        assert_eq!(
+            runtime_query_error_message(&metrics).as_deref(),
+            Some("Runtime metrics query failed: runtime metrics collection thread panicked: boom")
         );
         Ok(())
     }
