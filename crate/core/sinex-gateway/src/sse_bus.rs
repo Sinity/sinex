@@ -85,6 +85,7 @@ pub(crate) struct SseErrorPayload {
 struct SubscriptionSlot {
     filter: SubscriptionFilter,
     tx: mpsc::Sender<SseMessage>,
+    next_seq: u64,
     /// Running gap counter — when we fail to send, track how many events were dropped.
     gap_start: Option<u64>,
     gap_count: u64,
@@ -94,7 +95,6 @@ struct SubscriptionSlot {
 pub struct SubscriptionBus {
     subscriptions: Arc<DashMap<u64, SubscriptionSlot>>,
     next_sub_id: AtomicU64,
-    next_seq: AtomicU64,
 }
 
 impl SubscriptionBus {
@@ -104,7 +104,6 @@ impl SubscriptionBus {
         Self {
             subscriptions: Arc::new(DashMap::new()),
             next_sub_id: AtomicU64::new(1),
-            next_seq: AtomicU64::new(1),
         }
     }
 
@@ -117,6 +116,7 @@ impl SubscriptionBus {
             SubscriptionSlot {
                 filter,
                 tx,
+                next_seq: 1,
                 gap_start: None,
                 gap_count: 0,
             },
@@ -277,7 +277,8 @@ impl SubscriptionBus {
                     continue;
                 }
 
-                let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                let seq = slot.next_seq;
+                slot.next_seq = slot.next_seq.saturating_add(1);
                 if let Some(from_seq) = slot.gap_start {
                     let gap_count = slot.gap_count;
                     let gap = SseMessage::Gap {

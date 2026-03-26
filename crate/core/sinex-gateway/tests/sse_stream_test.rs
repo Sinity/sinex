@@ -684,3 +684,76 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
 
     Ok(())
 }
+
+#[sinex_test]
+async fn multiple_subscribers_keep_independent_sequence_numbers(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+    let env_name = env.name().to_string();
+
+    let first_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 1})).await?;
+    let second_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 2})).await?;
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (_, mut rx_a) = bus.register(SubscriptionFilter::default());
+    let (_, mut rx_b) = bus.register(SubscriptionFilter::default());
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+
+    let nats_pub = ctx.nats_client();
+    publish_confirmation(&nats_pub, &env_name, &first_id).await?;
+    publish_confirmation(&nats_pub, &env_name, &second_id).await?;
+
+    let mut seen_a = Vec::new();
+    let mut seen_b = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && (seen_a.len() < 2 || seen_b.len() < 2) {
+        if seen_a.len() < 2
+            && let Some(SseMessage::Event { seq, event }) =
+                recv_timeout(&mut rx_a, Duration::from_millis(200)).await
+            && let Some(id) = event.id.as_ref().map(|value| *value.as_uuid())
+        {
+            seen_a.push((seq, id));
+        }
+
+        if seen_b.len() < 2
+            && let Some(SseMessage::Event { seq, event }) =
+                recv_timeout(&mut rx_b, Duration::from_millis(200)).await
+            && let Some(id) = event.id.as_ref().map(|value| *value.as_uuid())
+        {
+            seen_b.push((seq, id));
+        }
+    }
+
+    assert_eq!(
+        seen_a.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        vec![1, 2],
+        "subscriber A should observe a local 1,2 sequence regardless of DB fetch order"
+    );
+    assert_eq!(
+        seen_b.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        vec![1, 2],
+        "subscriber B should observe a local 1,2 sequence regardless of DB fetch order"
+    );
+    assert_eq!(
+        seen_a.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        seen_b.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+        "both subscribers should observe the same event ordering"
+    );
+    assert_eq!(
+        seen_a
+            .iter()
+            .map(|(_, id)| *id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [first_id, second_id].into_iter().collect(),
+        "subscriber A should receive the full event set"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;
+
+    Ok(())
+}
