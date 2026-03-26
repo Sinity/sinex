@@ -26,6 +26,7 @@ use crate::{
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
     event_node::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
+    systemd_notify,
 };
 use async_nats::jetstream::kv;
 use async_trait::async_trait;
@@ -40,7 +41,6 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
-use sd_notify::NotifyState;
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
     domain::{NodeName, NodeState},
@@ -742,12 +742,6 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
     }
 
-    fn notify_ready() {
-        if let Err(error) = sd_notify::notify(true, &[NotifyState::Ready]) {
-            warn!(error = %error, "Failed to notify systemd ready state");
-        }
-    }
-
     /// Create a new node runner
     pub fn new(node: T) -> Self {
         Self::new_with_optional_factory(node, None)
@@ -1168,6 +1162,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 _ = heartbeat_shutdown_rx => {}
             }
         });
+        let watchdog_handle = systemd_notify::spawn_watchdog("sinex-node");
 
         // Start command listener for node-dispatch replay (scan commands via NATS).
         // This allows the gateway to dispatch historical scans to running nodes.
@@ -1199,9 +1194,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             warn!(error = %error, "Failed to join heartbeat task");
         }
 
-        if let Err(error) = sd_notify::notify(true, &[NotifyState::Stopping]) {
-            warn!(error = %error, "Failed to notify systemd stopping state");
-        }
+        systemd_notify::stop_watchdog(watchdog_handle, "sinex-node").await;
+        systemd_notify::notify_stopping("sinex-node");
 
         let shutdown_result = self.shutdown().await;
 
@@ -1739,7 +1733,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         if self.node.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.node.current_checkpoint().await?;
-            Self::notify_ready();
+            systemd_notify::notify_ready("sinex-node");
 
             // This should run indefinitely until shutdown
             let continuous_report = self
@@ -1784,7 +1778,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 return Ok(());
             }
 
-            Self::notify_ready();
+            systemd_notify::notify_ready("sinex-node");
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self

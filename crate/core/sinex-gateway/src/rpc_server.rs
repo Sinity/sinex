@@ -24,6 +24,7 @@ use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
+use sinex_node_sdk::systemd_notify;
 use serde_json::Value;
 use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
@@ -1358,14 +1359,15 @@ pub async fn spawn(
     let local_addr = listener.local_addr()?;
     info!("RPC server listening on TLS {}", local_addr);
 
-    // Notify systemd that we're ready to accept connections
-    if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
-        warn!("Failed to notify systemd ready state: {}", e);
-    }
+    systemd_notify::notify_ready("sinex-gateway");
+    let watchdog_handle = systemd_notify::spawn_watchdog("sinex-gateway");
 
     let handle = tokio::spawn(async move {
         // Run accept loop until shutdown signal
-        RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await?;
+        let accept_result = RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await;
+        systemd_notify::stop_watchdog(watchdog_handle, "sinex-gateway").await;
+        systemd_notify::notify_stopping("sinex-gateway");
+        accept_result?;
 
         // Signal all background tasks to shut down
         info!("Shutting down background tasks...");

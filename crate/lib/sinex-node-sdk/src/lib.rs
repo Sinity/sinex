@@ -103,6 +103,8 @@ pub mod shutdown;
 pub mod sqlite_source;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
+#[cfg(feature = "messaging")]
+pub mod systemd_notify;
 pub mod version;
 #[cfg(feature = "messaging")]
 pub mod watcher_handle;
@@ -170,6 +172,8 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
+#[cfg(feature = "messaging")]
+pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use sqlite_source::stage_stable_material;
