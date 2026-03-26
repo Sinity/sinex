@@ -200,6 +200,18 @@ pub async fn handle_nodes_mark_inactive(pool: &PgPool, params: Value) -> Result<
         .await
         .map_err(|e| SinexError::database("Failed to mark node inactive").with_std_error(&e))?;
 
+    if !marked {
+        warn!(
+            node_name = %request.node_name,
+            version = %request.version,
+            "Rejected node mark_inactive because no matching manifest row exists"
+        );
+        return Err(SinexError::not_found(format!(
+            "Node manifest {}@{} is not registered",
+            request.node_name, request.version
+        )));
+    }
+
     info!(
         node_name = %request.node_name,
         version = %request.version,
