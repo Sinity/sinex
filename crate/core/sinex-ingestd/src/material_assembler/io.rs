@@ -23,7 +23,6 @@ use super::{
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use libc;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
@@ -741,48 +740,90 @@ async fn persist_buffered_slice(
 pub(super) async fn import_into_annex(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> IngestdResult<(AnnexKey, PathBuf)> {
-    let relative_utf8 = Utf8PathBuf::from(format!("materials/{}.bin", state.material_id));
-    let repo_path = assembler.annex.repo_path();
-    let target_path_utf8 = repo_path.join(&relative_utf8);
+) -> IngestdResult<AnnexKey> {
+    let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
+        SinexError::io(format!(
+            "Staging path is not valid utf-8 for annex import: {}",
+            path.display()
+        ))
+    })?;
 
-    if let Some(parent) = target_path_utf8.parent() {
-        fs::create_dir_all(parent.as_std_path())
-            .await
-            .map_err(|e| {
-                SinexError::io(format!(
-                    "Failed to create annex target directory {}",
-                    parent.as_str()
-                ))
-                .with_source(e)
-            })?;
-    }
-
-    let target_path: PathBuf = target_path_utf8.clone().into_std_path_buf();
-
-    if let Err(e) = fs::rename(&state.temp_path, &target_path).await {
-        if e.raw_os_error() == Some(libc::EXDEV) {
-            fs::copy(&state.temp_path, &target_path)
-                .await
-                .map_err(|copy_err| {
-                    SinexError::io("Failed to copy assembled file into annex").with_source(copy_err)
-                })?;
-            fs::remove_file(&state.temp_path)
-                .await
-                .map_err(|remove_err| {
-                    SinexError::io("Failed to remove staging file after copy")
-                        .with_source(remove_err)
-                })?;
-        } else {
-            return Err(SinexError::io("Failed to move assembled file into annex").with_source(e));
-        }
-    }
-
-    let annex_key = assembler
+    assembler
         .annex
-        .add_file(&relative_utf8)
+        .add_file(&staging_path)
         .await
-        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))?;
+        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))
+}
 
-    Ok((annex_key, target_path))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MaterialReadySet;
+    use camino::Utf8PathBuf;
+    use serde_json::json;
+    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use std::sync::Arc;
+    use xtask::sandbox::prelude::*;
+
+    async fn test_assembler(
+        ctx: &TestContext,
+    ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("io-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            300,
+            3_600,
+            90,
+        )?;
+
+        Ok((assembler, annex_dir, state_dir))
+    }
+
+    #[sinex_test]
+    async fn import_into_annex_preserves_staging_file_until_cleanup(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let temp_path = state_dir.path().join("assembled.bin");
+        tokio::fs::write(&temp_path, b"staged-content").await?;
+
+        let final_state = FinalizationState {
+            material_id: Uuid::now_v7(),
+            temp_path: temp_path.clone(),
+            expected_offset: 14,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://annex".to_string(),
+            started_at: Timestamp::now(),
+        };
+
+        let annex_key = import_into_annex(&assembler, &final_state).await?;
+        assert!(!annex_key.key.is_empty());
+        assert!(
+            temp_path.exists(),
+            "annex import should preserve the staging file until cleanup succeeds"
+        );
+        Ok(())
+    }
 }

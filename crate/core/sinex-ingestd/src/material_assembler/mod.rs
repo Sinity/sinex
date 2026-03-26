@@ -488,7 +488,7 @@ impl MaterialAssembler {
     async fn import_into_annex(
         &self,
         state: &FinalizationState,
-    ) -> IngestdResult<(sinex_node_sdk::annex::AnnexKey, std::path::PathBuf)> {
+    ) -> IngestdResult<sinex_node_sdk::annex::AnnexKey> {
         io::import_into_annex(self, state).await
     }
 

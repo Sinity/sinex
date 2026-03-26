@@ -576,7 +576,7 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let (annex_key, final_path) = match self.import_into_annex(&final_state).await {
+        let annex_key = match self.import_into_annex(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 self.route_material_error(
@@ -681,11 +681,10 @@ impl MaterialAssembler {
         info!(
             material_id = %material_id,
             annex_key = %annex_key.key,
-            path = %final_path.display(),
             size_bytes = end.total_size_bytes,
             slices = slice_count,
             duration_ms = duration_ms,
-            "Material assembly complete and persisted to annex"
+            "Material assembly complete and persisted to git-annex"
         );
 
         Ok(())
