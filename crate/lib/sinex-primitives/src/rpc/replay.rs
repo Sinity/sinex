@@ -22,6 +22,8 @@ pub enum ReplayState {
     Approved,
     /// Active replay in progress
     Executing,
+    /// Operator requested cancellation; executor is still unwinding.
+    Cancelling,
     /// Finalizing changes
     Committing,
     /// Successfully finished

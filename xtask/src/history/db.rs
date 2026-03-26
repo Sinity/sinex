@@ -68,6 +68,7 @@ impl InvocationStatus {
 pub enum JobLifecycleStatus {
     Running,
     Completed,
+    Failed,
     Orphaned,
     Killed,
 }
@@ -77,6 +78,7 @@ impl JobLifecycleStatus {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
+            Self::Failed => "failed",
             Self::Orphaned => "orphaned",
             Self::Killed => "killed",
         }
@@ -86,6 +88,7 @@ impl JobLifecycleStatus {
         match s {
             "running" => Ok(Self::Running),
             "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
             "orphaned" => Ok(Self::Orphaned),
             "killed" => Ok(Self::Killed),
             _ => Err(color_eyre::eyre::eyre!("invalid job lifecycle status: {s}")),
@@ -94,6 +97,16 @@ impl JobLifecycleStatus {
 
     pub(crate) fn is_terminal(&self) -> bool {
         !matches!(self, Self::Running)
+    }
+
+    #[must_use]
+    pub(crate) fn from_invocation_status(status: InvocationStatus) -> Self {
+        match status {
+            InvocationStatus::Running => Self::Running,
+            InvocationStatus::Success => Self::Completed,
+            InvocationStatus::Failed => Self::Failed,
+            InvocationStatus::Cancelled => Self::Killed,
+        }
     }
 }
 
@@ -3163,7 +3176,7 @@ pub struct BackgroundJob {
     pub pid: u32,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
-    /// Process lifecycle status (running/completed/orphaned/killed).
+    /// Process lifecycle status (running/completed/failed/orphaned/killed).
     pub job_status: JobLifecycleStatus,
     pub exit_code: Option<i32>,
 }

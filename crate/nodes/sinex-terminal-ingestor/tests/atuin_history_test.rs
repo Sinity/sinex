@@ -1,6 +1,7 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Context;
 use rusqlite::Connection;
+use sinex_primitives::Timestamp;
 use sinex_terminal_ingestor::atuin_history::{
     get_max_row_id, is_atuin_sqlite_history, read_atuin_history,
 };
@@ -74,7 +75,7 @@ async fn test_read_atuin_history_returns_all_entries() -> TestResult<()> {
     let history_path = create_test_atuin_history(&temp_dir)?;
 
     let (entries, last_row_id) =
-        read_atuin_history(&history_path, 0).wrap_err("read full Atuin history")?;
+        read_atuin_history(&history_path, 0, None).wrap_err("read full Atuin history")?;
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].history_id, "h1");
@@ -91,7 +92,7 @@ async fn test_read_atuin_history_incremental() -> TestResult<()> {
     let history_path = create_test_atuin_history(&temp_dir)?;
 
     let (entries, last_row_id) =
-        read_atuin_history(&history_path, 0).wrap_err("read initial Atuin history")?;
+        read_atuin_history(&history_path, 0, None).wrap_err("read initial Atuin history")?;
     assert_eq!(entries.len(), 2);
     assert_eq!(last_row_id, 2);
 
@@ -104,10 +105,27 @@ async fn test_read_atuin_history_incremental() -> TestResult<()> {
     .wrap_err("insert incremental Atuin history row")?;
 
     let (new_entries, new_last_row_id) =
-        read_atuin_history(&history_path, last_row_id).wrap_err("read incremental Atuin history")?;
+        read_atuin_history(&history_path, last_row_id, None)
+            .wrap_err("read incremental Atuin history")?;
     assert_eq!(new_entries.len(), 1);
     assert_eq!(new_entries[0].history_id, "h3");
     assert_eq!(new_last_row_id, 3);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_read_atuin_history_respects_end_time_boundary() -> TestResult<()> {
+    let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
+    let history_path = create_test_atuin_history(&temp_dir)?;
+    let end_time = Timestamp::from_unix_timestamp_nanos(1_700_000_050_000_000_000i128)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid Atuin end time"))?;
+
+    let (entries, last_row_id) = read_atuin_history(&history_path, 0, Some(end_time))
+        .wrap_err("read bounded Atuin history")?;
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].history_id, "h1");
+    assert_eq!(last_row_id, 1);
     Ok(())
 }
 

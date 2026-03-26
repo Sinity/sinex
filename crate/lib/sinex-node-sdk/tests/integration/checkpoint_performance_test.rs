@@ -95,6 +95,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
     let mut processed = 0usize;
     let mut last_checkpoint = None;
     let mut total_save_duration = StdDuration::from_millis(0);
+    let mut revision = 0u64;
 
     while processed < total_messages {
         let mut batch = consumer
@@ -110,7 +111,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
             message.ack().await?;
             processed += 1;
 
-            let checkpoint = CheckpointState {
+            let mut checkpoint = CheckpointState {
                 checkpoint: Checkpoint::Stream {
                     message_id: sequence.to_string(),
                     event_id: None,
@@ -119,10 +120,12 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
                 last_activity: Timestamp::now(),
                 data: Some(json!({ "stream": stream, "subject": subject })),
                 version: 2,
+                revision,
             };
 
             let start = Instant::now();
-            manager.save_checkpoint(&checkpoint).await?;
+            revision = manager.save_checkpoint(&checkpoint).await?;
+            checkpoint.revision = revision;
             total_save_duration += start.elapsed();
             last_checkpoint = Some(checkpoint);
         }
@@ -204,6 +207,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
 
     // Process the first batch and persist checkpoint.
     let mut processed = 0usize;
+    let mut revision = 0u64;
     while processed < 50 {
         let mut batch = consumer
             .fetch()
@@ -227,8 +231,9 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                 last_activity: Timestamp::now(),
                 data: Some(json!({ "phase": "initial" })),
                 version: 2,
+                revision,
             };
-            manager.save_checkpoint(&checkpoint).await?;
+            revision = manager.save_checkpoint(&checkpoint).await?;
         }
     }
 
@@ -251,6 +256,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
 
     let consumer = spawn_consumer(&js, &stream, &subject, &durable).await?;
     let mut recovered = 0usize;
+    let mut revision = 0u64;
     while recovered < 50 {
         let mut batch = consumer
             .fetch()
@@ -276,8 +282,9 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                 last_activity: Timestamp::now(),
                 data: Some(json!({ "phase": "recovery" })),
                 version: 2,
+                revision,
             };
-            manager.save_checkpoint(&checkpoint).await?;
+            revision = manager.save_checkpoint(&checkpoint).await?;
         }
 
         if !processed_any {

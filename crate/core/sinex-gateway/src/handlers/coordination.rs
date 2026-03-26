@@ -17,7 +17,7 @@ fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> Instan
     InstanceInfo {
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service,
-        hostname: Some(HostName::new(&meta.hostname)),
+        hostname: HostName::new(&meta.hostname).ok(),
         last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,
     }
@@ -62,7 +62,8 @@ pub async fn handle_coordination_instance_health(
         Some(meta) => {
             let now = temporal::now().unix_timestamp();
             let heartbeat_age_secs = now - meta.last_heartbeat;
-            let is_healthy = heartbeat_age_secs < 60;
+            let is_healthy =
+                heartbeat_age_secs < kv_client.instance_stale_timeout().as_secs() as i64;
             let is_leader = meta.instance_id == leader;
 
             Ok(serde_json::to_value(InstanceHealthResponse {

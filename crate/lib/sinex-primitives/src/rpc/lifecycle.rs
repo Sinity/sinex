@@ -124,9 +124,9 @@ fn default_batch_limit() -> i64 {
 /// data loss, it uses a two-step confirmation flow:
 ///
 /// ```text
-/// Pending ──create──→ Previewed ──approve──→ Approved ──execute──→ Completed
-///              │            │                     │
-///              └──cancel────┴────────────────────→ Cancelled
+/// Pending ──create──→ Previewed ──approve──→ Executing ──complete──→ Completed
+///              │            │
+///              └──cancel────┴──────────────────────────────────────→ Cancelled
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -135,8 +135,6 @@ pub enum TombstoneOperationState {
     Pending,
     /// Preview computed, awaiting approval (TTL active)
     Previewed,
-    /// Approved for execution
-    Approved,
     /// Tombstone in progress
     Executing,
     /// Successfully completed
@@ -157,7 +155,6 @@ pub enum TombstoneOperationState {
 pub enum TombstoneOperationPhase {
     Pending,
     Previewed,
-    Approved,
     Executing,
     Completed,
     Cancelled,
@@ -170,7 +167,6 @@ impl From<TombstoneOperationState> for TombstoneOperationPhase {
         match state {
             TombstoneOperationState::Pending => Self::Pending,
             TombstoneOperationState::Previewed => Self::Previewed,
-            TombstoneOperationState::Approved => Self::Approved,
             TombstoneOperationState::Executing => Self::Executing,
             TombstoneOperationState::Completed => Self::Completed,
             TombstoneOperationState::Cancelled => Self::Cancelled,
@@ -185,7 +181,6 @@ impl From<TombstoneOperationPhase> for TombstoneOperationState {
         match phase {
             TombstoneOperationPhase::Pending => Self::Pending,
             TombstoneOperationPhase::Previewed => Self::Previewed,
-            TombstoneOperationPhase::Approved => Self::Approved,
             TombstoneOperationPhase::Executing => Self::Executing,
             TombstoneOperationPhase::Completed => Self::Completed,
             TombstoneOperationPhase::Cancelled => Self::Cancelled,
@@ -208,7 +203,7 @@ impl TombstoneOperationState {
     /// Check if operation can be cancelled
     #[must_use]
     pub fn is_cancellable(&self) -> bool {
-        matches!(self, Self::Pending | Self::Previewed | Self::Approved)
+        matches!(self, Self::Pending | Self::Previewed)
     }
 
     /// Check if operation can be approved

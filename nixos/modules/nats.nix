@@ -321,7 +321,7 @@ in
           {
             name = "SINEX_RAW_EVENTS";
             subjects = [ "events.raw.>" ];
-            maxAge = "168h"; # 7d
+            maxAge = "2160h"; # 90d
           }
           {
             name = "SOURCE_MATERIAL_BEGIN";
@@ -341,8 +341,14 @@ in
           {
             name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
             subjects = [ "events.confirmations.>" ];
-            maxAge = "720h"; # 30d
+            maxAge = "168h"; # 7d
             maxMsgsPerSubject = 1;
+          }
+          {
+            name = "SINEX_RAW_EVENTS_DLQ";
+            subjects = [ "events.dlq.>" ];
+            maxAge = "720h"; # 30d
+            dupeWindow = "1h";
           }
         ];
         description = "Stream definitions to bootstrap when bootstrapStreams.enable is true.";
@@ -464,16 +470,26 @@ in
             let
               subjArgs = concatStringsSep " " (map (s: "--subjects ${escapeShellArg s}") stream.subjects);
               maxMsgsPerSubjectArg = optionalString (stream ? maxMsgsPerSubject) "--max-msgs-per-subject ${toString stream.maxMsgsPerSubject}";
+              dupeWindowArg = optionalString (stream ? dupeWindow) "--dupe-window ${escapeShellArg stream.dupeWindow}";
+              mutableArgs = ''
+                ${subjArgs} \
+                --retention limits \
+                --max-age ${stream.maxAge} \
+                ${maxMsgsPerSubjectArg} \
+                ${dupeWindowArg}
+              '';
             in ''
-              if ! ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
+              if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
+                ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${stream.name} \
+                  --force \
+                  ${mutableArgs}
+              else
                 if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${stream.name} \
                   --defaults \
-                  ${subjArgs} \
+                  ${mutableArgs} \
                   --storage file \
-                  --retention limits \
-                  --max-age ${stream.maxAge} \
                   --replicas 1 \
-                  ${maxMsgsPerSubjectArg} 2>&1); then
+                  2>&1); then
                   if echo "$output" | grep -q "subjects overlap with an existing stream"; then
                     echo "Stream ${stream.name} already provisioned elsewhere; skipping bootstrap for it"
                   else

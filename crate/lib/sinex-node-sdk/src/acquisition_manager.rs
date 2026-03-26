@@ -486,14 +486,15 @@ impl AcquisitionManager {
     /// Finalize material and publish end event
     ///
     /// Ported from `TemporalLedger::finalize_material`
-    pub async fn finalize(&self, handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
-        self.finalize_with_metadata(handle, reason, json!({})).await
+    pub async fn finalize(&self, mut handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
+        self.finalize_with_metadata(&mut handle, reason, json!({}))
+            .await
     }
 
     /// Cancel a material capture and finalize with cancellation metadata.
-    pub async fn cancel(&self, handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
+    pub async fn cancel(&self, mut handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
         self.finalize_with_metadata(
-            handle,
+            &mut handle,
             reason,
             json!({
                 "cancelled": true,
@@ -505,7 +506,7 @@ impl AcquisitionManager {
 
     pub async fn finalize_with_metadata(
         &self,
-        mut handle: SourceMaterialHandle,
+        handle: &mut SourceMaterialHandle,
         _reason: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
@@ -516,7 +517,7 @@ impl AcquisitionManager {
         }
 
         // Compute final hash
-        let content_hash = handle.hasher.finalize();
+        let content_hash = handle.hasher.clone().finalize();
         let hash_hex = content_hash.to_hex();
 
         // Publish end message

@@ -925,6 +925,59 @@ async fn test_aggregation_time_series(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_aggregation_time_series_buckets_by_original_timestamp(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("timeseries-original-timestamp"))
+        .await?;
+
+    for ts in [
+        "2024-01-01T10:15:00Z",
+        "2024-01-01T10:45:00Z",
+        "2024-01-01T11:05:00Z",
+    ] {
+        let mut event = DynamicPayload::new("ts-orig-source", "ts.type", json!({ "ts": ts }))
+            .from_material(material_id)
+            .build()?;
+        event.ts_orig = Some(Timestamp::parse_rfc3339(ts)?);
+        let _ = ctx.pool.events().insert(event).await?;
+    }
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("ts-orig-source")],
+            aggregation: Some(AggregationMode::TimeSeries {
+                interval_minutes: 60,
+                order: TimeSeriesOrder::TimeAsc,
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    match result {
+        EventQueryResult::TimeSeries { buckets } => {
+            assert_eq!(buckets.len(), 2, "expected one bucket per event hour");
+            assert_eq!(
+                buckets[0].bucket,
+                Timestamp::parse_rfc3339("2024-01-01T10:00:00Z")?
+            );
+            assert_eq!(buckets[0].count, 2);
+            assert_eq!(
+                buckets[1].bucket,
+                Timestamp::parse_rfc3339("2024-01-01T11:00:00Z")?
+            );
+            assert_eq!(buckets[1].count, 1);
+        }
+        _ => panic!("Expected TimeSeries result"),
+    }
+
+    Ok(())
+}
+
 /// Test: Aggregation SourceStats
 #[sinex_test]
 async fn test_aggregation_source_stats(ctx: TestContext) -> TestResult<()> {

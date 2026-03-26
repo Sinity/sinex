@@ -539,23 +539,13 @@ struct RuntimeCheckReport {
 
 async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckReport> {
     use crate::config::config;
-    use crate::runtime_metrics::{
-        IngestdStatus, RuntimeAssessment, RuntimeHealthStatus, query_runtime_metrics,
-    };
+    use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeHealthStatus};
 
     let cfg = config();
     let descriptor = match DeploymentReadinessDescriptor::load() {
         Ok(descriptor) => descriptor,
         Err(error) => {
-            let metrics = crate::runtime_metrics::RuntimeMetrics {
-                ingestd_status: crate::runtime_metrics::IngestdStatus::Unknown,
-                last_heartbeat_age_secs: None,
-                consumer_lag_pending: None,
-                consumer_lag_age_secs: None,
-                last_batch_latency_ms: None,
-                last_batch_latency_age_secs: None,
-                query_error: Some(error.to_string()),
-            };
+            let metrics = crate::runtime_metrics::RuntimeMetrics::query_failure(error.to_string());
             let assessment = metrics.assessment();
             let warnings = assessment.warnings.clone();
             return Ok(RuntimeCheckReport {
@@ -592,29 +582,13 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
                 overall: false,
                 skipped: true,
                 skip_reason: Some("runtime database target not configured".into()),
-                metrics: crate::runtime_metrics::RuntimeMetrics {
-                    ingestd_status: crate::runtime_metrics::IngestdStatus::Unknown,
-                    last_heartbeat_age_secs: None,
-                    consumer_lag_pending: None,
-                    consumer_lag_age_secs: None,
-                    last_batch_latency_ms: None,
-                    last_batch_latency_age_secs: None,
-                    query_error: None,
-                },
+                metrics: crate::runtime_metrics::RuntimeMetrics::unavailable(),
                 assessment,
                 warnings,
             });
         }
         Err(error) => {
-            let metrics = crate::runtime_metrics::RuntimeMetrics {
-                ingestd_status: crate::runtime_metrics::IngestdStatus::Unknown,
-                last_heartbeat_age_secs: None,
-                consumer_lag_pending: None,
-                consumer_lag_age_secs: None,
-                last_batch_latency_ms: None,
-                last_batch_latency_age_secs: None,
-                query_error: Some(error.to_string()),
-            };
+            let metrics = crate::runtime_metrics::RuntimeMetrics::query_failure(error.to_string());
             let assessment = metrics.assessment();
             let warnings = assessment.warnings.clone();
             return Ok(RuntimeCheckReport {
@@ -628,7 +602,7 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         }
     };
 
-    let metrics = query_runtime_metrics(&db_url).await;
+    let metrics = crate::runtime_metrics::query_runtime_metrics(&db_url).await;
     let assessment = metrics.assessment();
     let warnings = assessment.warnings.clone();
 

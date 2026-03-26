@@ -316,6 +316,7 @@ async fn test_checkpoint_consumer_state_isolated(ctx: TestContext) -> TestResult
         "worker-primary".to_string(),
     );
 
+    let mut revision = 0u64;
     for index in 0..5u64 {
         let state = CheckpointState {
             checkpoint: Checkpoint::Stream {
@@ -326,9 +327,9 @@ async fn test_checkpoint_consumer_state_isolated(ctx: TestContext) -> TestResult
             last_activity: Timestamp::now(),
             data: Some(serde_json::json!({ "worker": "primary" })),
             version: 2,
-            revision: 0,
+            revision,
         };
-        leader.save_checkpoint(&state).await?;
+        revision = leader.save_checkpoint(&state).await?;
     }
 
     let follower = CheckpointManager::new(

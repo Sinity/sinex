@@ -516,7 +516,6 @@ fn phase_to_result_status(phase: TombstoneOperationPhase) -> OperationStatus {
     match phase {
         TombstoneOperationPhase::Pending
         | TombstoneOperationPhase::Previewed
-        | TombstoneOperationPhase::Approved
         | TombstoneOperationPhase::Executing => OperationStatus::Running,
         TombstoneOperationPhase::Completed => OperationStatus::Success,
         TombstoneOperationPhase::Cancelled => OperationStatus::Cancelled,

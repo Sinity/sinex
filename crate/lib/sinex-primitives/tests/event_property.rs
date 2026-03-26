@@ -22,7 +22,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         source,
         event_type,
         ts_orig: Some(Timestamp::now()),
-        host: HostName::new("localhost"),
+        host: HostName::from_static("localhost"),
         payload,
         node_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
@@ -115,7 +115,7 @@ fn arb_json_value() -> impl Strategy<Value = JsonValue> {
 
 /// Generate arbitrary valid source names
 fn arb_source_name() -> impl Strategy<Value = String> {
-    "[a-zA-Z][a-zA-Z0-9_.-]{2,50}"
+    "[a-z][a-z0-9_.-]{2,50}"
 }
 
 /// Generate arbitrary valid event type names
@@ -133,7 +133,7 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
         Just("window.opened".to_string()),
         Just("window.closed".to_string()),
         // Custom format
-        "[a-zA-Z][a-zA-Z0-9_-]{1,30}\\.[a-zA-Z][a-zA-Z0-9_-]{1,30}"
+        "[a-z][a-z0-9_-]{1,30}\\.[a-z][a-z0-9_-]{1,30}"
     ]
 }
 
@@ -169,8 +169,15 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
         arb_json_value(),
         prop::option::of(arb_timestamp()),
     )
-        .prop_map(|(source, event_type, payload, ts_orig)| {
-            let mut event = test_event(source.into(), event_type.into(), payload);
+        .prop_filter_map("source and event_type must satisfy domain validation", |(
+            source,
+            event_type,
+            payload,
+            ts_orig,
+        )| {
+            let source = EventSource::new(source).ok()?;
+            let event_type = EventType::new(event_type).ok()?;
+            let mut event = test_event(source, event_type, payload);
             // Simulate ingest by assigning an ID
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
@@ -178,7 +185,7 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
                 event.ts_orig = Some(ts);
             }
 
-            event
+            Some(event)
         })
 }
 
@@ -277,7 +284,7 @@ sinex_proptest! {
             payload.clone(),
         );
         event.ts_orig = Some(ts_orig);
-        event.host = HostName::new(host.clone());
+        event.host = HostName::new(host.clone())?;
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         prop_assert_eq!(event.source.as_str(), source);

@@ -109,7 +109,8 @@ pub fn event_fixture(
         event_type,
         payload,
         ts_orig: Some(Timestamp::now()),
-        host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+        host: HostName::new(gethostname::gethostname().to_string_lossy().to_string())
+            .unwrap_or_else(|_| HostName::from_static("unknown-host")),
         node_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
@@ -186,7 +187,8 @@ pub mod strategies {
 
     /// Generate random HostName values.
     pub fn hostname() -> impl Strategy<Value = HostName> {
-        "[a-z][a-z0-9-]{2,15}".prop_map(HostName::new)
+        "[a-z][a-z0-9-]{2,15}"
+            .prop_map(|s| HostName::new(s).expect("regex-generated hostname is always valid"))
     }
 
     /// Generate random CommandText values.

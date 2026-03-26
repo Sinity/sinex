@@ -66,6 +66,25 @@ pub struct RuntimeAssessment {
 }
 
 impl RuntimeMetrics {
+    pub fn unavailable() -> Self {
+        Self {
+            ingestd_status: IngestdStatus::Unknown,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: None,
+        }
+    }
+
+    pub fn query_failure(message: impl Into<String>) -> Self {
+        Self {
+            query_error: Some(message.into()),
+            ..Self::unavailable()
+        }
+    }
+
     pub fn fresh_consumer_lag_pending(&self) -> Option<f64> {
         self.consumer_lag_pending
             .filter(|_| self.consumer_lag_age_secs.is_some_and(|age| age <= TELEMETRY_STALE_SECS))
@@ -193,15 +212,7 @@ pub async fn query_runtime_metrics(db_url: &str) -> RuntimeMetrics {
         Ok(m) => m,
         Err(e) => {
             tracing::debug!("Runtime metrics query failed: {e}");
-            RuntimeMetrics {
-                ingestd_status: IngestdStatus::Unknown,
-                last_heartbeat_age_secs: None,
-                consumer_lag_pending: None,
-                consumer_lag_age_secs: None,
-                last_batch_latency_ms: None,
-                last_batch_latency_age_secs: None,
-                query_error: Some(e.to_string()),
-            }
+            RuntimeMetrics::query_failure(e.to_string())
         }
     }
 }

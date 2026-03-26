@@ -9,6 +9,7 @@
 
 use sinex_gateway::distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter};
 use std::num::NonZeroU32;
+use tokio::sync::Barrier;
 use xtask::sandbox::prelude::*;
 
 async fn start_limiter(
@@ -239,6 +240,37 @@ async fn rate_limit_concurrent_tokens(ctx: TestContext) -> TestResult<()> {
             "Token {i} should have all 10 requests allowed (got {count})"
         );
     }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn rate_limit_same_token_first_request_race_respects_limit(ctx: TestContext) -> TestResult<()> {
+    let (_ctx, limiter) = start_limiter(ctx, config_with_limit(5)).await?;
+    let limiter = Arc::new(limiter);
+    let barrier = Arc::new(Barrier::new(10));
+
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let limiter = limiter.clone();
+        let barrier = barrier.clone();
+        handles.push(tokio::spawn(async move {
+            barrier.wait().await;
+            limiter.check_and_increment("same-token-race").await
+        }));
+    }
+
+    let allowed = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .map(|result| result.expect("task should not panic"))
+        .filter(|allowed| *allowed)
+        .count();
+
+    assert_eq!(
+        allowed, 5,
+        "a contended first reservation must still respect the configured global limit"
+    );
 
     Ok(())
 }

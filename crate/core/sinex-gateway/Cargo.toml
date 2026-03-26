@@ -148,6 +148,9 @@ workspace = true
 [dependencies.dashmap]
 workspace = true
 
+[dependencies.parking_lot]
+workspace = true
+
 [dependencies.blake3]
 workspace = true
 

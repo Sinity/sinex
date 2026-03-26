@@ -172,6 +172,17 @@ async fn derived_adapter_rejects_missing_trigger_id() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn derived_adapter_uses_its_own_continuous_loop() -> TestResult<()> {
+    let adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
+    let capabilities = sinex_node_sdk::runtime::stream::Node::capabilities(&adapter);
+
+    assert!(capabilities.supports_continuous);
+    assert!(capabilities.manages_own_continuous_loop);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn derived_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()> {
     let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(DlqDerivedNode));
 

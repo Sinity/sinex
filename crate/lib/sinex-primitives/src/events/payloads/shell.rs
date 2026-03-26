@@ -110,7 +110,7 @@ impl AtuinCommandExecutedPayload {
             timestamp: 0,
             ts_start_orig: crate::temporal::now(),
             ts_end_orig: crate::temporal::now(),
-            hostname: HostName::new("test-host".to_string()),
+            hostname: HostName::from_static("test-host"),
             terminal_session_uuid: None,
         }
     }
@@ -345,7 +345,9 @@ impl AtuinCommandExecutedPayload {
             timestamp: timestamp_ns,
             ts_start_orig,
             ts_end_orig,
-            hostname: HostName::new(hostname.into()),
+            hostname: HostName::new(hostname.into()).map_err(|error| {
+                crate::SinexError::validation("Atuin hostname is invalid").with_source(error)
+            })?,
             terminal_session_uuid: None,
         })
     }

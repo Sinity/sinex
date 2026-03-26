@@ -8,8 +8,9 @@
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{
     SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
-    read_rows_after,
+    read_rows_after, read_rows_with_params,
 };
+use sinex_primitives::Timestamp;
 
 /// Represents a single command from Atuin history.
 #[derive(Debug, Clone)]
@@ -43,37 +44,64 @@ pub fn ensure_atuin_sqlite_history(path: &Utf8PathBuf) -> Result<(), SqliteTable
 pub fn read_atuin_history(
     path: &Utf8PathBuf,
     from_row_id: i64,
+    end_time: Option<Timestamp>,
 ) -> Result<(Vec<AtuinHistoryEntry>, i64), rusqlite::Error> {
-    read_rows_after(
-        path,
-        "SELECT
-            ROWID,
-            id,
-            timestamp,
-            duration,
-            exit,
-            command,
-            cwd,
-            session,
-            hostname
-         FROM history
-         WHERE deleted_at IS NULL AND ROWID > ?
-         ORDER BY ROWID ASC",
-        from_row_id,
-        |row| {
-            Ok(AtuinHistoryEntry {
-                row_id: row.get(0)?,
-                history_id: row.get(1)?,
-                timestamp_ns: row.get(2)?,
-                duration_ns: row.get(3)?,
-                exit_code: row.get(4)?,
-                command: row.get(5)?,
-                cwd: row.get(6)?,
-                session_id: row.get(7)?,
-                hostname: row.get(8)?,
-            })
-        },
-    )
+    fn map_atuin_row(row: &rusqlite::Row<'_>) -> Result<AtuinHistoryEntry, rusqlite::Error> {
+        Ok(AtuinHistoryEntry {
+            row_id: row.get(0)?,
+            history_id: row.get(1)?,
+            timestamp_ns: row.get(2)?,
+            duration_ns: row.get(3)?,
+            exit_code: row.get(4)?,
+            command: row.get(5)?,
+            cwd: row.get(6)?,
+            session_id: row.get(7)?,
+            hostname: row.get(8)?,
+        })
+    }
+
+    if let Some(end_time) = end_time {
+        let end_time_ns =
+            i64::try_from(end_time.inner().unix_timestamp_nanos()).unwrap_or(i64::MAX);
+        read_rows_with_params(
+            path,
+            "SELECT
+                ROWID,
+                id,
+                timestamp,
+                duration,
+                exit,
+                command,
+                cwd,
+                session,
+                hostname
+             FROM history
+             WHERE deleted_at IS NULL AND ROWID > ?1 AND timestamp <= ?2
+             ORDER BY ROWID ASC",
+            (from_row_id, end_time_ns),
+            from_row_id,
+            map_atuin_row,
+        )
+    } else {
+        read_rows_after(
+            path,
+            "SELECT
+                ROWID,
+                id,
+                timestamp,
+                duration,
+                exit,
+                command,
+                cwd,
+                session,
+                hostname
+             FROM history
+             WHERE deleted_at IS NULL AND ROWID > ?
+             ORDER BY ROWID ASC",
+            from_row_id,
+            map_atuin_row,
+        )
+    }
 }
 
 /// Get the current maximum row ID from the Atuin history database.

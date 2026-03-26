@@ -733,10 +733,197 @@ impl std::ops::Deref for EventType {
     }
 }
 
-define_string_type!(
-    #[doc = "The hostname where an event occurred"]
-    HostName
-);
+/// The hostname where an event occurred.
+///
+/// Always valid by construction. Use [`HostName::new`] to parse runtime input,
+/// or [`HostName::from_static`] for compile-time literals.
+///
+/// Valid format: ASCII alphanumeric labels separated by dots, with optional
+/// interior hyphens. Labels may not start or end with `-`, may not be empty,
+/// and the full hostname must not exceed 255 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct HostName(Cow<'static, str>);
+
+impl<'de> serde::Deserialize<'de> for HostName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::validate_str(&s).map_err(serde::de::Error::custom)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+}
+
+impl HostName {
+    /// Parse a string into a validated `HostName`.
+    pub fn new(s: impl Into<String>) -> Result<Self, crate::SinexError> {
+        let s = s.into();
+        Self::validate_str(&s)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+
+    /// Create a const instance from a static string literal.
+    #[must_use]
+    pub const fn from_static(s: &'static str) -> Self {
+        Self::const_validate_hostname(s);
+        Self(Cow::Borrowed(s))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0.into_owned()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    const fn const_validate_hostname(s: &str) {
+        let bytes = s.as_bytes();
+        assert!(!bytes.is_empty(), "HostName cannot be empty");
+        assert!(bytes.len() <= 255, "HostName cannot exceed 255 bytes");
+
+        let mut i = 0;
+        let mut label_len = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'.' {
+                assert!(label_len != 0, "HostName cannot contain empty labels");
+                assert!(bytes[i - 1] != b'-', "HostName labels cannot end with '-'");
+                label_len = 0;
+                i += 1;
+                continue;
+            }
+
+            let is_ascii_alnum = (b >= b'a' && b <= b'z')
+                || (b >= b'A' && b <= b'Z')
+                || (b >= b'0' && b <= b'9');
+            assert!(
+                is_ascii_alnum || b == b'-',
+                "HostName must contain only ASCII letters, digits, hyphens, and dots"
+            );
+            assert!(
+                !(label_len == 0 && b == b'-'),
+                "HostName labels cannot start with '-'"
+            );
+            label_len += 1;
+            assert!(label_len <= 63, "HostName labels cannot exceed 63 bytes");
+            i += 1;
+        }
+
+        assert!(label_len != 0, "HostName cannot end with '.'");
+        assert!(
+            bytes[bytes.len() - 1] != b'-',
+            "HostName labels cannot end with '-'"
+        );
+    }
+
+    fn validate_str(s: &str) -> Result<(), crate::SinexError> {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            return Err(crate::SinexError::validation("HostName cannot be empty"));
+        }
+        if bytes.len() > 255 {
+            return Err(crate::SinexError::validation(
+                "HostName cannot exceed 255 bytes",
+            ));
+        }
+
+        let mut label_len = 0usize;
+        for (idx, &b) in bytes.iter().enumerate() {
+            if b == b'.' {
+                if label_len == 0 {
+                    return Err(crate::SinexError::validation(
+                        "HostName cannot contain empty labels",
+                    ));
+                }
+                if bytes[idx - 1] == b'-' {
+                    return Err(crate::SinexError::validation(
+                        "HostName labels cannot end with '-'",
+                    ));
+                }
+                label_len = 0;
+                continue;
+            }
+
+            let is_ascii_alnum = b.is_ascii_alphanumeric();
+            if !(is_ascii_alnum || b == b'-') {
+                return Err(crate::SinexError::validation(
+                    "HostName must contain only ASCII letters, digits, hyphens, and dots",
+                ));
+            }
+            if label_len == 0 && b == b'-' {
+                return Err(crate::SinexError::validation(
+                    "HostName labels cannot start with '-'",
+                ));
+            }
+            label_len += 1;
+            if label_len > 63 {
+                return Err(crate::SinexError::validation(
+                    "HostName labels cannot exceed 63 bytes",
+                ));
+            }
+        }
+
+        if label_len == 0 {
+            return Err(crate::SinexError::validation("HostName cannot end with '.'"));
+        }
+        if bytes[bytes.len() - 1] == b'-' {
+            return Err(crate::SinexError::validation(
+                "HostName labels cannot end with '-'",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl FromStr for HostName {
+    type Err = crate::SinexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl From<String> for HostName {
+    #[allow(clippy::expect_used)] // Intentional: invalid trusted value = programmer error
+    fn from(s: String) -> Self {
+        Self::new(s.clone()).unwrap_or_else(|_| panic!("invalid HostName value: {s:?}"))
+    }
+}
+
+impl From<&str> for HostName {
+    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error
+    fn from(s: &str) -> Self {
+        Self::new(s).unwrap_or_else(|_| panic!("invalid HostName value: {s:?}"))
+    }
+}
+
+impl AsRef<str> for HostName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for HostName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Display for HostName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 define_string_type!(
     #[doc = "The name of a node (ingestor, automaton, service)"]
@@ -1726,7 +1913,7 @@ mod sqlx_impls {
     impl_sqlx_for_validated_string_type!(EventType);
 
     // Register string types without validation
-    impl_sqlx_for_string_type!(HostName);
+    impl_sqlx_for_validated_string_type!(HostName);
     impl_sqlx_for_string_type!(NodeName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);

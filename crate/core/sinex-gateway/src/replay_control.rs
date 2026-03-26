@@ -21,6 +21,8 @@ use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
@@ -687,7 +689,10 @@ struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
     env: SinexEnvironment,
+    scan_ack_timeout: Duration,
     scan_completion_timeout: Duration,
+    #[cfg(test)]
+    checkpoint_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug)]
@@ -704,13 +709,28 @@ impl ReplayExecutionEngine {
             replay,
             nats_client,
             env: environment(),
+            scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
+            #[cfg(test)]
+            checkpoint_failures_remaining: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_scan_ack_timeout(mut self, scan_ack_timeout: Duration) -> Self {
+        self.scan_ack_timeout = scan_ack_timeout;
+        self
     }
 
     #[cfg(test)]
     fn with_scan_completion_timeout(mut self, scan_completion_timeout: Duration) -> Self {
         self.scan_completion_timeout = scan_completion_timeout;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_checkpoint_failures(mut self, checkpoint_failures_remaining: Arc<AtomicUsize>) -> Self {
+        self.checkpoint_failures_remaining = Some(checkpoint_failures_remaining);
         self
     }
 
@@ -737,7 +757,8 @@ impl ReplayExecutionEngine {
         match result {
             Ok(operation) => Ok(operation),
             Err(err) => match self.load_cancelled_operation(operation_id).await {
-                Ok(Some(cancelled)) => Ok(cancelled),
+                Ok(Some(cancelled)) if cancelled.started_at.is_some() => Ok(cancelled),
+                Ok(Some(_)) => Err(err),
                 Ok(None) => Err(err),
                 Err(load_err) => Err(err).wrap_err(format!(
                     "replay cancellation probe failed after execution error: {load_err}"
@@ -747,16 +768,33 @@ impl ReplayExecutionEngine {
     }
 
     async fn handle_execution_finish(&self, operation_id: Uuid, result: &Result<ReplayOperation>) {
-        match self.load_cancelled_operation(operation_id).await {
-            Ok(Some(cancelled)) => {
+        match self.replay.load_operation(operation_id).await {
+            Ok(operation) if operation.state == ReplayState::Cancelled => {
                 info!(
                     operation_id = %operation_id,
-                    state = ?cancelled.state,
+                    state = ?operation.state,
                     "Replay execution stopped after operator cancellation"
                 );
                 return;
             }
-            Ok(None) => {}
+            Ok(operation) if operation.state == ReplayState::Cancelling => {
+                if Self::execution_result_is_cancellation(result) {
+                    match self.replay.finish_cancellation(operation_id).await {
+                        Ok(()) => {
+                            info!(
+                                operation_id = %operation_id,
+                                state = ?ReplayState::Cancelled,
+                                "Replay execution stopped after operator cancellation"
+                            );
+                            return;
+                        }
+                        Err(err) => {
+                            warn!(?err, "Failed to finalize replay cancellation");
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
             Err(err) => {
                 warn!(?err, "Failed to load replay operation while checking for cancellation");
             }
@@ -770,7 +808,7 @@ impl ReplayExecutionEngine {
             );
             if let Err(mark_err) = self
                 .replay
-                .mark_failed(operation_id, format!("{err}"))
+                .mark_failed(operation_id, format!("{err:#}"))
                 .await
             {
                 warn!(?mark_err, "Failed to mark replay operation as failed");
@@ -882,8 +920,11 @@ impl ReplayExecutionEngine {
                 // Finalize checkpoint
                 checkpoint.processed_events = processed_count;
                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                self.replay
-                    .update_checkpoint(operation_id, &checkpoint)
+                self.persist_replay_checkpoint(
+                    operation_id,
+                    &checkpoint,
+                    "Failed to persist final replay checkpoint",
+                )
                     .await?;
 
                 if let Some(cancelled) = self.load_cancelled_operation(operation_id).await? {
@@ -906,12 +947,15 @@ impl ReplayExecutionEngine {
             Err(err) => {
                 // Update checkpoint with current progress before failing
                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                if let Err(ckpt_err) = self
-                    .replay
-                    .update_checkpoint(operation_id, &checkpoint)
+                if let Err(checkpoint_error) = self
+                    .persist_replay_checkpoint(
+                        operation_id,
+                        &checkpoint,
+                        "Failed to persist replay checkpoint after execution error",
+                    )
                     .await
                 {
-                    warn!(?ckpt_err, "Failed to save checkpoint on error");
+                    return Err(err.wrap_err(format!("{checkpoint_error}")));
                 }
                 Err(err)
             }
@@ -924,6 +968,44 @@ impl ReplayExecutionEngine {
     ) -> Result<Option<ReplayOperation>> {
         let operation = self.replay.load_operation(operation_id).await?;
         Ok((operation.state == ReplayState::Cancelled).then_some(operation))
+    }
+
+    fn execution_result_is_cancellation(result: &Result<ReplayOperation>) -> bool {
+        result.as_ref().is_err_and(|err| {
+            err.downcast_ref::<SinexError>()
+                .is_some_and(|sinex_err| matches!(sinex_err, SinexError::Cancelled(_)))
+        })
+    }
+
+    #[cfg(test)]
+    fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
+        if let Some(remaining) = &self.checkpoint_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay checkpoint persistence failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn persist_replay_checkpoint(
+        &self,
+        operation_id: Uuid,
+        checkpoint: &ReplayCheckpoint,
+        context: &'static str,
+    ) -> Result<()> {
+        self.maybe_fail_checkpoint_persist().wrap_err(context)?;
+        self.replay
+            .update_checkpoint(operation_id, checkpoint)
+            .await
+            .map_err(|e| eyre!("{e}"))
+            .wrap_err(context)
     }
 
     /// Pagination batch size for collecting scope events from the database.
@@ -1235,6 +1317,24 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
+    async fn abort_before_scan_ack(
+        &self,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+        operation_id: Uuid,
+        error: color_eyre::eyre::Report,
+    ) -> Result<u64> {
+        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
+            return Err(error.wrap_err(format!(
+                "Replay dispatch failed before node acknowledgement, and restoring the archived cascade also failed: {restore_error}"
+            )));
+        }
+
+        Err(error.wrap_err(
+            "Replay dispatch failed before node acknowledgement; restored archived cascade",
+        ))
+    }
+
     /// Timeout for the node to acknowledge the scan command.
     const SCAN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
     /// Timeout for the entire scan operation to complete.
@@ -1442,11 +1542,19 @@ impl ReplayExecutionEngine {
             .env
             .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
-        let mut progress_sub = self
-            .nats_client
-            .subscribe(progress_subject.clone())
-            .await
-            .map_err(|e| eyre!("Failed to subscribe to replay progress: {e}"))?;
+        let mut progress_sub = match self.nats_client.subscribe(progress_subject.clone()).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("Failed to subscribe to replay progress: {error}"),
+                    )
+                    .await;
+            }
+        };
 
         // Build MaterialReplayContext so the node knows this is a replay scan
         let replay_context = MaterialReplayContext {
@@ -1479,34 +1587,67 @@ impl ReplayExecutionEngine {
             .map_err(|e| eyre!("Failed to serialize NodeScanCommand: {e}"))?;
 
         // Step 3: Send via NATS request-reply and wait for acknowledgement
-        let ack_msg = tokio::time::timeout(
-            Self::SCAN_ACK_TIMEOUT,
+        let ack_msg = match tokio::time::timeout(
+            self.scan_ack_timeout,
             self.nats_client
                 .request(scan_subject.clone(), command_payload.into()),
         )
         .await
-        .map_err(|_| {
-            eyre!(
-                "Timed out waiting for scan ack from node '{}' after {:?}. \
-                 Is the node running?",
-                scope.node_id,
-                Self::SCAN_ACK_TIMEOUT
-            )
-        })?
-        .map_err(|e| eyre!("NATS request to {} failed: {e}", scan_subject))?;
+        {
+            Ok(Ok(message)) => message,
+            Ok(Err(error)) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("NATS request to {} failed: {error}", scan_subject),
+                    )
+                    .await;
+            }
+            Err(_) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!(
+                            "Timed out waiting for scan ack from node '{}' after {:?}. Is the node running?",
+                            scope.node_id,
+                            self.scan_ack_timeout
+                        ),
+                    )
+                    .await;
+            }
+        };
 
-        let ack: NodeScanAck = serde_json::from_slice(&ack_msg.payload)
-            .map_err(|e| eyre!("Failed to deserialize NodeScanAck: {e}"))?;
+        let ack: NodeScanAck = match serde_json::from_slice(&ack_msg.payload) {
+            Ok(ack) => ack,
+            Err(error) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        operation_id,
+                        eyre!("Failed to deserialize NodeScanAck: {error}"),
+                    )
+                    .await;
+            }
+        };
 
         if !ack.accepted {
-            // Node rejected the command — restore the cascade
-            self.restore_cascade(pool, &cascade_ids, operation_id)
-                .await?;
-            return Err(eyre!(
-                "Node '{}' rejected scan command: {}",
-                ack.node_name,
-                ack.error.unwrap_or_else(|| "unknown reason".to_string())
-            ));
+            return self
+                .abort_before_scan_ack(
+                    pool,
+                    &cascade_ids,
+                    operation_id,
+                    eyre!(
+                        "Node '{}' rejected scan command: {}",
+                        ack.node_name,
+                        ack.error.unwrap_or_else(|| "unknown reason".to_string())
+                    ),
+                )
+                .await;
         }
 
         info!(
@@ -1567,14 +1708,19 @@ impl ReplayExecutionEngine {
                                 // Update checkpoint with progress
                                 checkpoint.processed_events = progress.events_processed;
                                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                                if let Err(checkpoint_error) =
-                                    replay.update_checkpoint(operation_id, checkpoint).await
+                                if let Err(checkpoint_error) = self
+                                    .persist_replay_checkpoint(
+                                        operation_id,
+                                        checkpoint,
+                                        "Failed to persist replay progress checkpoint",
+                                    )
+                                    .await
                                 {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        error = %checkpoint_error,
-                                        "Failed to persist replay progress checkpoint"
-                                    );
+                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                        error: checkpoint_error,
+                                        emitted_count: progress.events_emitted,
+                                        restore_archived_cascade: progress.events_emitted == 0,
+                                    });
                                 }
 
                                 // If final_report is present, the scan is complete
@@ -1595,12 +1741,18 @@ impl ReplayExecutionEngine {
                     _ = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
                         match replay.load_operation(operation_id).await {
                             Ok(operation) if operation.state == ReplayState::Executing => {}
-                            Ok(operation) if operation.state == ReplayState::Cancelled => {
+                            Ok(operation)
+                                if matches!(
+                                    operation.state,
+                                    ReplayState::Cancelling | ReplayState::Cancelled
+                                ) =>
+                            {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: eyre!(
+                                    error: SinexError::cancelled(format!(
                                         "Replay operation {} was cancelled during execution",
                                         operation_id
-                                    ),
+                                    ))
+                                    .into(),
                                     emitted_count: events_emitted,
                                     restore_archived_cascade: events_emitted == 0,
                                 });
@@ -1890,6 +2042,76 @@ mod tests {
                     node_name: node_name.clone(),
                     events_processed,
                     events_emitted: events_processed,
+                    final_report: Some(report),
+                    error: None,
+                };
+                nats.publish(
+                    progress_subject,
+                    serde_json::to_vec(&progress).unwrap().into(),
+                )
+                .await
+                .expect("fake node progress publish should succeed");
+            }
+        });
+
+        Ok((command_rx, handle))
+    }
+
+    async fn spawn_fake_scan_node_with_progress(
+        nats: Client,
+        env: SinexEnvironment,
+        node_name: &str,
+        events_processed: u64,
+        events_emitted: u64,
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<NodeScanCommand>,
+        tokio::task::JoinHandle<()>,
+    )> {
+        let node_name = node_name.to_string();
+        let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+        let mut sub = nats
+            .subscribe(subject)
+            .await
+            .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            if let Some(msg) = sub.next().await {
+                let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+                    .expect("fake node must receive a valid scan command");
+                let operation_id = command.operation_id;
+                let progress_subject =
+                    env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                let _ = command_tx.send(command.clone());
+
+                if let Some(reply) = msg.reply {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: true,
+                        error: None,
+                    };
+                    nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
+                        .await
+                        .expect("fake node ack publish should succeed");
+                }
+
+                let report = ScanReport {
+                    events_processed,
+                    duration: Duration::from_millis(5),
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    node_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
+                    successful_targets: vec![node_name.clone()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                };
+                let progress = NodeScanProgress {
+                    operation_id,
+                    node_name: node_name.clone(),
+                    events_processed,
+                    events_emitted,
                     final_report: Some(report),
                     error: None,
                 };
@@ -2627,6 +2849,202 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-checkpoint-persist-fail"))
+            .await?;
+        let event = DynamicPayload::new(
+            "checkpoint-fail-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-checkpoint-persist-fail.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+            nats_client.clone(),
+            env,
+            "checkpoint-fail-test",
+            1,
+            0,
+        )
+        .await?;
+
+        let mut scope = sample_scope();
+        scope.node_id = "checkpoint-fail-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:checkpoint-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
+            .with_checkpoint_failures(Arc::new(AtomicUsize::new(1)))
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("checkpoint persistence failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to persist replay progress checkpoint")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed
+                .error_details
+                .as_deref()
+                .is_some_and(|details| details.contains("Failed to persist replay progress checkpoint")),
+            "failure details should include checkpoint persistence context: {:?}",
+            failed.error_details
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "checkpoint persistence failure before replacements should restore live rows"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "checkpoint persistence failure before replacements should not leave archived rows behind"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake checkpoint-fail-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_ack(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx.create_source_material(Some("replay-pre-ack-failure")).await?;
+        let event = DynamicPayload::new(
+            "pre-ack-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-pre-ack-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_ack_timeout(Duration::from_millis(100));
+        ReplayTelemetry::new(replay.clone()).spawn();
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30));
+
+        let mut scope = sample_scope();
+        scope.node_id = "pre-ack-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+        let err = client
+            .execute(approved.operation_id, "service:executor-node".into(), false)
+            .await
+            .expect_err("execute should fail before scan ack when no node responder exists");
+        assert!(
+            err.to_string().contains("restored archived cascade"),
+            "pre-ack dispatch failures must explain that the archived cascade was restored: {err}"
+        );
+
+        let operation = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(operation.state, ReplayState::Failed);
+        assert_eq!(operation.checkpoint.processed_events, 0);
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "pre-ack dispatch failures must restore the live row"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "pre-ack dispatch failures must not leave the archived cascade behind"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn replay_execute_rejects_zero_event_preview_before_execution(
         ctx: TestContext,
     ) -> Result<()> {
@@ -2666,7 +3084,15 @@ mod tests {
         );
 
         let stored = replay.load_operation(operation.operation_id).await?;
-        assert_eq!(stored.state, ReplayState::Approved);
+        assert_eq!(stored.state, ReplayState::Failed);
+        assert_eq!(
+            stored.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert_eq!(
+            stored.error_details.as_deref(),
+            Some(err.to_string().as_str())
+        );
         assert!(stored.executor_node.is_none());
 
         Ok(())
@@ -2829,22 +3255,20 @@ mod tests {
             "replay operation should enter Executing before cancellation"
         );
 
-        let cancelled = control_client
+        let cancellation_requested = control_client
             .cancel(
                 operation_id,
                 "admin:approver".into(),
                 Some("operator requested stop".to_string()),
             )
             .await?;
-        assert_eq!(cancelled.state, ReplayState::Cancelled);
+        assert_eq!(cancellation_requested.state, ReplayState::Cancelling);
+        assert!(cancellation_requested.outcome.is_none());
         assert_eq!(
-            cancelled.outcome,
-            Some(sinex_primitives::domain::ReplayOutcome::Cancelled)
-        );
-        assert_eq!(
-            cancelled.error_details.as_deref(),
+            cancellation_requested.error_details.as_deref(),
             Some("operator requested stop")
         );
+        assert!(cancellation_requested.finished_at.is_none());
 
         let executed = execute_task
             .await

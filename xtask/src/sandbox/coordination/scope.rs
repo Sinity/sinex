@@ -168,9 +168,7 @@ impl<'ctx> PipelineScope<'ctx> {
             event_type,
             payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(Timestamp::now)),
-            host: sinex_primitives::domain::HostName::new(
-                gethostname::gethostname().to_string_lossy().to_string(),
-            ),
+            host: crate::sandbox::local_test_host(),
             node_run_id: Some(sinex_primitives::Uuid::now_v7()),
             payload_schema_id: None,
             provenance: sinex_primitives::events::Provenance::Material {

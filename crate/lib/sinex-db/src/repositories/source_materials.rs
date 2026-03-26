@@ -868,28 +868,24 @@ impl SourceMaterialRepository<'_> {
         recovery_reason: &str,
         metadata_update: JsonValue,
     ) -> DbResult<()> {
-        let mut update = json!({
-            "recovery_info": {
+        let mut update = serde_json::Map::new();
+        update.insert(
+            "recovery_info".to_string(),
+            json!({
                 "recovered_at": Timestamp::now(),
                 "recovery_reason": recovery_reason,
                 "original_status": status::SENSING,
-            }
-        });
+            }),
+        );
         match metadata_update {
             JsonValue::Object(extra) => {
-                let target = update
-                    .as_object_mut()
-                    .expect("recovery metadata literal must be an object");
                 for (key, value) in extra {
-                    target.insert(key, value);
+                    update.insert(key, value);
                 }
             }
             JsonValue::Null => {}
             other => {
-                update
-                    .as_object_mut()
-                    .expect("recovery metadata literal must be an object")
-                    .insert("_meta".to_string(), other);
+                update.insert("_meta".to_string(), other);
             }
         }
         self.update_material_state(
@@ -897,7 +893,7 @@ impl SourceMaterialRepository<'_> {
             id,
             status::RECOVERED_PARTIAL,
             None,
-            update,
+            JsonValue::Object(update),
         )
         .await
     }

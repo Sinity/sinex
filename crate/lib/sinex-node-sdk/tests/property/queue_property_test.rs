@@ -38,8 +38,9 @@ async fn checkpoint_progress_is_monotonic(ctx: TestContext) -> TestResult<()> {
         );
 
         let mut last_state = None;
+        let mut revision = 0u64;
         for (idx, processed_count) in processed.iter().copied().enumerate() {
-            let state = CheckpointState {
+            let mut state = CheckpointState {
                 checkpoint: Checkpoint::Stream {
                     message_id: format!("message-{idx}"),
                     event_id: None,
@@ -48,10 +49,11 @@ async fn checkpoint_progress_is_monotonic(ctx: TestContext) -> TestResult<()> {
                 last_activity: Timestamp::now(),
                 data: Some(serde_json::json!({"batch": idx})),
                 version: 2,
-                revision: 0,
+                revision,
             };
 
-            manager.save_checkpoint(&state).await?;
+            revision = manager.save_checkpoint(&state).await?;
+            state.revision = revision;
             last_state = Some(state);
         }
 

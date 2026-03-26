@@ -77,8 +77,10 @@ impl TestNodePublisher {
                 event_type.replace('.', "_")
             ),
         );
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
         self.nats_client
-            .publish(subject, serde_json::to_vec(&event)?.into())
+            .publish_with_headers(subject, headers, serde_json::to_vec(&event)?.into())
             .await?;
         self.nats_client.flush().await?;
 
@@ -236,6 +238,28 @@ async fn start_consumer_with_hooks(
         topology,
         namespace,
     })
+}
+
+async fn consume_one_stream_message(
+    js: &jetstream::Context,
+    stream_name: &str,
+    consumer_name: &str,
+) -> TestResult<jetstream::Message> {
+    let stream = js.get_stream(stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(
+            consumer_name,
+            jetstream::consumer::pull::Config {
+                durable_name: Some(consumer_name.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let mut messages = consumer.messages().await?;
+    let next_message = timeout(Duration::from_secs(Timeouts::SHORT), messages.next()).await?;
+    let message = next_message.ok_or_else(|| eyre!("no message available in stream {stream_name}"))?;
+    let message = message.map_err(|error| eyre!(error.to_string()))?;
+    Ok(message)
 }
 
 #[sinex_test]
@@ -851,6 +875,98 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         Ok::<_, color_eyre::Report>(())
     }
     .await
+}
+
+#[sinex_test]
+async fn jetstream_consumer_sets_stable_dedupe_identity_on_dlq_messages(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = format!("dlq-dedupe-{}", Uuid::now_v7().to_string().to_lowercase());
+    let (hooks, _counters) = TestHooks::builder()
+        .fail_once()
+        .route_db_errors_to_dlq()
+        .build();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let event_id = Uuid::now_v7();
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        "dlq-dedupe",
+        Some(setup.namespace.clone()),
+    );
+    publisher
+        .publish_with_overrides(
+            "db.failure",
+            json!({"force": "db_error"}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = setup.topology.dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages >= 1)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    let consumer_name = format!("dlq-inspect-{suffix}");
+    let dlq_message =
+        consume_one_stream_message(&setup.js, &setup.topology.dlq_stream, &consumer_name).await?;
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    setup
+        .js
+        .publish_with_headers(
+            setup.topology.dlq_publish_subject.clone(),
+            headers,
+            dlq_message.payload.clone(),
+        )
+        .await?
+        .await?;
+    dlq_message
+        .ack()
+        .await
+        .map_err(|error| eyre!(error.to_string()))?;
+
+    let mut dlq_stream = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await
+        .map_err(|error| eyre!(error.to_string()))?;
+    let dlq_state = dlq_stream
+        .info()
+        .await
+        .map_err(|error| eyre!(error.to_string()))?
+        .state
+        .clone();
+    assert_eq!(
+        dlq_state.messages, 1,
+        "republishing with the expected dedupe id must not create a second DLQ entry"
+    );
+
+    setup.handle.abort();
+    Ok(())
 }
 
 #[sinex_test]

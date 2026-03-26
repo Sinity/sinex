@@ -18,12 +18,12 @@
 //! - Test with extreme values: empty strings, very long strings, unicode, control chars
 //! - Test with edge case numbers: negative, zero, max values, floating point precision
 //! - Test with malformed but parseable JSON structures
-//! - Focus on the modern `RawEvent::schemaless()` API and database insertion paths
+//! - Focus on the modern `RawEvent::schemaless()` API and serialization paths
 
 use sinex_primitives::testing::event_fixture;
 use xtask::sandbox::prelude::*;
 
-use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
+use proptest::test_runner::TestCaseResult;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::{Event, Id};
 use sinex_primitives::{
@@ -181,8 +181,9 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
             |(source, event_type, ts_orig, host, payload)| {
                 let source = EventSource::new(source).ok()?;
                 let event_type = EventType::new(event_type).ok()?;
+                let host = HostName::new(host).ok()?;
                 let mut event = event_fixture(source, event_type, payload);
-                event.host = HostName::new(host);
+                event.host = host;
                 event.id = Some(Id::from_uuid(Uuid::now_v7()));
                 event.ts_orig = Some(ts_orig);
                 Some(event)
@@ -627,7 +628,10 @@ sinex_proptest! {
             event_type,
             serde_json::json!({}),
         );
-        event.host = HostName::new(host.clone());
+        let Ok(host) = HostName::new(host.clone()) else {
+            return TestCaseResult::Ok(());
+        };
+        event.host = host.clone();
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Test serialization with problematic strings in host/payload
@@ -640,42 +644,9 @@ sinex_proptest! {
     }
 }
 
-// ============================================================================
-// Database Integration Fuzzing Tests
-// ============================================================================
-
-// Test database insertion with fuzzed events using the modern infrastructure.
+// Test event creation with extreme payloads in the serialization context.
 #[sinex_test]
-async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> {
-    use proptest::test_runner::TestRunner;
-
-    let mut runner = TestRunner::deterministic();
-
-    // Generate multiple fuzzed events and test serialization robustness
-    // Focus on the parts that are most likely to cause issues: JSON serialization
-    for _ in 0..100 {
-        let event = fuzzed_events().new_tree(&mut runner).unwrap().current();
-
-        // Test JSON serialization (this is the critical path for database storage)
-        let json_result = serde_json::to_string(&event);
-        if let Ok(json_str) = json_result {
-            // If serialization succeeds, test deserialization as well
-            let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
-            assert!(
-                deserialize_result.is_ok(),
-                "Event should deserialize successfully if serialization succeeded"
-            );
-        } else {
-            // Serialization errors are acceptable as long as they don't cause panics
-            // The main requirement is graceful failure
-        }
-    }
-    Ok(())
-}
-
-// Test event creation with extreme payloads in the database context.
-#[sinex_test]
-async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<()> {
+async fn test_extreme_payload_serialization_handling() -> TestResult<()> {
     // Test various extreme payload scenarios
     let test_cases = vec![
         // Very large string payload
@@ -722,7 +693,7 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<
         );
 
         // Test should not panic regardless of success or failure
-        // Focus on serialization since that's the critical path for database storage
+        // Focus on serialization since that's the critical path for storage handoff
         let json_result = serde_json::to_string(&event);
         match json_result {
             Ok(json_str) => {
@@ -759,23 +730,23 @@ mod additional_tests {
         assert!(EventSource::new("test\0null\0bytes").is_err());
         assert!(EventType::new("test\0event").is_err());
 
-        // Null bytes in payload and host are still allowed (not validated)
+        // Null bytes in payload are still tolerated by serialization, but hostnames are validated.
         let mut event = event_fixture(
             EventSource::from_static("test"),
             EventType::from_static("test.event"),
             serde_json::json!({"null_bytes": "test\0data"}),
         );
-        event.host = HostName::new("test\0host".to_string());
+        assert!(HostName::new("test\0host".to_string()).is_err());
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        // Serialization should still work for payload/host with null bytes
+        // Serialization should still work for payloads with null bytes.
         let _result = serde_json::to_string(&event);
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_event_with_extremely_large_payload(ctx: TestContext) -> TestResult<()> {
+    async fn test_event_with_extremely_large_payload() -> TestResult<()> {
         // Create a very large payload (10MB of data)
         let large_string = "x".repeat(10_000_000);
         let large_payload = serde_json::json!({
@@ -800,7 +771,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    async fn test_event_with_infinite_numbers(ctx: TestContext) -> TestResult<()> {
+    async fn test_event_with_infinite_numbers() -> TestResult<()> {
         let payload = serde_json::json!({
             "infinity": f64::INFINITY,
             "neg_infinity": f64::NEG_INFINITY,
@@ -842,7 +813,7 @@ mod additional_tests {
                     }
                 }),
             );
-            event.host = HostName::new("🦀".to_string());
+            assert!(HostName::new("🦀".to_string()).is_err());
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             // Test JSON serialization

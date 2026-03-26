@@ -9,18 +9,18 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
+fn set_annex_path(env: &mut EnvGuard, annex_path: &std::path::Path) {
+    let annex_path = annex_path.to_string_lossy();
+    env.set("SINEX_ANNEX_PATH", annex_path.as_ref());
+}
+
 fn configure_gateway_env(
     env: &mut EnvGuard,
     ctx: &TestContext,
     annex_path: &std::path::Path,
 ) -> TestResult<()> {
     env.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
-    env.set(
-        "SINEX_ANNEX_PATH",
-        annex_path
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    set_annex_path(env, annex_path);
     Ok(())
 }
 
@@ -75,13 +75,7 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
 async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestResult<()> {
     let mut env = EnvGuard::new();
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    set_annex_path(&mut env, temp_dir.path());
 
     let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
@@ -104,13 +98,7 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
     let mut env = EnvGuard::new();
     env.clear("DATABASE_URL");
     let temp_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        temp_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    set_annex_path(&mut env, temp_dir.path());
 
     let result = ServiceContainer::from_database_url("").await;
 
@@ -160,13 +148,7 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
 
     // Test with custom annex path
     let custom_dir = TempDir::new()?;
-    env.set(
-        "SINEX_ANNEX_PATH",
-        custom_dir
-            .path()
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    set_annex_path(&mut env, custom_dir.path());
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(

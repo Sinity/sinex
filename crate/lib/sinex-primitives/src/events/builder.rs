@@ -500,6 +500,7 @@ static HOST_IDENTITY: std::sync::LazyLock<crate::domain::HostName> =
                     .into_owned()
             });
         crate::domain::HostName::new(id)
+            .unwrap_or_else(|_| crate::domain::HostName::from_static("unknown-host"))
     });
 
 // Helper function to get hostname (needed by builder)
