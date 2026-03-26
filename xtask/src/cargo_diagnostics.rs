@@ -263,28 +263,30 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
 /// For `--workspace`/`--all`: queries `cargo metadata --no-deps` (fast, no rustc).
 /// Returns 0 on error or when args are ambiguous (caller keeps progress indeterminate).
 pub fn estimate_package_count(package_args: &[&str]) -> usize {
+    progress_target_packages(package_args).map_or(0, |targets| targets.len())
+}
+
+fn progress_target_packages(package_args: &[&str]) -> Option<std::collections::HashSet<String>> {
     // Count explicit -p/--package flags in the args (most common case)
-    let mut explicit_packages = 0usize;
+    let mut explicit_packages = std::collections::HashSet::new();
     let mut workspace_mode = false;
     let mut next_is_pkg = false;
 
     for arg in package_args {
         if next_is_pkg {
-            explicit_packages += 1;
+            explicit_packages.insert((*arg).to_string());
             next_is_pkg = false;
         } else if *arg == "--workspace" || *arg == "--all" {
             workspace_mode = true;
         } else if *arg == "--package" || *arg == "-p" {
             next_is_pkg = true;
         } else if arg.starts_with("--package=") {
-            explicit_packages += 1;
+            explicit_packages.insert(arg.trim_start_matches("--package=").to_string());
         }
     }
 
-    if explicit_packages > 0 {
-        // Each -p foo compiles approximately 1 package (plus deps, but the artifact
-        // count for the target packages themselves is what we track)
-        return explicit_packages;
+    if !explicit_packages.is_empty() {
+        return Some(explicit_packages);
     }
 
     if workspace_mode {
@@ -294,27 +296,65 @@ pub fn estimate_package_count(package_args: &[&str]) -> usize {
             .output()
         {
             Ok(o) => o,
-            Err(_) => return 0,
+            Err(_) => return None,
         };
         if !output.status.success() {
-            return 0;
+            return None;
         }
         let text = match std::str::from_utf8(&output.stdout) {
             Ok(s) => s,
-            Err(_) => return 0,
+            Err(_) => return None,
         };
         let json: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
-            Err(_) => return 0,
+            Err(_) => return None,
         };
-        return json["packages"]
+        return Some(
+            json["packages"]
             .as_array()
-            .map(|pkgs| pkgs.len())
-            .unwrap_or(0);
+            .map(|pkgs| {
+                pkgs.iter()
+                    .filter_map(|pkg| {
+                        pkg.get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .map(std::string::ToString::to_string)
+                    })
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default(),
+        );
     }
 
     // Affected mode or unknown scope — cannot estimate without running cargo
-    0
+    None
+}
+
+fn track_progress_artifact(
+    line: &str,
+    progress_targets: Option<&std::collections::HashSet<String>>,
+    seen_packages: &mut std::collections::HashSet<String>,
+) -> Option<usize> {
+    let json = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if json.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+        return None;
+    }
+
+    let package = json
+        .get("package_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(extract_package_name)?;
+
+    if let Some(targets) = progress_targets
+        && !targets.contains(&package)
+    {
+        return None;
+    }
+
+    if seen_packages.insert(package) {
+        Some(seen_packages.len())
+    } else {
+        None
+    }
 }
 
 /// Run a cargo subcommand streaming lines to a callback as they arrive.
@@ -365,7 +405,8 @@ where
     });
 
     let mut all_bytes = Vec::new();
-    let mut artifact_count = 0usize;
+    let progress_targets = progress_target_packages(cargo_args);
+    let mut seen_packages = std::collections::HashSet::new();
 
     if let Some(out) = child.stdout.take() {
         for line in BufReader::new(out).lines() {
@@ -373,10 +414,10 @@ where
             // Accumulate raw bytes for parse_cargo_json_output
             all_bytes.extend_from_slice(line.as_bytes());
             all_bytes.push(b'\n');
-            // Count compiler-artifact messages for progress
-            if line.contains(r#""reason":"compiler-artifact""#) {
-                artifact_count += 1;
-                on_artifact(artifact_count);
+            if let Some(done) =
+                track_progress_artifact(&line, progress_targets.as_ref(), &mut seen_packages)
+            {
+                on_artifact(done);
             }
         }
     }
@@ -843,6 +884,33 @@ mod tests {
         assert_eq!(result.compiled_packages.len(), 2);
         assert!(result.compiled_packages.contains("sinex-primitives"));
         assert!(result.compiled_packages.contains("sinex-db"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_track_progress_artifact_counts_unique_target_packages() -> TestResult<()> {
+        let targets = std::collections::HashSet::from(["xtask".to_string()]);
+        let mut seen = std::collections::HashSet::new();
+
+        let dep_line = r#"{"reason":"compiler-artifact","package_id":"registry+https://example.invalid#indexmap@2.7.1","target":{"name":"indexmap"}}"#;
+        let first_target = r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#xtask@0.4.2","target":{"name":"xtask"}}"#;
+        let duplicate_target = r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#xtask@0.4.2","target":{"name":"xtask","kind":["test"]}}"#;
+
+        assert_eq!(
+            track_progress_artifact(dep_line, Some(&targets), &mut seen),
+            None,
+            "dependency artifacts should not advance package progress"
+        );
+        assert_eq!(
+            track_progress_artifact(first_target, Some(&targets), &mut seen),
+            Some(1),
+            "first target package artifact should advance progress once"
+        );
+        assert_eq!(
+            track_progress_artifact(duplicate_target, Some(&targets), &mut seen),
+            None,
+            "duplicate artifacts for the same target package should not inflate progress"
+        );
         Ok(())
     }
 }
