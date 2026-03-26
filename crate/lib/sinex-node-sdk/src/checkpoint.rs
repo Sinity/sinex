@@ -293,7 +293,8 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 ///
 /// # Thread Safety
 /// `CheckpointManager` is `Clone` and can be safely shared across threads.
-/// KV updates are atomic per key; concurrent writers follow last-write-wins semantics.
+/// KV updates are atomic per key; stale writers fail fast on revision mismatch instead of
+/// silently overwriting an already-created checkpoint.
 ///
 /// # Checkpoint Cleanup
 ///
@@ -457,13 +458,13 @@ impl CheckpointManager {
                         .with_source(e)
                 })?
         } else {
-            // Use put() for initial write to correctly handle tombstone cases after purge()
-            // in async-nats v0.33.0 which lacks a dedicated create() method.
             self.kv
-                .put(&self.kv_key(), encoded.into())
+                .create(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
-                    SinexError::checkpoint("Failed to create checkpoint in KV (Put failure?)")
+                    SinexError::checkpoint(
+                        "Failed to create checkpoint in KV (already exists or create failed)",
+                    )
                         .with_source(e)
                 })?
         };

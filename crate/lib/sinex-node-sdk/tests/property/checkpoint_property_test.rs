@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use sinex_node_sdk::Checkpoint;
-use sinex_node_sdk::{CheckpointManager, CheckpointState};
+use sinex_node_sdk::{CheckpointManager, CheckpointState, SinexError};
 use std::sync::Arc;
 use xtask::sandbox::{prelude::*, sinex_prop};
 
@@ -80,7 +80,7 @@ async fn checkpoint_updates_are_idempotent(
         Checkpoint::None
     };
 
-    let initial_state = CheckpointState {
+    let mut initial_state = CheckpointState {
         checkpoint,
         processed_count,
         last_activity: Timestamp::now(),
@@ -90,7 +90,7 @@ async fn checkpoint_updates_are_idempotent(
     };
 
     // Save checkpoint twice
-    checkpoint_manager
+    initial_state.revision = checkpoint_manager
         .save_checkpoint(&initial_state)
         .await
         .map_err(report_to_test_error)?;
@@ -133,6 +133,7 @@ async fn checkpoint_recovery_is_robust(
 
     // Save multiple checkpoints with increasing counts
     let mut expected_final_count = 0u64;
+    let mut current_revision = 0u64;
     for (i, (processed_count, data)) in checkpoints.iter().enumerate() {
         expected_final_count = *processed_count;
 
@@ -145,10 +146,10 @@ async fn checkpoint_recovery_is_robust(
             last_activity: Timestamp::now(),
             data: Some(data.clone()),
             version: 2,
-            revision: 0,
+            revision: current_revision,
         };
 
-        checkpoint_manager
+        current_revision = checkpoint_manager
             .save_checkpoint(&state)
             .await
             .map_err(report_to_test_error)?;
@@ -213,9 +214,13 @@ async fn concurrent_checkpoint_access_is_safe(
         results.push(handle.await.expect("task join"));
     }
 
-    // Verify all updates succeeded (or failed gracefully)
+    // Verify stale revision-0 writers race honestly against the initial create.
     let successful_updates = results.iter().filter(|r| r.is_ok()).count();
-    prop_assert!(successful_updates > 0, "At least one update should succeed");
+    prop_assert_eq!(
+        successful_updates,
+        1,
+        "exactly one revision-0 checkpoint create should succeed"
+    );
 
     // Verify final state is consistent
     let final_state = checkpoint_manager
@@ -262,7 +267,7 @@ async fn checkpoint_state_transitions_are_valid(
         revision: 0,
     };
 
-    checkpoint_manager
+    state.revision = checkpoint_manager
         .save_checkpoint(&state)
         .await
         .map_err(report_to_test_error)?;
@@ -278,7 +283,7 @@ async fn checkpoint_state_transitions_are_valid(
         state.version += 1;
         state.data = Some(serde_json::json!({ "sequence": i + 1 }));
 
-        checkpoint_manager
+        state.revision = checkpoint_manager
             .save_checkpoint(&state)
             .await
             .map_err(report_to_test_error)?;
@@ -327,6 +332,7 @@ async fn checkpoint_data_integrity_is_preserved(
     let mut expected_data = test_data.clone();
     let mut processed_count = 0u64;
     let mut has_persisted = false;
+    let mut current_revision = 0u64;
 
     // Execute operations sequence
     for (i, operation) in operations.iter().enumerate() {
@@ -341,10 +347,10 @@ async fn checkpoint_data_integrity_is_preserved(
                     last_activity: Timestamp::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
-                    revision: 0,
+                    revision: current_revision,
                 };
 
-                checkpoint_manager
+                current_revision = checkpoint_manager
                     .save_checkpoint(&state)
                     .await
                     .map_err(report_to_test_error)?;
@@ -374,10 +380,10 @@ async fn checkpoint_data_integrity_is_preserved(
                     last_activity: Timestamp::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
-                    revision: 0,
+                    revision: current_revision,
                 };
 
-                checkpoint_manager
+                current_revision = checkpoint_manager
                     .save_checkpoint(&state)
                     .await
                     .map_err(report_to_test_error)?;
@@ -415,8 +421,8 @@ async fn checkpoint_cleanup_maintains_consistency(
     let mut managers = Vec::new();
     let mut unique_names = Vec::new();
 
-    for node_name in &node_names {
-        let unique_name = format!("{node_name}-{case_id}");
+    for (index, node_name) in node_names.iter().enumerate() {
+        let unique_name = format!("{node_name}-{case_id}-{index}");
         unique_names.push(unique_name.clone());
 
         let manager = CheckpointManager::new(
@@ -508,6 +514,7 @@ mod stress_tests {
                     format!("{node_name}-consumer"),
                 );
 
+                let mut revision = 0u64;
                 for i in 0..UPDATES_PER_THREAD {
                     let state = CheckpointState {
                         checkpoint: Checkpoint::Stream {
@@ -518,32 +525,34 @@ mod stress_tests {
                         last_activity: Timestamp::now(),
                         data: Some(serde_json::json!({"thread": thread_id, "iteration": i})),
                         version: 2,
-                        revision: 0,
+                        revision,
                     };
 
-                    if checkpoint_manager.save_checkpoint(&state).await.is_ok() {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                    }
+                    revision = checkpoint_manager.save_checkpoint(&state).await?;
+                    counter.fetch_add(1, Ordering::Relaxed);
 
                     // Occasional yield to increase contention
                     if i.rem_euclid(10) == 0 {
                         tokio::task::yield_now().await;
                     }
                 }
+
+                Result::<(), SinexError>::Ok(())
             });
             handles.push(handle);
         }
 
         // Wait for all tasks to complete
         for handle in handles {
-            handle.await.expect("Task should complete successfully");
+            handle.await.expect("Task should complete successfully")?;
         }
 
         // Verify results
         let successful_updates = counter.load(Ordering::Relaxed);
-        assert!(
-            successful_updates >= EXPECTED_TOTAL / 2,
-            "Should have at least half successful updates: {successful_updates}/{EXPECTED_TOTAL}"
+        assert_eq!(
+            successful_updates,
+            EXPECTED_TOTAL,
+            "threaded checkpoint revisions should allow every stress update to persist"
         );
 
         Ok(())

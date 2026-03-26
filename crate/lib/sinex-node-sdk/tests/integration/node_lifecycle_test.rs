@@ -129,7 +129,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
     };
 
     // Save initial health checkpoint
-    checkpoint_manager.save_checkpoint(&checkpoint).await?;
+    checkpoint.revision = checkpoint_manager.save_checkpoint(&checkpoint).await?;
     debug!("  Initial health checkpoint saved");
 
     // Simulate health updates over time
@@ -145,7 +145,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
         }));
         checkpoint.version += 1;
 
-        checkpoint_manager.save_checkpoint(&checkpoint).await?;
+        checkpoint.revision = checkpoint_manager.save_checkpoint(&checkpoint).await?;
         debug!("  Health checkpoint {} updated", i);
     }
 
