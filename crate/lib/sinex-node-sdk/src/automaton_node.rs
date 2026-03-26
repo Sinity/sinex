@@ -915,13 +915,7 @@ where
 
             match next_cursor {
                 Some(c) => {
-                    let uuid = c
-                        .parse::<Uuid>()
-                        .map_err(|e| SinexError::processing(format!("Invalid cursor UUID: {e}")))?;
-                    cursor = Some(sinex_primitives::Cursor {
-                        after: Some(Id::from_uuid(uuid)),
-                        before: None,
-                    });
+                    cursor = Some(c);
                 }
                 None => break,
             }

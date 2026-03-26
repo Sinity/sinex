@@ -22,7 +22,7 @@ use sinex_primitives::events::builder::{Operation, Provenance};
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{Cursor, EventSource, EventType, HostName, Id, JsonValue, Pagination, Uuid};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -171,10 +171,7 @@ where
             pages += 1;
             collected.append(&mut page_events);
 
-            cursor = match next_cursor {
-                Some(next_cursor) => Some(parse_query_cursor(&next_cursor)?),
-                None => None,
-            };
+            cursor = next_cursor;
 
             if cursor.is_none() {
                 break;
@@ -1111,13 +1108,7 @@ where
 
             match next_cursor {
                 Some(c) => {
-                    let uuid = c
-                        .parse::<Uuid>()
-                        .map_err(|e| SinexError::processing(format!("Invalid cursor UUID: {e}")))?;
-                    cursor = Some(sinex_primitives::Cursor {
-                        after: Some(Id::from_uuid(uuid)),
-                        before: None,
-                    });
+                    cursor = Some(c);
                 }
                 None => break,
             }
@@ -1402,17 +1393,6 @@ where
     ) -> NodeResult<()> {
         Ok(())
     }
-}
-
-fn parse_query_cursor(cursor: &str) -> NodeResult<Cursor> {
-    let uuid = cursor.parse::<Uuid>().map_err(|e| {
-        SinexError::processing(format!("Invalid invalidation pagination cursor '{cursor}': {e}"))
-    })?;
-
-    Ok(Cursor {
-        after: Some(Id::from_uuid(uuid)),
-        before: None,
-    })
 }
 
 // ── Type aliases for user-facing API ───────────────────────────────────
