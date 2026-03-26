@@ -21,6 +21,8 @@ use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
@@ -689,6 +691,8 @@ struct ReplayExecutionEngine {
     env: SinexEnvironment,
     scan_ack_timeout: Duration,
     scan_completion_timeout: Duration,
+    #[cfg(test)]
+    checkpoint_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug)]
@@ -707,6 +711,8 @@ impl ReplayExecutionEngine {
             env: environment(),
             scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
+            #[cfg(test)]
+            checkpoint_failures_remaining: None,
         }
     }
 
@@ -719,6 +725,12 @@ impl ReplayExecutionEngine {
     #[cfg(test)]
     fn with_scan_completion_timeout(mut self, scan_completion_timeout: Duration) -> Self {
         self.scan_completion_timeout = scan_completion_timeout;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_checkpoint_failures(mut self, checkpoint_failures_remaining: Arc<AtomicUsize>) -> Self {
+        self.checkpoint_failures_remaining = Some(checkpoint_failures_remaining);
         self
     }
 
@@ -796,7 +808,7 @@ impl ReplayExecutionEngine {
             );
             if let Err(mark_err) = self
                 .replay
-                .mark_failed(operation_id, format!("{err}"))
+                .mark_failed(operation_id, format!("{err:#}"))
                 .await
             {
                 warn!(?mark_err, "Failed to mark replay operation as failed");
@@ -908,8 +920,11 @@ impl ReplayExecutionEngine {
                 // Finalize checkpoint
                 checkpoint.processed_events = processed_count;
                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                self.replay
-                    .update_checkpoint(operation_id, &checkpoint)
+                self.persist_replay_checkpoint(
+                    operation_id,
+                    &checkpoint,
+                    "Failed to persist final replay checkpoint",
+                )
                     .await?;
 
                 if let Some(cancelled) = self.load_cancelled_operation(operation_id).await? {
@@ -932,12 +947,15 @@ impl ReplayExecutionEngine {
             Err(err) => {
                 // Update checkpoint with current progress before failing
                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                if let Err(ckpt_err) = self
-                    .replay
-                    .update_checkpoint(operation_id, &checkpoint)
+                if let Err(checkpoint_error) = self
+                    .persist_replay_checkpoint(
+                        operation_id,
+                        &checkpoint,
+                        "Failed to persist replay checkpoint after execution error",
+                    )
                     .await
                 {
-                    warn!(?ckpt_err, "Failed to save checkpoint on error");
+                    return Err(err.wrap_err(format!("{checkpoint_error}")));
                 }
                 Err(err)
             }
@@ -957,6 +975,37 @@ impl ReplayExecutionEngine {
             err.downcast_ref::<SinexError>()
                 .is_some_and(|sinex_err| matches!(sinex_err, SinexError::Cancelled(_)))
         })
+    }
+
+    #[cfg(test)]
+    fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
+        if let Some(remaining) = &self.checkpoint_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay checkpoint persistence failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn persist_replay_checkpoint(
+        &self,
+        operation_id: Uuid,
+        checkpoint: &ReplayCheckpoint,
+        context: &'static str,
+    ) -> Result<()> {
+        self.maybe_fail_checkpoint_persist().wrap_err(context)?;
+        self.replay
+            .update_checkpoint(operation_id, checkpoint)
+            .await
+            .map_err(|e| eyre!("{e}"))
+            .wrap_err(context)
     }
 
     /// Pagination batch size for collecting scope events from the database.
@@ -1659,14 +1708,19 @@ impl ReplayExecutionEngine {
                                 // Update checkpoint with progress
                                 checkpoint.processed_events = progress.events_processed;
                                 checkpoint.updated_at = sinex_primitives::temporal::now();
-                                if let Err(checkpoint_error) =
-                                    replay.update_checkpoint(operation_id, checkpoint).await
+                                if let Err(checkpoint_error) = self
+                                    .persist_replay_checkpoint(
+                                        operation_id,
+                                        checkpoint,
+                                        "Failed to persist replay progress checkpoint",
+                                    )
+                                    .await
                                 {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        error = %checkpoint_error,
-                                        "Failed to persist replay progress checkpoint"
-                                    );
+                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                        error: checkpoint_error,
+                                        emitted_count: progress.events_emitted,
+                                        restore_archived_cascade: progress.events_emitted == 0,
+                                    });
                                 }
 
                                 // If final_report is present, the scan is complete
@@ -1988,6 +2042,76 @@ mod tests {
                     node_name: node_name.clone(),
                     events_processed,
                     events_emitted: events_processed,
+                    final_report: Some(report),
+                    error: None,
+                };
+                nats.publish(
+                    progress_subject,
+                    serde_json::to_vec(&progress).unwrap().into(),
+                )
+                .await
+                .expect("fake node progress publish should succeed");
+            }
+        });
+
+        Ok((command_rx, handle))
+    }
+
+    async fn spawn_fake_scan_node_with_progress(
+        nats: Client,
+        env: SinexEnvironment,
+        node_name: &str,
+        events_processed: u64,
+        events_emitted: u64,
+    ) -> Result<(
+        tokio::sync::oneshot::Receiver<NodeScanCommand>,
+        tokio::task::JoinHandle<()>,
+    )> {
+        let node_name = node_name.to_string();
+        let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+        let mut sub = nats
+            .subscribe(subject)
+            .await
+            .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            if let Some(msg) = sub.next().await {
+                let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+                    .expect("fake node must receive a valid scan command");
+                let operation_id = command.operation_id;
+                let progress_subject =
+                    env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                let _ = command_tx.send(command.clone());
+
+                if let Some(reply) = msg.reply {
+                    let ack = NodeScanAck {
+                        operation_id,
+                        node_name: node_name.clone(),
+                        accepted: true,
+                        error: None,
+                    };
+                    nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
+                        .await
+                        .expect("fake node ack publish should succeed");
+                }
+
+                let report = ScanReport {
+                    events_processed,
+                    duration: Duration::from_millis(5),
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    node_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
+                    successful_targets: vec![node_name.clone()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                };
+                let progress = NodeScanProgress {
+                    operation_id,
+                    node_name: node_name.clone(),
+                    events_processed,
+                    events_emitted,
                     final_report: Some(report),
                     error: None,
                 };
@@ -2720,6 +2844,118 @@ mod tests {
         scan_handle
             .await
             .map_err(|e| eyre!("fake timeout-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-checkpoint-persist-fail"))
+            .await?;
+        let event = DynamicPayload::new(
+            "checkpoint-fail-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-checkpoint-persist-fail.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+            nats_client.clone(),
+            env,
+            "checkpoint-fail-test",
+            1,
+            0,
+        )
+        .await?;
+
+        let mut scope = sample_scope();
+        scope.node_id = "checkpoint-fail-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:checkpoint-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
+            .with_checkpoint_failures(Arc::new(AtomicUsize::new(1)))
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("checkpoint persistence failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to persist replay progress checkpoint")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed
+                .error_details
+                .as_deref()
+                .is_some_and(|details| details.contains("Failed to persist replay progress checkpoint")),
+            "failure details should include checkpoint persistence context: {:?}",
+            failed.error_details
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "checkpoint persistence failure before replacements should restore live rows"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "checkpoint persistence failure before replacements should not leave archived rows behind"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake checkpoint-fail-test node task failed: {e}"))?;
 
         Ok(())
     }
