@@ -10,13 +10,23 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedScopeInvalidation, DerivedTriggerContext,
+    DerivedOutput, DerivedScopeInvalidation, DerivedTriggerContext, ScopeReconcilerWrapper,
 };
-use sinex_node_sdk::{NodeLogicError, ScopeReconcilerNode, TransducerNode, WindowedNode};
+use sinex_node_sdk::runtime::stream::{
+    EventEmitter, Node, NodeHandles, NodeInitContext, ServiceInfo,
+};
+use sinex_node_sdk::{
+    CheckpointManager, EventTransport, NatsPublisher, NodeLogicError, ScopeReconcilerNode,
+    ScopeReconcilerNodeAdapter, TransducerNode, WindowedNode,
+};
 use sinex_primitives::domain::{InvalidationAction, ProcessingMode, TriggerKind};
+use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::testing::event_stub;
-use sinex_primitives::{Id, JsonValue, Uuid};
+use sinex_primitives::{Id, JsonValue, Pagination, Uuid};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
 
 // ── Test fixtures ────────────────────────────────────────────────────────
@@ -664,6 +674,163 @@ async fn windowed_output_has_latest_input_temporal_policy() -> TestResult<()> {
         results[0].temporal_policy,
         SyntheticTemporalPolicy::LatestInput,
         "windowed invalidation output should use LatestInput policy"
+    );
+
+    Ok(())
+}
+
+async fn initialize_scope_reconciler_adapter(
+    ctx: &TestContext,
+) -> TestResult<ScopeReconcilerNodeAdapter<TestReconciler>> {
+    let nats = ctx.nats_handle()?;
+    let nats_client = nats.connect().await?;
+    let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(nats_client.clone())));
+
+    let kv_store = async_nats::jetstream::new(nats_client)
+        .create_key_value(async_nats::jetstream::kv::Config {
+            bucket: format!("KV_derived_invalid_{}", Uuid::now_v7().simple()),
+            ..Default::default()
+        })
+        .await?;
+
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        kv_store,
+        "test-reconciler".to_string(),
+        "default".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+
+    let (event_sender, _event_receiver) = mpsc::channel::<sinex_primitives::Event<JsonValue>>(1024);
+    let emitter = EventEmitter::new(event_sender, false);
+    let handles = NodeHandles::new(
+        ctx.pool().clone(),
+        checkpoint_manager,
+        emitter,
+        transport,
+        None,
+        None,
+    );
+
+    let work_dir = std::env::temp_dir().join(format!(
+        "sinex-derived-invalidation-{}",
+        Uuid::now_v7().simple()
+    ));
+    std::fs::create_dir_all(&work_dir)?;
+
+    let init_context = NodeInitContext::new(
+        sinex_node_sdk::DerivedNodeConfig::default(),
+        HashMap::new(),
+        ServiceInfo::new(
+            "test-reconciler".to_string(),
+            "test-host".to_string(),
+            work_dir.clone(),
+            false,
+        ),
+        handles,
+        camino::Utf8PathBuf::from_path_buf(work_dir).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "temporary derived invalidation path should be utf-8: {}",
+                path.display()
+            )
+        })?,
+    );
+
+    let mut adapter = ScopeReconcilerNodeAdapter::new(ScopeReconcilerWrapper(TestReconciler));
+    adapter.initialize(init_context).await?;
+
+    Ok(adapter)
+}
+
+#[sinex_test]
+async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestContext) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::query::{AggregationMode, EventQuery, EventQueryResult};
+
+    let ctx = ctx.with_nats().shared().await?;
+    let mut adapter = initialize_scope_reconciler_adapter(&ctx).await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-pagination"))
+        .await?;
+
+    let scope_key = "scope:derived-pagination";
+    let expected_count = (Pagination::MAX_LIMIT + 1) as usize;
+    let expected_total = (expected_count as i64 - 1) * expected_count as i64 / 2;
+
+    let mut input_events = Vec::with_capacity(expected_count);
+    for value in 0..expected_count {
+        let mut event = DynamicPayload::new(
+            "measurements",
+            "measurement.taken",
+            serde_json::json!({ "value": value as i64 }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.scope_key = Some(scope_key.to_string());
+        input_events.push(event);
+    }
+    let input_events = ctx.pool().events().insert_batch(input_events).await?;
+
+    let mut stale_outputs = Vec::with_capacity(expected_count);
+    for (index, input_event) in input_events.iter().enumerate() {
+        let input_id = input_event.id.expect("inserted input should have id");
+        let mut derived = DynamicPayload::new(
+            "test-reconciler",
+            "measurement.aggregate",
+            serde_json::json!({ "stale_index": index }),
+        )
+        .from_parents(vec![input_id])?
+        .build()?;
+        derived.scope_key = Some(scope_key.to_string());
+        stale_outputs.push(derived);
+    }
+    ctx.pool().events().insert_batch(stale_outputs).await?;
+
+    let first_input_id = input_events
+        .first()
+        .and_then(|event| event.id)
+        .expect("paged input fixture should contain an id");
+    let invalidation =
+        DerivedScopeInvalidation::replaced(vec![*first_input_id.as_uuid()], "measurements", "measurement.taken")
+            .with_scope_keys(vec![scope_key.to_string()]);
+
+    let outputs = adapter.process_invalidation(&invalidation).await?;
+    assert_eq!(outputs.len(), 1, "large scope should still recompute one aggregate");
+    assert_eq!(outputs[0].payload["count"], serde_json::json!(expected_count));
+    assert_eq!(outputs[0].payload["total"], serde_json::json!(expected_total));
+
+    let live_output_count = match ctx
+        .pool()
+        .events()
+        .query(EventQuery {
+            sources: vec![sinex_primitives::EventSource::new("test-reconciler")?],
+            event_types: vec![sinex_primitives::EventType::new("measurement.aggregate")?],
+            scope_key: Some(scope_key.to_string()),
+            aggregation: Some(AggregationMode::Count),
+            ..EventQuery::default()
+        })
+        .await?
+    {
+        EventQueryResult::Count { count } => count,
+        other => panic!("expected count result, got {other:?}"),
+    };
+    assert_eq!(live_output_count, 0, "all stale outputs should be archived");
+
+    let archived_output_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)::bigint as "count!"
+        FROM audit.archived_events
+        WHERE source = $1 AND event_type = $2 AND scope_key = $3
+        "#,
+        "test-reconciler",
+        "measurement.aggregate",
+        scope_key
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(
+        archived_output_count,
+        expected_count as i64,
+        "invalidations must archive every stale scope output, not just the first page"
     );
 
     Ok(())
