@@ -1663,12 +1663,13 @@ impl<T: Node + 'static> NodeRunner<T> {
 
             info!("Confirmed as leader, proceeding with processing");
 
-            // Spawn a simplified heartbeater (3s interval with default 10s TTL
-            // gives 7s margin for network delays)
+            // Reuse the configured coordination heartbeat interval so stream-mode
+            // leader/standby timing matches the main coordination runtime.
             let kv_clone = kv_client.clone();
             let instance_id_clone = instance_id.clone();
+            let heartbeat_interval = kv_client.heartbeat_interval();
             let heartbeat_handle = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+                let mut interval = tokio::time::interval(heartbeat_interval);
                 loop {
                     interval.tick().await;
                     if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {

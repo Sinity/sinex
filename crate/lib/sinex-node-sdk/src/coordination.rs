@@ -865,7 +865,7 @@ impl NodeCoordination {
             }
         }
 
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut interval = tokio::time::interval(self.kv_client.heartbeat_interval());
 
         loop {
             interval.tick().await;
@@ -1033,7 +1033,7 @@ impl NodeCoordination {
         })));
 
         // Heartbeat/Lease Maintenance Interval
-        let mut maintenance_interval = tokio::time::interval(Duration::from_secs(5));
+        let mut maintenance_interval = tokio::time::interval(self.kv_client.heartbeat_interval());
         let kv_client = self.kv_client.clone();
         let instance_id = self.instance.instance_id.clone();
         let instance = self.instance.clone();
@@ -1196,7 +1196,7 @@ impl NodeCoordination {
             target_instance_id: target_instance_id.to_string(),
             target_version,
             requested_at: SystemTime::now(),
-            timeout_seconds: Seconds::from_secs(30),
+            timeout_seconds: self.kv_client.handoff_timeout_secs(),
         };
 
         let subject = format!("sinex.coordination.{}.handoff", self.instance.service_name);
@@ -1417,7 +1417,7 @@ impl NodeCoordination {
             self.wait_for_handoff_ready_with_subscription(
                 &mut handoff_ready,
                 &leader_metadata.instance_id,
-                Duration::from_secs(30),
+                self.kv_client.handoff_timeout(),
             )
             .await?;
 
@@ -1478,7 +1478,7 @@ impl NodeCoordination {
         info!("Finishing critical work before handoff");
 
         // Use a bounded drain timeout before forcing shutdown.
-        let graceful_timeout = Duration::from_secs(30);
+        let graceful_timeout = self.kv_client.handoff_timeout();
         let start = std::time::Instant::now();
 
         // Signal any running tasks to complete gracefully

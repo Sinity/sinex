@@ -6,8 +6,82 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
-const INSTANCE_STALE_SECS: Seconds = Seconds::from_secs(20);
+const DEFAULT_HEARTBEAT_SECS: Seconds = Seconds::from_secs(5);
+const DEFAULT_LEADERSHIP_TIMEOUT_SECS: Seconds = Seconds::from_secs(30);
+const DEFAULT_HANDOFF_TIMEOUT_SECS: Seconds = Seconds::from_secs(10);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CoordinationTiming {
+    heartbeat_secs: Seconds,
+    leadership_timeout_secs: Seconds,
+    handoff_timeout_secs: Seconds,
+}
+
+impl Default for CoordinationTiming {
+    fn default() -> Self {
+        Self {
+            heartbeat_secs: DEFAULT_HEARTBEAT_SECS,
+            leadership_timeout_secs: DEFAULT_LEADERSHIP_TIMEOUT_SECS,
+            handoff_timeout_secs: DEFAULT_HANDOFF_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl CoordinationTiming {
+    fn from_overrides(
+        heartbeat_secs: Option<u64>,
+        leadership_timeout_secs: Option<u64>,
+        handoff_timeout_secs: Option<u64>,
+    ) -> Self {
+        let defaults = Self::default();
+        Self {
+            heartbeat_secs: heartbeat_secs
+                .filter(|secs| *secs > 0)
+                .map_or(defaults.heartbeat_secs, Seconds::from_secs),
+            leadership_timeout_secs: leadership_timeout_secs
+                .filter(|secs| *secs > 0)
+                .map_or(defaults.leadership_timeout_secs, Seconds::from_secs),
+            handoff_timeout_secs: handoff_timeout_secs
+                .filter(|secs| *secs > 0)
+                .map_or(defaults.handoff_timeout_secs, Seconds::from_secs),
+        }
+    }
+
+    fn from_env() -> Self {
+        Self::from_overrides(
+            std::env::var("SINEX_COORDINATION_HEARTBEAT")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok()),
+            std::env::var("SINEX_COORDINATION_TIMEOUT")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok()),
+            std::env::var("SINEX_COORDINATION_HANDOFF")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok()),
+        )
+    }
+
+    fn heartbeat_interval(self) -> Duration {
+        self.heartbeat_secs.as_duration()
+    }
+
+    fn leadership_timeout(self) -> Duration {
+        self.leadership_timeout_secs.as_duration()
+    }
+
+    fn handoff_timeout(self) -> Duration {
+        self.handoff_timeout_secs.as_duration()
+    }
+
+    fn handoff_timeout_secs(self) -> Seconds {
+        self.handoff_timeout_secs
+    }
+
+    fn instance_stale_timeout(self) -> Duration {
+        self.leadership_timeout()
+            .max(self.heartbeat_interval().saturating_mul(2))
+    }
+}
 
 /// Client for interacting with the Coordination KV Store.
 /// Handles node registration, heartbeats, and leader election.
@@ -17,6 +91,7 @@ pub struct CoordinationKvClient {
     service_name: String,
     instances_bucket: String,
     leadership_bucket: String,
+    timing: CoordinationTiming,
 }
 
 /// Metadata for a registered service instance in the coordination KV store.
@@ -72,14 +147,35 @@ impl CoordinationKvClient {
             service_name,
             instances_bucket,
             leadership_bucket,
+            timing: CoordinationTiming::from_env(),
         }
+    }
+
+    #[must_use]
+    pub fn heartbeat_interval(&self) -> Duration {
+        self.timing.heartbeat_interval()
+    }
+
+    #[must_use]
+    pub fn leadership_timeout(&self) -> Duration {
+        self.timing.leadership_timeout()
+    }
+
+    #[must_use]
+    pub fn handoff_timeout(&self) -> Duration {
+        self.timing.handoff_timeout()
+    }
+
+    #[must_use]
+    pub fn handoff_timeout_secs(&self) -> Seconds {
+        self.timing.handoff_timeout_secs()
     }
 
     async fn instances_bucket(&self) -> Result<Store, SinexError> {
         let config = async_nats::jetstream::kv::Config {
             bucket: self.instances_bucket.clone(),
             history: 5,
-            max_age: Duration::from_secs(INSTANCE_STALE_SECS.as_secs()),
+            max_age: self.timing.instance_stale_timeout(),
             ..Default::default()
         };
 
@@ -101,7 +197,7 @@ impl CoordinationKvClient {
         let config = async_nats::jetstream::kv::Config {
             bucket: self.leadership_bucket.clone(),
             history: 5,
-            max_age: Duration::from_secs(LEADERSHIP_TTL_SECS.as_secs()),
+            max_age: self.timing.leadership_timeout(),
             ..Default::default()
         };
 
@@ -399,6 +495,42 @@ impl CoordinationKvClient {
 
     fn instance_is_fresh(&self, metadata: &InstanceMetadata) -> bool {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        now.saturating_sub(metadata.last_heartbeat) <= INSTANCE_STALE_SECS.as_secs() as i64
+        now.saturating_sub(metadata.last_heartbeat) <= self.timing.instance_stale_timeout().as_secs() as i64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn coordination_timing_defaults_match_deployment_contract()
+    -> ::xtask::sandbox::TestResult<()> {
+        let timing = CoordinationTiming::from_overrides(None, None, None);
+        assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
+        assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
+        assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(10));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn coordination_timing_accepts_positive_overrides()
+    -> ::xtask::sandbox::TestResult<()> {
+        let timing = CoordinationTiming::from_overrides(Some(7), Some(31), Some(11));
+        assert_eq!(timing.heartbeat_secs, Seconds::from_secs(7));
+        assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(31));
+        assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(11));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn coordination_timing_rejects_zero_overrides()
+    -> ::xtask::sandbox::TestResult<()> {
+        let timing = CoordinationTiming::from_overrides(Some(0), Some(0), Some(0));
+        assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
+        assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
+        assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(10));
+        Ok(())
     }
 }
