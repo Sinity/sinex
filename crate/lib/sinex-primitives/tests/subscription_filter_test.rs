@@ -413,3 +413,44 @@ async fn validate_accepts_shallow_nesting() -> ::xtask::sandbox::TestResult<()> 
     assert!(filter.validate().is_ok());
     Ok(())
 }
+
+#[sinex_test]
+async fn validate_rejects_payload_text_search() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::TextSearch {
+            text: "important".to_string(),
+        }),
+        ..Default::default()
+    };
+
+    let error = filter.validate().expect_err("text search should be rejected for SSE filters");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support payload text search"),
+        "unexpected validation error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn validate_rejects_nested_payload_text_search() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::And {
+            filters: vec![
+                PayloadFilter::HasKey {
+                    key: "title".to_string(),
+                },
+                PayloadFilter::Not {
+                    filter: Box::new(PayloadFilter::TextSearch {
+                        text: "secret".to_string(),
+                    }),
+                },
+            ],
+        }),
+        ..Default::default()
+    };
+
+    assert!(filter.validate().is_err());
+    Ok(())
+}

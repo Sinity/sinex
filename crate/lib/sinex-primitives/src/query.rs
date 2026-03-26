@@ -412,6 +412,18 @@ impl PayloadFilter {
     }
 
     #[must_use]
+    pub fn contains_text_search(&self) -> bool {
+        match self {
+            Self::TextSearch { .. } => true,
+            Self::And { filters } | Self::Or { filters } => {
+                filters.iter().any(Self::contains_text_search)
+            }
+            Self::Not { filter } => filter.contains_text_search(),
+            Self::Contains { .. } | Self::HasKey { .. } | Self::Path { .. } => false,
+        }
+    }
+
+    #[must_use]
     pub fn positive_text_search_terms(&self) -> Vec<String> {
         let mut terms = Vec::new();
         self.collect_positive_text_search_terms(false, &mut terms);
@@ -631,6 +643,14 @@ impl SubscriptionFilter {
     /// Validate the filter (depth check on payload filter).
     pub fn validate(&self) -> Result<(), SinexError> {
         if let Some(ref pf) = self.payload {
+            if pf.contains_text_search() {
+                return Err(
+                    SinexError::validation(
+                        "SubscriptionFilter does not support payload text search",
+                    )
+                    .with_context("reason", "events.stream uses in-memory matching, not PostgreSQL full-text search"),
+                );
+            }
             pf.validate_depth(0)?;
             // Apply tighter depth limit for in-memory evaluation
             Self::check_depth(pf, 0)?;
