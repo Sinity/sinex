@@ -264,6 +264,46 @@ impl MaterialAssembler {
         }
     }
 
+    async fn finalization_commit_landed(
+        &self,
+        final_state: &FinalizationState,
+        annex_key: &AnnexKey,
+    ) -> IngestdResult<bool> {
+        let material = self
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_uuid(final_state.material_id))
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to inspect material state after commit error")
+                    .with_source(error)
+            })?;
+
+        let Some(material) = material else {
+            return Ok(false);
+        };
+
+        if material.status != sinex_db::repositories::source_materials::status::COMPLETED {
+            return Ok(false);
+        }
+
+        let Some(material_blob_id) = material.optional_blob_id else {
+            return Ok(false);
+        };
+
+        let blob = self
+            .pool
+            .blobs()
+            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to inspect blob state after commit error")
+                    .with_source(error)
+            })?;
+
+        Ok(blob.is_some_and(|blob| *blob.id.as_uuid() == material_blob_id))
+    }
+
     async fn persist_finalized_material(
         &self,
         final_state: &FinalizationState,
@@ -329,10 +369,39 @@ impl MaterialAssembler {
             return Err(error);
         }
 
-        tx.commit().await.map_err(|e| {
-            SinexError::database("Failed to commit material finalization transaction")
-                .with_source(e)
-        })
+        match tx.commit().await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let commit_error = SinexError::database(
+                    "Failed to commit material finalization transaction",
+                )
+                .with_source(error);
+
+                match self.finalization_commit_landed(final_state, annex_key).await {
+                    Ok(true) => {
+                        warn!(
+                            material_id = %final_state.material_id,
+                            annex_key = %annex_key.key,
+                            "Material finalization commit returned an error, but the committed state was reconciled successfully"
+                        );
+                        Ok(())
+                    }
+                    Ok(false) => {
+                        self.cleanup_annex_import_failure(annex_key).await;
+                        Err(commit_error)
+                    }
+                    Err(reconcile_error) => {
+                        warn!(
+                            material_id = %final_state.material_id,
+                            annex_key = %annex_key.key,
+                            error = %reconcile_error,
+                            "Failed to reconcile material finalization after commit error"
+                        );
+                        Err(commit_error)
+                    }
+                }
+            }
+        }
     }
 
     /// Write an early `staged_at` ledger entry at material-begin time.
@@ -981,6 +1050,123 @@ mod tests {
             .await?
             .expect("material should exist");
         assert_eq!(material.status.as_str(), status::COMPLETED);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_commit_landed_detects_completed_material_with_blob(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let annex_key = AnnexKey {
+            key: "SHA256E-s4--hash".to_string(),
+            backend: "SHA256E".to_string(),
+            size: 4,
+            hash: "hash".to_string(),
+        };
+
+        let blob = ctx
+            .pool
+            .blobs()
+            .insert(
+                Blob::builder()
+                    .annex_backend(annex_key.backend.clone())
+                    .content_hash(annex_key.hash.clone())
+                    .original_filename("material.bin".to_string())
+                    .size_bytes(annex_key.size as i64)
+                    .checksum_blake3("hash".to_string())
+                    .metadata(json!({ "material_id": material_id }))
+                    .build(),
+            )
+            .await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://commit-landed"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+        ctx.pool
+            .source_materials()
+            .finalize_in_flight(
+                Id::from_uuid(material_id),
+                Some(blob.id),
+                None,
+                None,
+                Some(annex_key.size as i64),
+            )
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("material.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://commit-landed".to_string(),
+            started_at: Timestamp::now(),
+        };
+
+        assert!(
+            assembler
+                .finalization_commit_landed(&final_state, &annex_key)
+                .await?,
+            "completed material with matching blob metadata should reconcile as committed"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_commit_landed_rejects_non_terminal_material(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let annex_key = AnnexKey {
+            key: "SHA256E-s4--hash".to_string(),
+            backend: "SHA256E".to_string(),
+            size: 4,
+            hash: "hash".to_string(),
+        };
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://commit-pending"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("material.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://commit-pending".to_string(),
+            started_at: Timestamp::now(),
+        };
+
+        assert!(
+            !assembler
+                .finalization_commit_landed(&final_state, &annex_key)
+                .await?,
+            "non-terminal material state should not reconcile as a landed commit"
+        );
         Ok(())
     }
 }
