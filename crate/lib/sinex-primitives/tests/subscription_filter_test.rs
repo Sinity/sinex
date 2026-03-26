@@ -218,6 +218,20 @@ async fn payload_path_like_filter() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn payload_path_like_filter_matches_sql_case_sensitively() -> ::xtask::sandbox::TestResult<()>
+{
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::Path {
+            path: "name".to_string(),
+            op: PathOp::Like("%.rs".to_string()),
+        }),
+        ..Default::default()
+    };
+    assert!(!filter.matches(&test_event("x", "x", "h", json!({"name": "MAIN.RS"}))));
+    Ok(())
+}
+
+#[sinex_test]
 async fn payload_path_like_filter_handles_many_wildcards() -> ::xtask::sandbox::TestResult<()> {
     let repeated = "%a".repeat(48);
     let filter = SubscriptionFilter {

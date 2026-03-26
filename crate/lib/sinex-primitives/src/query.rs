@@ -662,7 +662,7 @@ fn like_match(s: &str, pattern: &str) -> bool {
                     }
                     continue;
                 }
-                ch if s[s_idx].eq_ignore_ascii_case(&ch) => {
+                ch if s[s_idx] == ch => {
                     s_idx += 1;
                     p_idx += 1;
                     continue;
