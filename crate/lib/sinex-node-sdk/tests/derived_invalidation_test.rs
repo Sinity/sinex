@@ -722,9 +722,13 @@ async fn initialize_scope_reconciler_adapter(
         HashMap::new(),
         ServiceInfo::new(
             "test-reconciler".to_string(),
+            "test-reconciler".to_string(),
             "test-host".to_string(),
             work_dir.clone(),
             false,
+            "test-instance".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
         ),
         handles,
         camino::Utf8PathBuf::from_path_buf(work_dir).map_err(|path| {

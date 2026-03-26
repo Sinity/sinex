@@ -22,6 +22,7 @@ use xtask::sandbox::sinex_serial_test;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
 /// Minimal test node that doesn't require database access
+#[derive(Default)]
 struct EdgeTestNode {
     name: String,
 }
@@ -121,6 +122,135 @@ async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
 
     // Verify initialization succeeded
     assert!(runner.runtime_state().is_some());
+
+    Ok(())
+}
+
+#[sinex_serial_test(timeout = 30)]
+async fn test_runner_registers_node_run_when_database_is_available(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let node = EdgeTestNode::new("registered_ingestor");
+    let mut runner = NodeRunner::new(node);
+
+    let nats = ctx.nats_handle()?;
+    let nats_client = nats.connect().await?;
+    let publisher = Arc::new(NatsPublisher::new(nats_client));
+    let transport = EventTransport::Nats(publisher);
+
+    let mut raw_config = std::collections::HashMap::new();
+    raw_config.insert("batch_size".to_string(), serde_json::json!(128));
+    raw_config.insert(
+        "nested".to_string(),
+        serde_json::json!({"enabled": true, "sources": ["a", "b"]}),
+    );
+
+    runner
+        .initialize_with_transport(
+            "registered_ingestor".to_string(),
+            raw_config,
+            Some(ctx.pool().clone()),
+            transport,
+            std::path::PathBuf::from("/tmp/sinex/registered_ingestor"),
+            false,
+        )
+        .await?;
+
+    let runtime = runner.runtime_state().expect("runtime state should exist");
+    let node_run_id = runtime
+        .node_run_id()
+        .expect("db-backed runner should register node_run_id");
+
+    let manifest = sqlx::query!(
+        r#"
+        SELECT id, node_name, version
+        FROM core.node_manifests
+        WHERE node_name = $1
+        "#,
+        "registered_ingestor",
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    let node_run = sqlx::query!(
+        r#"
+        SELECT
+            id as "id!: uuid::Uuid",
+            node_manifest_id,
+            service_name,
+            status,
+            effective_config_hash,
+            effective_config
+        FROM core.node_runs
+        WHERE id = $1::uuid
+        "#,
+        node_run_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(node_run.node_manifest_id, manifest.id);
+    assert_eq!(node_run.service_name, "registered_ingestor");
+    assert_eq!(node_run.status, "running");
+    assert!(node_run.effective_config_hash.is_some());
+    assert_eq!(
+        node_run.effective_config,
+        Some(serde_json::json!({
+            "batch_size": 128,
+            "nested": { "enabled": true, "sources": ["a", "b"] }
+        }))
+    );
+
+    Ok(())
+}
+
+#[sinex_serial_test(timeout = 30)]
+async fn test_run_service_marks_registered_node_run_stopped(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let node = EdgeTestNode::new("stopping_ingestor");
+    let mut runner = NodeRunner::new(node);
+
+    let nats = ctx.nats_handle()?;
+    let nats_client = nats.connect().await?;
+    let publisher = Arc::new(NatsPublisher::new(nats_client));
+    let transport = EventTransport::Nats(publisher);
+
+    runner
+        .initialize_with_transport(
+            "stopping_ingestor".to_string(),
+            std::collections::HashMap::new(),
+            Some(ctx.pool().clone()),
+            transport,
+            std::path::PathBuf::from("/tmp/sinex/stopping_ingestor"),
+            false,
+        )
+        .await?;
+
+    let node_run_id = runner
+        .runtime_state()
+        .and_then(|runtime| runtime.node_run_id())
+        .expect("db-backed runner should register node_run_id");
+
+    runner.run_service().await?;
+
+    let node_run = sqlx::query!(
+        r#"
+        SELECT
+            status,
+            ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
+        FROM core.node_runs
+        WHERE id = $1::uuid
+        "#,
+        node_run_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(node_run.status, "stopped");
+    assert!(node_run.ended_at.is_some());
 
     Ok(())
 }

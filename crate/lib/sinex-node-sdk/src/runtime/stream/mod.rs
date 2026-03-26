@@ -43,9 +43,10 @@ const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sd_notify::NotifyState;
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
+    domain::{NodeName, NodeState},
     non_empty::NonEmptyVec,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -632,6 +633,121 @@ struct FailedDispatchedScanOutcome {
 }
 
 impl<T: Node + 'static> NodeRunner<T> {
+    fn build_instance_id(host: &str) -> String {
+        format!("{host}-{}-{}", std::process::id(), Uuid::now_v7().simple())
+    }
+
+    fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values.into_iter().map(Self::canonicalize_json).collect(),
+            ),
+            serde_json::Value::Object(map) => {
+                let ordered = map
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::canonicalize_json(value)))
+                    .collect::<BTreeMap<_, _>>();
+                serde_json::Value::Object(ordered.into_iter().collect())
+            }
+            other => other,
+        }
+    }
+
+    fn effective_config(
+        raw_config: &HashMap<String, serde_json::Value>,
+    ) -> NodeResult<(Option<String>, Option<serde_json::Value>)> {
+        if raw_config.is_empty() {
+            return Ok((None, None));
+        }
+
+        let config_value = serde_json::to_value(raw_config).map_err(|error| {
+            SinexError::configuration(format!(
+                "Failed to serialize effective runtime config: {error}"
+            ))
+        })?;
+        let canonical = Self::canonicalize_json(config_value);
+        let encoded = serde_json::to_vec(&canonical).map_err(|error| {
+            SinexError::configuration(format!(
+                "Failed to encode effective runtime config: {error}"
+            ))
+        })?;
+        let config_hash = blake3::hash(&encoded).to_hex().to_string();
+        Ok((Some(config_hash), Some(canonical)))
+    }
+
+    #[cfg(feature = "db")]
+    async fn register_runtime_identity(
+        &self,
+        pool: &PgPool,
+        service_name: &str,
+        instance_id: &str,
+        host: &str,
+        version: &str,
+        raw_config: &HashMap<String, serde_json::Value>,
+    ) -> NodeResult<Option<Uuid>> {
+        let node_name = NodeName::new(self.node.node_name());
+        let node_type = match self.node.node_type() {
+            NodeType::Ingestor => sinex_primitives::domain::NodeType::Ingestor,
+            NodeType::Automaton => sinex_primitives::domain::NodeType::Automaton,
+        };
+        let manifest = pool
+            .state()
+            .register_node(&node_name, node_type, version, None)
+            .await
+            .map_err(|error| {
+                SinexError::processing(format!(
+                    "Failed to register node manifest for {}: {error}",
+                    self.node.node_name()
+                ))
+            })?;
+        let (config_hash, effective_config) = Self::effective_config(raw_config)?;
+        let node_run = pool
+            .state()
+            .start_node_run(
+                manifest.id,
+                service_name,
+                instance_id,
+                host,
+                config_hash.as_deref(),
+                effective_config.as_ref(),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::processing(format!(
+                    "Failed to register node run for {}: {error}",
+                    self.node.node_name()
+                ))
+            })?;
+        Ok(Some(node_run.id))
+    }
+
+    #[cfg(feature = "db")]
+    async fn update_registered_run_status(
+        pool: &PgPool,
+        service_info: &ServiceInfo,
+        status: NodeState,
+    ) {
+        let Some(node_run_id) = service_info.node_run_id() else {
+            return;
+        };
+        if let Err(error) = pool.state().update_node_run_status(node_run_id, status).await {
+            warn!(
+                node = %service_info.node_name(),
+                service = %service_info.service_name(),
+                node_run_id = %node_run_id,
+                target_status = %status,
+                error = %error,
+                "Failed to persist node run terminal status"
+            );
+        }
+    }
+
+    fn notify_ready() {
+        if let Err(error) = sd_notify::notify(true, &[NotifyState::Ready]) {
+            warn!(error = %error, "Failed to notify systemd ready state");
+        }
+    }
+
     /// Create a new node runner
     pub fn new(node: T) -> Self {
         Self::new_with_optional_factory(node, None)
@@ -729,6 +845,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
         let consumer_name = format!("{host}-{}", std::process::id());
+        let instance_id = Self::build_instance_id(&host);
+        let version = crate::version::node_version()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
@@ -804,7 +924,24 @@ impl<T: Node + 'static> NodeRunner<T> {
             None
         };
 
-        let event_emitter = {
+        #[cfg(feature = "db")]
+        let node_run_id = if let Some(pool) = db_pool.as_ref() {
+            self.register_runtime_identity(
+                pool,
+                &service_name,
+                &instance_id,
+                &host,
+                &version,
+                &raw_config,
+            )
+            .await?
+        } else {
+            None
+        };
+        #[cfg(not(feature = "db"))]
+        let node_run_id = None;
+
+        let mut event_emitter = {
             #[cfg(feature = "messaging")]
             if let Some(validator) = schema_validator {
                 EventEmitter::with_validator(event_sender_raw.clone(), dry_run, validator)
@@ -815,6 +952,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             #[cfg(not(feature = "messaging"))]
             EventEmitter::new(event_sender_raw, dry_run)
         };
+
+        if let Some(node_run_id) = node_run_id {
+            event_emitter = event_emitter.with_default_node_run_id(node_run_id);
+        }
 
         // No LeaseManager passed to handles
         // No LeaseManager passed to handles
@@ -851,9 +992,13 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let service_info = ServiceInfo::new(
             service_name.clone(),
+            self.node.node_name().to_string(),
             host.clone(),
             work_dir.clone(),
             dry_run,
+            instance_id,
+            version,
+            node_run_id,
         );
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir).unwrap_or_else(|_| {
             Utf8PathBuf::from_path_buf(sinex_primitives::environment::environment().temp_dir())
@@ -880,6 +1025,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
 
         if let Err(e) = self.node.initialize(init_context).await {
+            #[cfg(feature = "db")]
+            if let Some(pool) = handles.db_pool().cloned() {
+                Self::update_registered_run_status(&pool, &service_info, NodeState::Failed).await;
+            }
             self.lifecycle = RunnerLifecycle::Created;
             return Err(e);
         }
@@ -994,13 +1143,6 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
         self.lifecycle = RunnerLifecycle::Running;
 
-        // Notify systemd that initialization is complete and the node is ready to serve.
-        // NixOS modules use Type=notify for node services; without this the service manager
-        // times out and restarts the process in a loop.
-        if let Err(e) = sd_notify::notify(true, &[NotifyState::Ready]) {
-            warn!("Failed to notify systemd ready state: {}", e);
-        }
-
         let node_type = self.node.node_type();
         info!(
             node = %self.node.node_name(),
@@ -1008,12 +1150,31 @@ impl<T: Node + 'static> NodeRunner<T> {
             "Starting service with startup sequence"
         );
 
+        let heartbeat_interval = std::env::var("SINEX_COORDINATION_HEARTBEAT")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(30);
+        let runtime = self
+            .runtime_state()
+            .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
+        let heartbeat = crate::heartbeat::HeartbeatEmitter::from_runtime(
+            &runtime,
+            sinex_primitives::Seconds::from_secs(heartbeat_interval),
+        );
+        let (heartbeat_shutdown_tx, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
+        let heartbeat_handle = tokio::spawn(async move {
+            tokio::select! {
+                () = heartbeat.start_periodic_heartbeat(None) => {}
+                _ = heartbeat_shutdown_rx => {}
+            }
+        });
+
         // Start command listener for node-dispatch replay (scan commands via NATS).
         // This allows the gateway to dispatch historical scans to running nodes.
         #[cfg(feature = "messaging")]
         self.start_command_listener();
 
-        match node_type {
+        let service_result = match node_type {
             NodeType::Ingestor => {
                 // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
                 self.run_ingestor_startup_sequence().await
@@ -1030,6 +1191,36 @@ impl<T: Node + 'static> NodeRunner<T> {
                         "Messaging feature required for Automaton mode".to_string(),
                     ))
                 }
+            }
+        };
+
+        let _ = heartbeat_shutdown_tx.send(());
+        if let Err(error) = heartbeat_handle.await {
+            warn!(error = %error, "Failed to join heartbeat task");
+        }
+
+        if let Err(error) = sd_notify::notify(true, &[NotifyState::Stopping]) {
+            warn!(error = %error, "Failed to notify systemd stopping state");
+        }
+
+        let shutdown_result = self.shutdown().await;
+
+        #[cfg(feature = "db")]
+        if let Some(pool) = runtime.handles().db_pool().cloned() {
+            let terminal = if service_result.is_ok() && shutdown_result.is_ok() {
+                NodeState::Stopped
+            } else {
+                NodeState::Failed
+            };
+            Self::update_registered_run_status(&pool, runtime.service_info(), terminal).await;
+        }
+
+        match (service_result, shutdown_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(service_error), Ok(())) => Err(service_error),
+            (Ok(()), Err(shutdown_error)) => Err(shutdown_error),
+            (Err(service_error), Err(shutdown_error)) => {
+                Err(service_error.with_context("shutdown_error", shutdown_error.to_string()))
             }
         }
     }
@@ -1336,9 +1527,13 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
         let replay_service_info = ServiceInfo::new(
             replay_service_name.clone(),
+            base_service_info.node_name().to_string(),
             base_service_info.host().to_string(),
             base_service_info.work_dir().clone(),
             base_service_info.dry_run(),
+            base_service_info.instance_id().to_string(),
+            base_service_info.version().to_string(),
+            base_service_info.node_run_id(),
         );
 
         let (replay_handles, emitted_counter, forwarder_handle) =
@@ -1544,6 +1739,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         if self.node.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.node.current_checkpoint().await?;
+            Self::notify_ready();
 
             // This should run indefinitely until shutdown
             let continuous_report = self
@@ -1587,6 +1783,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             {
                 return Ok(());
             }
+
+            Self::notify_ready();
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self

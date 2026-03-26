@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
+use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::{Id, Uuid};
 use std::time::Duration;
 use xtask::sandbox::sinex_test;
@@ -329,6 +329,68 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
     let active_nodes = repo.get_active_nodes().await?;
     assert_eq!(active_nodes.len(), 1);
     assert_eq!(active_nodes[0].version, "2.0.0");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("node-run-lifecycle");
+
+    let manifest = repo
+        .register_node(&node_name, NodeType::Ingestor, "1.2.3", Some("node run test"))
+        .await?;
+
+    let config = json!({
+        "history_sources": ["/tmp/history.sqlite"],
+        "nested": { "enabled": true, "batch_size": 64 }
+    });
+
+    let run = repo
+        .start_node_run(
+            manifest.id,
+            "sinex-terminal-ingestor",
+            "host-123-run",
+            "test-host",
+            Some("b3-abc123"),
+            Some(&config),
+        )
+        .await?;
+
+    assert_eq!(run.node_manifest_id, manifest.id);
+    assert_eq!(run.service_name, "sinex-terminal-ingestor");
+    assert_eq!(run.instance_id, "host-123-run");
+    assert_eq!(run.host, "test-host");
+    assert_eq!(run.status, "running");
+    assert!(run.last_heartbeat_at.is_some());
+    assert_eq!(run.effective_config_hash.as_deref(), Some("b3-abc123"));
+    assert_eq!(run.effective_config, Some(config.clone()));
+
+    assert!(repo.update_node_run_heartbeat(run.id).await?);
+    assert!(repo
+        .update_node_run_status(run.id, NodeState::Stopped)
+        .await?);
+
+    let refreshed = sqlx::query!(
+        r#"
+        SELECT
+            status,
+            ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
+            effective_config_hash,
+            effective_config
+        FROM core.node_runs
+        WHERE id = $1::uuid
+        "#,
+        run.id
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(refreshed.status, "stopped");
+    assert!(refreshed.ended_at.is_some());
+    assert_eq!(refreshed.effective_config_hash.as_deref(), Some("b3-abc123"));
+    assert_eq!(refreshed.effective_config, Some(config));
 
     Ok(())
 }

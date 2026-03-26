@@ -158,8 +158,7 @@ pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{
-    NodeCli, NodeCliRunner, NodeCommand, command_requires_heartbeat, parse_checkpoint,
-    parse_time_horizon,
+    NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon,
 };
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{

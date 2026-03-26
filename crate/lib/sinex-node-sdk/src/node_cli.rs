@@ -24,11 +24,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-#[must_use]
-pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
-    matches!(command, NodeCommand::Service { .. })
-}
-
 /// Standard CLI arguments for all nodes
 #[derive(Parser, Debug, Clone)]
 #[command(name = "sinex-node", about = "Sinex Stream Node", version)]
@@ -972,36 +967,11 @@ macro_rules! node_entrypoint {
             human_panic::setup_panic!();
 
             use clap::Parser;
-            use $crate::heartbeat::HeartbeatEmitter;
             use $crate::node_cli::{NodeCli, NodeCliRunner};
 
             let args = NodeCli::parse();
             let node = <$node_type as Default>::default();
             let mut runner = NodeCliRunner::new(node);
-
-            // Auto-spawn HeartbeatEmitter and Coordination for service mode
-            if $crate::node_cli::command_requires_heartbeat(&args.command) {
-                let service_name = args
-                    .service_name
-                    .clone()
-                    .unwrap_or_else(|| "sinex-node".to_string());
-
-                let heartbeat_secs = std::env::var("SINEX_COORDINATION_HEARTBEAT")
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(30);
-                let heartbeat_emitter = HeartbeatEmitter::new(
-                    service_name.clone(),
-                    sinex_primitives::Seconds::from_secs(heartbeat_secs),
-                );
-
-                // Spawn heartbeat task concurrently; keep handle alive until main returns.
-                let _heartbeat_handle = tokio::spawn(async move {
-                    heartbeat_emitter.start_periodic_heartbeat(None).await;
-                });
-
-                // NodeCoordination integrated below in service mode
-            }
 
             runner.run(args).await.map_err(|e| e.into())
         }
@@ -1013,34 +983,11 @@ macro_rules! node_entrypoint {
             human_panic::setup_panic!();
 
             use clap::Parser;
-            use $crate::heartbeat::HeartbeatEmitter;
             use $crate::node_cli::{NodeCli, NodeCliRunner};
 
             let args = NodeCli::parse();
             let node = $node_expr;
             let mut runner = NodeCliRunner::new(node);
-
-            // Keep behavior consistent with the 1-arg macro arm.
-            if $crate::node_cli::command_requires_heartbeat(&args.command) {
-                let service_name = args
-                    .service_name
-                    .clone()
-                    .unwrap_or_else(|| "sinex-node".to_string());
-
-                let heartbeat_secs = std::env::var("SINEX_COORDINATION_HEARTBEAT")
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(30);
-                let heartbeat_emitter = HeartbeatEmitter::new(
-                    service_name.clone(),
-                    sinex_primitives::Seconds::from_secs(heartbeat_secs),
-                );
-
-                // Keep handle alive until main returns.
-                let _heartbeat_handle = tokio::spawn(async move {
-                    heartbeat_emitter.start_periodic_heartbeat(None).await;
-                });
-            }
 
             runner.run(args).await.map_err(|e| e.into())
         }

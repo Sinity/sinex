@@ -9,7 +9,7 @@ use crate::schema::OperationsLog;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
+use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
@@ -830,6 +830,111 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Insert a concrete node-run row for a single process execution.
+    pub async fn start_node_run(
+        &self,
+        node_manifest_id: i32,
+        service_name: &str,
+        instance_id: &str,
+        host: &str,
+        effective_config_hash: Option<&str>,
+        effective_config: Option<&JsonValue>,
+    ) -> DbResult<NodeRun> {
+        sqlx::query_as!(
+            NodeRun,
+            r#"
+            INSERT INTO core.node_runs (
+                node_manifest_id,
+                service_name,
+                instance_id,
+                host,
+                status,
+                last_heartbeat_at,
+                effective_config_hash,
+                effective_config
+            ) VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'running',
+                NOW(),
+                $5,
+                $6
+            )
+            RETURNING
+                id as "id!: uuid::Uuid",
+                node_manifest_id,
+                service_name,
+                instance_id,
+                host,
+                started_at as "started_at!: sinex_primitives::temporal::Timestamp",
+                ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
+                status,
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                effective_config_hash,
+                effective_config
+            "#,
+            node_manifest_id,
+            service_name,
+            instance_id,
+            host,
+            effective_config_hash,
+            effective_config
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "start node run"))
+    }
+
+    /// Refresh the heartbeat timestamp for a node run and keep it in `running`.
+    pub async fn update_node_run_heartbeat(&self, node_run_id: Uuid) -> DbResult<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE core.node_runs
+            SET last_heartbeat_at = NOW(),
+                status = 'running'
+            WHERE id = $1::uuid
+            "#,
+            node_run_id,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update node run heartbeat"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a node run as terminal or transitional.
+    pub async fn update_node_run_status(
+        &self,
+        node_run_id: Uuid,
+        status: NodeState,
+    ) -> DbResult<bool> {
+        let ended_at = matches!(status, NodeState::Failed | NodeState::Stopped)
+            .then(Timestamp::now)
+            .map(|timestamp| timestamp.inner());
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE core.node_runs
+            SET status = $2,
+                last_heartbeat_at = NOW(),
+                ended_at = CASE
+                    WHEN $3::timestamptz IS NULL THEN ended_at
+                    ELSE COALESCE(ended_at, $3::timestamptz)
+                END
+            WHERE id = $1::uuid
+            "#,
+            node_run_id,
+            status.to_string(),
+            ended_at,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update node run status"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get active nodes based on status column and recent heartbeat.
     ///
     /// Returns nodes where `status = 'active'` AND `last_heartbeat_at`
@@ -1051,6 +1156,22 @@ pub struct NodeManifest {
     pub created_at: Timestamp,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,
+}
+
+/// Node run record
+#[derive(Debug, sqlx::FromRow)]
+pub struct NodeRun {
+    pub id: Uuid,
+    pub node_manifest_id: i32,
+    pub service_name: String,
+    pub instance_id: String,
+    pub host: String,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub effective_config_hash: Option<String>,
+    pub effective_config: Option<JsonValue>,
 }
 
 /// Node health summary
