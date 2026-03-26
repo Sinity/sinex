@@ -194,6 +194,15 @@ pub struct IngestdConfig {
     #[validate(range(min = 50, max = 99))]
     pub disk_threshold_percent: u8,
 
+    /// Maximum total bytes a single material assembly may accumulate before it is
+    /// rejected and routed to the DLQ.
+    ///
+    /// Set via: `SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES=536870912`
+    #[serde(default = "default_max_material_size_bytes")]
+    #[builder(default = default_max_material_size_bytes())]
+    #[validate(custom(function = "validate_material_size_limit"))]
+    pub max_material_size_bytes: Bytes,
+
     /// Enable `GitOps` schema sync service
     ///
     /// When enabled, ingestd periodically fetches configured Git repositories
@@ -460,6 +469,29 @@ fn env_flag(name: &str) -> Option<bool> {
     }
 }
 
+fn env_parsed<T>(name: &str) -> Option<T>
+where
+    T: std::str::FromStr,
+{
+    match std::env::var(name) {
+        Ok(value) => match value.parse::<T>() {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                warn!(env = name, value = %value, "Environment variable failed to parse; ignoring");
+                None
+            }
+        },
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                env = name,
+                "Environment variable is not valid UTF-8; ignoring"
+            );
+            None
+        }
+        Err(std::env::VarError::NotPresent) => None,
+    }
+}
+
 impl Default for IngestdConfig {
     fn default() -> Self {
         let env = environment();
@@ -489,6 +521,7 @@ impl Default for IngestdConfig {
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
             disk_threshold_percent: default_disk_threshold_percent(),
+            max_material_size_bytes: default_max_material_size_bytes(),
             gitops_enabled: false,
             gitops_work_dir: default_gitops_work_dir(),
             schema_reload_interval_secs: default_schema_reload_interval_secs(),
@@ -654,6 +687,14 @@ fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {
     Ok(())
 }
 
+fn validate_material_size_limit(value: &Bytes) -> Result<(), ValidationError> {
+    let bytes = value.as_u64();
+    if !(1024..=1_073_741_824).contains(&bytes) {
+        return Err(ValidationError::new("range"));
+    }
+    Ok(())
+}
+
 fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
     let ms = value.as_millis();
     if !(1..=60_000).contains(&ms) {
@@ -665,19 +706,25 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
 }
 
 fn default_max_buffered_slices() -> usize {
-    100
+    env_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES").unwrap_or(100)
 }
 
 fn default_slice_timeout_secs() -> u64 {
-    300 // 5 minutes
+    env_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS").unwrap_or(300) // 5 minutes
 }
 
 fn default_orphan_threshold_secs() -> u64 {
-    3600 // 1 hour
+    env_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS").unwrap_or(3600) // 1 hour
 }
 
 fn default_disk_threshold_percent() -> u8 {
-    90
+    env_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT").unwrap_or(90)
+}
+
+fn default_max_material_size_bytes() -> Bytes {
+    env_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES")
+        .map(Bytes::from_bytes)
+        .unwrap_or_else(|| Bytes::from_mebibytes(512))
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {

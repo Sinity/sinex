@@ -183,6 +183,8 @@ pub struct MaterialAssembler {
     disk_monitor: Arc<DiskSpaceMonitor>,
     /// Maximum out-of-order slices to buffer per assembly (from config)
     pub(super) max_buffered_slices: usize,
+    /// Maximum bytes one material may accumulate before being failed.
+    pub(super) max_material_size_bytes: i64,
     /// Timeout before an in-flight assembly is considered stale (from config)
     pub(super) slice_arrival_timeout: std::time::Duration,
     /// Age threshold for orphaned temp files (from config)
@@ -201,6 +203,7 @@ impl MaterialAssembler {
         max_concurrent_assemblies: usize,
         ready_set: Option<MaterialReadySet>,
         max_buffered_slices: usize,
+        max_material_size_bytes: u64,
         slice_timeout_secs: u64,
         orphan_threshold_secs: u64,
         disk_threshold_percent: u8,
@@ -246,6 +249,8 @@ impl MaterialAssembler {
             stats: Arc::new(AssemblyStats::default()),
             disk_monitor,
             max_buffered_slices,
+            max_material_size_bytes: i64::try_from(max_material_size_bytes)
+                .unwrap_or(i64::MAX),
             slice_arrival_timeout: std::time::Duration::from_secs(slice_timeout_secs),
             orphaned_file_age_threshold: std::time::Duration::from_secs(orphan_threshold_secs),
         })
@@ -450,6 +455,7 @@ impl MaterialAssembler {
             expected_offset: 0,
             slice_count: 0,
             buffered_slices: BTreeMap::new(),
+            buffered_bytes: 0,
             state_dir,
             started_at: Timestamp::now(),
             material_kind: String::new(),
@@ -536,6 +542,7 @@ impl MaterialAssembler {
             stats: self.stats.clone(),
             disk_monitor: self.disk_monitor.clone(),
             max_buffered_slices: self.max_buffered_slices,
+            max_material_size_bytes: self.max_material_size_bytes,
             slice_arrival_timeout: self.slice_arrival_timeout,
             orphaned_file_age_threshold: self.orphaned_file_age_threshold,
         }

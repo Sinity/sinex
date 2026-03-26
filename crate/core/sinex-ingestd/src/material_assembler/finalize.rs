@@ -105,8 +105,9 @@ impl MaterialAssembler {
     /// - This is acceptable: a true collision means identical content by cryptographic assumption
     ///
     /// The theoretical collision risk is negligible compared to hardware/cosmic ray bit flips.
-    pub(super) async fn upsert_blob(
+    pub(super) async fn upsert_blob_with_executor(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         state: &FinalizationState,
         annex_key: &AnnexKey,
         content_hash: &str,
@@ -148,7 +149,10 @@ impl MaterialAssembler {
             .metadata(metadata)
             .build();
 
-        let stored = repo.insert(blob).await.map_err(|e| {
+        let stored = repo
+            .insert_with_executor(&mut **tx, blob)
+            .await
+            .map_err(|e| {
             error!(
                 material_id = %state.material_id,
                 backend = %annex_key.backend,
@@ -165,8 +169,9 @@ impl MaterialAssembler {
     }
 
     /// Finalize source material registry and ledger
-    pub(super) async fn finalize_material_record(
+    pub(super) async fn finalize_material_record_with_executor(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         state: &FinalizationState,
         blob_id: Id<Blob>,
         total_size_bytes: i64,
@@ -175,7 +180,7 @@ impl MaterialAssembler {
         let repo = self.pool.source_materials();
         let id: Id<SourceMaterialRecord> = Id::from_uuid(state.material_id);
 
-        repo.update_metadata(id, metadata.clone())
+        repo.update_metadata_with_executor(&mut **tx, id, metadata.clone())
             .await
             .map_err(|e| {
                 SinexError::database("Failed to update material metadata").with_source(e)
@@ -192,7 +197,8 @@ impl MaterialAssembler {
             .and_then(|value| value.as_str())
             .map(std::string::ToString::to_string);
 
-        repo.finalize_in_flight(
+        repo.finalize_in_flight_with_executor(
+            &mut **tx,
             Id::from_uuid(state.material_id),
             Some(blob_id),
             encoding_hint.as_deref(),
@@ -209,7 +215,11 @@ impl MaterialAssembler {
     /// `staged_at` entry is written earlier at begin-time by
     /// [`record_staged_at_ledger_entry`] so that `LedgerReader::derive_ts_orig()`
     /// never needs to fall back to ephemeral `Timestamp::now()`.
-    pub(super) async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
+    pub(super) async fn record_ledger_entry_with_executor(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        state: &FinalizationState,
+    ) -> IngestdResult<()> {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
             state.expected_offset,
@@ -218,13 +228,111 @@ impl MaterialAssembler {
 
         self.pool
             .source_materials()
-            .append_temporal_ledger(entry)
+            .append_temporal_ledger_with_executor(&mut **tx, entry)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to append temporal ledger entry").with_source(e)
             })?;
 
         Ok(())
+    }
+
+    async fn cleanup_annex_import_failure(&self, annex_key: &AnnexKey) {
+        match self
+            .pool
+            .blobs()
+            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                if let Err(error) = self.annex.drop_content(&annex_key.key, true).await {
+                    warn!(
+                        annex_key = %annex_key.key,
+                        error = %error,
+                        "Failed to roll back annex content after transactional finalization failure"
+                    );
+                }
+            }
+            Err(error) => {
+                warn!(
+                    annex_key = %annex_key.key,
+                    error = %error,
+                    "Failed to inspect blob metadata before annex rollback"
+                );
+            }
+        }
+    }
+
+    async fn persist_finalized_material(
+        &self,
+        final_state: &FinalizationState,
+        annex_key: &AnnexKey,
+        end: &MaterialEndMessage,
+        finalize_metadata: JsonValue,
+    ) -> IngestdResult<()> {
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            SinexError::database("Failed to begin material finalization transaction")
+                .with_source(e)
+        })?;
+
+        let repo = self.pool.source_materials();
+        if let Err(error) = repo
+            .register_external_in_flight_with_executor(
+                &mut *tx,
+                final_state.material_id,
+                &final_state.material_kind,
+                Some(&final_state.source_identifier),
+                final_state.metadata.clone(),
+                final_state.started_at,
+            )
+            .await
+        {
+            let _ = tx.rollback().await;
+            self.cleanup_annex_import_failure(annex_key).await;
+            return Err(
+                SinexError::database("Failed to register source material for finalization")
+                    .with_source(error),
+            );
+        }
+
+        let blob_id = match self
+            .upsert_blob_with_executor(&mut tx, final_state, annex_key, &end.content_hash)
+            .await
+        {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = tx.rollback().await;
+                self.cleanup_annex_import_failure(annex_key).await;
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = self
+            .finalize_material_record_with_executor(
+                &mut tx,
+                final_state,
+                blob_id,
+                end.total_size_bytes,
+                finalize_metadata,
+            )
+            .await
+        {
+            let _ = tx.rollback().await;
+            self.cleanup_annex_import_failure(annex_key).await;
+            return Err(error);
+        }
+
+        if let Err(error) = self.record_ledger_entry_with_executor(&mut tx, final_state).await {
+            let _ = tx.rollback().await;
+            self.cleanup_annex_import_failure(annex_key).await;
+            return Err(error);
+        }
+
+        tx.commit().await.map_err(|e| {
+            SinexError::database("Failed to commit material finalization transaction")
+                .with_source(e)
+        })
     }
 
     /// Write an early `staged_at` ledger entry at material-begin time.
@@ -316,6 +424,17 @@ impl MaterialAssembler {
         if !self.begin_failure_cleanup(material_id, reason).await {
             return;
         }
+
+        self.finalize_failed_material_claimed(material_id, reason).await;
+    }
+
+    /// Finalize a failed material after the caller has already claimed the terminal transition.
+    pub(super) async fn finalize_failed_material_claimed(&self, material_id: Uuid, reason: &str) {
+        debug!(
+            material_id = %material_id,
+            failure_reason = reason,
+            "Finalizing failed material after terminal ownership was claimed"
+        );
 
         self.stats_inc_failed(); // Track failed assembly
         tracing::warn!(
@@ -428,8 +547,11 @@ impl MaterialAssembler {
                     ctx,
                 )
                 .await;
-                self.finalize_failed_material(material_id, "material assembly corruption detected")
-                    .await;
+                self.finalize_failed_material_claimed(
+                    material_id,
+                    "material assembly corruption detected",
+                )
+                .await;
                 return Ok(());
             }
 
@@ -514,7 +636,30 @@ impl MaterialAssembler {
                 }),
             )
             .await;
-            self.finalize_failed_material(material_id, "empty_material")
+            self.finalize_failed_material_claimed(material_id, "empty_material")
+                .await;
+            return Ok(());
+        }
+
+        if end.total_size_bytes > self.max_material_size_bytes {
+            warn!(
+                material_id = %material_id,
+                reported_total = end.total_size_bytes,
+                max_material_size_bytes = self.max_material_size_bytes,
+                "Material exceeded the configured per-material size limit"
+            );
+            self.route_material_error(
+                material_id,
+                "material_size_limit_exceeded",
+                serde_json::json!({
+                    "assembled_bytes": assembled_bytes,
+                    "reported_total": end.total_size_bytes,
+                    "max_material_size_bytes": self.max_material_size_bytes,
+                    "slice_count": slice_count,
+                }),
+            )
+            .await;
+            self.finalize_failed_material_claimed(material_id, "material_size_limit_exceeded")
                 .await;
             return Ok(());
         }
@@ -544,7 +689,7 @@ impl MaterialAssembler {
                 }),
             )
             .await;
-            self.finalize_failed_material(material_id, "material_size_mismatch_disk")
+            self.finalize_failed_material_claimed(material_id, "material_size_mismatch_disk")
                 .await;
             return Ok(());
         }
@@ -571,10 +716,30 @@ impl MaterialAssembler {
                 }),
             )
             .await;
-            self.finalize_failed_material(material_id, "material_hash_mismatch")
+            self.finalize_failed_material_claimed(material_id, "material_hash_mismatch")
                 .await;
             return Ok(());
         }
+
+        let finalize_metadata = match build_finalize_metadata(
+            &final_state,
+            &end.metadata,
+            ended_at,
+            end.total_size_bytes,
+            &end.content_hash,
+        ) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.route_material_error(
+                    material_id,
+                    "material_finalize_metadata_invalid",
+                    serde_json::json!({ "error": error.to_string() }),
+                )
+                .await;
+                Self::revert_finalization_start(&state_handle, end).await;
+                return Err(error);
+            }
+        };
 
         let annex_key = match self.import_into_annex(&final_state).await {
             Ok(result) => result,
@@ -590,74 +755,24 @@ impl MaterialAssembler {
             }
         };
 
-        // Ensure the record is registered before finalization (handles out-of-order Begin/End)
-        self.register_material_record(
-            material_id,
-            &final_state.material_kind,
-            &final_state.source_identifier,
-            final_state.metadata.clone(),
-            final_state.started_at,
-        )
-        .await?;
+        if let Err(e) = self
+            .persist_finalized_material(&final_state, &annex_key, &end, finalize_metadata)
+            .await
+        {
+            self.route_material_error(
+                material_id,
+                "material_persist_failed",
+                serde_json::json!({ "error": e.to_string() }),
+            )
+            .await;
+            Self::revert_finalization_start(&state_handle, end).await;
+            return Err(e);
+        }
 
-        // Signal readiness for any events still waiting on this material's FK target.
+        // Signal readiness only after the material registration/finalization transaction has
+        // committed, so FK waiters never observe a phantom in-memory-ready state.
         if let Some(ref ready_set) = self.ready_set {
             ready_set.mark_ready(material_id);
-        }
-
-        let blob_id = match self
-            .upsert_blob(&final_state, &annex_key, &end.content_hash)
-            .await
-        {
-            Ok(id) => id,
-            Err(e) => {
-                self.route_material_error(
-                    material_id,
-                    "blob_registration_failed",
-                    serde_json::json!({ "error": e.to_string() }),
-                )
-                .await;
-                Self::revert_finalization_start(&state_handle, end).await;
-                return Err(e);
-            }
-        };
-
-        let finalize_metadata = build_finalize_metadata(
-            &final_state,
-            &end.metadata,
-            ended_at,
-            end.total_size_bytes,
-            &end.content_hash,
-        )?;
-
-        if let Err(e) = self
-            .finalize_material_record(
-                &final_state,
-                blob_id,
-                end.total_size_bytes,
-                finalize_metadata,
-            )
-            .await
-        {
-            self.route_material_error(
-                material_id,
-                "material_finalize_failed",
-                serde_json::json!({ "error": e.to_string() }),
-            )
-            .await;
-            Self::revert_finalization_start(&state_handle, end).await;
-            return Err(e);
-        }
-
-        if let Err(e) = self.record_ledger_entry(&final_state).await {
-            self.route_material_error(
-                material_id,
-                "ledger_append_failed",
-                serde_json::json!({ "error": e.to_string() }),
-            )
-            .await;
-            Self::revert_finalization_start(&state_handle, end).await;
-            return Err(e);
         }
 
         self.cleanup_state(material_id).await;
@@ -784,6 +899,7 @@ mod tests {
             50,
             Some(MaterialReadySet::default()),
             100,
+            512 * 1024 * 1024,
             300,
             3_600,
             90,

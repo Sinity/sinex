@@ -114,6 +114,7 @@ pub(super) struct AssemblerState {
     pub expected_offset: i64,
     pub slice_count: usize,
     pub buffered_slices: BTreeMap<i64, PathBuf>,
+    pub buffered_bytes: i64,
     pub state_dir: PathBuf,
     pub started_at: Timestamp,
     pub material_kind: String,
@@ -165,6 +166,11 @@ impl AssemblerState {
             source_identifier: self.source_identifier.clone(),
             started_at: self.started_at,
         }
+    }
+
+    #[must_use]
+    pub(super) fn total_staged_bytes(&self) -> i64 {
+        self.expected_offset + self.buffered_bytes
     }
 }
 
@@ -446,6 +452,7 @@ mod tests {
             expected_offset: 0,
             slice_count: 0,
             buffered_slices: BTreeMap::new(),
+            buffered_bytes: 0,
             state_dir: temp_dir.path().to_path_buf(),
             started_at: Timestamp::now(),
             material_kind: "test".to_string(),

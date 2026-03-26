@@ -542,6 +542,7 @@ impl IngestService {
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
         let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
         let max_buffered_slices = self.config.max_buffered_slices;
+        let max_material_size_bytes = self.config.max_material_size_bytes.as_u64();
         let slice_timeout_secs = self.config.slice_timeout_secs;
         let orphan_threshold_secs = self.config.orphan_threshold_secs;
         let disk_threshold_percent = self.config.disk_threshold_percent;
@@ -580,6 +581,7 @@ impl IngestService {
                 max_concurrent_assemblies,
                 ready_set,
                 max_buffered_slices,
+                max_material_size_bytes,
                 slice_timeout_secs,
                 orphan_threshold_secs,
                 disk_threshold_percent,

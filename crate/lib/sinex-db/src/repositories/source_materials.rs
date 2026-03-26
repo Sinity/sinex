@@ -675,6 +675,18 @@ impl SourceMaterialRepository<'_> {
         id: Id<SourceMaterialRecord>,
         metadata: JsonValue,
     ) -> DbResult<Option<SourceMaterialRecord>> {
+        self.update_metadata_with_executor(self.pool, id, metadata).await
+    }
+
+    pub async fn update_metadata_with_executor<'e, E>(
+        &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+        metadata: JsonValue,
+    ) -> DbResult<Option<SourceMaterialRecord>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
@@ -698,7 +710,7 @@ impl SourceMaterialRepository<'_> {
             id.to_uuid(),
             metadata
         )
-        .fetch_optional(self.pool)
+        .fetch_optional(executor)
         .await
         .map_err(|e| db_error(e, "update material metadata"))
     }
@@ -718,14 +730,18 @@ impl SourceMaterialRepository<'_> {
     /// - Metadata is deep-merged with new values
     /// - `end_time` is cleared so terminal state does not leak into the rerun
     /// - `staged_by` and `staged_on_host` are updated if not null
-    async fn register_in_flight_internal(
+    async fn register_in_flight_internal_with_executor<'e, E>(
         &self,
+        executor: E,
         id: Id<SourceMaterial>,
         material_type: &str,
         source_uri: Option<&str>,
         metadata: JsonValue,
         start_time_override: Option<Timestamp>,
-    ) -> DbResult<SourceMaterialRecord> {
+    ) -> DbResult<SourceMaterialRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         // Build the material struct for metadata preparation
         let mut material =
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
@@ -807,7 +823,7 @@ impl SourceMaterialRepository<'_> {
             .bind(material.start_time)
             .bind(&material.staged_by)
             .bind(&material.staged_on_host)
-            .fetch_one(self.pool)
+            .fetch_one(executor)
             .await
             .map_err(|e| db_error(e, "upsert in-flight source material"))
     }
@@ -818,7 +834,14 @@ impl SourceMaterialRepository<'_> {
         metadata: JsonValue,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::new();
-        self.register_in_flight_internal(id, material_type, source_uri, metadata, None)
+        self.register_in_flight_internal_with_executor(
+            self.pool,
+            id,
+            material_type,
+            source_uri,
+            metadata,
+            None,
+        )
             .await
     }
     pub async fn register_external_in_flight(
@@ -830,8 +853,39 @@ impl SourceMaterialRepository<'_> {
         started_at: Timestamp,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::from_uuid(material_id);
-        self.register_in_flight_internal(id, material_type, source_uri, metadata, Some(started_at))
-            .await
+        self.register_in_flight_internal_with_executor(
+            self.pool,
+            id,
+            material_type,
+            source_uri,
+            metadata,
+            Some(started_at),
+        )
+        .await
+    }
+
+    pub async fn register_external_in_flight_with_executor<'e, E>(
+        &self,
+        executor: E,
+        material_id: uuid::Uuid,
+        material_type: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+        started_at: Timestamp,
+    ) -> DbResult<SourceMaterialRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let id = Id::<SourceMaterial>::from_uuid(material_id);
+        self.register_in_flight_internal_with_executor(
+            executor,
+            id,
+            material_type,
+            source_uri,
+            metadata,
+            Some(started_at),
+        )
+        .await
     }
     /// Mark an in-flight source material as failed
     pub async fn mark_as_failed(
@@ -961,6 +1015,17 @@ impl SourceMaterialRepository<'_> {
     /// The temporal ledger tracks timing metadata for captures, including
     /// offset ranges, capture timestamps, and clock information.
     pub async fn append_temporal_ledger(&self, entry: TemporalLedgerEntry) -> DbResult<()> {
+        self.append_temporal_ledger_with_executor(self.pool, entry).await
+    }
+
+    pub async fn append_temporal_ledger_with_executor<'e, E>(
+        &self,
+        executor: E,
+        entry: TemporalLedgerEntry,
+    ) -> DbResult<()>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger
@@ -976,7 +1041,7 @@ impl SourceMaterialRepository<'_> {
             entry.clock.to_string() as String,
             entry.source_type.to_string() as String
         )
-        .execute(self.pool)
+        .execute(executor)
         .await
         .map_err(|e| db_error(e, "append temporal ledger entry"))?;
         Ok(())
