@@ -142,139 +142,156 @@ impl DistributedRateLimiter {
             .or_insert_with(|| Arc::new(AtomicU32::new(0)))
             .clone();
 
-        // 2. Try to consume locally
-        loop {
-            let current = bucket.load(Ordering::Relaxed);
-            if current > 0 {
-                if bucket
-                    .compare_exchange_weak(
-                        current,
-                        current - 1,
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    )
-                    .is_ok()
-                {
-                    // Success: consumed 1 local token
-                    return true;
-                }
-            } else {
-                break; // Local bucket empty, fall through to NATS reservation
-            }
-        }
-
-        // 3. Replenish from NATS (with CAS loop).
-        // Never use the raw bearer token as a NATS KV key or log field.
-        let key = token_identity.kv_key.clone();
-        let limit = self.config.requests_per_minute.get();
-        let batch_size = RESERVATION_BATCH_SIZE;
-
-        // Exponential backoff for high contention CAS loops
-        let mut backoff = Duration::from_millis(5);
-
-        for attempt in 0..5 {
-            // Get current global count
-            let (entry_value, revision) = match self.kv.entry(&key).await {
-                Ok(Some(entry)) => {
-                    let val = if let Some(v) = std::str::from_utf8(&entry.value)
-                        .ok()
-                        .and_then(|s| s.parse::<u32>().ok())
+        'consume: loop {
+            // 2. Try to consume locally.
+            loop {
+                let current = bucket.load(Ordering::Relaxed);
+                if current > 0 {
+                    if bucket
+                        .compare_exchange_weak(
+                            current,
+                            current - 1,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
                     {
-                        v
-                    } else {
-                        warn!(
-                            token_fingerprint = %token_identity.fingerprint,
-                            raw = ?entry.value,
-                            "Corrupt rate limit counter in NATS KV; failing closed"
-                        );
-                        return false;
-                    };
-                    (val, entry.revision)
+                        // Success: consumed 1 local token
+                        return true;
+                    }
+                } else {
+                    break; // Local bucket empty, fall through to NATS reservation
                 }
-                Ok(None) => (0, 0), // Key doesn't exist yet, revision 0 signals create
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        token_fingerprint = %token_identity.fingerprint,
-                        "NATS KV read failed; failing closed (rate limit enforced)"
-                    );
-                    return false; // Fail closed: NATS outage should not bypass rate limits
-                }
-            };
-
-            // Check hard limit
-            if entry_value >= limit {
-                debug!(
-                    token_fingerprint = %token_identity.fingerprint,
-                    used = entry_value,
-                    limit = limit,
-                    "Rate limit exceeded (global)"
-                );
-                // Cache 0 locally to prevent hammering this loop
-                bucket.store(0, Ordering::Relaxed);
-                return false;
             }
 
-            // Calculate safe reservation amount
-            let available = limit - entry_value;
-            let to_reserve = std::cmp::min(available, batch_size);
+            // 3. Replenish from NATS (with CAS loop).
+            // Never use the raw bearer token as a NATS KV key or log field.
+            let key = token_identity.kv_key.clone();
+            let limit = self.config.requests_per_minute.get();
+            let batch_size = RESERVATION_BATCH_SIZE;
 
-            // CAS: use put() for new keys, update() for existing ones
-            let new_value = entry_value + to_reserve;
-            let cas_result: std::result::Result<u64, sinex_primitives::SinexError> =
-                if revision == 0 {
-                    // Key doesn't exist yet — put creates it (not CAS, but the race
-                    // window is a single first-request per token per window; subsequent
-                    // operations use update() with proper CAS)
-                    self.kv
-                        .put(&key, new_value.to_string().into())
-                        .await
-                        .map_err(|e| {
-                            sinex_primitives::SinexError::kv("rate limit CAS put failed")
-                                .with_context("key", &key)
-                                .with_source(e)
-                        })
-                } else {
-                    // Key exists — CAS update against known revision
-                    self.kv
-                        .update(&key, new_value.to_string().into(), revision)
-                        .await
-                        .map_err(|e| {
-                            sinex_primitives::SinexError::kv("rate limit CAS update failed")
-                                .with_context("key", &key)
-                                .with_context("revision", revision)
-                                .with_source(e)
-                        })
+            // Exponential backoff for high contention CAS loops
+            let mut backoff = Duration::from_millis(5);
+
+            for attempt in 0..5 {
+                // Another contender may have successfully refilled the shared local bucket
+                // since this caller last checked it. Re-check before touching the global
+                // counter so same-process stampedes can consume the reservation.
+                let current = bucket.load(Ordering::Relaxed);
+                if current > 0 {
+                    continue 'consume;
+                }
+
+                // Get current global count
+                let (entry_value, revision) = match self.kv.entry(&key).await {
+                    Ok(Some(entry)) => {
+                        let val = if let Some(v) = std::str::from_utf8(&entry.value)
+                            .ok()
+                            .and_then(|s| s.parse::<u32>().ok())
+                        {
+                            v
+                        } else {
+                            warn!(
+                                token_fingerprint = %token_identity.fingerprint,
+                                raw = ?entry.value,
+                                "Corrupt rate limit counter in NATS KV; failing closed"
+                            );
+                            return false;
+                        };
+                        (val, entry.revision)
+                    }
+                    Ok(None) => (0, 0), // Key doesn't exist yet, revision 0 signals create
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            token_fingerprint = %token_identity.fingerprint,
+                            "NATS KV read failed; failing closed (rate limit enforced)"
+                        );
+                        return false; // Fail closed: NATS outage should not bypass rate limits
+                    }
                 };
 
-            match cas_result {
-                Ok(_) => {
-                    // Success!
-                    // We consume 1 for *this* request immediately, store the rest
-                    bucket.store(to_reserve - 1, Ordering::Relaxed);
+                // Check hard limit
+                if entry_value >= limit {
+                    if bucket.load(Ordering::Relaxed) > 0 {
+                        continue 'consume;
+                    }
                     debug!(
                         token_fingerprint = %token_identity.fingerprint,
-                        reserved = to_reserve,
-                        new_global = new_value,
-                        "Refilled local rate limit bucket"
+                        used = entry_value,
+                        limit = limit,
+                        "Rate limit exceeded (global)"
                     );
-                    return true;
+                    // Cache 0 locally to prevent hammering this loop
+                    bucket.store(0, Ordering::Relaxed);
+                    return false;
                 }
-                Err(e) => {
-                    // Conflict or error — retry with backoff
-                    debug!(error = %e, attempt, "CAS failure/conflict reserving tokens; retrying");
-                    tokio::time::sleep(backoff).await;
-                    backoff = std::cmp::min(backoff * 2, Duration::from_millis(100));
-                    continue;
+
+                // Calculate safe reservation amount
+                let available = limit - entry_value;
+                let to_reserve = std::cmp::min(available, batch_size);
+
+                // CAS: use create() for new keys, update() for existing ones
+                let new_value = entry_value + to_reserve;
+                let cas_result: std::result::Result<u64, sinex_primitives::SinexError> =
+                    if revision == 0 {
+                        // Key doesn't exist yet — create fails if another contender won
+                        // the initial reservation race, forcing a retry against the
+                        // authoritative revision instead of silently oversubscribing.
+                        self.kv
+                            .create(&key, new_value.to_string().into())
+                            .await
+                            .map_err(|e| {
+                                sinex_primitives::SinexError::kv("rate limit CAS create failed")
+                                    .with_context("key", &key)
+                                    .with_source(e)
+                            })
+                    } else {
+                        // Key exists — CAS update against known revision
+                        self.kv
+                            .update(&key, new_value.to_string().into(), revision)
+                            .await
+                            .map_err(|e| {
+                                sinex_primitives::SinexError::kv("rate limit CAS update failed")
+                                    .with_context("key", &key)
+                                    .with_context("revision", revision)
+                                    .with_source(e)
+                            })
+                    };
+
+                match cas_result {
+                    Ok(_) => {
+                        // Success!
+                        // We consume 1 for *this* request immediately, store the rest
+                        bucket.store(to_reserve - 1, Ordering::Relaxed);
+                        debug!(
+                            token_fingerprint = %token_identity.fingerprint,
+                            reserved = to_reserve,
+                            new_global = new_value,
+                            "Refilled local rate limit bucket"
+                        );
+                        return true;
+                    }
+                    Err(e) => {
+                        // Conflict or error — retry with backoff
+                        debug!(
+                            error = %e,
+                            attempt,
+                            "CAS failure/conflict reserving tokens; retrying"
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = std::cmp::min(backoff * 2, Duration::from_millis(100));
+                        continue;
+                    }
                 }
             }
-        }
 
-        warn!(
-            token_fingerprint = %token_identity.fingerprint,
-            "Failed to reserve rate limit tokens after retries; failing closed"
-        );
-        false // Fail closed on persistent CAS failure
+            warn!(
+                token_fingerprint = %token_identity.fingerprint,
+                "Failed to reserve rate limit tokens after retries; failing closed"
+            );
+            return false; // Fail closed on persistent CAS failure
+        }
     }
 
     /// Check if rate limiting is enabled
