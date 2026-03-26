@@ -459,7 +459,7 @@ impl StageAsYouGoContext {
             })?
             .clone();
 
-        let handle = self
+        let mut handle = self
             .acquisition_handles
             .lock()
             .await
@@ -468,16 +468,21 @@ impl StageAsYouGoContext {
                 SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
 
-        self.finalize_via_acquisition(
+        let finalize_result = self.finalize_via_acquisition(
             manager,
-            handle,
+            &mut handle,
             material_info.as_ref(),
             content,
             mime_type,
             encoding,
             content_preview.clone(),
         )
-        .await?;
+        .await;
+
+        if let Err(error) = finalize_result {
+            self.acquisition_handles.lock().await.insert(id, handle);
+            return Err(error);
+        }
 
         // Remove from registry only after successful finalization
         {
@@ -510,8 +515,8 @@ impl StageAsYouGoContext {
         let mut total_bytes: i64 = 0;
 
         let material_info = {
-            let mut registry = self.material_registry.lock().await;
-            registry.remove(&id)
+            let registry = self.material_registry.lock().await;
+            registry.get(&id).cloned()
         };
 
         let manager = self
@@ -533,44 +538,57 @@ impl StageAsYouGoContext {
                 SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
 
-        let mut buffer = vec![0u8; MAX_SLICE_BYTES];
-        loop {
-            let read = reader
-                .read(&mut buffer)
-                .await
-                .map_err(|e| SinexError::processing(e.to_string()))?;
-            if read == 0 {
-                break;
+        let finalize_result = async {
+            let mut buffer = vec![0u8; MAX_SLICE_BYTES];
+            loop {
+                let read = reader
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| SinexError::processing(e.to_string()))?;
+                if read == 0 {
+                    break;
+                }
+
+                if is_text && preview_bytes.len() < CONTENT_PREVIEW_BYTES {
+                    let take_len = (CONTENT_PREVIEW_BYTES - preview_bytes.len()).min(read);
+                    preview_bytes.extend_from_slice(&buffer[..take_len]);
+                }
+
+                manager
+                    .append_slice(&mut handle, &buffer[..read])
+                    .await
+                    .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
+                total_bytes += read as i64;
             }
 
-            if is_text && preview_bytes.len() < CONTENT_PREVIEW_BYTES {
-                let take_len = (CONTENT_PREVIEW_BYTES - preview_bytes.len()).min(read);
-                preview_bytes.extend_from_slice(&buffer[..take_len]);
-            }
+            let content_preview = if is_text && !preview_bytes.is_empty() {
+                Some(String::from_utf8_lossy(&preview_bytes).to_string())
+            } else {
+                None
+            };
+            let metadata = Self::build_finalize_metadata(
+                material_info.as_ref(),
+                total_bytes,
+                content_preview,
+                encoding,
+            );
 
             manager
-                .append_slice(&mut handle, &buffer[..read])
+                .finalize_with_metadata(&mut handle, MATERIAL_FINALIZE_REASON, metadata)
                 .await
-                .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
-            total_bytes += read as i64;
+                .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))
+        }
+        .await;
+
+        if let Err(error) = finalize_result {
+            self.acquisition_handles.lock().await.insert(id, handle);
+            return Err(error);
         }
 
-        let content_preview = if is_text && !preview_bytes.is_empty() {
-            Some(String::from_utf8_lossy(&preview_bytes).to_string())
-        } else {
-            None
-        };
-        let metadata = Self::build_finalize_metadata(
-            material_info.as_ref(),
-            total_bytes,
-            content_preview,
-            encoding,
-        );
-
-        manager
-            .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
-            .await
-            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))?;
+        {
+            let mut registry = self.material_registry.lock().await;
+            registry.remove(&id);
+        }
 
         info!(
             material_id = %id,
@@ -584,7 +602,7 @@ impl StageAsYouGoContext {
     async fn finalize_via_acquisition(
         &self,
         manager: Arc<AcquisitionManager>,
-        mut handle: SourceMaterialHandle,
+        handle: &mut SourceMaterialHandle,
         info: Option<&StageMaterialInfo>,
         content: &[u8],
         _mime_type: Option<&str>,
@@ -593,7 +611,7 @@ impl StageAsYouGoContext {
     ) -> NodeResult<()> {
         for chunk in content.chunks(MAX_SLICE_BYTES) {
             manager
-                .append_slice(&mut handle, chunk)
+                .append_slice(handle, chunk)
                 .await
                 .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
         }

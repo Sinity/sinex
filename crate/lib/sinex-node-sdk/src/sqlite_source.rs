@@ -190,7 +190,7 @@ pub async fn stage_stable_material(
 
     if let Some(metadata_value) = metadata {
         acquisition
-            .finalize_with_metadata(handle, reason, metadata_value)
+            .finalize_with_metadata(&mut handle, reason, metadata_value)
             .await?;
     } else {
         acquisition.finalize(handle, reason).await?;
