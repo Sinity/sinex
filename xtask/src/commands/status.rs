@@ -1846,7 +1846,8 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
         .filter(|j| {
             matches!(
                 j.job_status,
-                crate::history::JobLifecycleStatus::Orphaned
+                crate::history::JobLifecycleStatus::Failed
+                    | crate::history::JobLifecycleStatus::Orphaned
                     | crate::history::JobLifecycleStatus::Killed
             )
         })

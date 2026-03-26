@@ -423,7 +423,7 @@ async fn execute_wait(
 
     let job_failed = matches!(
         job.job_status,
-        JobLifecycleStatus::Orphaned | JobLifecycleStatus::Killed
+        JobLifecycleStatus::Failed | JobLifecycleStatus::Orphaned | JobLifecycleStatus::Killed
     ) || job.exit_code.is_some_and(|c| c != 0);
 
     let mut result = if job_failed {
@@ -496,6 +496,7 @@ fn status_to_str(status: JobLifecycleStatus) -> &'static str {
     match status {
         JobLifecycleStatus::Running => "running",
         JobLifecycleStatus::Completed => "completed",
+        JobLifecycleStatus::Failed => "failed",
         JobLifecycleStatus::Orphaned => "orphaned",
         JobLifecycleStatus::Killed => "killed",
     }
@@ -582,6 +583,7 @@ mod tests {
     async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(status_to_str(JobLifecycleStatus::Running), "running");
         assert_eq!(status_to_str(JobLifecycleStatus::Completed), "completed");
+        assert_eq!(status_to_str(JobLifecycleStatus::Failed), "failed");
         assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
         assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
         Ok(())
