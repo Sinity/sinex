@@ -480,9 +480,14 @@ in
               '';
             in ''
               if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
-                ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${stream.name} \
-                  --force \
-                  ${mutableArgs}
+                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${stream.name} \
+                  --dry-run \
+                  ${mutableArgs} \
+                  2>&1); then
+                  echo "Stream ${stream.name} drifts from declarative bootstrap config; refusing to overwrite it automatically" >&2
+                  echo "$output" >&2
+                  exit 1
+                fi
               else
                 if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${stream.name} \
                   --defaults \

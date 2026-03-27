@@ -257,7 +257,7 @@ in
             command = schemaApplyScript;
             passwordFile = cfg.database.passwordFile;
           };
-          TimeoutStartSec = preflight.timeoutSec;
+          TimeoutStartSec = preflight.schemaApplyTimeoutSec;
         } // mkHelperServiceConfig {
           user = serviceUser;
           group = serviceUser;

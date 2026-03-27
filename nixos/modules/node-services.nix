@@ -328,7 +328,14 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
-        unitConfig = restartRateLimits;
+        unitConfig = restartRateLimits // optionalAttrs (coreCfg.gateway.enable && !tlsAutoGenEnabled) {
+          AssertPathIsReadable =
+            [
+              cfg.core.gateway.tlsCertFile
+              cfg.core.gateway.tlsKeyFile
+            ]
+            ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ];
+        };
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
