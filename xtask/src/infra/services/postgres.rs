@@ -2,7 +2,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,40 @@ pub struct PostgresConfig {
 
 pub struct PostgresManager {
     config: PostgresConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostmasterPidState {
+    Missing,
+    Running(i32),
+    Stale(i32),
+}
+
+fn remove_service_file(path: &Path, label: &str) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .wrap_err_with(|| format!("failed to remove {label} {}", path.display())),
+    }
+}
+
+fn read_postmaster_pid(path: &Path) -> Result<Option<i32>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed to read postmaster pid file {}", path.display()))?;
+    let Some(first_line) = content.lines().next().map(str::trim).filter(|line| !line.is_empty())
+    else {
+        bail!("postmaster pid file {} is empty", path.display());
+    };
+
+    let pid = first_line
+        .parse::<i32>()
+        .wrap_err_with(|| format!("failed to parse postmaster pid from {}", path.display()))?;
+    Ok(Some(pid))
 }
 
 impl PostgresManager {
@@ -99,19 +133,25 @@ impl PostgresManager {
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
-        if self.is_running() {
-            // PID exists — but verify it's actually accepting connections
-            if self.is_accepting_connections() {
-                if verbose {
-                    println!("PostgreSQL already running");
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing => {}
+            PostmasterPidState::Running(_) => {
+                if self.is_accepting_connections() {
+                    if verbose {
+                        println!("PostgreSQL already running");
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+
+                eprintln!(
+                    "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
+                );
+                self.force_cleanup(verbose)?;
             }
-            // PID alive but not accepting connections — stale/zombie Postgres
-            eprintln!(
-                "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
-            );
-            self.force_cleanup(verbose);
+            PostmasterPidState::Stale(pid) => {
+                eprintln!("⚠️  Stale PostgreSQL pid file detected for dead PID {pid}. Recovering...");
+                self.force_cleanup(verbose)?;
+            }
         }
 
         if verbose {
@@ -176,11 +216,21 @@ impl PostgresManager {
     }
 
     pub fn stop(&self, verbose: bool) -> Result<()> {
-        if !self.is_running() {
-            if verbose {
-                println!("PostgreSQL not running");
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing => {
+                if verbose {
+                    println!("PostgreSQL not running");
+                }
+                return Ok(());
             }
-            return Ok(());
+            PostmasterPidState::Stale(pid) => {
+                if verbose {
+                    println!("Cleaning up stale PostgreSQL state for dead PID {pid}");
+                }
+                self.force_cleanup(verbose)?;
+                return Ok(());
+            }
+            PostmasterPidState::Running(_) => {}
         }
 
         if verbose {
@@ -210,14 +260,14 @@ impl PostgresManager {
 
     #[must_use]
     pub fn is_running(&self) -> bool {
-        let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file)
-            && let Some(first_line) = content.lines().next()
-            && let Ok(pid) = first_line.parse::<i32>()
-        {
-            return unsafe { libc::kill(pid, 0) == 0 };
+        match self.postmaster_pid_state() {
+            Ok(PostmasterPidState::Running(_)) => true,
+            Ok(PostmasterPidState::Missing | PostmasterPidState::Stale(_)) => false,
+            Err(error) => {
+                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to inspect postgres pid file");
+                false
+            }
         }
-        false
     }
 
     /// Check if PostgreSQL is accepting connections via pg_isready.
@@ -239,11 +289,10 @@ impl PostgresManager {
     }
 
     /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
-    fn force_cleanup(&self, verbose: bool) {
+    fn force_cleanup(&self, verbose: bool) -> Result<()> {
         let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file)
-            && let Some(first_line) = content.lines().next()
-            && let Ok(pid) = first_line.parse::<i32>()
+        if let Some(pid) = read_postmaster_pid(&pid_file)?
+            && unsafe { libc::kill(pid, 0) == 0 }
         {
             if verbose {
                 eprintln!("  Sending SIGKILL to stale PID {pid}");
@@ -254,7 +303,7 @@ impl PostgresManager {
         }
 
         // Clean up stale files so pg_ctl start succeeds
-        let _ = fs::remove_file(&pid_file);
+        remove_service_file(&pid_file, "postgres pid file")?;
         let socket = self
             .config
             .run_dir
@@ -263,12 +312,14 @@ impl PostgresManager {
             .config
             .run_dir
             .join(format!(".s.PGSQL.{}.lock", self.config.port));
-        let _ = fs::remove_file(&socket);
-        let _ = fs::remove_file(&lock);
+        remove_service_file(&socket, "postgres socket")?;
+        remove_service_file(&lock, "postgres socket lock")?;
 
         if verbose {
             eprintln!("  Cleaned up stale PID file and sockets");
         }
+
+        Ok(())
     }
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
@@ -365,5 +416,62 @@ impl PostgresManager {
         } else {
             Command::new(binary)
         }
+    }
+
+    fn postmaster_pid_state(&self) -> Result<PostmasterPidState> {
+        let pid_file = self.config.data_dir.join("postmaster.pid");
+        let Some(pid) = read_postmaster_pid(&pid_file)? else {
+            return Ok(PostmasterPidState::Missing);
+        };
+
+        if unsafe { libc::kill(pid, 0) == 0 } {
+            Ok(PostmasterPidState::Running(pid))
+        } else {
+            Ok(PostmasterPidState::Stale(pid))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
+        PostgresManager::new(PostgresConfig {
+            port: 55432,
+            data_dir: root.path().join("data"),
+            run_dir: root.path().join("run"),
+            logs_dir: root.path().join("logs"),
+            database: "sinex".to_string(),
+            superuser: "postgres".to_string(),
+            app_user: "sinex".to_string(),
+        })
+    }
+
+    #[sinex_test]
+    async fn test_postmaster_pid_state_reports_malformed_pid_file() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "not-a-pid\n")?;
+
+        let error = manager.postmaster_pid_state().unwrap_err();
+        assert!(format!("{error:#}").contains("failed to parse postmaster pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_force_cleanup_reports_socket_cleanup_failure() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::create_dir_all(&manager.config.run_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "999999\n")?;
+        fs::create_dir(manager.config.run_dir.join(format!(".s.PGSQL.{}", manager.config.port)))?;
+
+        let error = manager.force_cleanup(false).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to remove postgres socket"));
+        Ok(())
     }
 }
