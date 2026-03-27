@@ -459,6 +459,17 @@ impl SourceMaterialRepository<'_> {
         &self,
         id: Id<SourceMaterialRecord>,
     ) -> DbResult<Option<SourceMaterialRecord>> {
+        self.get_by_id_with_executor(self.pool, id).await
+    }
+
+    pub async fn get_by_id_with_executor<'e, E>(
+        &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<SourceMaterialRecord>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
@@ -480,7 +491,7 @@ impl SourceMaterialRepository<'_> {
             "#,
             id.to_uuid()
         )
-        .fetch_optional(self.pool)
+        .fetch_optional(executor)
         .await
         .map_err(|e| db_error(e, "get material by id"))
     }
