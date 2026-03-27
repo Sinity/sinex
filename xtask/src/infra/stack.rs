@@ -1,9 +1,13 @@
 //! Stack configuration and status tracking.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sinex_db::repositories::schema_management::{SchemaManagementRepository, SchemaSyncResult};
+use sinex_primitives::events::schema_registry::generate_all_schemas;
+use sqlx::postgres::PgPoolOptions;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -181,7 +185,11 @@ pub struct StackStatus {
     pub nats: ServiceStatus,
     pub annex: AnnexStatus,
     pub data_sizes: DataSizes,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_size_issues: Vec<String>,
     pub snapshots: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_issue: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +212,12 @@ pub struct DataSizes {
     pub annex_bytes: u64,
 }
 
+#[derive(Debug)]
+pub struct DirectorySizeProbe {
+    pub bytes: u64,
+    pub issue: Option<String>,
+}
+
 impl StackStatus {
     #[must_use]
     pub fn gather(config: &StackConfig) -> Self {
@@ -215,14 +229,7 @@ impl StackStatus {
 
         let postgres = ServiceStatus {
             running: pg_mgr.is_running(),
-            pid: if pg_mgr.is_running() {
-                // Read actual PID from postmaster.pid (first line is the postmaster PID)
-                std::fs::read_to_string(config.pg_data().join("postmaster.pid"))
-                    .ok()
-                    .and_then(|c| c.lines().next().and_then(|l| l.trim().parse::<u32>().ok()))
-            } else {
-                None
-            },
+            pid: pg_mgr.read_pid(),
             port: config.postgres.port,
         };
 
@@ -237,11 +244,18 @@ impl StackStatus {
             path: config.annex_data(),
         };
 
+        let postgres_size = dir_size(&config.pg_data());
+        let nats_size = dir_size(&config.nats_data());
+        let annex_size = dir_size(&config.annex_data());
         let data_sizes = DataSizes {
-            postgres_bytes: dir_size(&config.pg_data()),
-            nats_bytes: dir_size(&config.nats_data()),
-            annex_bytes: dir_size(&config.annex_data()),
+            postgres_bytes: postgres_size.bytes,
+            nats_bytes: nats_size.bytes,
+            annex_bytes: annex_size.bytes,
         };
+        let data_size_issues = [postgres_size.issue, nats_size.issue, annex_size.issue]
+            .into_iter()
+            .flatten()
+            .collect();
 
         let snapshots = list_snapshots(&config.snapshots_dir());
 
@@ -251,7 +265,9 @@ impl StackStatus {
             nats,
             annex,
             data_sizes,
-            snapshots,
+            data_size_issues,
+            snapshots: snapshots.snapshots,
+            snapshot_issue: snapshots.issue,
         }
     }
 }
@@ -272,6 +288,48 @@ pub fn ensure_directories(config: &StackConfig) -> Result<()> {
     Ok(())
 }
 
+fn summarize_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn probe_annex_available(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    match output {
+        Ok(output) if output.status.success() => Ok(true),
+        Ok(output) => {
+            bail!(
+                "git-annex version probe failed: {}",
+                summarize_command_output(&output)
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).wrap_err("failed to run git-annex version probe"),
+    }
+}
+
+fn require_successful_command(
+    description: &str,
+    output: std::io::Result<std::process::Output>,
+) -> Result<()> {
+    let output = output.wrap_err_with(|| format!("failed to run {description}"))?;
+    if !output.status.success() {
+        bail!(
+            "{description} failed: {}",
+            summarize_command_output(&output)
+        );
+    }
+    Ok(())
+}
+
 pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
     if config.annex_data().join(".git").exists() {
         if verbose {
@@ -280,7 +338,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    if Command::new("git-annex").arg("version").output().is_err() {
+    if !probe_annex_available(Command::new("git-annex").arg("version").output())? {
         if verbose {
             println!("git-annex not found, skipping annex initialization");
         }
@@ -293,29 +351,45 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     fs::create_dir_all(config.annex_data())?;
 
-    let _ = Command::new("git")
-        .args(["init"])
-        .current_dir(config.annex_data())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    require_successful_command(
+        "git init for annex repository",
+        Command::new("git")
+            .args(["init"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git-annex")
-        .args(["init", "sinex-dev-isolated"])
-        .current_dir(config.annex_data())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    require_successful_command(
+        "git-annex init for annex repository",
+        Command::new("git-annex")
+            .args(["init", "sinex-dev-isolated"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git")
-        .args(["config", "annex.thin", "true"])
-        .current_dir(config.annex_data())
-        .status();
+    require_successful_command(
+        "git config annex.thin",
+        Command::new("git")
+            .args(["config", "annex.thin", "true"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git")
-        .args(["config", "annex.backend", &config.annex.backend])
-        .current_dir(config.annex_data())
-        .status();
+    require_successful_command(
+        "git config annex.backend",
+        Command::new("git")
+            .args(["config", "annex.backend", &config.annex.backend])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
     if verbose {
         println!("Git-annex initialized");
@@ -377,16 +451,19 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
 
 /// Apply declarative database schema to an explicit database URL.
 ///
-/// Uses `block_in_place` since this is called from sync command contexts
-/// but needs to call async `apply_schema_for_url`.
+/// Runs on the current multithreaded runtime when available, otherwise falls back
+/// to a dedicated current-thread runtime so tests and sync contexts behave the same.
 pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("Applying declarative database schema...");
     }
 
-    let handle = tokio::runtime::Handle::current();
-    tokio::task::block_in_place(|| handle.block_on(sinex_db::apply_schema_for_url(database_url)))
-        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    let database_url = database_url.to_string();
+    run_async_from_sync(async move {
+        sinex_db::apply_schema_for_url(&database_url)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    })
         .context("Failed to apply declarative schema")?;
 
     if verbose {
@@ -396,9 +473,90 @@ pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Resul
     Ok(())
 }
 
+/// Synchronize discovered event payload schemas into the database.
+///
+/// Uses the same in-process schema registry inventory that ingestd uses at startup.
+pub fn sync_event_payload_schemas_for_database_url(
+    database_url: &str,
+    verbose: bool,
+) -> Result<SchemaSyncResult> {
+    if verbose {
+        println!("Synchronizing event payload schemas...");
+    }
+
+    let database_url = database_url.to_string();
+    let result = run_async_from_sync(async move {
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&database_url)
+                .await
+                .wrap_err("Failed to connect for event payload schema synchronization")?;
+
+            let repo = SchemaManagementRepository::new(&pool);
+            let result = repo
+                .sync_discovered_schemas(generate_all_schemas())
+                .await
+                .wrap_err("Failed to synchronize discovered event payload schemas")?;
+            pool.close().await;
+            Ok::<_, color_eyre::Report>(result)
+        })?;
+
+    if verbose {
+        println!(
+            "Schema synchronization complete (discovered={}, created={}, updated={}, unchanged={})",
+            result.discovered, result.created, result.updated, result.unchanged
+        );
+    }
+
+    Ok(result)
+}
+
 /// Apply declarative database schema using the current stack configuration.
 pub fn pg_apply_schema(config: &StackConfig, verbose: bool) -> Result<()> {
     apply_schema_for_database_url(&config.database_url(), verbose)
+}
+
+fn run_async_from_sync<F, T>(fut: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| handle.block_on(fut))
+        }
+        Ok(_) => run_async_on_dedicated_thread(fut),
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .wrap_err("failed to build runtime for stack operation")?
+            .block_on(fut),
+    }
+}
+
+fn run_async_on_dedicated_thread<F, T>(fut: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .wrap_err("failed to build dedicated runtime for stack operation")?
+            .block_on(fut)
+    })
+    .join()
+    .map_err(|payload| {
+        let message = if let Some(message) = payload.downcast_ref::<String>() {
+            message.clone()
+        } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+            (*message).to_string()
+        } else {
+            "non-string panic payload".to_string()
+        };
+        color_eyre::eyre::eyre!("stack operation thread panicked: {message}")
+    })?
 }
 
 #[must_use]
@@ -430,29 +588,72 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[must_use]
-pub fn dir_size(path: &Path) -> u64 {
+pub fn dir_size(path: &Path) -> DirectorySizeProbe {
     if !path.exists() {
-        return 0;
+        return DirectorySizeProbe {
+            bytes: 0,
+            issue: None,
+        };
     }
-    walkdir::WalkDir::new(path)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.metadata().ok())
-        .filter(std::fs::Metadata::is_file)
-        .map(|m| m.len())
-        .sum()
+    if !path.is_dir() {
+        return DirectorySizeProbe {
+            bytes: 0,
+            issue: Some(format!(
+                "expected directory while sizing stack data path {}, found non-directory entry",
+                path.display()
+            )),
+        };
+    }
+
+    let mut bytes = 0;
+    let mut issues = Vec::new();
+    for entry in walkdir::WalkDir::new(path) {
+        match entry {
+            Ok(entry) => match entry.metadata() {
+                Ok(metadata) if metadata.is_file() => {
+                    bytes += metadata.len();
+                }
+                Ok(_) => {}
+                Err(error) => issues.push(format!(
+                    "failed to read metadata while sizing {}: {error}",
+                    entry.path().display()
+                )),
+            },
+            Err(error) => issues.push(format!(
+                "failed to walk stack data path {}: {error}",
+                path.display()
+            )),
+        }
+    }
+
+    DirectorySizeProbe {
+        bytes,
+        issue: if issues.is_empty() {
+            None
+        } else {
+            Some(issues.join("; "))
+        },
+    }
 }
 
 // Re-export list_snapshots if needed by commands (it was used in Status)
 // or move it to crate::utils if it's generic enough. It seems specific to stack layout.
+pub struct SnapshotListProbe {
+    pub snapshots: Vec<String>,
+    pub issue: Option<String>,
+}
+
 #[must_use]
-pub fn list_snapshots(dir: &Path) -> Vec<String> {
+pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
     if !dir.exists() {
-        return vec![];
+        return SnapshotListProbe {
+            snapshots: vec![],
+            issue: None,
+        };
     }
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries
+    match fs::read_dir(dir) {
+        Ok(entries) => {
+            let mut snapshots: Vec<String> = entries
                 .filter_map(std::result::Result::ok)
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
@@ -464,14 +665,33 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
                         None
                     }
                 })
-                .collect()
-        })
-        .unwrap_or_default()
+                .collect();
+            snapshots.sort();
+            SnapshotListProbe {
+                snapshots,
+                issue: None,
+            }
+        }
+        Err(error) => SnapshotListProbe {
+            snapshots: Vec::new(),
+            issue: Some(format!(
+                "failed to read snapshots directory {}: {error:#}",
+                dir.display()
+            )),
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::StackConfig;
+    use super::{
+        dir_size, list_snapshots, probe_annex_available, require_successful_command,
+        sync_event_payload_schemas_for_database_url,
+    };
+    use crate::sandbox::prelude::*;
+    use std::fs;
+    use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
 
     #[test]
@@ -479,5 +699,91 @@ mod tests {
         let checkout = Path::new("/realm/project/sinex");
         assert_eq!(StackConfig::port_offset_for_checkout(checkout), 86);
         assert_eq!(StackConfig::nats_port_for_checkout(checkout), 4308);
+    }
+
+    #[test]
+    fn probe_annex_available_treats_missing_binary_as_absent() {
+        let available = probe_annex_available(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        )))
+        .unwrap();
+        assert!(!available);
+    }
+
+    #[test]
+    fn probe_annex_available_reports_nonzero_status() {
+        let error = probe_annex_available(Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"git-annex broken".to_vec(),
+        }))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("git-annex broken"));
+    }
+
+    #[test]
+    fn require_successful_command_reports_failure_output() {
+        let error = require_successful_command(
+            "git init for annex repository",
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            }),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("permission denied"));
+        assert!(message.contains("git init for annex repository"));
+    }
+
+    #[test]
+    fn list_snapshots_reports_directory_read_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let not_a_dir = temp.path().join("snapshots");
+        fs::write(&not_a_dir, "blocked").unwrap();
+
+        let probe = list_snapshots(&not_a_dir);
+        assert!(probe.snapshots.is_empty());
+        assert!(
+            probe.issue.unwrap_or_default().contains("failed to read snapshots directory")
+        );
+    }
+
+    #[test]
+    fn list_snapshots_collects_known_extensions_sorted() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("b.tar.zst"), "").unwrap();
+        fs::write(temp.path().join("a.sql.zst"), "").unwrap();
+        fs::write(temp.path().join("ignore.txt"), "").unwrap();
+
+        let probe = list_snapshots(temp.path());
+        assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
+        assert!(probe.issue.is_none());
+    }
+
+    #[test]
+    fn dir_size_reports_non_directory_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_path = temp.path().join("postgres");
+        fs::write(&file_path, "blocked").unwrap();
+
+        let probe = dir_size(&file_path);
+        assert_eq!(probe.bytes, 0);
+        assert!(
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("expected directory while sizing stack data path")
+        );
+    }
+
+    #[sinex_test]
+    async fn sync_event_payload_schemas_uses_in_process_registry(ctx: TestContext) -> TestResult<()> {
+        let result = sync_event_payload_schemas_for_database_url(ctx.database_url(), false)?;
+        assert!(result.discovered > 0);
+        assert_eq!(result.discovered, result.created + result.updated + result.unchanged);
+        Ok(())
     }
 }

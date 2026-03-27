@@ -20,6 +20,7 @@ use console::style;
 use serde::Serialize;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use std::any::Any;
+use std::path::Path;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusCommand {
@@ -84,6 +85,7 @@ struct ServiceStatus {
 enum ServiceRunStatus {
     Running,
     Stopped,
+    Unknown,
 }
 
 const CORE_SERVICE_NAMES: [&str; 2] = ["sinex-gateway", "sinex-ingestd"];
@@ -93,23 +95,48 @@ fn probe_service_status(service_name: &str) -> ServiceStatus {
         .arg("-x")
         .arg(service_name)
         .output();
+    probe_service_status_with(service_name, output)
+}
 
+fn probe_service_status_with(
+    service_name: &str,
+    output: std::io::Result<std::process::Output>,
+) -> ServiceStatus {
     let (status, pid, message) = match output {
-        Ok(output) if !output.stdout.is_empty() => {
+        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
             let pid_str = String::from_utf8_lossy(&output.stdout);
-            let pid = pid_str
+            match pid_str
                 .lines()
                 .next()
-                .and_then(|line| line.trim().parse().ok());
-            (ServiceRunStatus::Running, pid, None)
+                .and_then(|line| line.trim().parse().ok())
+            {
+                Some(pid) => (ServiceRunStatus::Running, Some(pid), None),
+                None => (
+                    ServiceRunStatus::Unknown,
+                    None,
+                    Some(format!(
+                        "process probe returned unreadable pid output: {}",
+                        pid_str.trim()
+                    )),
+                ),
+            }
         }
-        Ok(_) => (
+        Ok(output) if output.status.code() == Some(1) => (
             ServiceRunStatus::Stopped,
             None,
             Some("exact process-name probe found no matching process".to_string()),
         ),
+        Ok(output) => (
+            ServiceRunStatus::Unknown,
+            None,
+            Some(format!(
+                "process probe exited with status {}{}",
+                output.status,
+                render_probe_stderr(&output)
+            )),
+        ),
         Err(error) => (
-            ServiceRunStatus::Stopped,
+            ServiceRunStatus::Unknown,
             None,
             Some(format!("failed to run process probe: {error}")),
         ),
@@ -121,6 +148,16 @@ fn probe_service_status(service_name: &str) -> ServiceStatus {
         probe: "process_exact_name",
         pid,
         message,
+    }
+}
+
+fn render_probe_stderr(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" ({detail})")
     }
 }
 
@@ -460,6 +497,140 @@ struct GitState {
     uncommitted_count: usize,
 }
 
+fn summarize_git_probe_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn record_git_probe_issue(probe_issues: &mut Vec<String>, args: &[&str], detail: impl Into<String>) {
+    probe_issues.push(format!("git {} failed: {}", args.join(" "), detail.into()));
+}
+
+fn run_git_output(cwd: &Path, probe_issues: &mut Vec<String>, args: &[&str]) -> Option<std::process::Output> {
+    match std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+    {
+        Ok(output) if output.status.success() => Some(output),
+        Ok(output) => {
+            record_git_probe_issue(probe_issues, args, summarize_git_probe_output(&output));
+            None
+        }
+        Err(error) => {
+            record_git_probe_issue(probe_issues, args, error.to_string());
+            None
+        }
+    }
+}
+
+fn probe_git_state(cwd: &Path) -> GitState {
+    let mut probe_issues = Vec::new();
+
+    let branch = run_git_output(cwd, &mut probe_issues, &["branch", "--show-current"]).and_then(
+        |output| {
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!branch.is_empty()).then_some(branch)
+        },
+    );
+
+    let porcelain_output = run_git_output(cwd, &mut probe_issues, &["status", "--porcelain"]);
+    let dirty = porcelain_output
+        .as_ref()
+        .is_some_and(|output| !output.stdout.is_empty());
+    let uncommitted_count = porcelain_output
+        .as_ref()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .count()
+        })
+        .unwrap_or(0);
+
+    let (ahead, behind) = run_git_output(
+        cwd,
+        &mut probe_issues,
+        &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+    )
+    .map_or((0, 0), |output| {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = text.trim().split('\t').collect();
+        if parts.len() == 2 {
+            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
+        } else {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                format!("unexpected output: {}", text.trim()),
+            );
+            (0, 0)
+        }
+    });
+
+    let commit = run_git_output(cwd, &mut probe_issues, &["log", "-1", "--format=%h\t%s\t%cr"])
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let parts: Vec<&str> = text.splitn(3, '\t').collect();
+            if parts.len() == 3 {
+                Some((
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[2].to_string(),
+                ))
+            } else {
+                record_git_probe_issue(
+                    &mut probe_issues,
+                    &["log", "-1", "--format=%h\t%s\t%cr"],
+                    format!("unexpected output: {text}"),
+                );
+                None
+            }
+        });
+
+    let stash_count = run_git_output(cwd, &mut probe_issues, &["stash", "list"])
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .count()
+        })
+        .unwrap_or(0);
+
+    let files_changed = run_git_output(cwd, &mut probe_issues, &["diff", "--shortstat", "HEAD"])
+        .and_then(|output| {
+            let shortstat = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!shortstat.is_empty()).then_some(shortstat)
+        });
+
+    let last_age = commit.as_ref().and_then(|(_, _, age)| parse_git_age(age));
+    let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
+    let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
+
+    GitState {
+        branch,
+        dirty,
+        ahead,
+        behind,
+        probe_message: (!probe_issues.is_empty()).then(|| probe_issues.join("; ")),
+        last_commit_hash: last_hash,
+        last_commit_message: last_msg,
+        last_commit_age_mins: last_age,
+        stash_count,
+        files_changed,
+        uncommitted_count,
+    }
+}
+
 /// Active job detail for rich MOTD
 struct ActiveJobDetail {
     command: String,
@@ -692,102 +863,21 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         let history_handle = s.spawn(move || collect_history_snapshot(ctx, 50, true));
 
         // Thread 4: Git state (expanded for rich mode)
-        let git_handle = s.spawn(move || {
-            let branch = std::process::Command::new("git")
-                .args(["branch", "--show-current"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-
-            let porcelain_output = std::process::Command::new("git")
-                .args(["status", "--porcelain"])
-                .output()
-                .ok();
-            let dirty = porcelain_output
-                .as_ref()
-                .is_some_and(|o| !o.stdout.is_empty());
-            let uncommitted_count = porcelain_output
-                .as_ref()
-                .map(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .filter(|l| !l.is_empty())
-                        .count()
-                })
-                .unwrap_or(0);
-
-            let (ahead, behind) = std::process::Command::new("git")
-                .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map_or((0, 0), |o| {
-                    let text = String::from_utf8_lossy(&o.stdout);
-                    let parts: Vec<&str> = text.trim().split('\t').collect();
-                    if parts.len() == 2 {
-                        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-                    } else {
-                        (0, 0)
-                    }
-                });
-
-            // Last commit, stash count, diff stat
-            let commit = std::process::Command::new("git")
-                .args(["log", "-1", "--format=%h\t%s\t%cr"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .and_then(|o| {
-                    let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    let parts: Vec<&str> = text.splitn(3, '\t').collect();
-                    if parts.len() == 3 {
-                        Some((
-                            parts[0].to_string(),
-                            parts[1].to_string(),
-                            parts[2].to_string(),
-                        ))
-                    } else {
-                        None
-                    }
-                });
-
-            let stash_count = std::process::Command::new("git")
-                .args(["stash", "list"])
-                .output()
-                .ok()
-                .map(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .filter(|l| !l.is_empty())
-                        .count()
-                })
-                .unwrap_or(0);
-
-            let files_changed = std::process::Command::new("git")
-                .args(["diff", "--shortstat", "HEAD"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success() && !o.stdout.is_empty())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-
-            let last_age = commit.as_ref().and_then(|(_, _, age)| parse_git_age(age));
-            let last_hash = commit.as_ref().map(|(h, _, _)| h.clone());
-            let last_msg = commit.as_ref().map(|(_, m, _)| m.clone());
-
-            GitState {
-                branch,
-                dirty,
-                ahead,
-                behind,
-                probe_message: None,
-                last_commit_hash: last_hash,
-                last_commit_message: last_msg,
-                last_commit_age_mins: last_age,
-                stash_count,
-                files_changed,
-                uncommitted_count,
-            }
+        let git_handle = s.spawn(move || match std::env::current_dir() {
+            Ok(cwd) => probe_git_state(&cwd),
+            Err(error) => GitState {
+                branch: None,
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                probe_message: Some(format!("failed to determine current directory for git probe: {error}")),
+                last_commit_hash: None,
+                last_commit_message: None,
+                last_commit_age_mins: None,
+                stash_count: 0,
+                files_changed: None,
+                uncommitted_count: 0,
+            },
         });
 
         // Main thread: jobs
@@ -925,10 +1015,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     let last_check = get_last_command("check");
     let last_test = get_last_command("test");
     let last_build = get_last_command("build");
-    let stopped_services: Vec<&str> = data
+    let unavailable_services: Vec<&str> = data
         .services
         .iter()
-        .filter(|service| matches!(service.status, ServiceRunStatus::Stopped))
+        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
         .map(|service| service.name.as_str())
         .collect();
 
@@ -974,10 +1064,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     if let Some(message) = &data.git.probe_message {
         warnings.push(message.clone());
     }
-    if !stopped_services.is_empty() {
+    if !unavailable_services.is_empty() {
         warnings.push(format!(
-            "Core services not running: {}",
-            stopped_services.join(", ")
+            "Core services not healthy: {}",
+            unavailable_services.join(", ")
         ));
     }
     if data.history.is_synthetic {
@@ -1284,6 +1374,9 @@ impl<'a> MotdRenderer<'a> {
                         }
                         ServiceRunStatus::Stopped => {
                             style(format!("{short}:down")).red().to_string()
+                        }
+                        ServiceRunStatus::Unknown => {
+                            style(format!("{short}:unknown")).yellow().to_string()
                         }
                     }
                 })
@@ -1834,9 +1927,9 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
     let (pg_probe, nats_probe, runtime_configured, runtime_metrics, services, jobs, history) =
         collect_status_data(ctx);
     let runtime_assessment = runtime_metrics.as_ref().map(RuntimeMetrics::assessment);
-    let stopped_services: Vec<&str> = services
+    let unavailable_services: Vec<&str> = services
         .iter()
-        .filter(|service| matches!(service.status, ServiceRunStatus::Stopped))
+        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
         .map(|service| service.name.as_str())
         .collect();
 
@@ -1901,10 +1994,10 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
     if jobs.active.len() > 5 {
         warnings.push(format!("{} background jobs running.", jobs.active.len()));
     }
-    if !stopped_services.is_empty() {
+    if !unavailable_services.is_empty() {
         warnings.push(format!(
-            "Core services not running: {}",
-            stopped_services.join(", ")
+            "Core services not healthy: {}",
+            unavailable_services.join(", ")
         ));
     }
     if history.is_synthetic {
@@ -1959,11 +2052,12 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
             let status_label = match svc.status {
                 ServiceRunStatus::Running => "running",
                 ServiceRunStatus::Stopped => "stopped",
+                ServiceRunStatus::Unknown => "unknown",
             };
-            let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
-                style(status_label).green()
-            } else {
-                style(status_label).dim()
+            let status_display = match svc.status {
+                ServiceRunStatus::Running => style(status_label).green(),
+                ServiceRunStatus::Stopped => style(status_label).dim(),
+                ServiceRunStatus::Unknown => style(status_label).yellow(),
             };
             let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
             println!("  {:<20} {}{}", svc.name, status_display, pid_str);
@@ -2179,6 +2273,24 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn run_git(args: &[&str], cwd: &Path) -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "git {} failed: stdout={} stderr={}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -2201,6 +2313,51 @@ mod tests {
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
         assert!(metadata.track_in_history);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_service_status_reports_probe_failures_as_unknown()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = probe_service_status_with(
+            "sinex-gateway",
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "pgrep unavailable",
+            )),
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert!(status.pid.is_none());
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("failed to run process probe"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_service_status_reports_unreadable_pid_output_as_unknown()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = probe_service_status_with(
+            "sinex-gateway",
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"not-a-pid\n".to_vec(),
+                stderr: Vec::new(),
+            }),
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert!(status.pid.is_none());
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("unreadable pid output"))
+        );
         Ok(())
     }
 
@@ -2568,6 +2725,46 @@ mod tests {
         assert!(json.get("latency_ms").is_none());
         assert!(json.get("port").is_none());
         assert_eq!(json["status"], "offline");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_git_state_reports_missing_upstream() -> ::xtask::sandbox::TestResult<()> {
+        let repo = tempdir()?;
+        run_git(&["init", "-q"], repo.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], repo.path())?;
+        std::fs::write(repo.path().join("README.md"), "hello\n")?;
+        run_git(&["add", "README.md"], repo.path())?;
+        run_git(&["commit", "-qm", "init"], repo.path())?;
+
+        let git = probe_git_state(repo.path());
+
+        assert_eq!(git.ahead, 0);
+        assert_eq!(git.behind, 0);
+        assert!(git.last_commit_hash.is_some());
+        assert!(
+            git.probe_message
+                .as_deref()
+                .is_some_and(|message| message.contains("git rev-list --left-right --count HEAD...@{u} failed"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_git_state_reports_non_repo_failures() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+
+        let git = probe_git_state(dir.path());
+
+        assert!(!git.dirty);
+        assert!(git.last_commit_hash.is_none());
+        let probe_message = git
+            .probe_message
+            .as_deref()
+            .unwrap_or_else(|| panic!("expected git probe failure message"));
+        assert!(probe_message.contains("git branch --show-current failed"));
+        assert!(probe_message.contains("git status --porcelain failed"));
         Ok(())
     }
 

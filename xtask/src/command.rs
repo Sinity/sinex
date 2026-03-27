@@ -668,19 +668,49 @@ impl CommandContext {
         Ok(())
     }
 
+    fn resolve_coordination_fingerprint(
+        command: &str,
+        args: &[String],
+        fingerprint_result: Result<String>,
+    ) -> Result<(String, String)> {
+        let fingerprint = fingerprint_result?;
+        let scope = crate::coordinator::compute_scope_key(command, args);
+        Ok((fingerprint, scope))
+    }
+
     /// Record tree fingerprint and scope key for coordinator freshness detection.
     ///
     /// Called by coordinatable commands (check, build, test) at the start of their
     /// foreground execution path. Each command passes its own scope-relevant args
     /// to ensure the scope key matches what the --bg path would compute.
     pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
-        if let Some(inv_id) = self.invocation_id
-            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint()
-        {
-            let scope = crate::coordinator::compute_scope_key(command, args);
-            self.with_history_db(|db| {
-                db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)
-            });
+        if let Some(inv_id) = self.invocation_id {
+            match Self::resolve_coordination_fingerprint(
+                command,
+                args,
+                crate::coordinator::current_tree_fingerprint(),
+            ) {
+                Ok((fingerprint, scope)) => {
+                    if let Some(Err(error)) = self.try_with_history_db(|db| {
+                        db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)
+                    }) {
+                        tracing::warn!(
+                            target: "xtask::command",
+                            invocation_id = inv_id,
+                            error = %error,
+                            "failed to record coordination fingerprint"
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "xtask::command",
+                        invocation_id = inv_id,
+                        error = %error,
+                        "failed to resolve coordination fingerprint"
+                    );
+                }
+            }
         }
     }
 
@@ -1031,6 +1061,34 @@ mod tests {
         let result = CommandResult::success().with_duration(duration);
 
         assert_eq!(result.duration_secs, Some(5.0));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_coordination_fingerprint_uses_scope_key() -> TestResult<()> {
+        let args = vec!["-p".to_string(), "xtask".to_string()];
+        let (fingerprint, scope) = CommandContext::resolve_coordination_fingerprint(
+            "check",
+            &args,
+            Ok("tree-fingerprint".to_string()),
+        )?;
+
+        assert_eq!(fingerprint, "tree-fingerprint");
+        assert_eq!(scope, crate::coordinator::compute_scope_key("check", &args));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_coordination_fingerprint_propagates_errors() -> TestResult<()> {
+        let args = vec!["-p".to_string(), "xtask".to_string()];
+        let error = CommandContext::resolve_coordination_fingerprint(
+            "check",
+            &args,
+            Err(color_eyre::eyre::eyre!("git failure")),
+        )
+        .expect_err("expected fingerprint error");
+
+        assert!(error.to_string().contains("git failure"));
         Ok(())
     }
 

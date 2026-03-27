@@ -53,6 +53,8 @@ pub(crate) struct DoctorReport {
     pub environment: Option<serde_json::Value>,
     pub tls: Option<TlsCheck>,
     pub postgres_extensions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postgres_extensions_error: Option<String>,
     pub overall: bool,
 }
 
@@ -155,6 +157,88 @@ fn detect_tls_check() -> Option<TlsCheck> {
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresExtensionsProbe {
+    extensions: Option<Vec<String>>,
+    error: Option<String>,
+}
+
+fn summarize_command_probe_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn probe_postgres_extensions<T, RunPsql>(
+    pg_ready: bool,
+    stack_config: std::result::Result<T, String>,
+    mut run_psql: RunPsql,
+) -> PostgresExtensionsProbe
+where
+    RunPsql: FnMut(&T) -> std::io::Result<std::process::Output>,
+{
+    if !pg_ready {
+        return PostgresExtensionsProbe {
+            extensions: None,
+            error: None,
+        };
+    }
+
+    let cfg = match stack_config {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return PostgresExtensionsProbe {
+                extensions: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor could not load stack config to probe extensions: {error}"
+                )),
+            };
+        }
+    };
+
+    let output = match run_psql(&cfg) {
+        Ok(output) => output,
+        Err(error) => {
+            return PostgresExtensionsProbe {
+                extensions: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor failed to run extension probe via psql: {error}"
+                )),
+            };
+        }
+    };
+
+    if !output.status.success() {
+        return PostgresExtensionsProbe {
+            extensions: None,
+            error: Some(format!(
+                "Postgres is reachable, but doctor failed to probe extensions: {}",
+                summarize_command_probe_output(&output)
+            )),
+        };
+    }
+
+    let extensions = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect();
+
+    PostgresExtensionsProbe {
+        extensions: Some(extensions),
+        error: None,
+    }
+}
+
 impl XtaskCommand for DoctorCommand {
     fn name(&self) -> &'static str {
         "doctor"
@@ -229,17 +313,19 @@ impl XtaskCommand for DoctorCommand {
             let pg_probe = probe_postgres();
             let nats_probe = probe_nats();
 
-            if !pg_probe.ready() || !nats_probe.ready() {
-                let stack_config = crate::infra::stack::StackConfig::for_current_checkout().ok();
-                if let Some(cfg) = stack_config {
-                    let verbose = ctx.is_human();
-                    if !pg_probe.ready() {
-                        let _ = crate::infra::stack::pg_start(&cfg, verbose);
-                    }
-                    if !nats_probe.ready() {
-                        let _ = crate::infra::stack::nats_start(&cfg, verbose);
-                    }
+            let remediation_warnings = remediate_stack_services(
+                pg_probe.ready(),
+                nats_probe.ready(),
+                crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+                ctx.is_human(),
+                crate::infra::stack::pg_start,
+                crate::infra::stack::nats_start,
+            );
+            if !remediation_warnings.is_empty() {
+                if result.status == Status::Success {
+                    result.status = Status::Partial;
                 }
+                result.warnings.extend(remediation_warnings);
             }
         }
 
@@ -327,24 +413,19 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     let missing = ToolManager::check_required_tools(&tools_to_check);
 
     // Check Postgres extensions
-    let mut pg_extensions = None;
-    if pg_probe.ready() {
-        let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
-        if let Some(cfg) = config {
-            let output = std::process::Command::new("psql")
+    let postgres_extensions_probe = probe_postgres_extensions(
+        pg_probe.ready(),
+        crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+        |cfg| {
+            std::process::Command::new("psql")
                 .env("PGHOST", cfg.run_dir())
                 .env("PGPORT", cfg.postgres.port.to_string())
                 .args(["-tAc", "SELECT extname FROM pg_extension"])
-                .output();
-
-            if let Ok(o) = output {
-                let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .map(ToString::to_string)
-                    .collect();
-                pg_extensions = Some(exts);
-            }
-        }
+                .output()
+        },
+    );
+    if postgres_extensions_probe.error.is_some() {
+        all_ok = false;
     }
 
     // Check TLS certificates from env vars or .sinex/tls/
@@ -379,7 +460,8 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         tools: tool_checks,
         environment,
         tls: tls_check,
-        postgres_extensions: pg_extensions,
+        postgres_extensions: postgres_extensions_probe.extensions,
+        postgres_extensions_error: postgres_extensions_probe.error,
         overall: all_ok,
     };
 
@@ -468,6 +550,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         if let Some(exts) = &report.postgres_extensions {
             println!("\n{}", style("Postgres Extensions:").bold());
             println!("  {}", exts.join(", "));
+        } else if let Some(error) = &report.postgres_extensions_error {
+            println!("\n{}", style("Postgres Extensions:").bold());
+            println!("  {} {error}", style("✗").red());
         }
 
         // Pipeline smoke tests
@@ -677,6 +762,46 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         assessment,
         warnings,
     })
+}
+
+fn remediate_stack_services<T, PgStart, NatsStart>(
+    pg_ready: bool,
+    nats_ready: bool,
+    stack_config: std::result::Result<T, String>,
+    verbose: bool,
+    mut pg_start: PgStart,
+    mut nats_start: NatsStart,
+) -> Vec<String>
+where
+    PgStart: FnMut(&T, bool) -> Result<()>,
+    NatsStart: FnMut(&T, bool) -> Result<()>,
+{
+    if pg_ready && nats_ready {
+        return Vec::new();
+    }
+
+    let cfg = match stack_config {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return vec![format!(
+                "Doctor --fix could not load stack config for infra remediation: {error}"
+            )];
+        }
+    };
+
+    let mut warnings = Vec::new();
+    if !pg_ready && let Err(error) = pg_start(&cfg, verbose) {
+        warnings.push(format!(
+            "Doctor --fix failed to start Postgres during infra remediation: {error}"
+        ));
+    }
+    if !nats_ready && let Err(error) = nats_start(&cfg, verbose) {
+        warnings.push(format!(
+            "Doctor --fix failed to start NATS during infra remediation: {error}"
+        ));
+    }
+
+    warnings
 }
 
 /// Result of a single deployment readiness check.
@@ -2267,15 +2392,47 @@ async fn check_gateway_ready(
     };
 
     let status = response.status();
-    let body: Option<JsonValue> = response.json().await.ok();
-    let serving = body
-        .as_ref()
-        .and_then(|json| json.get("serving"))
-        .and_then(JsonValue::as_bool);
-    let healthy = body
-        .as_ref()
-        .and_then(|json| json.get("healthy"))
-        .and_then(JsonValue::as_bool);
+    let body_text = match response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!("Failed to read readiness body from {ready_url}: {error}"),
+            );
+        }
+    };
+
+    interpret_gateway_ready_response(&ready_url, status, &body_text)
+}
+
+fn interpret_gateway_ready_response(
+    ready_url: &str,
+    status: reqwest::StatusCode,
+    body_text: &str,
+) -> DeploymentReadinessItem {
+    let trimmed = body_text.trim();
+    if trimmed.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "gateway-ready",
+            format!("{ready_url} returned HTTP {status} with an empty body"),
+        );
+    }
+
+    let body: JsonValue = match serde_json::from_str(trimmed) {
+        Ok(body) => body,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!(
+                    "{ready_url} returned HTTP {status} with a non-JSON body: {error}; body={}",
+                    summarize_gateway_probe_body(trimmed)
+                ),
+            );
+        }
+    };
+
+    let serving = body.get("serving").and_then(JsonValue::as_bool);
+    let healthy = body.get("healthy").and_then(JsonValue::as_bool);
 
     if status.is_success() && serving == Some(true) {
         DeploymentReadinessItem::pass(
@@ -2289,10 +2446,24 @@ async fn check_gateway_ready(
         DeploymentReadinessItem::fail(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?})",
-                serving, healthy
+                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?}, body={})",
+                serving,
+                healthy,
+                summarize_gateway_probe_body(trimmed)
             ),
         )
+    }
+}
+
+fn summarize_gateway_probe_body(body_text: &str) -> String {
+    const MAX_CHARS: usize = 200;
+
+    let compact = body_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        compact
+    } else {
+        let summary = compact.chars().take(MAX_CHARS).collect::<String>();
+        format!("{summary}...")
     }
 }
 
@@ -2412,6 +2583,7 @@ mod tests {
     use ::xtask::sandbox::EnvGuard;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
 
     fn write_executable_script(
         path: &std::path::Path,
@@ -2493,6 +2665,7 @@ mod tests {
                 error: None,
             }),
             postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
+            postgres_extensions_error: None,
             overall: false,
         };
 
@@ -2524,6 +2697,72 @@ mod tests {
         // Extensions (agents use: .data.postgres_extensions[])
         assert!(json["postgres_extensions"].is_array());
         assert_eq!(json["postgres_extensions"][0], "pgvector");
+        assert!(json.get("postgres_extensions_error").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_postgres_extensions_reports_stack_config_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = probe_postgres_extensions(false, Ok("stack"), |_: &&str| {
+            panic!("probe should not run when Postgres is not ready")
+        });
+        assert_eq!(
+            probe,
+            PostgresExtensionsProbe {
+                extensions: None,
+                error: None,
+            }
+        );
+
+        let probe = probe_postgres_extensions(
+            true,
+            Err("missing stack config".to_string()),
+            |_: &&str| {
+                panic!("probe should not run when stack config resolution already failed")
+            },
+        );
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("missing stack config"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_postgres_extensions_reports_psql_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = probe_postgres_extensions(true, Ok("stack"), |_: &&str| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "psql missing",
+            ))
+        });
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("psql missing"))
+        );
+
+        let probe = probe_postgres_extensions(true, Ok("stack"), |_: &&str| {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            })
+        });
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("permission denied"))
+        );
         Ok(())
     }
 
@@ -2612,6 +2851,74 @@ mod tests {
             normalize_gateway_base_url("https://127.0.0.1:9999/"),
             "https://127.0.0.1:9999"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_reports_invalid_json()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            "<html>proxy error</html>",
+        );
+
+        assert_eq!(item.status, "fail");
+        assert!(
+            item.description.contains("non-JSON body"),
+            "unexpected message: {}",
+            item.description
+        );
+        assert!(item.description.contains("proxy error"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_passes_serving_true()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            r#"{"serving":true,"healthy":false}"#,
+        );
+
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("healthy=false"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remediate_stack_services_reports_missing_stack_config()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = remediate_stack_services(
+            false,
+            true,
+            Err("missing stack config".to_string()),
+            false,
+            |_: &&str, _| Ok(()),
+            |_: &&str, _| Ok(()),
+        );
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("missing stack config"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remediate_stack_services_reports_start_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = remediate_stack_services(
+            false,
+            false,
+            Ok("stack"),
+            false,
+            |_: &&str, _| Err(color_eyre::eyre::eyre!("pg failed")),
+            |_: &&str, _| Err(color_eyre::eyre::eyre!("nats failed")),
+        );
+
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().any(|warning| warning.contains("pg failed")));
+        assert!(warnings.iter().any(|warning| warning.contains("nats failed")));
         Ok(())
     }
 

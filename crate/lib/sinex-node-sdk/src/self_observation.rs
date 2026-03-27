@@ -20,7 +20,10 @@
 //! use sinex_node_sdk::self_observation::SelfObserver;
 //!
 //! // Create an observer for the gateway component
-//! let observer = SelfObserver::new(nats_client, "sinex-gateway".to_string());
+//! let observer = SelfObserver::new(
+//!     nats_client,
+//!     SelfObserverConfig::from_env("sinex-gateway"),
+//! );
 //!
 //! // Emit metrics periodically
 //! observer.emit_counter("requests.total", 1000, None).await?;
@@ -242,7 +245,13 @@ impl SelfObserver {
 
         // Publish to NATS (without waiting for ack for telemetry)
         let Some(ref nats_client) = self.nats_client else {
-            return Ok(()); // No client, silently skip
+            self.release_metric_slot(&metric_key).await;
+            warn!(
+                component = %self.component,
+                event_type = %event.event_type,
+                "Self-observation enabled but no NATS client is available"
+            );
+            return Err(SelfObservationError::Unavailable);
         };
 
         if let Err(e) = nats_client.publish(subject.clone(), data.into()).await {
@@ -571,6 +580,8 @@ impl SelfObserver {
 pub enum SelfObservationError {
     #[error("Failed to serialize event: {0}")]
     Serialization(String),
+    #[error("Self-observation is enabled but no NATS client is available")]
+    Unavailable,
     #[error("Failed to publish event: {0}")]
     Publish(String),
 }
@@ -701,6 +712,24 @@ mod tests {
         assert!(observer.reserve_metric_slot(key).await);
         observer.release_metric_slot(key).await;
         assert!(observer.reserve_metric_slot(key).await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_publish_fails_honestly_without_nats_client() -> TestResult<()> {
+        let observer = test_observer();
+
+        let first_error = observer
+            .emit_counter("requests.total", 1, None)
+            .await
+            .expect_err("expected missing NATS client to fail");
+        assert!(matches!(first_error, SelfObservationError::Unavailable));
+
+        let second_error = observer
+            .emit_counter("requests.total", 1, None)
+            .await
+            .expect_err("expected reservation to be released after missing client");
+        assert!(matches!(second_error, SelfObservationError::Unavailable));
         Ok(())
     }
 }

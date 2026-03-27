@@ -100,12 +100,18 @@ impl Job {
         }
         // Fall back to DB (for completed jobs)
         let cfg = config();
-        if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
-            && let Ok((Some(content), _)) = db.get_job_logs(self.id)
-        {
-            return Ok(content);
-        }
-        Ok(String::new())
+        let history_db_path = cfg.history_db_path();
+        let db = HistoryDb::open(&history_db_path).with_context(|| {
+            format!(
+                "failed to open history DB at {} while reading stdout for job {}",
+                history_db_path.display(),
+                self.id
+            )
+        })?;
+        let (stdout, _) = db.get_job_logs(self.id).with_context(|| {
+            format!("failed to load stdout from history DB for job {}", self.id)
+        })?;
+        Ok(stdout.unwrap_or_default())
     }
 
     /// Read all stderr.
@@ -118,12 +124,18 @@ impl Job {
         }
         // Fall back to DB (for completed jobs)
         let cfg = config();
-        if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
-            && let Ok((_, Some(content))) = db.get_job_logs(self.id)
-        {
-            return Ok(content);
-        }
-        Ok(String::new())
+        let history_db_path = cfg.history_db_path();
+        let db = HistoryDb::open(&history_db_path).with_context(|| {
+            format!(
+                "failed to open history DB at {} while reading stderr for job {}",
+                history_db_path.display(),
+                self.id
+            )
+        })?;
+        let (_, stderr) = db.get_job_logs(self.id).with_context(|| {
+            format!("failed to load stderr from history DB for job {}", self.id)
+        })?;
+        Ok(stderr.unwrap_or_default())
     }
 
     /// Check if the job process is still running.
@@ -351,21 +363,37 @@ impl JobManager {
             let _ = std::fs::write(&exit_code_path, "124\n");
 
             // Update history DB: finish the invocation and the job handle.
-            if let Ok(db) = HistoryDb::open(&watchdog_db_path) {
-                let _ = db.finish_invocation(
-                    invocation_id,
-                    InvocationStatus::Cancelled,
-                    Some(124),
-                    max_duration.as_secs_f64(),
-                );
-                let _ = db.finish_background_job(
-                    job_id,
-                    JobLifecycleStatus::Killed,
-                    Some(124),
-                    max_duration.as_secs_f64(),
-                    None,
-                    None,
-                );
+            match HistoryDb::open(&watchdog_db_path) {
+                Ok(db) => {
+                    if let Err(error) = db.finish_invocation(
+                        invocation_id,
+                        InvocationStatus::Cancelled,
+                        Some(124),
+                        max_duration.as_secs_f64(),
+                    ) {
+                        eprintln!(
+                            "Warning: failed to mark timed-out invocation {invocation_id} as cancelled in history DB: {error}"
+                        );
+                    }
+                    if let Err(error) = db.finish_background_job(
+                        job_id,
+                        JobLifecycleStatus::Killed,
+                        Some(124),
+                        max_duration.as_secs_f64(),
+                        None,
+                        None,
+                    ) {
+                        eprintln!(
+                            "Warning: failed to mark timed-out background job {job_id} as killed in history DB: {error}"
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!(
+                        "Warning: failed to open history DB at {} while recording timed-out background job {job_id}: {error}",
+                        watchdog_db_path.display()
+                    );
+                }
             }
         });
 
@@ -508,7 +536,13 @@ impl JobManager {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.finish_background_job(id, JobLifecycleStatus::Killed, None, 0.0, None, None)?;
             if let Some(inv_id) = job.invocation_id {
-                let _ = db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0);
+                if let Err(error) =
+                    db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0)
+                {
+                    eprintln!(
+                        "Warning: failed to mark cancelled invocation {inv_id} in history DB: {error}"
+                    );
+                }
             }
 
             Ok(true)
@@ -589,8 +623,32 @@ fn pid_is_expected_process(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
+
+    struct ScopedEnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                unsafe { std::env::set_var(self.key, previous) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     #[sinex_test]
     async fn test_job_tail_stdout() -> TestResult<()> {
@@ -640,6 +698,34 @@ mod tests {
             JobLifecycleStatus::from_invocation_status(status),
             JobLifecycleStatus::Failed
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_job_read_stdout_errors_when_history_db_is_unavailable() -> TestResult<()> {
+        let dir = tempdir()?;
+        let blocking_parent = dir.path().join("not-a-directory");
+        fs::write(&blocking_parent, "occupied")?;
+        let unreadable_db_path = blocking_parent.join("xtask-history.db");
+        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", &unreadable_db_path);
+
+        let job = Job {
+            id: 42,
+            invocation_id: Some(7),
+            command: "check".into(),
+            args: vec![],
+            started_at: OffsetDateTime::now_utc(),
+            pid: 0,
+            job_status: JobLifecycleStatus::Completed,
+            stdout_path: dir.path().join("missing-stdout.log"),
+            stderr_path: dir.path().join("missing-stderr.log"),
+            exit_code: Some(0),
+        };
+
+        let error = job
+            .read_stdout()
+            .expect_err("missing archived logs should surface DB access failures");
+        assert!(error.to_string().contains("failed to open history DB"));
         Ok(())
     }
 }

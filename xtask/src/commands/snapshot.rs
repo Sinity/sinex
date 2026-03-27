@@ -1,11 +1,12 @@
 //! Codebase snapshot command - promoted from analyze snapshot
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::process::ProcessBuilder;
 
 /// Generate a codebase snapshot for AI context (via repomix)
 #[derive(Debug, Clone, clap::Args)]
@@ -96,7 +97,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U1: Include files from most recent build_diagnostics invocation
         if self.diagnostics {
-            let diag_files = collect_diagnostic_files(ctx);
+            let diag_files = collect_diagnostic_files(ctx)?;
             if ctx.is_human() && !diag_files.is_empty() {
                 println!(
                     "  Diagnostics: including {} files from recent check run",
@@ -108,7 +109,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U2: Include files changed since HEAD
         if self.changed {
-            let changed_files = collect_changed_files();
+            let changed_files = collect_changed_files()?;
             if ctx.is_human() && !changed_files.is_empty() {
                 println!(
                     "  Changed: including {} files from git diff",
@@ -129,7 +130,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U5: Scope to crate/directory group
         if let Some(scope) = &self.scope {
-            let scope_includes = collect_scope_includes(scope);
+            let scope_includes = collect_scope_includes(scope)?;
             if ctx.is_human() {
                 println!(
                     "  Scope '{}': {} include pattern(s)",
@@ -209,9 +210,9 @@ impl XtaskCommand for SnapshotCommand {
         };
 
         // Single read for both size and file count (avoid separate metadata + read_to_string)
-        let content = std::fs::read_to_string(&output_path).unwrap_or_default();
-        let file_size = content.len();
-        let file_count = content.matches("<file ").count();
+        let snapshot_output = read_snapshot_output(Path::new(&output_path))?;
+        let file_size = snapshot_output.len();
+        let file_count = snapshot_output.matches("<file ").count();
 
         let snapshot_result = SnapshotResult {
             output_file: output_path,
@@ -255,8 +256,8 @@ impl XtaskCommand for SnapshotCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Return distinct file paths from the most recent build_diagnostics invocation.
-fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
-    ctx.with_history_db(|db| {
+fn collect_diagnostic_files(ctx: &CommandContext) -> Result<Vec<String>> {
+    match ctx.try_with_history_db(|db| {
         // Get current (package-scoped) diagnostics filtered to check command.
         let diags = db.get_current_diagnostics(None, None, None, Some("check"), false)?;
         let mut paths: Vec<String> = diags
@@ -267,8 +268,13 @@ fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
         paths.sort();
         paths.dedup();
         Ok(paths)
-    })
-    .unwrap_or_default()
+    }) {
+        Some(result) => result,
+        None => Err(color_eyre::eyre::eyre!(
+            "history DB unavailable while collecting diagnostic snapshot includes from {}",
+            ctx.history_db_path().display()
+        )),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,34 +282,33 @@ fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Return files changed since HEAD (staged + unstaged via git diff --name-only HEAD).
-fn collect_changed_files() -> Vec<String> {
-    // Unstaged + staged relative to HEAD
-    let head_diff = Command::new("git")
-        .args(["diff", "--name-only", "HEAD"])
-        .output()
-        .ok();
-
-    // Untracked new files (staged but not yet committed — git diff HEAD misses new files)
-    let cached_diff = Command::new("git")
-        .args(["diff", "--name-only", "--cached"])
-        .output()
-        .ok();
-
-    let mut files: Vec<String> = vec![];
-    for output in [head_diff, cached_diff].into_iter().flatten() {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let path = line.trim().to_string();
-                if !path.is_empty() {
-                    files.push(path);
-                }
-            }
-        }
-    }
+fn collect_changed_files() -> Result<Vec<String>> {
+    let mut files = git_name_only(
+        &["diff", "--name-only", "HEAD"],
+        "git diff --name-only HEAD",
+    )?;
+    files.extend(git_name_only(
+        &["diff", "--name-only", "--cached"],
+        "git diff --name-only --cached",
+    )?);
     files.sort();
     files.dedup();
-    files
+    Ok(files)
+}
+
+fn git_name_only(args: &[&str], description: &str) -> Result<Vec<String>> {
+    let output = ProcessBuilder::git()
+        .args(args.iter().copied())
+        .with_description(description)
+        .run()?;
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,25 +320,42 @@ fn build_context_block(ctx: &CommandContext) -> String {
     let mut lines: Vec<String> = vec!["[xtask-context]".to_string()];
 
     // Recent check/test invocations
-    lines.push(format!("recent_runs: {}", format_recent_runs(ctx)));
+    push_context_field(&mut lines, "recent_runs", format_recent_runs(ctx));
 
     // Active diagnostics
-    lines.push(format!(
-        "active_diagnostics: {}",
-        format_active_diagnostics(ctx)
-    ));
+    push_context_field(
+        &mut lines,
+        "active_diagnostics",
+        format_active_diagnostics(ctx),
+    );
 
     // Coordinator state
-    lines.push(format!("coordinator_state: {}", format_coordinator_state()));
+    push_context_field(&mut lines, "coordinator_state", format_coordinator_state());
 
     // Active background jobs
-    lines.push(format!("active_jobs: {}", format_active_jobs()));
+    push_context_field(&mut lines, "active_jobs", format_active_jobs());
 
     lines.join("\n")
 }
 
-fn format_recent_runs(ctx: &CommandContext) -> String {
-    ctx.with_history_db(|db| {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotContextField {
+    value: String,
+    issue: Option<String>,
+}
+
+fn push_context_field(lines: &mut Vec<String>, name: &str, field: SnapshotContextField) {
+    lines.push(format!("{name}: {}", field.value));
+    if let Some(issue) = field.issue {
+        lines.push(format!(
+            "{name}_issue: {}",
+            serde_json::Value::String(issue).to_string()
+        ));
+    }
+}
+
+fn format_recent_runs(ctx: &CommandContext) -> SnapshotContextField {
+    match ctx.try_with_history_db(|db| {
         // get_recent(limit, command_filter)
         let invocations = db.get_recent(5, Some("check"))?;
 
@@ -348,12 +370,30 @@ fn format_recent_runs(ctx: &CommandContext) -> String {
             })
             .collect();
         Ok(format!("[{}]", items.join(", ")))
-    })
-    .unwrap_or_else(|| "[]".to_string())
+    }) {
+        Some(Ok(value)) => SnapshotContextField {
+            value,
+            issue: None,
+        },
+        Some(Err(error)) => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "failed to read recent runs from history DB at {}: {error:#}",
+                ctx.history_db_path().display()
+            )),
+        },
+        None => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "history DB unavailable while reading recent runs at {}",
+                ctx.history_db_path().display()
+            )),
+        },
+    }
 }
 
-fn format_active_diagnostics(ctx: &CommandContext) -> String {
-    ctx.with_history_db(|db| {
+fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
+    match ctx.try_with_history_db(|db| {
         // get_current_diagnostics(level, file_pattern, package, command, fixable_only)
         let diags = db.get_current_diagnostics(Some("error"), None, None, None, false)?;
 
@@ -371,49 +411,98 @@ fn format_active_diagnostics(ctx: &CommandContext) -> String {
             })
             .collect();
         Ok(format!("[{}]", items.join(", ")))
-    })
-    .unwrap_or_else(|| "[]".to_string())
+    }) {
+        Some(Ok(value)) => SnapshotContextField {
+            value,
+            issue: None,
+        },
+        Some(Err(error)) => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "failed to read active diagnostics from history DB at {}: {error:#}",
+                ctx.history_db_path().display()
+            )),
+        },
+        None => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "history DB unavailable while reading active diagnostics at {}",
+                ctx.history_db_path().display()
+            )),
+        },
+    }
 }
 
-fn format_coordinator_state() -> String {
+fn format_coordinator_state() -> SnapshotContextField {
     use crate::coordinator::JobCoordinator;
 
     let coord = match JobCoordinator::new() {
         Ok(c) => c,
-        Err(_) => return "{}".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "{}".to_string(),
+                issue: Some(format!("failed to open coordinator state: {error:#}")),
+            };
+        }
     };
 
     let mut parts: Vec<String> = vec![];
+    let mut issues = Vec::new();
     for cmd in &["check", "test", "build"] {
-        if let Ok(Some(state)) = coord.state(cmd) {
-            parts.push(format!(
-                "{cmd}: {{job_id:{}, scope:\"{}\", fingerprint:\"{}\"}}",
-                state.job_id,
-                state.scope_key,
-                &state.tree_fingerprint[..state.tree_fingerprint.len().min(12)]
-            ));
+        match coord.state(cmd) {
+            Ok(Some(state)) => {
+                parts.push(format!(
+                    "{cmd}: {{job_id:{}, scope:\"{}\", fingerprint:\"{}\"}}",
+                    state.job_id,
+                    state.scope_key,
+                    &state.tree_fingerprint[..state.tree_fingerprint.len().min(12)]
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => issues.push(format!(
+                "failed to read coordinator state for {cmd}: {error:#}"
+            )),
         }
     }
-    if parts.is_empty() {
-        "{}".to_string()
-    } else {
-        format!("{{{}}}", parts.join(", "))
+    SnapshotContextField {
+        value: if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{{}}}", parts.join(", "))
+        },
+        issue: (!issues.is_empty()).then(|| issues.join("; ")),
     }
 }
 
-fn format_active_jobs() -> String {
+fn format_active_jobs() -> SnapshotContextField {
     use crate::config::config;
     use crate::jobs::JobManager;
 
     let jobs_dir = config().jobs_dir();
-    let mgr = match JobManager::new(jobs_dir) {
+    let mgr = match JobManager::new(jobs_dir.clone()) {
         Ok(m) => m,
-        Err(_) => return "[]".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some(format!(
+                    "failed to open jobs state at {}: {error:#}",
+                    jobs_dir.display()
+                )),
+            };
+        }
     };
 
     let active = match mgr.list_active() {
         Ok(jobs) => jobs,
-        Err(_) => return "[]".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some(format!(
+                    "failed to read active jobs from {}: {error:#}",
+                    jobs_dir.display()
+                )),
+            };
+        }
     };
 
     let items: Vec<String> = active
@@ -427,7 +516,10 @@ fn format_active_jobs() -> String {
             )
         })
         .collect();
-    format!("[{}]", items.join(", "))
+    SnapshotContextField {
+        value: format!("[{}]", items.join(", ")),
+        issue: None,
+    }
 }
 
 /// Append the context block as an XML comment to the repomix output file.
@@ -472,8 +564,8 @@ fn format_age(secs: i64) -> String {
 ///
 /// Any other string is treated as a crate name. The function resolves the crate's
 /// directory from `cargo metadata` and collects transitive workspace dependencies.
-fn collect_scope_includes(scope: &str) -> Vec<String> {
-    match scope {
+fn collect_scope_includes(scope: &str) -> Result<Vec<String>> {
+    Ok(match scope {
         "core" => vec!["crate/core/**".to_string()],
         "nodes" => vec!["crate/nodes/**".to_string()],
         "tests" => vec![
@@ -483,30 +575,17 @@ fn collect_scope_includes(scope: &str) -> Vec<String> {
         ],
         "cli" => vec!["crate/cli/**".to_string()],
         "all" | "workspace" => vec!["crate/**".to_string()],
-        crate_name => collect_crate_scope(crate_name),
-    }
+        crate_name => collect_crate_scope(crate_name)?,
+    })
 }
 
 /// Use `cargo metadata` to find a crate and its transitive workspace dependencies,
 /// returning their directory paths as include globs.
-fn collect_crate_scope(crate_name: &str) -> Vec<String> {
-    // Run cargo metadata to get workspace package list
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version=1", "--no-deps", "--quiet"])
-        .output();
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => {
-            // Fallback: best-effort glob based on crate name
-            return vec![format!("crate/**/{crate_name}/**")];
-        }
-    };
-
-    let metadata: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(_) => return vec![format!("crate/**/{crate_name}/**")],
-    };
+fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
+    let metadata = cargo_metadata(
+        ["metadata", "--format-version=1", "--no-deps", "--quiet"],
+        "workspace package metadata",
+    )?;
 
     let workspace_root = crate::config::workspace_root();
 
@@ -529,31 +608,28 @@ fn collect_crate_scope(crate_name: &str) -> Vec<String> {
     }
 
     if name_to_dir.is_empty() {
-        return vec![format!("crate/**/{crate_name}/**")];
+        bail!("workspace package metadata returned no packages");
+    }
+    if !name_to_dir.contains_key(crate_name) {
+        bail!("scope '{crate_name}' did not match a workspace package or predefined alias");
     }
 
-    // Now run cargo metadata WITH deps to get transitive dep graph for this crate
-    let output_with_deps = Command::new("cargo")
-        .args([
+    let full_meta = cargo_metadata(
+        [
             "metadata",
             "--format-version=1",
             "--quiet",
             "--filter-platform",
             std::env::consts::ARCH, // avoids cross-compilation noise
-        ])
-        .output();
+        ],
+        "workspace dependency metadata",
+    )?;
 
     // Collect: crate itself + transitive workspace deps
     let mut included_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     included_names.insert(crate_name.to_string());
 
-    if let Ok(out) = output_with_deps {
-        if out.status.success() {
-            if let Ok(full_meta) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                collect_transitive_workspace_deps(crate_name, &full_meta, &mut included_names);
-            }
-        }
-    }
+    collect_transitive_workspace_deps(crate_name, &full_meta, &mut included_names);
 
     // Map crate names to directory globs
     let mut patterns: Vec<String> = included_names
@@ -565,10 +641,10 @@ fn collect_crate_scope(crate_name: &str) -> Vec<String> {
     patterns.dedup();
 
     if patterns.is_empty() {
-        vec![format!("crate/**/{crate_name}/**")]
-    } else {
-        patterns
+        bail!("scope '{crate_name}' resolved no workspace include patterns");
     }
+
+    Ok(patterns)
 }
 
 /// Walk the cargo metadata dependency graph to find transitive workspace deps.
@@ -632,5 +708,220 @@ fn collect_transitive_workspace_deps(
                 }
             }
         }
+    }
+}
+
+fn cargo_metadata<I, S>(args: I, description: &str) -> Result<serde_json::Value>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let output = ProcessBuilder::cargo()
+        .args(args)
+        .with_description(description)
+        .run()?;
+
+    serde_json::from_str(&output.stdout)
+        .with_context(|| format!("failed to parse {description} output as cargo metadata JSON"))
+}
+
+fn read_snapshot_output(output_path: &Path) -> Result<String> {
+    std::fs::read_to_string(output_path)
+        .with_context(|| format!("failed to read snapshot output {}", output_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::CommandContext;
+    use crate::output::{OutputFormat, OutputWriter};
+    use crate::sandbox::sinex_test;
+    use ::xtask::sandbox::EnvGuard;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_executable_script(
+        path: &std::path::Path,
+        body: &str,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        fs::write(path, body)?;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_changed_files_reports_git_failures() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("git"),
+            r#"#!/bin/sh
+printf 'fatal: synthetic git failure\n' >&2
+exit 128
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let error = collect_changed_files().expect_err("git failure should surface");
+        assert!(error.to_string().contains("git diff --name-only HEAD"));
+        assert!(error.to_string().contains("synthetic git failure"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_diagnostic_files_reports_unavailable_history_db()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let blocked_parent = temp.path().join("not-a-dir");
+        fs::write(&blocked_parent, "blocked")?;
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "snapshot",
+            blocked_parent.join("history.db"),
+        );
+
+        let error =
+            collect_diagnostic_files(&ctx).expect_err("history DB failure should surface");
+        assert!(error.to_string().contains("history DB unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_changed_files_deduplicates_head_and_cached()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("git"),
+            r#"#!/bin/sh
+if [ "$1" = "diff" ] && [ "$2" = "--name-only" ] && [ "$3" = "HEAD" ]; then
+  printf 'a.rs\nshared.rs\n'
+  exit 0
+fi
+if [ "$1" = "diff" ] && [ "$2" = "--name-only" ] && [ "$3" = "--cached" ]; then
+  printf 'b.rs\nshared.rs\n'
+  exit 0
+fi
+printf 'unexpected git invocation: %s\n' "$*" >&2
+exit 1
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        assert_eq!(
+            collect_changed_files()?,
+            vec![
+                "a.rs".to_string(),
+                "b.rs".to_string(),
+                "shared.rs".to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_crate_scope_reports_metadata_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("cargo"),
+            r#"#!/bin/sh
+printf 'cargo metadata exploded\n' >&2
+exit 101
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let error = collect_crate_scope("sinex-db").expect_err("metadata failure should surface");
+        assert!(error.to_string().contains("workspace package metadata"));
+        assert!(error.to_string().contains("cargo metadata exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_crate_scope_reports_unknown_workspace_package()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("cargo"),
+            r#"#!/bin/sh
+printf '%s\n' '{"packages":[{"name":"sinex-db","manifest_path":"/realm/project/sinex/crate/lib/sinex-db/Cargo.toml"}]}'
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let error = collect_crate_scope("missing-crate")
+            .expect_err("unknown workspace package should surface");
+        assert!(
+            error.to_string().contains("missing-crate"),
+            "unexpected error: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_snapshot_output_reports_missing_file() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let missing = temp.path().join("missing.xml");
+        let error = read_snapshot_output(&missing).expect_err("missing snapshot should error");
+        assert!(error.to_string().contains("failed to read snapshot output"));
+        assert!(error.to_string().contains("missing.xml"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_push_context_field_includes_issue_line() -> ::xtask::sandbox::TestResult<()> {
+        let mut lines = vec!["[xtask-context]".to_string()];
+        push_context_field(
+            &mut lines,
+            "recent_runs",
+            SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some("history unavailable".to_string()),
+            },
+        );
+
+        assert_eq!(lines[1], "recent_runs: []");
+        assert_eq!(lines[2], "recent_runs_issue: \"history unavailable\"");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_context_block_reports_unavailable_history_db()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let blocked_parent = temp.path().join("not-a-dir");
+        fs::write(&blocked_parent, "blocked")?;
+        let missing_db = blocked_parent.join("history.db");
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "snapshot",
+            missing_db,
+        );
+
+        let block = build_context_block(&ctx);
+        assert!(block.contains("recent_runs_issue:"));
+        assert!(block.contains("active_diagnostics_issue:"));
+        Ok(())
     }
 }

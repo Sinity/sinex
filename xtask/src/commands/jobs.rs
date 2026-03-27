@@ -3,13 +3,14 @@
 //! Jobs are tracked in the history database (`SQLite`). Log files are stored in the filesystem.
 //! `JobManager` is a thin wrapper - `HistoryDb` is the single source of truth.
 
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{Result, WrapErr, eyre};
+use std::path::Path;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{InvocationProgress, JobLifecycleStatus};
+use crate::history::{InvocationProgress, JobLifecycleStatus, StageTiming};
 use crate::jobs::JobManager;
 
 /// Jobs command configuration
@@ -105,6 +106,7 @@ fn execute_list(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let jobs = job_manager.list_recent(limit)?;
+    let mut progress_issues = Vec::new();
 
     if ctx.is_human() {
         if jobs.is_empty() {
@@ -114,17 +116,15 @@ fn execute_list(
             builder.push_record(["ID", "COMMAND", "STATUS", "PROGRESS", "PID", "STARTED"]);
             for job in &jobs {
                 let status_str = status_to_str(job.job_status);
+                let progress = load_invocation_progress(ctx, job.invocation_id);
+                if let Some(issue) = &progress.issue {
+                    progress_issues.push(format!("job {}: {issue}", job.id));
+                }
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
                     status_str.to_string(),
-                    progress_brief(
-                        job.invocation_id
-                            .and_then(|iid| {
-                                ctx.with_history_db(|db| db.get_progress(iid)).flatten()
-                            })
-                            .as_ref(),
-                    ),
+                    progress_brief(progress.progress.as_ref()),
                     job.pid.to_string(),
                     super::format_display_time(&job.started_at),
                 ]);
@@ -138,13 +138,15 @@ fn execute_list(
     let mut result = CommandResult::success()
         .with_message(format!("Listed {} jobs", jobs.len()))
         .with_duration(ctx.elapsed());
+    for issue in &progress_issues {
+        result = result.with_warning(issue.clone());
+    }
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "recent",
             "jobs": jobs.iter().map(|j| {
-                let progress: Option<InvocationProgress> = j.invocation_id
-                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                let progress = load_invocation_progress(ctx, j.invocation_id);
                 serde_json::json!({
                     "id": j.id,
                     "invocation_id": j.invocation_id,
@@ -154,7 +156,8 @@ fn execute_list(
                     "pid": j.pid,
                     "started_at": j.started_at.to_string(),
                     "exit_code": j.exit_code,
-                    "progress": progress.as_ref().map(progress_to_json),
+                    "progress": progress.progress.as_ref().map(progress_to_json),
+                    "progress_issue": progress.issue,
                 })
             }).collect::<Vec<_>>()
         }));
@@ -165,6 +168,7 @@ fn execute_list(
 
 fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
     let active = job_manager.list_active()?;
+    let mut progress_issues = Vec::new();
 
     if ctx.is_human() {
         if active.is_empty() {
@@ -175,16 +179,14 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
             for job in &active {
                 let elapsed = time::OffsetDateTime::now_utc() - job.started_at;
                 let running_time = format!("{:.0}s", elapsed.whole_seconds());
+                let progress = load_invocation_progress(ctx, job.invocation_id);
+                if let Some(issue) = &progress.issue {
+                    progress_issues.push(format!("job {}: {issue}", job.id));
+                }
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
-                    progress_brief(
-                        job.invocation_id
-                            .and_then(|iid| {
-                                ctx.with_history_db(|db| db.get_progress(iid)).flatten()
-                            })
-                            .as_ref(),
-                    ),
+                    progress_brief(progress.progress.as_ref()),
                     job.pid.to_string(),
                     running_time,
                     super::format_display_time(&job.started_at),
@@ -199,13 +201,15 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
     let mut result = CommandResult::success()
         .with_message(format!("{} active jobs", active.len()))
         .with_duration(ctx.elapsed());
+    for issue in &progress_issues {
+        result = result.with_warning(issue.clone());
+    }
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "active",
             "jobs": active.iter().map(|j| {
-                let progress: Option<InvocationProgress> = j.invocation_id
-                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                let progress = load_invocation_progress(ctx, j.invocation_id);
                 serde_json::json!({
                     "id": j.id,
                     "invocation_id": j.invocation_id,
@@ -215,7 +219,8 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                     "pid": j.pid,
                     "started_at": j.started_at.to_string(),
                     "exit_code": j.exit_code,
-                    "progress": progress.as_ref().map(progress_to_json),
+                    "progress": progress.progress.as_ref().map(progress_to_json),
+                    "progress_issue": progress.issue,
                 })
             }).collect::<Vec<_>>()
         }));
@@ -235,26 +240,18 @@ async fn execute_status(
         .ok_or_else(|| eyre!("job {id} not found"))?;
 
     if follow {
-        // Follow mode: seek-based tailing (O(delta) per poll, not O(n))
-        use std::io::{Read, Seek, SeekFrom};
-
         let mut last_pos = 0u64;
         loop {
             // Read only new content since last position
-            if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
-                let _ = file.seek(SeekFrom::Start(last_pos));
-                let mut buf = String::new();
-                if let Ok(n) = file.read_to_string(&mut buf)
-                    && n > 0
-                {
+            if let Some((buf, new_pos)) = read_stdout_delta_from_file(&job.stdout_path, last_pos)? {
+                if !buf.is_empty() {
                     print!("{buf}");
-                    last_pos += n as u64;
+                    last_pos = new_pos;
                 }
             } else if job.is_terminal() {
                 // File gone (archived to DB) — read remainder from DB
-                if let Ok(stdout) = job.read_stdout()
-                    && stdout.len() as u64 > last_pos
-                {
+                let stdout = job.read_stdout()?;
+                if stdout.len() as u64 > last_pos {
                     print!("{}", &stdout[last_pos as usize..]);
                 }
                 break;
@@ -265,13 +262,16 @@ async fn execute_status(
             match updated {
                 Some(j) if j.is_terminal() => {
                     // One more read to catch final output before file is archived
-                    if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
-                        let _ = file.seek(SeekFrom::Start(last_pos));
-                        let mut buf = String::new();
-                        if let Ok(n) = file.read_to_string(&mut buf)
-                            && n > 0
-                        {
+                    if let Some((buf, _new_pos)) =
+                        read_stdout_delta_from_file(&job.stdout_path, last_pos)?
+                    {
+                        if !buf.is_empty() {
                             print!("{buf}");
+                        }
+                    } else {
+                        let stdout = job.read_stdout()?;
+                        if stdout.len() as u64 > last_pos {
+                            print!("{}", &stdout[last_pos as usize..]);
                         }
                     }
                     break;
@@ -287,17 +287,16 @@ async fn execute_status(
             .with_message(format!("Job {id} completed"))
             .with_duration(ctx.elapsed()))
     } else {
+        let stdout_tail = job.tail_stdout(5);
+
         if ctx.is_human() {
             println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
             println!("  Status:   {}", status_to_str(job.job_status));
             println!("  PID:      {}", job.pid);
             println!("  Started:  {}", job.started_at);
-            // Progress: read from canonical invocation_progress table.
-            let progress = job
-                .invocation_id
-                .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
-            if let Some(ref p) = progress {
+            let progress = load_invocation_progress(ctx, job.invocation_id);
+            if let Some(ref p) = progress.progress {
                 println!("  Progress: {}", progress_brief(Some(p)));
                 if let Some(step) = &p.step
                     && !step.is_empty()
@@ -305,25 +304,44 @@ async fn execute_status(
                     println!("  Last step: {step}");
                 }
                 println!("  Updated:  {}", &p.updated_at);
+            } else if let Some(issue) = &progress.issue {
+                println!("  Progress: <unavailable>");
+                println!("  Progress read failed: {issue}");
             }
             // Show last few lines of output
-            if let Ok(tail) = job.tail_stdout(5)
-                && !tail.is_empty()
-            {
-                println!("\n  Last output:\n{tail}");
+            match &stdout_tail {
+                Ok(tail) if !tail.is_empty() => {
+                    println!("\n  Last output:\n{tail}");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    println!("\n  Last output: <unavailable>");
+                    println!("  Output read failed: {error:#}");
+                }
             }
         }
 
         let mut result = CommandResult::success()
             .with_message(format!("Job {id} status"))
             .with_duration(ctx.elapsed());
+        if let Err(error) = &stdout_tail {
+            result = result.with_warning(format!(
+                "failed to read recent stdout for job {id}: {error:#}"
+            ));
+        }
+        let progress = load_invocation_progress(ctx, job.invocation_id);
+        if let Some(issue) = &progress.issue {
+            result = result.with_warning(issue.clone());
+        }
 
         if !ctx.is_human() {
             // Stage/diagnostic queries target the invocation record, not the job handle.
-            let stages: Vec<serde_json::Value> = job
-                .invocation_id
-                .and_then(|iid| ctx.with_history_db(|db| db.get_stage_timings_for_invocation(iid)))
-                .unwrap_or_default()
+            let stages = load_stage_timings(ctx, job.invocation_id);
+            if let Some(issue) = &stages.issue {
+                result = result.with_warning(issue.clone());
+            }
+            let stages_json: Vec<serde_json::Value> = stages
+                .stages
                 .iter()
                 .map(|s| {
                     serde_json::json!({
@@ -333,9 +351,6 @@ async fn execute_status(
                     })
                 })
                 .collect();
-            let progress: Option<InvocationProgress> = job
-                .invocation_id
-                .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
             // Phase is available via progress.phase — not emitted separately at top level.
             result = result.with_data(serde_json::json!({
                 "id": job.id,
@@ -343,16 +358,41 @@ async fn execute_status(
                 "command": job.command,
                 "args": job.args,
                 "status": status_to_str(job.job_status),
-                "stages": stages,
+                "stages": stages_json,
+                "stages_issue": stages.issue,
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
-                "progress": progress.as_ref().map(progress_to_json),
+                "progress": progress.progress.as_ref().map(progress_to_json),
+                "progress_issue": progress.issue,
             }));
         }
 
         Ok(result)
     }
+}
+
+fn read_stdout_delta_from_file(path: &Path, last_pos: u64) -> Result<Option<(String, u64)>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to open job stdout log {}", path.display()));
+        }
+    };
+
+    file.seek(SeekFrom::Start(last_pos))
+        .with_context(|| format!("failed to seek job stdout log {}", path.display()))?;
+
+    let mut buf = String::new();
+    let bytes_read = file
+        .read_to_string(&mut buf)
+        .with_context(|| format!("failed to read job stdout log {}", path.display()))?;
+
+    Ok(Some((buf, last_pos + bytes_read as u64)))
 }
 
 fn execute_output(
@@ -436,13 +476,19 @@ async fn execute_wait(
     }
     .with_duration(ctx.elapsed());
 
+    let progress = load_invocation_progress(ctx, job.invocation_id);
+    if let Some(issue) = &progress.issue {
+        result = result.with_warning(issue.clone());
+    }
+
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "id": job.id,
             "invocation_id": job.invocation_id,
             "status": status_to_str(job.job_status),
             "exit_code": job.exit_code,
-            "progress": job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref().map(progress_to_json),
+            "progress": progress.progress.as_ref().map(progress_to_json),
+            "progress_issue": progress.issue,
         }));
     }
 
@@ -543,10 +589,94 @@ fn progress_to_json(progress: &InvocationProgress) -> serde_json::Value {
     })
 }
 
+#[derive(Debug)]
+struct ProgressProbe {
+    progress: Option<InvocationProgress>,
+    issue: Option<String>,
+}
+
+#[derive(Debug)]
+struct StageTimingsProbe {
+    stages: Vec<StageTiming>,
+    issue: Option<String>,
+}
+
+fn load_invocation_progress(ctx: &CommandContext, invocation_id: Option<i64>) -> ProgressProbe {
+    match invocation_id {
+        Some(iid) => progress_probe_from_result(iid, ctx.try_with_history_db(|db| db.get_progress(iid))),
+        None => ProgressProbe {
+            progress: None,
+            issue: None,
+        },
+    }
+}
+
+fn progress_probe_from_result(
+    invocation_id: i64,
+    result: Option<Result<Option<InvocationProgress>>>,
+) -> ProgressProbe {
+    match result {
+        Some(Ok(progress)) => ProgressProbe {
+            progress,
+            issue: None,
+        },
+        Some(Err(error)) => ProgressProbe {
+            progress: None,
+            issue: Some(format!(
+                "failed to load progress for invocation {invocation_id}: {error:#}"
+            )),
+        },
+        None => ProgressProbe {
+            progress: None,
+            issue: Some(format!(
+                "history DB unavailable while loading progress for invocation {invocation_id}"
+            )),
+        },
+    }
+}
+
+fn load_stage_timings(ctx: &CommandContext, invocation_id: Option<i64>) -> StageTimingsProbe {
+    match invocation_id {
+        Some(iid) => stage_timings_probe_from_result(
+            iid,
+            ctx.try_with_history_db(|db| db.get_stage_timings_for_invocation(iid)),
+        ),
+        None => StageTimingsProbe {
+            stages: Vec::new(),
+            issue: None,
+        },
+    }
+}
+
+fn stage_timings_probe_from_result(
+    invocation_id: i64,
+    result: Option<Result<Vec<StageTiming>>>,
+) -> StageTimingsProbe {
+    match result {
+        Some(Ok(stages)) => StageTimingsProbe {
+            stages,
+            issue: None,
+        },
+        Some(Err(error)) => StageTimingsProbe {
+            stages: Vec::new(),
+            issue: Some(format!(
+                "failed to load stage timings for invocation {invocation_id}: {error:#}"
+            )),
+        },
+        None => StageTimingsProbe {
+            stages: Vec::new(),
+            issue: Some(format!(
+                "history DB unavailable while loading stage timings for invocation {invocation_id}"
+            )),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use tempfile::tempdir;
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -586,6 +716,63 @@ mod tests {
         assert_eq!(status_to_str(JobLifecycleStatus::Failed), "failed");
         assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
         assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_stdout_delta_from_file_reports_io_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let error = read_stdout_delta_from_file(dir.path(), 0).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(dir.path().to_string_lossy().as_ref()));
+        assert!(
+            message.contains("failed to open job stdout log")
+                || message.contains("failed to seek job stdout log")
+                || message.contains("failed to read job stdout log")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_stdout_delta_from_file_reads_new_bytes_only()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("stdout.log");
+        std::fs::write(&path, "first\nsecond\n")?;
+
+        let first = read_stdout_delta_from_file(&path, 0)?;
+        assert_eq!(first, Some(("first\nsecond\n".to_string(), 13)));
+
+        let second = read_stdout_delta_from_file(&path, 13)?;
+        assert_eq!(second, Some((String::new(), 13)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_progress_probe_from_result_reports_history_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = progress_probe_from_result(42, Some(Err(eyre!("boom"))));
+        assert!(probe.progress.is_none());
+        assert!(probe.issue.unwrap_or_default().contains("boom"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_progress_probe_from_result_reports_unavailable_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = progress_probe_from_result(42, None);
+        assert!(probe.progress.is_none());
+        assert!(probe.issue.unwrap_or_default().contains("history DB unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stage_timings_probe_from_result_reports_history_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = stage_timings_probe_from_result(42, Some(Err(eyre!("stages boom"))));
+        assert!(probe.stages.is_empty());
+        assert!(probe.issue.unwrap_or_default().contains("stages boom"));
         Ok(())
     }
 }

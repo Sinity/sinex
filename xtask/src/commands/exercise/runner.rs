@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 
 use super::custom::*;
 use super::types::{
@@ -27,13 +27,26 @@ impl GitStateGuard {
             .args(["status", "--porcelain"])
             .output()
             .context("git status")?;
+        if !status.status.success() {
+            bail!(
+                "git status --porcelain failed while preparing exercise guard: {}",
+                summarize_command_output(&status)
+            );
+        }
         let has_changes = !status.stdout.is_empty();
 
         let stash_created = if has_changes {
-            Command::new("git")
+            let stash = Command::new("git")
                 .args(["stash", "push", "-m", "xtask-exercise-guard"])
-                .status()
-                .is_ok_and(|s| s.success())
+                .output()
+                .context("git stash push")?;
+            if !stash.status.success() {
+                bail!(
+                    "git stash push failed while preparing exercise guard: {}",
+                    summarize_command_output(&stash)
+                );
+            }
+            true
         } else {
             false
         };
@@ -59,13 +72,34 @@ impl GitStateGuard {
 impl Drop for GitStateGuard {
     fn drop(&mut self) {
         for file in &self.touched_files {
-            let _ = Command::new("git")
-                .args(["checkout", "--"])
+            match Command::new("git")
+                .args(["restore", "--worktree", "--source=HEAD", "--"])
                 .arg(file)
-                .status();
+                .output()
+            {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => eprintln!(
+                    "⚠ xtask exercise git cleanup failed for {}: {}",
+                    file.display(),
+                    summarize_command_output(&output)
+                ),
+                Err(error) => eprintln!(
+                    "⚠ xtask exercise git cleanup failed for {}: {error}",
+                    file.display()
+                ),
+            }
         }
         if self.stash_created {
-            let _ = Command::new("git").args(["stash", "pop"]).status();
+            match Command::new("git").args(["stash", "pop"]).output() {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => eprintln!(
+                    "⚠ xtask exercise git stash restore failed: {}",
+                    summarize_command_output(&output)
+                ),
+                Err(error) => {
+                    eprintln!("⚠ xtask exercise git stash restore failed: {error}");
+                }
+            }
         }
     }
 }
@@ -111,9 +145,28 @@ pub fn run_xtask(args: &[&str], env: &[(&str, &str)], verbose: bool) -> StepOutp
     output
 }
 
-pub fn save_output(dir: &Path, prefix: &str, output: &StepOutput) {
-    let _ = fs::write(dir.join(format!("{prefix}.stdout.log")), &output.stdout);
-    let _ = fs::write(dir.join(format!("{prefix}.stderr.log")), &output.stderr);
+fn summarize_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+pub fn save_output(dir: &Path, prefix: &str, output: &StepOutput) -> Result<()> {
+    let stdout_path = dir.join(format!("{prefix}.stdout.log"));
+    fs::write(&stdout_path, &output.stdout)
+        .with_context(|| format!("write {}", stdout_path.display()))?;
+    let stderr_path = dir.join(format!("{prefix}.stderr.log"));
+    fs::write(&stderr_path, &output.stderr)
+        .with_context(|| format!("write {}", stderr_path.display()))?;
+    Ok(())
 }
 
 pub fn validate_step(
@@ -154,8 +207,10 @@ pub fn exec_step(
 ) -> (StepOutcome, StepOutput) {
     let output = run_xtask(args, &[], verbose);
     let prefix = format!("step_{}_{}", idx, label.replace(' ', "_"));
-    save_output(dir, &prefix, &output);
-    let errors = validate_step(&output, &expected, validations);
+    let mut errors = validate_step(&output, &expected, validations);
+    if let Err(error) = save_output(dir, &prefix, &output) {
+        errors.push(format!("failed to save step logs: {error}"));
+    }
     let outcome = StepOutcome {
         label: label.to_string(),
         passed: errors.is_empty(),
@@ -187,8 +242,10 @@ pub fn run_declarative_exercise(
             .collect();
         let output = run_xtask(&args, &env, verbose);
         let prefix = format!("step_{}_{}", i, step.label.replace(' ', "_"));
-        save_output(output_dir, &prefix, &output);
-        let errors = validate_step(&output, &step.expected_exit, &step.validations);
+        let mut errors = validate_step(&output, &step.expected_exit, &step.validations);
+        if let Err(error) = save_output(output_dir, &prefix, &output) {
+            errors.push(format!("failed to save step logs: {error}"));
+        }
         outcomes.push(StepOutcome {
             label: step.label.clone(),
             passed: errors.is_empty(),
@@ -282,12 +339,24 @@ pub fn setup_output_dir() -> Result<PathBuf> {
 
     // Symlink target/exercise/latest → run-<timestamp>
     let latest = base.join("latest");
-    let _ = fs::remove_file(&latest);
+    if let Err(error) = fs::remove_file(&latest)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "⚠ xtask exercise could not replace latest symlink {}: {error}",
+            latest.display()
+        );
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
         // Use just the directory name (not full path) since the symlink lives in the same parent
-        let _ = symlink(run_dir.file_name().unwrap(), &latest);
+        if let Err(error) = symlink(run_dir.file_name().unwrap(), &latest) {
+            eprintln!(
+                "⚠ xtask exercise could not update latest symlink {}: {error}",
+                latest.display()
+            );
+        }
     }
 
     Ok(run_dir)
