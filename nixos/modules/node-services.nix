@@ -8,7 +8,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
-    mkDatabasePasswordUnitConfig
     renderDatabaseUrl
     ;
   cfg = config.services.sinex;
@@ -166,8 +165,9 @@ let
     blobDir
   ];
   restartRateLimits = {
-    StartLimitIntervalSec = 300;
-    StartLimitBurst = 5;
+    # Long-running capture services must recover after transient infra outages
+    # without requiring a manual `systemctl reset-failed`.
+    StartLimitIntervalSec = 0;
   };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -316,12 +316,7 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
-        unitConfig =
-          restartRateLimits
-          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null)
-          // optionalAttrs (gatewayAdminTokenFile != null) {
-            ConditionPathReadable = gatewayAdminTokenFile;
-          };
+        unitConfig = restartRateLimits;
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -716,9 +711,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
-        unitConfig =
-          restartRateLimits
-          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
+        unitConfig = restartRateLimits;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
@@ -757,9 +750,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig =
-        restartRateLimits
-        // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
+      unitConfig = restartRateLimits;
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
           name = params.binary;
