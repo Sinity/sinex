@@ -1634,12 +1634,10 @@ fn check_hyprland_socket(
     }
 
     match std::fs::read_dir(&hypr_dir) {
-        Ok(entries) => {
-            let candidates: Vec<PathBuf> = entries
-                .filter_map(|entry| entry.ok().map(|value| value.path()))
-                .filter(|path| path.join(".socket2.sock").exists())
-                .collect();
-            match candidates.as_slice() {
+        Ok(entries) => match collect_hyprland_socket_candidates(
+            entries.map(|entry| entry.map(|value| value.path())),
+        ) {
+            Ok(candidates) => match candidates.as_slice() {
                 [candidate] => DeploymentReadinessItem::pass(
                     "hyprland-socket",
                     format!("Found Hyprland event socket under {}", candidate.display()),
@@ -1658,13 +1656,31 @@ fn check_hyprland_socket(
                         hypr_dir.display()
                     ),
                 ),
-            }
-        }
+            },
+            Err(error) => DeploymentReadinessItem::fail(
+                "hyprland-socket",
+                format!("Could not inspect {}: {error}", hypr_dir.display()),
+            ),
+        },
         Err(e) => DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!("Could not read {}: {e}", hypr_dir.display()),
         ),
     }
+}
+
+fn collect_hyprland_socket_candidates<I>(entries: I) -> std::io::Result<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = std::io::Result<PathBuf>>,
+{
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let path = entry?;
+        if path.join(".socket2.sock").exists() {
+            candidates.push(path);
+        }
+    }
+    Ok(candidates)
 }
 
 fn check_activitywatch_db(
@@ -3590,6 +3606,37 @@ mod tests {
         );
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_hyprland_socket_candidates_reports_entry_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = collect_hyprland_socket_candidates(vec![Err(std::io::Error::other(
+            "readdir exploded",
+        ))])
+        .unwrap_err();
+
+        assert!(error.to_string().contains("readdir exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_hyprland_socket_candidates_keeps_only_event_sockets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let matching = temp.path().join("one");
+        let ignored = temp.path().join("two");
+        std::fs::create_dir_all(&matching)?;
+        std::fs::create_dir_all(&ignored)?;
+        std::fs::write(matching.join(".socket2.sock"), "")?;
+
+        let candidates = collect_hyprland_socket_candidates(vec![
+            Ok(matching.clone()),
+            Ok(ignored.clone()),
+        ])?;
+
+        assert_eq!(candidates, vec![matching]);
         Ok(())
     }
 
