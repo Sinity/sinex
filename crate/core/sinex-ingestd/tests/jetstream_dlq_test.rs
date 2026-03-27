@@ -1,5 +1,8 @@
 //! `JetStream` Dead Letter Queue integration tests
 
+#[path = "support.rs"]
+mod support;
+
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::validator::EventValidator;
@@ -12,6 +15,9 @@ use tokio_stream::StreamExt;
 use xtask::sandbox::TestHooks;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use support::{
+    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+};
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
@@ -46,7 +52,7 @@ async fn publish_raw_event(
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
-    let event_id = overrides.id.unwrap_or_default();
+    let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
     let ts_orig = overrides
         .ts_orig
         .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
@@ -260,7 +266,7 @@ impl TestNodePublisher {
         overrides: EventOverrides,
     ) -> TestResult<Uuid> {
         let env = sinex_primitives::environment();
-        let event_id = overrides.id.unwrap_or_default();
+        let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
         let ts_orig = overrides
             .ts_orig
             .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
@@ -272,7 +278,7 @@ impl TestNodePublisher {
             "payload": payload,
             "ts_orig": ts_orig,
             "host": "test-host",
-            "source_material_id": "00000000-0000-7000-8000-000000000000",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
             "anchor_byte": 0,
         });
 
@@ -330,6 +336,7 @@ async fn start_consumer_with_hooks(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = EventValidator::new(hooks.validate);
 
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -359,13 +366,7 @@ async fn start_consumer_with_hooks(
         hooks.confirmation_failures.clone(),
     )
     .with_batch_fetch_config(10, Duration::from_millis(200));
-    let handle = tokio::spawn(async move { consumer.run().await });
-
-    let stream_timeout = Duration::from_secs(Timeouts::SHORT);
-    nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
-        .await?;
+    let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
         nats_client,

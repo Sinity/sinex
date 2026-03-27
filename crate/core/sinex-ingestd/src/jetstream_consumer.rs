@@ -3,8 +3,8 @@
 //! See `crate::docs::ingestion_pipeline` for architectural details.
 
 use async_nats::{Client as NatsClient, jetstream};
-use futures::future::join_all;
-use serde::Serialize;
+use futures::future::{BoxFuture, join_all};
+use serde::{Deserialize, Serialize};
 use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_node_sdk::SelfObserver;
@@ -32,6 +32,11 @@ struct Confirmation {
     event_id: String,
     persisted: bool,
     ts_ingest: Timestamp,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ConfirmationRetryRequest {
+    event_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +84,10 @@ pub struct JetStreamTopology {
     pub confirmations_stream: String,
     pub confirmations_subject: String,
     pub confirmations_prefix: String,
+    pub confirmation_retry_stream: String,
+    pub confirmation_retry_subject: String,
+    pub confirmation_retry_prefix: String,
+    pub confirmation_retry_consumer: String,
     pub dlq_stream: String,
     pub dlq_subject: String,
     pub dlq_publish_subject: String,
@@ -94,9 +103,12 @@ impl JetStreamTopology {
         namespace: Option<&str>,
     ) -> Self {
         let confirmations_stream = format!("{base_stream}_CONFIRMATIONS");
+        let confirmation_retry_stream = format!("{base_stream}_CONFIRMATION_RETRIES");
         let dlq_stream = format!("{base_stream}_DLQ");
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
+        let confirmation_retry_prefix =
+            format!("{}.", namespaced("events.confirmation_retries"));
 
         Self {
             events_stream: base_stream,
@@ -104,6 +116,10 @@ impl JetStreamTopology {
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
             confirmations_prefix,
+            confirmation_retry_stream,
+            confirmation_retry_subject: namespaced("events.confirmation_retries.>"),
+            confirmation_retry_prefix,
+            confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
             dlq_stream,
             dlq_subject: namespaced("events.dlq.>"),
             dlq_publish_subject: namespaced("events.dlq.ingestd"),
@@ -142,6 +158,9 @@ const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
+const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
+const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
 /// before `JetStream` redelivers the event. Used by both the proactive ready-set
@@ -227,6 +246,8 @@ struct ConsumerStats {
     validation_failures: AtomicU64,
     dlq_routed: AtomicU64,
     confirmation_failures: AtomicU64,
+    confirmation_retries_enqueued: AtomicU64,
+    confirmation_retry_failures: AtomicU64,
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
@@ -242,6 +263,8 @@ impl ConsumerStats {
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
+            confirmation_retries_enqueued = self.confirmation_retries_enqueued.load(Ordering::Relaxed),
+            confirmation_retry_failures = self.confirmation_retry_failures.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
             "JetStream consumer stats"
@@ -422,6 +445,22 @@ impl JetStreamConsumer {
                 SinexError::network("Failed to create confirmations stream").with_source(e)
             })?;
 
+        let confirmation_retry_stream = self.topology.confirmation_retry_stream.clone();
+        self.js
+            .create_or_update_stream(jetstream::stream::Config {
+                name: confirmation_retry_stream.clone(),
+                subjects: vec![self.topology.confirmation_retry_subject.clone()],
+                retention: jetstream::stream::RetentionPolicy::Limits,
+                max_messages_per_subject: 1,
+                max_age: Duration::from_hours(168),
+                storage: jetstream::stream::StorageType::File,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to create confirmation retry stream").with_source(e)
+            })?;
+
         // DLQ stream
         let dlq_stream = self.topology.dlq_stream.clone();
         self.js
@@ -470,9 +509,24 @@ impl JetStreamConsumer {
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
         consumer_spec.max_deliver = 10;
-        let mut consumer = ensure_pull_consumer(&self.js, &consumer_spec)
+        let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
+        let mut lag_consumer = consumer.clone();
+        let mut confirmation_retry_spec = PullConsumerSpec::new(
+            self.topology.confirmation_retry_stream.clone(),
+            self.topology.confirmation_retry_consumer.clone(),
+        );
+        confirmation_retry_spec.filter_subject = Some(self.topology.confirmation_retry_subject.clone());
+        confirmation_retry_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
+        confirmation_retry_spec.ack_wait = self.ack_wait;
+        confirmation_retry_spec.max_ack_pending = self.max_ack_pending;
+        confirmation_retry_spec.max_deliver = -1;
+        let confirmation_retry_consumer = ensure_pull_consumer(&self.js, &confirmation_retry_spec)
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to create confirmation retry consumer").with_source(e)
+            })?;
 
         // Signal readiness: consumer is bound and the pull loop is about to start.
         // This allows callers to delay sd_notify(READY) until the subscription is live.
@@ -486,6 +540,9 @@ impl JetStreamConsumer {
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
         // Consumer lag check interval (30s)
         let mut lag_check_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        let mut confirmation_retry_interval = tokio::time::interval(CONFIRM_RETRY_POLL_INTERVAL);
+        let mut batch_future: BoxFuture<'_, IngestdResult<()>> =
+            Box::pin(self.process_batch(&consumer));
 
         loop {
             tokio::select! {
@@ -514,7 +571,7 @@ impl JetStreamConsumer {
                 }
                 _ = lag_check_interval.tick() => {
                     if let Some(ref observer) = self.observer {
-                        match consumer.info().await {
+                        match lag_consumer.info().await {
                             Ok(info) => {
                                 let mut labels = std::collections::HashMap::new();
                                 labels.insert("consumer".to_string(), self.topology.consumer_durable.clone());
@@ -535,10 +592,16 @@ impl JetStreamConsumer {
                         }
                     }
                 }
-                batch_result = self.process_batch(&consumer) => {
+                _ = confirmation_retry_interval.tick() => {
+                    if let Err(e) = self.process_confirmation_retry_batch(&confirmation_retry_consumer).await {
+                        error!("Confirmation retry processing error: {}", e);
+                    }
+                }
+                batch_result = &mut batch_future => {
                     if let Err(e) = batch_result {
                         error!("Batch processing error: {}", e);
                     }
+                    batch_future = Box::pin(self.process_batch(&consumer));
                 }
             }
         }
@@ -763,7 +826,8 @@ impl JetStreamConsumer {
                     .collect();
                 let confirmation_results = join_all(confirmation_futs).await;
 
-                let mut has_confirmation_failure = false;
+                let mut ack_messages = Vec::with_capacity(batch.len());
+                let mut nack_prepared = Vec::new();
                 for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
                     match result {
                         Ok(()) => {
@@ -775,6 +839,7 @@ impl JetStreamConsumer {
                                     "Re-published confirmation for already persisted event"
                                 );
                             }
+                            ack_messages.push(&prepared.message);
                         }
                         Err(err) => {
                             warn!(
@@ -785,13 +850,43 @@ impl JetStreamConsumer {
                             self.stats
                                 .confirmation_failures
                                 .fetch_add(1, Ordering::Relaxed);
-                            has_confirmation_failure = true;
+                            match self.enqueue_confirmation_retry(&prepared.parsed_id).await {
+                                Ok(()) => {
+                                    info!(
+                                        event_id = %prepared.parsed_id,
+                                        "Queued durable confirmation retry after publish failure"
+                                    );
+                                    self.stats
+                                        .confirmation_retries_enqueued
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    ack_messages.push(&prepared.message);
+                                }
+                                Err(retry_err) => {
+                                    error!(
+                                        event_id = %prepared.parsed_id,
+                                        error = %retry_err,
+                                        "Failed to queue durable confirmation retry; falling back to raw message redelivery"
+                                    );
+                                    self.stats
+                                        .confirmation_retry_failures
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    nack_prepared.push(prepared);
+                                }
+                            }
                         }
                     }
                 }
 
-                if has_confirmation_failure {
-                    let nak_futs: Vec<_> = batch
+                let ack_futs: Vec<_> = ack_messages.iter().map(|message| message.ack()).collect();
+                let ack_results = join_all(ack_futs).await;
+                for result in &ack_results {
+                    if let Err(e) = result {
+                        return Err(SinexError::network(format!("Failed to ack: {e}")));
+                    }
+                }
+
+                if !nack_prepared.is_empty() {
+                    let nak_futs: Vec<_> = nack_prepared
                         .iter()
                         .map(|prepared| {
                             prepared
@@ -800,7 +895,7 @@ impl JetStreamConsumer {
                         })
                         .collect();
                     let nak_results = join_all(nak_futs).await;
-                    for (result, prepared) in nak_results.iter().zip(batch.iter()) {
+                    for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
                         if let Err(err) = result {
                             warn!(
                                 event_id = %prepared.parsed_id,
@@ -810,7 +905,16 @@ impl JetStreamConsumer {
                             self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    let failed_count = batch.len() as u64;
+                    let processed_count = ack_messages.len() as u64;
+                    if processed_count > 0 {
+                        self.stats
+                            .events_processed
+                            .fetch_add(processed_count, Ordering::Relaxed);
+                        if let Some(ref handle) = self.heartbeat_handle {
+                            handle.increment_events_processed(processed_count);
+                        }
+                    }
+                    let failed_count = nack_prepared.len() as u64;
                     self.stats
                         .events_failed
                         .fetch_add(failed_count, Ordering::Relaxed);
@@ -820,19 +924,7 @@ impl JetStreamConsumer {
                     return Ok(());
                 }
 
-                // ACK all messages concurrently
-                let ack_futs: Vec<_> = batch
-                    .iter()
-                    .map(|prepared| prepared.message.ack())
-                    .collect();
-                let ack_results = join_all(ack_futs).await;
-                for result in &ack_results {
-                    if let Err(e) = result {
-                        return Err(SinexError::network(format!("Failed to ack: {e}")));
-                    }
-                }
-
-                let count = batch.len() as u64;
+                let count = ack_messages.len() as u64;
                 self.stats
                     .events_processed
                     .fetch_add(count, Ordering::Relaxed);
@@ -1180,6 +1272,111 @@ impl JetStreamConsumer {
 
         Err(last_error
             .unwrap_or_else(|| SinexError::network("Failed to publish confirmation after retries")))
+    }
+
+    async fn enqueue_confirmation_retry(&self, event_id: &Uuid) -> IngestdResult<()> {
+        let event_id_str = event_id.to_string();
+        let subject = format!("{}{}", self.topology.confirmation_retry_prefix, event_id_str);
+        let payload = serde_json::to_vec(&ConfirmationRetryRequest {
+            event_id: event_id_str.clone(),
+        })?;
+
+        let mut headers = async_nats::HeaderMap::new();
+        let retry_msg_id = format!("confirm-retry.{event_id_str}");
+        headers.insert("Nats-Msg-Id", retry_msg_id.as_str());
+
+        self.js
+            .publish_with_headers(subject, headers, payload.into())
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to enqueue confirmation retry").with_source(e)
+            })?
+            .await
+            .map_err(|e| {
+                SinexError::network("Confirmation retry enqueue ack failed").with_source(e)
+            })?;
+
+        Ok(())
+    }
+
+    async fn process_confirmation_retry_batch(
+        &self,
+        consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+    ) -> IngestdResult<()> {
+        let messages = pull_batch(
+            consumer,
+            CONFIRM_RETRY_BATCH_MAX_MESSAGES,
+            CONFIRM_RETRY_BATCH_TIMEOUT,
+        )
+        .await
+        .map_err(|e| {
+            SinexError::network("Failed to fetch confirmation retry messages").with_source(e)
+        })?;
+
+        for message in messages {
+            let retry = match serde_json::from_slice::<ConfirmationRetryRequest>(&message.payload) {
+                Ok(retry) => retry,
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Failed to parse confirmation retry payload; acknowledging corrupt retry message"
+                    );
+                    if let Err(ack_err) = message.ack().await {
+                        warn!(error = %ack_err, "Failed to ack corrupt confirmation retry message");
+                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                    continue;
+                }
+            };
+
+            let event_id = match Uuid::parse_str(&retry.event_id) {
+                Ok(event_id) => event_id,
+                Err(err) => {
+                    warn!(
+                        event_id = %retry.event_id,
+                        error = %err,
+                        "Confirmation retry payload contained an invalid event id; acknowledging corrupt retry message"
+                    );
+                    if let Err(ack_err) = message.ack().await {
+                        warn!(error = %ack_err, "Failed to ack invalid confirmation retry message");
+                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                    continue;
+                }
+            };
+
+            match self.publish_confirmation_with_retry(&event_id).await {
+                Ok(()) => {
+                    if let Err(err) = message.ack().await {
+                        return Err(SinexError::network(format!(
+                            "Failed to ack confirmation retry message: {err}"
+                        )));
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        event_id = %event_id,
+                        error = %err,
+                        "Failed to publish confirmation from durable retry queue"
+                    );
+                    self.stats
+                        .confirmation_retry_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    if let Some(ref handle) = self.heartbeat_handle {
+                        handle.record_error("confirmation retry failure");
+                    }
+                    if let Err(nak_err) =
+                        message.ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY))).await
+                    {
+                        return Err(SinexError::network(format!(
+                            "Failed to NAK confirmation retry message: {nak_err}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Route failed message to DLQ and return Ok(()) on success.
