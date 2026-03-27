@@ -17,6 +17,51 @@ use crate::process::ProcessBuilder;
 // UI & System monitoring
 use console::style;
 
+fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
+    match error {
+        Some(error) => format!(
+            "Failed to read failing-test details from history DB at {}: {error}",
+            ctx.history_db_path().display()
+        ),
+        None => format!(
+            "History DB unavailable at {} while reading failing-test details",
+            ctx.history_db_path().display()
+        ),
+    }
+}
+
+fn flaky_test_probe_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
+    match error {
+        Some(error) => format!(
+            "Failed to read flaky-test history from DB at {}: {error}",
+            ctx.history_db_path().display()
+        ),
+        None => format!(
+            "History DB unavailable at {} while reading flaky-test history",
+            ctx.history_db_path().display()
+        ),
+    }
+}
+
+fn load_failing_test_details(
+    ctx: &CommandContext,
+    limit: usize,
+) -> (Vec<crate::history::FailingTest>, Option<String>) {
+    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(limit)) {
+        Some(Ok(failures)) => (failures, None),
+        Some(Err(error)) => (Vec::new(), Some(failing_test_details_issue(ctx, Some(&error)))),
+        None => (Vec::new(), Some(failing_test_details_issue(ctx, None))),
+    }
+}
+
+fn load_flaky_tests(ctx: &CommandContext, limit: usize) -> (Vec<(String, String, i64)>, Option<String>) {
+    match ctx.try_with_history_db(|db| db.get_flaky_tests(limit)) {
+        Some(Ok(flaky)) => (flaky, None),
+        Some(Err(error)) => (Vec::new(), Some(flaky_test_probe_issue(ctx, Some(&error)))),
+        None => (Vec::new(), Some(flaky_test_probe_issue(ctx, None))),
+    }
+}
+
 /// Test command configuration
 ///
 /// Bare `xtask test` runs nextest (the common case). Specialized workflows
@@ -618,9 +663,7 @@ impl XtaskCommand for TestCommand {
 
         if stats.failed > 0 {
             // Query per-test failure details from history DB for structured output
-            let failures = ctx
-                .with_history_db(|db| db.get_failing_tests_with_output(50))
-                .unwrap_or_default();
+            let (failures, failure_details_issue) = load_failing_test_details(ctx, 50);
 
             // H4: Inline failure table for human mode (capped at 5)
             if ctx.is_human() && !failures.is_empty() {
@@ -632,6 +675,10 @@ impl XtaskCommand for TestCommand {
                 if failures.len() > 5 {
                     eprintln!("  … and {} more", failures.len() - 5);
                 }
+                eprintln!();
+            }
+            if ctx.is_human() && let Some(issue) = &failure_details_issue {
+                eprintln!("⚠  {issue}");
                 eprintln!();
             }
 
@@ -648,17 +695,19 @@ impl XtaskCommand for TestCommand {
                 "failed": stats.failed,
                 "ignored": stats.ignored,
                 "failures": failures,
+                "failure_details_issue": failure_details_issue.clone(),
             }))
             .with_duration(ctx.elapsed());
             if low_disk_space {
                 result = result.with_warning(low_disk_space_warning);
             }
+            if let Some(issue) = failure_details_issue {
+                result = result.with_warning(issue);
+            }
             Ok(result)
         } else {
             // H7: Surface flaky tests after a clean run
-            let flaky = ctx
-                .with_history_db(|db| db.get_flaky_tests(5))
-                .unwrap_or_default();
+            let (flaky, flaky_issue) = load_flaky_tests(ctx, 5);
             if ctx.is_human() && !flaky.is_empty() {
                 eprintln!(
                     "\n⚠  {} test{} passed on retry (flaky):",
@@ -678,6 +727,10 @@ impl XtaskCommand for TestCommand {
                 }
                 eprintln!();
             }
+            if ctx.is_human() && let Some(issue) = &flaky_issue {
+                eprintln!("⚠  {issue}");
+                eprintln!();
+            }
 
             let mut result = CommandResult::success()
                 .with_message(format!(
@@ -688,12 +741,68 @@ impl XtaskCommand for TestCommand {
             if low_disk_space {
                 result = result.with_warning(low_disk_space_warning);
             }
+            if let Some(issue) = flaky_issue {
+                result = result.with_warning(issue);
+            }
             Ok(result)
         }
     }
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::test()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these helpers are private and are exercised more directly here
+    // than through a full nextest command harness.
+    use super::*;
+    use crate::command::CommandContext;
+    use crate::history::HistoryDb;
+    use crate::output::{OutputFormat, OutputWriter};
+    use crate::sandbox::sinex_test;
+
+    fn test_context(db_path: std::path::PathBuf) -> CommandContext {
+        CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "test",
+            db_path,
+        )
+    }
+
+    #[sinex_test]
+    async fn test_load_failing_test_details_surfaces_history_query_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let conn = rusqlite::Connection::open(&db_path)?;
+        conn.execute("DROP TABLE test_results", [])?;
+
+        let (_failures, issue) = load_failing_test_details(&test_context(db_path.clone()), 50);
+        let issue = issue.expect("query failure should surface");
+        assert!(issue.contains("Failed to read failing-test details"));
+        assert!(issue.contains(&db_path.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_flaky_tests_surfaces_history_query_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let conn = rusqlite::Connection::open(&db_path)?;
+        conn.execute("DROP TABLE test_results", [])?;
+
+        let (_flaky, issue) = load_flaky_tests(&test_context(db_path.clone()), 5);
+        let issue = issue.expect("query failure should surface");
+        assert!(issue.contains("Failed to read flaky-test history"));
+        assert!(issue.contains(&db_path.display().to_string()));
+        Ok(())
     }
 }
 

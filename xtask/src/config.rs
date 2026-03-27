@@ -163,20 +163,35 @@ pub fn config() -> &'static Config {
 
 /// Load `UserPreferences` from `~/.config/xtask/preferences.toml`.
 ///
-/// Silently returns defaults if the file is missing, unreadable, or malformed.
-/// This matches the plan's "precedence" contract: the prefs file is the fallback
-/// after CLI flags and env vars, and before hardcoded defaults.
+/// Missing files fall back to defaults. Read/parse failures are surfaced to
+/// stderr and also fall back to defaults so xtask remains usable.
 pub(crate) fn load_user_preferences() -> UserPreferences {
     let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));
-    load_user_preferences_from(&config_dir)
+    let path = config_dir.join("xtask/preferences.toml");
+    match load_user_preferences_from(&config_dir) {
+        Ok(prefs) => prefs,
+        Err(error) => {
+            eprintln!(
+                "[xtask] failed to load user preferences from {}: {error}",
+                path.display()
+            );
+            UserPreferences::default()
+        }
+    }
 }
 
 /// Testable core of `load_user_preferences` — reads from an explicit config dir.
-pub(crate) fn load_user_preferences_from(config_dir: &std::path::Path) -> UserPreferences {
+pub(crate) fn load_user_preferences_from(
+    config_dir: &std::path::Path,
+) -> color_eyre::Result<UserPreferences> {
+    use color_eyre::eyre::Context;
+
     let path = config_dir.join("xtask/preferences.toml");
     match std::fs::read_to_string(&path) {
-        Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
-        Err(_) => UserPreferences::default(),
+        Ok(contents) => toml::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(UserPreferences::default()),
+        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
     }
 }
 
@@ -250,7 +265,7 @@ mod tests {
             "notify_on_completion = true\n",
         )?;
 
-        let prefs = load_user_preferences_from(dir.path());
+        let prefs = load_user_preferences_from(dir.path())?;
         assert!(
             prefs.notify_on_completion,
             "should read notify_on_completion = true"
@@ -262,7 +277,7 @@ mod tests {
     async fn test_load_preferences_missing_file() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         // No preferences.toml written — should return defaults without panic
-        let prefs = load_user_preferences_from(dir.path());
+        let prefs = load_user_preferences_from(dir.path())?;
         assert!(
             !prefs.notify_on_completion,
             "missing file should yield default false"
@@ -277,11 +292,11 @@ mod tests {
         std::fs::create_dir_all(&prefs_dir)?;
         std::fs::write(prefs_dir.join("preferences.toml"), "[[[not valid")?;
 
-        // Malformed TOML — should silently return defaults, not panic
-        let prefs = load_user_preferences_from(dir.path());
+        let error = load_user_preferences_from(dir.path())
+            .expect_err("malformed TOML should surface a parse error");
         assert!(
-            !prefs.notify_on_completion,
-            "malformed TOML should yield defaults"
+            error.to_string().contains("failed to parse"),
+            "expected parse context, got: {error}"
         );
         Ok(())
     }
