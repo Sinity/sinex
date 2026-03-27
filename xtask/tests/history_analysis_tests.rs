@@ -413,6 +413,37 @@ async fn test_recommendations_empty_on_clean_workspace() -> ::xtask::sandbox::Te
     Ok(())
 }
 
+#[sinex_test]
+async fn test_package_reliability_surfaces_flaky_query_failures()
+-> ::xtask::sandbox::TestResult<()> {
+    let (dir, db) = temp_db()?;
+    seed_check_with_diagnostics(&db, "sinex-node-sdk", 0, 1, 0, 2.0)?;
+    let conn = rusqlite::Connection::open(dir.path().join("test.db"))?;
+    conn.execute("DROP TABLE test_results", rusqlite::params![])?;
+
+    let analysis = HistoryAnalysis::new(&db);
+    let error = analysis
+        .package_reliability(10)
+        .expect_err("flaky test query failure should surface");
+    assert!(format!("{error:#}").contains("test_results"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_recommendations_surface_flaky_query_failures()
+-> ::xtask::sandbox::TestResult<()> {
+    let (dir, db) = temp_db()?;
+    let conn = rusqlite::Connection::open(dir.path().join("test.db"))?;
+    conn.execute("DROP TABLE test_results", rusqlite::params![])?;
+
+    let analysis = HistoryAnalysis::new(&db);
+    let error = analysis
+        .recommendations()
+        .expect_err("flaky test query failure should surface");
+    assert!(format!("{error:#}").contains("test_results"));
+    Ok(())
+}
+
 // ─── pass rate aggregation ────────────────────────────────────────────────────
 
 /// pass rate aggregates across multiple invocations, not just the last one.

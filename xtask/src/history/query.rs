@@ -662,7 +662,7 @@ impl<'db> HistoryAnalysis<'db> {
     /// J3: Per-package test reliability (pass rate + flakiness, 7d vs 30d trend).
     pub fn package_reliability(&self, limit: usize) -> Result<Vec<PackageReliability>> {
         let packages = self.db.get_known_packages()?;
-        let flaky_tests = self.db.get_flaky_tests(200).unwrap_or_default();
+        let flaky_tests = self.db.get_flaky_tests(200)?;
 
         let mut results = Vec::new();
         for pkg in packages.iter() {
@@ -859,7 +859,7 @@ impl<'db> HistoryAnalysis<'db> {
             }
         }
 
-        let flaky = self.db.get_flaky_tests(5).unwrap_or_default();
+        let flaky = self.db.get_flaky_tests(5)?;
         if !flaky.is_empty() {
             recs.push(Recommendation {
                 severity: "warning".to_string(),
