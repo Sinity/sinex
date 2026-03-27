@@ -388,19 +388,45 @@ impl JobCoordinator {
         scope_key: &str,
     ) -> Option<CoordinationResult> {
         let cfg = config();
-        let db = crate::history::HistoryDb::open(&cfg.history_db_path()).ok();
+        let history_db_path = cfg.history_db_path();
+        let db = match crate::history::HistoryDb::open(&history_db_path) {
+            Ok(db) => db,
+            Err(error) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    path = %history_db_path.display(),
+                    error = %error,
+                    command,
+                    "coordinator freshness check disabled because history DB could not be opened"
+                );
+                return None;
+            }
+        };
 
-        if let Some(db) = db
-            && let Ok(Some(last)) = db.get_last_completed_with_fingerprint(command)
-            && last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
-            && last.scope_key.as_deref() == Some(scope_key)
-            && last.status == InvocationStatus::Success
-        {
-            return Some(CoordinationResult::Fresh {
-                job_id: last.id,
-                status: "success".to_string(),
-                duration_secs: last.duration_secs.unwrap_or(0.0),
-            });
+        match db.get_last_completed_with_fingerprint(command) {
+            Ok(Some(last))
+                if last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
+                    && last.scope_key.as_deref() == Some(scope_key)
+                    && last.status == InvocationStatus::Success =>
+            {
+                return Some(CoordinationResult::Fresh {
+                    job_id: last.id,
+                    status: "success".to_string(),
+                    duration_secs: last.duration_secs.unwrap_or(0.0),
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    path = %history_db_path.display(),
+                    error = %error,
+                    command,
+                    tree_fingerprint = %tree_fingerprint,
+                    scope_key = %scope_key,
+                    "coordinator freshness check disabled because history lookup failed"
+                );
+            }
         }
 
         None
@@ -1060,6 +1086,30 @@ impl WorkflowGraph {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::ffi::OsString;
+
+    struct ScopedEnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                unsafe { std::env::set_var(self.key, previous) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     #[sinex_test]
     async fn test_should_coordinate() -> TestResult<()> {
@@ -1120,6 +1170,19 @@ mod tests {
             "--skip-preflight".into(),
         ];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+
+        assert!(
+            coordinator.check_fresh("check", "tree-fingerprint", "scope-key").is_none(),
+            "unopenable history DB should disable freshness checks instead of panicking"
+        );
         Ok(())
     }
 
