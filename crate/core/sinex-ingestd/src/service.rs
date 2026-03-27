@@ -32,7 +32,7 @@ use std::{
 use tokio::{
     sync::Mutex,
     sync::RwLock,
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
     time::{Duration, interval},
 };
 use tracing::{debug, error, info, warn};
@@ -73,6 +73,8 @@ pub struct IngestService {
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
     heartbeat_counter_handle: Option<sinex_node_sdk::heartbeat::HeartbeatCounterHandle>,
 }
+
+type CriticalTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
 
 impl Clone for IngestService {
     fn clone(&self) -> Self {
@@ -383,26 +385,22 @@ impl IngestService {
     ) -> IngestdResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        let mut critical_tasks = JoinSet::new();
+        Self::track_critical_task(&mut critical_tasks, "JetStream consumer", js_handle);
+        Self::track_critical_task(&mut critical_tasks, "MaterialAssembler", ma_handle);
 
-        tokio::select! {
-            // JetStream consumer exited
-            result = async {
-                match js_handle {
-                    Some(handle) => handle.await,
-                    None => std::future::pending().await,
+        let result = tokio::select! {
+            maybe_task = critical_tasks.join_next(), if !critical_tasks.is_empty() => {
+                match maybe_task {
+                    Some(Ok((name, result))) => {
+                        Self::handle_task_result(name, result, &shutdown_flag, &shutdown_notify)
+                    }
+                    Some(Err(err)) => {
+                        trigger_shutdown(&shutdown_flag, &shutdown_notify);
+                        Err(SinexError::service(format!("Critical task monitor panicked: {err}")))
+                    }
+                    None => Ok(()),
                 }
-            } => {
-                Self::handle_task_result("JetStream consumer", result, &shutdown_flag, &shutdown_notify)
-            }
-
-            // MaterialAssembler exited
-            result = async {
-                match ma_handle {
-                    Some(handle) => handle.await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                Self::handle_task_result("MaterialAssembler", result, &shutdown_flag, &shutdown_notify)
             }
 
             // Normal shutdown signal
@@ -410,7 +408,75 @@ impl IngestService {
                 info!("Received shutdown signal");
                 Ok(())
             }
+        };
+
+        Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
+        result
+    }
+
+    fn track_critical_task(
+        tasks: &mut JoinSet<CriticalTaskOutcome>,
+        name: &'static str,
+        handle: Option<JoinHandle<IngestdResult<()>>>,
+    ) {
+        if let Some(handle) = handle {
+            tasks.spawn(async move { (name, handle.await) });
         }
+    }
+
+    async fn wait_for_critical_tasks(
+        tasks: &mut JoinSet<CriticalTaskOutcome>,
+        timeout: Duration,
+    ) {
+        if tasks.is_empty() {
+            return;
+        }
+
+        info!(
+            "Waiting for {} critical tasks to finish...",
+            tasks.len()
+        );
+
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+
+        loop {
+            tokio::select! {
+                maybe = tasks.join_next(), if !tasks.is_empty() => {
+                    match maybe {
+                        Some(Ok((name, Ok(Ok(()))))) => {
+                            debug!(task = name, "Critical task stopped cleanly");
+                        }
+                        Some(Ok((name, Ok(Err(error))))) => {
+                            warn!(task = name, error = %error, "Critical task exited with error during shutdown");
+                        }
+                        Some(Ok((name, Err(error)))) => {
+                            warn!(task = name, error = ?error, "Critical task join failed during shutdown");
+                        }
+                        Some(Err(error)) => {
+                            warn!(error = ?error, "Critical task monitor join failed during shutdown");
+                        }
+                        None => break,
+                    }
+                }
+                () = &mut deadline => {
+                    warn!(
+                        "Timed out waiting for {} critical tasks after {:?}, aborting remaining work",
+                        tasks.len(),
+                        timeout
+                    );
+                    tasks.abort_all();
+                    while let Some(result) = tasks.join_next().await {
+                        if let Err(error) = result {
+                            debug!(error = ?error, "Critical task aborted during shutdown cleanup");
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        info!("Critical task cleanup complete");
     }
 
     fn handle_task_result(
@@ -1019,6 +1085,35 @@ mod tests {
         .await
         .expect("shutdown waiters should wake immediately");
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure(
+    ) -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+        let sibling_finished = Arc::new(AtomicBool::new(false));
+
+        let failing = tokio::spawn(async { Err(SinexError::service("boom")) });
+        let sibling_flag = Arc::clone(&sibling_finished);
+        let shutdown_flag = Arc::clone(&service.shutdown_flag);
+        let shutdown_notify = Arc::clone(&service.shutdown_notify);
+        let sibling = tokio::spawn(async move {
+            shutdown_signal(&shutdown_flag, &shutdown_notify).await;
+            sibling_flag.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let error = service
+            .monitor_runtime(Some(failing), Some(sibling))
+            .await
+            .expect_err("unexpected failure should bubble up");
+
+        assert!(error.to_string().contains("boom"));
+        assert!(
+            sibling_finished.load(Ordering::SeqCst),
+            "monitor_runtime should await the sibling critical task after shutdown"
+        );
         Ok(())
     }
 }
