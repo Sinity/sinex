@@ -32,6 +32,7 @@ use sinex_primitives::rpc::{
     },
     methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
+    ops::OpsStartResponse,
     replay::{
         ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
         ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
@@ -772,20 +773,14 @@ impl GatewayClient {
     pub async fn ops_start(
         &self,
         operation_type: &str,
-        operator: &str,
         scope: Option<Value>,
-    ) -> Result<String> {
+    ) -> Result<OpsStartResponse> {
         let params = json!({
             "operation_type": operation_type,
-            "operator": operator,
             "scope": scope
         });
         let result = self.call_rpc("ops.start", params).await?;
-        Ok(result
-            .get("operation_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string())
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     /// List operations

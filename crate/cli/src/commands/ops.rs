@@ -1,6 +1,6 @@
 use clap::Subcommand;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_primitives::rpc::ops::OpsStartResponse;
 use sinex_primitives::utils::json_helpers::get_str;
 
 use crate::Result;
@@ -25,7 +25,7 @@ EXAMPLES:
     sinexctl ops get 01HQ2KM...
 
     # Start a new maintenance operation
-    sinexctl ops start -t maintenance -o admin@example.com
+    sinexctl ops start -t maintenance
 
     # Cancel an operation
     sinexctl ops cancel 01HQ2KM... -r 'No longer needed'
@@ -36,10 +36,6 @@ pub enum OpsCommands {
         /// Operation type (e.g., "replay", "migration", "maintenance")
         #[arg(long, short = 't')]
         operation_type: String,
-
-        /// Operator identifier (user or service name)
-        #[arg(long, short = 'o')]
-        operator: String,
 
         /// Scope JSON (optional)
         #[arg(long, short = 's')]
@@ -96,7 +92,6 @@ impl OpsCommands {
         match self {
             Self::Start {
                 operation_type,
-                operator,
                 scope,
                 format,
             } => {
@@ -105,18 +100,12 @@ impl OpsCommands {
                     .map(|s| serde_json::from_str(s))
                     .transpose()?;
 
-                let operation_id = with_spinner_result(
+                let response = with_spinner_result(
                     format!("Starting {operation_type} operation..."),
                     "Operation started",
-                    client.ops_start(operation_type, operator, scope_json),
+                    client.ops_start(operation_type, scope_json),
                 )
                 .await?;
-
-                let response = OpsStartResponse {
-                    operation_id,
-                    operation_type: operation_type.clone(),
-                    operator: operator.clone(),
-                };
 
                 CommandOutput::single(response, format_ops_start_table).display(format)?;
             }
@@ -160,21 +149,13 @@ impl OpsCommands {
     }
 }
 
-/// Response for ops.start command
-#[derive(Debug, Serialize, Deserialize)]
-struct OpsStartResponse {
-    operation_id: String,
-    operation_type: String,
-    operator: String,
-}
-
 /// Format ops start response as table
 fn format_ops_start_table(response: &OpsStartResponse) -> String {
     let mut output = String::new();
     output.push_str("Operation started successfully\n");
-    output.push_str(&format!("  ID: {}\n", response.operation_id));
-    output.push_str(&format!("  Type: {}\n", response.operation_type));
-    output.push_str(&format!("  Operator: {}\n", response.operator));
+    output.push_str(&format!("  ID: {}\n", response.operation.id));
+    output.push_str(&format!("  Type: {}\n", response.operation.operation_type));
+    output.push_str(&format!("  Operator: {}\n", response.operation.operator));
     output
 }
 

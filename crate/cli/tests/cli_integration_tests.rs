@@ -109,6 +109,18 @@ mod help_tests {
     }
 
     #[sinex_test]
+    async fn test_ops_start_help_does_not_expose_dead_operator_flag() -> TestResult<()> {
+        sinexctl()
+            .args(["ops", "start", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--operator").not())
+            .stdout(predicate::str::contains("--operation-type"))
+            .stdout(predicate::str::contains("--scope"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_config_help() -> TestResult<()> {
         sinexctl()
             .args(["config", "--help"])
