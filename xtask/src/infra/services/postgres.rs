@@ -136,7 +136,7 @@ impl PostgresManager {
         match self.postmaster_pid_state()? {
             PostmasterPidState::Missing => {}
             PostmasterPidState::Running(_) => {
-                if self.is_accepting_connections() {
+                if self.accepting_connections_probe()? {
                     if verbose {
                         println!("PostgreSQL already running");
                     }
@@ -188,22 +188,7 @@ impl PostgresManager {
 
         // Wait for readiness
         for _ in 0..60 {
-            let check = self
-                .pg_command("pg_isready")
-                .args([
-                    "-h",
-                    self.config
-                        .run_dir
-                        .to_str()
-                        .expect("run dir must be valid UTF-8"),
-                ])
-                .arg("-p")
-                .arg(self.config.port.to_string())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-
-            if check.is_ok_and(|s| s.success()) {
+            if self.accepting_connections_probe()? {
                 if verbose {
                     println!("PostgreSQL started");
                 }
@@ -283,8 +268,9 @@ impl PostgresManager {
     }
 
     /// Check if PostgreSQL is accepting connections via pg_isready.
-    pub fn is_accepting_connections(&self) -> bool {
-        self.pg_command("pg_isready")
+    pub fn accepting_connections_probe(&self) -> Result<bool> {
+        pg_isready_probe(
+            self.pg_command("pg_isready")
             .args([
                 "-h",
                 self.config
@@ -295,9 +281,9 @@ impl PostgresManager {
             .arg("-p")
             .arg(self.config.port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+            .stderr(Stdio::piped())
+            .output(),
+        )
     }
 
     /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
@@ -452,6 +438,24 @@ impl PostgresManager {
     }
 }
 
+fn pg_isready_probe(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    let output = output.wrap_err("failed to run pg_isready")?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) | Some(2) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            bail!("pg_isready exited unexpectedly{suffix}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,6 +551,50 @@ mod tests {
         assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" CASCADE"));
         assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"vector\" CASCADE"));
         assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_reports_spawn_failures() -> TestResult<()> {
+        let error = pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to run pg_isready"));
+        assert!(message.contains("pg_isready exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_treats_exit_two_as_not_accepting() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let accepting = pg_isready_probe(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(512),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }))?;
+            assert!(!accepting);
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_reports_unexpected_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = pg_isready_probe(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(768),
+                stdout: Vec::new(),
+                stderr: b"invalid option".to_vec(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("pg_isready exited unexpectedly"));
+            assert!(message.contains("invalid option"));
+        }
         Ok(())
     }
 }
