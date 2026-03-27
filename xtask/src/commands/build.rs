@@ -92,8 +92,9 @@ impl XtaskCommand for BuildCommand {
         // Affected mode is default ON, --all disables it
         if !self.all {
             let stage = ctx.start_stage("affected");
-            let affected = affected::affected_packages()?;
-            ctx.finish_stage(stage, true);
+            let affected = affected::affected_packages();
+            ctx.finish_stage(stage, affected.is_ok());
+            let affected = affected?;
             if affected.is_empty() {
                 if ctx.is_human() {
                     println!("No changes detected. Building ALL packages.");

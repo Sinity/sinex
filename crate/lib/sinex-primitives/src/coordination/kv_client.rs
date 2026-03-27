@@ -1,4 +1,5 @@
 use crate::SinexError;
+use crate::nats::create_or_open_kv_store;
 use crate::units::Seconds;
 use async_nats::jetstream::{Context, kv::Store};
 use futures::StreamExt;
@@ -177,47 +178,29 @@ impl CoordinationKvClient {
     }
 
     async fn instances_bucket(&self) -> Result<Store, SinexError> {
-        let config = async_nats::jetstream::kv::Config {
+        create_or_open_kv_store(
+            &self.js,
+            async_nats::jetstream::kv::Config {
             bucket: self.instances_bucket.clone(),
             history: 5,
             max_age: self.timing.instance_stale_timeout(),
             ..Default::default()
-        };
-
-        match self.js.create_key_value(config).await {
-            Ok(store) => Ok(store),
-            Err(create_err) => self
-                .js
-                .get_key_value(&self.instances_bucket)
-                .await
-                .map_err(|e| {
-                    SinexError::kv(format!(
-                        "Failed to get instances bucket (create: {create_err}, open: {e})"
-                    ))
-                }),
-        }
+            },
+        )
+        .await
     }
 
     async fn leadership_bucket(&self) -> Result<Store, SinexError> {
-        let config = async_nats::jetstream::kv::Config {
+        create_or_open_kv_store(
+            &self.js,
+            async_nats::jetstream::kv::Config {
             bucket: self.leadership_bucket.clone(),
             history: 5,
             max_age: self.timing.leadership_timeout(),
             ..Default::default()
-        };
-
-        match self.js.create_key_value(config).await {
-            Ok(store) => Ok(store),
-            Err(create_err) => self
-                .js
-                .get_key_value(&self.leadership_bucket)
-                .await
-                .map_err(|e| {
-                    SinexError::kv(format!(
-                        "Failed to get leadership bucket (create: {create_err}, open: {e})"
-                    ))
-                }),
-        }
+            },
+        )
+        .await
     }
 
     /// Register a node instance in the KV store.

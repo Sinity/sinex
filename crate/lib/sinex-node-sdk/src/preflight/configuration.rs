@@ -11,6 +11,7 @@
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
 use sinex_primitives::DeploymentReadinessDescriptor;
+use std::fmt::Display;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -616,11 +617,15 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
         );
     };
 
-    let sockets: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|value| value.path()))
-        .map(|path| path.join(".socket2.sock"))
-        .filter(|path| path.exists())
-        .collect();
+    let sockets = match collect_hyprland_runtime_sockets(
+        &hypr_dir,
+        entries.map(|entry| entry.map(|value| value.path())),
+    ) {
+        Ok(sockets) => sockets,
+        Err(reason) => {
+            return EventSourceProbe::unavailable(reason, vec![hypr_dir]);
+        }
+    };
 
     match sockets.as_slice() {
         [socket] => EventSourceProbe::available(
@@ -636,6 +641,30 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
             sockets,
         ),
     }
+}
+
+fn collect_hyprland_runtime_sockets<I, E>(
+    hypr_dir: &Path,
+    entries: I,
+) -> std::result::Result<Vec<PathBuf>, String>
+where
+    I: IntoIterator<Item = std::result::Result<PathBuf, E>>,
+    E: Display,
+{
+    let mut sockets = Vec::new();
+    for entry in entries {
+        let instance_dir = entry.map_err(|error| {
+            format!(
+                "Failed to inspect Hyprland runtime directory entry in '{}': {error}",
+                hypr_dir.display()
+            )
+        })?;
+        let socket = instance_dir.join(".socket2.sock");
+        if socket.exists() {
+            sockets.push(socket);
+        }
+    }
+    Ok(sockets)
 }
 
 fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
@@ -672,6 +701,57 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
             format!("Configured Atuin history database is unreadable or malformed: {error}"),
             vec![path],
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are justified here because they exercise private
+    // helper behavior without widening the preflight API surface.
+    use super::collect_hyprland_runtime_sockets;
+    use std::fs;
+    use std::io;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn collect_hyprland_runtime_sockets_reports_entry_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let hypr_dir = temp.path().join("hypr");
+        fs::create_dir_all(&hypr_dir)?;
+
+        let error = collect_hyprland_runtime_sockets(
+            &hypr_dir,
+            vec![Err::<std::path::PathBuf, _>(io::Error::other("boom"))],
+        )
+        .expect_err("entry failure should be reported");
+
+        assert!(error.contains("Failed to inspect Hyprland runtime directory entry"));
+        assert!(error.contains("boom"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_hyprland_runtime_sockets_returns_present_event_socket_only() -> TestResult<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let hypr_dir = temp.path().join("hypr");
+        let instance_a = hypr_dir.join("instance-a");
+        let instance_b = hypr_dir.join("instance-b");
+        fs::create_dir_all(&instance_a)?;
+        fs::create_dir_all(&instance_b)?;
+        fs::write(instance_a.join(".socket2.sock"), [])?;
+
+        let sockets = collect_hyprland_runtime_sockets(
+            &hypr_dir,
+            vec![
+                Ok::<std::path::PathBuf, io::Error>(instance_a.clone()),
+                Ok::<std::path::PathBuf, io::Error>(instance_b.clone()),
+            ],
+        )
+        .map_err(color_eyre::eyre::Report::msg)?;
+
+        assert_eq!(sockets, vec![instance_a.join(".socket2.sock")]);
+        Ok(())
     }
 }
 

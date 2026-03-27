@@ -6,6 +6,7 @@
 //! `start_test_ingestd_with_config`.
 
 use crate::sandbox::prelude::*;
+use color_eyre::eyre::WrapErr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -47,7 +48,6 @@ impl Default for TestIngestdConfig {
 pub struct TestIngestdHandle {
     child: tokio::process::Child,
     pub stream_name: String,
-    stderr_reader: Option<tokio::task::JoinHandle<String>>,
 }
 
 impl TestIngestdHandle {
@@ -55,18 +55,17 @@ impl TestIngestdHandle {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
         // Dump debug log file
-        let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
-        if let Ok(content) = std::fs::read_to_string(&debug_log) {
-            if content.is_empty() {
+        let debug_log = ingestd_debug_log_path_for_test_process();
+        match read_ingestd_debug_log(&debug_log) {
+            Ok(None) => {
                 eprintln!("📋 ingestd log: EMPTY");
-            } else {
+            }
+            Ok(Some(content)) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
                 eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
             }
-        }
-        if let Some(reader) = self.stderr_reader.take() {
-            let _ = reader.await;
+            Err(error) => eprintln!("📋 ingestd log unavailable: {error:#}"),
         }
         Ok(())
     }
@@ -75,6 +74,20 @@ impl TestIngestdHandle {
 impl Drop for TestIngestdHandle {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
+    }
+}
+
+pub(crate) fn ingestd_debug_log_path_for_test_process() -> PathBuf {
+    PathBuf::from(format!("/tmp/sinex-ingestd-{}.log", std::process::id()))
+}
+
+pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<String>> {
+    let content = std::fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed to read ingestd debug log '{}'", path.display()))?;
+    if content.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(content))
     }
 }
 
@@ -355,7 +368,7 @@ pub async fn start_test_ingestd_with_config(
 
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
-    let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
+    let debug_log = ingestd_debug_log_path_for_test_process();
     let mut cmd = Command::new("bash");
     #[cfg(target_os = "linux")]
     unsafe {
@@ -368,7 +381,7 @@ pub async fn start_test_ingestd_with_config(
         "exec {} --pool-size {} >{} 2>&1",
         binary_path.display(),
         config.database_pool_size,
-        debug_log,
+        debug_log.display(),
     ));
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
@@ -410,12 +423,9 @@ pub async fn start_test_ingestd_with_config(
     // routed to the DLQ instead of being persisted.
     cmd.env("SINEX_VALIDATE_SCHEMAS", "false");
     cmd.env("SINEX_SKIP_SCHEMA_SYNC", "true");
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.stdin(Stdio::null()).kill_on_drop(true);
 
     let child = cmd.spawn()?;
-    let stderr_reader = None;
 
     // Compute the stream name using the same logic as ingestd:
     // environment-prefixed base name, with optional namespace suffix.
@@ -455,13 +465,13 @@ pub async fn start_test_ingestd_with_config(
     Ok(TestIngestdHandle {
         child,
         stream_name,
-        stderr_reader,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[sinex_test]
     async fn captured_output_stdout_json_lines_surfaces_invalid_json() -> TestResult<()> {
@@ -507,6 +517,35 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("failed to read workspace candidate manifest"));
         assert!(message.contains(workspace_root.join("Cargo.toml").display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_reports_missing_file() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let error = read_ingestd_debug_log(&tempdir.path().join("missing.log")).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read ingestd debug log"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_treats_empty_file_as_empty() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "")?;
+        assert!(read_ingestd_debug_log(&debug_log)?.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_preserves_non_empty_content() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "line one\nline two\n")?;
+        assert_eq!(
+            read_ingestd_debug_log(&debug_log)?,
+            Some("line one\nline two\n".to_string())
+        );
         Ok(())
     }
 }

@@ -62,7 +62,7 @@ pub enum InfraSubcommand {
         #[arg(long, default_value = "Sinex Gateway CA")]
         ca_name: String,
         /// Certificate validity in days
-        #[arg(long, default_value_t = 3650)]
+        #[arg(long, default_value_t = crate::tls::DEFAULT_DEV_CERT_VALIDITY_DAYS)]
         validity_days: u32,
         /// Overwrite an existing certificate set
         #[arg(long)]

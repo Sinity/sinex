@@ -492,11 +492,21 @@ impl XtaskCommand for CheckCommand {
         }
 
         // Q5: if NixOS modules are dirty, suggest running the NixOS compatibility gate
-        if ctx.is_human() && crate::affected::nixos_modules_dirty() {
-            eprintln!(
-                "→ NixOS modules modified. Run the NixOS compatibility gate: \
-                 xtask test --vm --category smoke"
-            );
+        match crate::affected::nixos_modules_dirty() {
+            Ok(true) if ctx.is_human() => {
+                eprintln!(
+                    "→ NixOS modules modified. Run the NixOS compatibility gate: \
+                     xtask test --vm --category smoke"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let warning = format!("Failed to detect dirty NixOS modules: {error:#}");
+                if ctx.is_human() {
+                    eprintln!("→ {warning}");
+                }
+                result = result.with_warning(warning);
+            }
         }
 
         // H1: Post-check fixable diagnostic hint

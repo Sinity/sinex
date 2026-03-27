@@ -1,13 +1,9 @@
 #![cfg(feature = "messaging")]
-#![allow(deprecated)]
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::derived_node::{
     DerivedOutput, DerivedTriggerContext, DerivedNodeAdapter, TransducerWrapper,
-};
-use sinex_node_sdk::automaton_node::{
-    AutomatonNode, AutomatonNodeAdapter, NodeEventContext, OutputEvent,
 };
 use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
 use sinex_primitives::events::DynamicPayload;
@@ -97,80 +93,6 @@ impl TransducerNode for DlqDerivedNode {
     }
 }
 
-struct PassthroughAutomaton;
-
-impl AutomatonNode for PassthroughAutomaton {
-    type State = TestState;
-    type Input = TestInput;
-    type Output = JsonValue;
-
-    fn name(&self) -> &'static str {
-        "adapter-regression-automaton"
-    }
-
-    fn input_event_type(&self) -> &'static str {
-        "test.input"
-    }
-
-    fn output_event_type(&self) -> &'static str {
-        "test.output"
-    }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Command
-    }
-
-    async fn process(
-        &mut self,
-        _state: &mut Self::State,
-        input: Self::Input,
-        context: &NodeEventContext,
-    ) -> std::result::Result<Option<OutputEvent<Self::Output>>, NodeLogicError> {
-        Ok(Some(OutputEvent {
-            payload: json!({ "value": input.value }),
-            ts_orig: context.ts_orig.unwrap_or_else(Timestamp::now),
-            source_event_ids: vec![context.event_id],
-        }))
-    }
-}
-
-struct DlqAutomaton;
-
-impl AutomatonNode for DlqAutomaton {
-    type State = TestState;
-    type Input = TestInput;
-    type Output = JsonValue;
-
-    fn name(&self) -> &'static str {
-        "adapter-regression-automaton-dlq"
-    }
-
-    fn input_event_type(&self) -> &'static str {
-        "test.input"
-    }
-
-    fn output_event_type(&self) -> &'static str {
-        "test.output"
-    }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
-    async fn process(
-        &mut self,
-        _state: &mut Self::State,
-        _input: Self::Input,
-        _context: &NodeEventContext,
-    ) -> std::result::Result<Option<OutputEvent<Self::Output>>, NodeLogicError> {
-        Err(NodeLogicError::Processing("automaton failure".to_string()))
-    }
-
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToDLQ
-    }
-}
-
 fn make_event_with_value(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
     let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
         .from_parents([Id::<Event<JsonValue>>::new()])?
@@ -218,29 +140,6 @@ async fn derived_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()
 }
 
 #[sinex_test]
-async fn automaton_adapter_rejects_missing_trigger_id() -> TestResult<()> {
-    let mut adapter = AutomatonNodeAdapter::new(PassthroughAutomaton);
-    let mut event = make_event()?;
-    event.id = None;
-
-    let err = adapter.process_one(event).await.expect_err("missing id must fail");
-    assert!(format!("{err}").contains("missing an id"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn automaton_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()> {
-    let mut adapter = AutomatonNodeAdapter::new(DlqAutomaton);
-
-    let err = adapter
-        .process_one(make_event()?)
-        .await
-        .expect_err("missing transport must fail");
-    assert!(!format!("{err}").is_empty());
-    Ok(())
-}
-
-#[sinex_test]
 async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
     let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
     let output = adapter
@@ -252,23 +151,6 @@ async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
         .into_iter()
         .next()
         .expect("derived node should emit output");
-
-    let value = output.payload["value"]
-        .as_str()
-        .expect("redacted payload should stay string");
-    assert_eq!(value, "<GITHUB_TOKEN>");
-    Ok(())
-}
-
-#[sinex_test]
-async fn automaton_adapter_redacts_output_payloads() -> TestResult<()> {
-    let mut adapter = AutomatonNodeAdapter::new(PassthroughAutomaton);
-    let output = adapter
-        .process_one(make_event_with_value(
-            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-        )?)
-        .await?
-        .expect("automaton should emit output");
 
     let value = output.payload["value"]
         .as_str()

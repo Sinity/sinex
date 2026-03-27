@@ -62,6 +62,23 @@ pub struct JetStreamEventConsumer {
 }
 
 impl JetStreamEventConsumer {
+    fn background_task_exit_result(
+        task_name: &str,
+        result: Result<NodeResult<()>, tokio::task::JoinError>,
+        stop_requested: bool,
+    ) -> NodeResult<()> {
+        match result {
+            Ok(Ok(())) if stop_requested => Ok(()),
+            Ok(Ok(())) => Err(SinexError::service(format!(
+                "{task_name} stopped unexpectedly"
+            ))),
+            Ok(Err(error)) => Err(error),
+            Err(join_error) => Err(SinexError::service(format!(
+                "{task_name} panicked: {join_error}"
+            ))),
+        }
+    }
+
     /// Create a new `JetStream` event consumer
     pub fn new(
         nats_client: async_nats::Client,
@@ -202,22 +219,28 @@ impl JetStreamEventConsumer {
 
         tokio::select! {
             result = provisional_task => {
+                let stop_requested = !*self.running.read().await;
                 error!("Provisional events task stopped: {:?}", result);
                 // Abort remaining tasks
                 confirmation_abort.abort();
                 timeout_abort.abort();
+                Self::background_task_exit_result("provisional events task", result, stop_requested)?
             }
             result = confirmation_task => {
+                let stop_requested = !*self.running.read().await;
                 error!("Confirmation task stopped: {:?}", result);
                 // Abort remaining tasks
                 provisional_abort.abort();
                 timeout_abort.abort();
+                Self::background_task_exit_result("confirmation task", result, stop_requested)?
             }
             result = timeout_task => {
+                let stop_requested = !*self.running.read().await;
                 error!("Timeout check task stopped: {:?}", result);
                 // Abort remaining tasks
                 provisional_abort.abort();
                 confirmation_abort.abort();
+                Self::background_task_exit_result("timeout check task", result, stop_requested)?
             }
         }
 
@@ -527,5 +550,49 @@ impl JetStreamEventConsumer {
             persisted,
             ts_ingest,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are justified here because they target private background-task
+    // exit classification logic that is not exposed through the public consumer API.
+    use super::JetStreamEventConsumer;
+    use sinex_primitives::SinexError;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn background_task_exit_is_error_while_running() -> xtask::sandbox::TestResult<()> {
+        let handle = tokio::spawn(async { Ok::<(), SinexError>(()) });
+        let result = handle.await;
+
+        let error = JetStreamEventConsumer::background_task_exit_result("confirmation task", result, false)
+            .expect_err("unexpected task exit while still running must fail");
+        assert!(format!("{error:#}").contains("confirmation task stopped unexpectedly"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn background_task_exit_after_stop_is_clean() -> xtask::sandbox::TestResult<()> {
+        let handle = tokio::spawn(async { Ok::<(), SinexError>(()) });
+        let result = handle.await;
+
+        JetStreamEventConsumer::background_task_exit_result("confirmation task", result, true)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn background_task_panic_is_preserved() -> xtask::sandbox::TestResult<()> {
+        let handle = tokio::spawn(async { panic!("boom") });
+        let result = handle.await.map(|_| Ok::<(), SinexError>(()));
+
+        let error = JetStreamEventConsumer::background_task_exit_result(
+            "confirmation task",
+            result,
+            false,
+        )
+        .expect_err("panic must surface as an error");
+        assert!(format!("{error:#}").contains("confirmation task panicked"));
+        Ok(())
     }
 }

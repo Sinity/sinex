@@ -55,6 +55,8 @@ pub(crate) struct DoctorReport {
     pub postgres_extensions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub postgres_extensions_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_smoke: Option<DoctorServiceCheck>,
     pub overall: bool,
 }
 
@@ -345,8 +347,6 @@ impl XtaskCommand for DoctorCommand {
 
 /// Run diagnostics (replaces 'stack doctor')
 fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    use crate::process::ProcessBuilder;
-
     let mut all_ok = true;
 
     // Check Postgres
@@ -419,6 +419,24 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         all_ok = false;
     }
 
+    let pipeline_smoke = if pipelines {
+        match run_pipeline_smoke_test() {
+            Ok(()) => Some(DoctorServiceCheck {
+                available: true,
+                message: None,
+            }),
+            Err(error) => {
+                all_ok = false;
+                Some(DoctorServiceCheck {
+                    available: false,
+                    message: Some(format!("{error:#}")),
+                })
+            }
+        }
+    } else {
+        None
+    };
+
     // Collect environment configuration
     let cfg = config();
     let environment = Some(serde_json::json!({
@@ -447,6 +465,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         tls: tls_check,
         postgres_extensions: postgres_extensions_probe.extensions,
         postgres_extensions_error: postgres_extensions_probe.error,
+        pipeline_smoke,
         overall: all_ok,
     };
 
@@ -541,15 +560,13 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         }
 
         // Pipeline smoke tests
-        if pipelines {
+        if let Some(pipeline_smoke) = &report.pipeline_smoke {
             println!("\n{}", style("Pipeline Smoke Test:").bold());
-            let result = ProcessBuilder::cargo()
-                .args(["run", "-p", "sinex-test-utils"])
-                .run();
-            match result {
-                Ok(_) => println!("  {} Pipeline test passed", style("✓").green()),
-                Err(e) => println!("  {} Pipeline test failed: {}", style("✗").red(), e),
-            }
+            print_check(
+                "Pipeline smoke",
+                pipeline_smoke.available,
+                pipeline_smoke.message.as_deref(),
+            );
         }
 
         // Summary
@@ -574,6 +591,44 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     Ok(result
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed()))
+}
+
+fn pipeline_smoke_invocation(
+    xtask_program: impl Into<String>,
+) -> (String, [&'static str; 5], String) {
+    (
+        xtask_program.into(),
+        ["test", "--debug", "-p", "sinex-ingestd", "-E"],
+        "test(test_pipeline_smoke)".to_string(),
+    )
+}
+
+fn run_pipeline_smoke_test() -> Result<()> {
+    use crate::process::ProcessBuilder;
+
+    let xtask_program = std::env::current_exe()
+        .wrap_err("failed to resolve current xtask executable for pipeline smoke")?;
+    let (program, args, filter) = pipeline_smoke_invocation(xtask_program.display().to_string());
+    let output = ProcessBuilder::new(program)
+        .args(args)
+        .arg(&filter)
+        .with_description("pipeline smoke test")
+        .run_capture()?;
+    if output.success() {
+        return Ok(());
+    }
+
+    let combined = output.combined().trim().to_string();
+    let detail = if combined.is_empty() {
+        String::new()
+    } else {
+        format!("\n{combined}")
+    };
+    Err(eyre!(
+        "pipeline smoke test failed with exit code {}{}",
+        output.exit_code,
+        detail
+    ))
 }
 
 fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
@@ -2735,6 +2790,10 @@ mod tests {
             }),
             postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
             postgres_extensions_error: None,
+            pipeline_smoke: Some(DoctorServiceCheck {
+                available: false,
+                message: Some("pipeline smoke failed".into()),
+            }),
             overall: false,
         };
 
@@ -2769,6 +2828,17 @@ mod tests {
         assert!(json["postgres_extensions"].is_array());
         assert_eq!(json["postgres_extensions"][0], "pgvector");
         assert!(json.get("postgres_extensions_error").is_none());
+        assert_eq!(json["pipeline_smoke"]["available"], false);
+        assert_eq!(json["pipeline_smoke"]["message"], "pipeline smoke failed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_pipeline_smoke_invocation_uses_xtask_test_harness() -> ::xtask::sandbox::TestResult<()> {
+        let (program, args, filter) = pipeline_smoke_invocation("/tmp/fake-xtask");
+        assert_eq!(program, "/tmp/fake-xtask");
+        assert_eq!(args, ["test", "--debug", "-p", "sinex-ingestd", "-E"]);
+        assert_eq!(filter, "test(test_pipeline_smoke)");
         Ok(())
     }
 

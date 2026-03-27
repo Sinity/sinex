@@ -8,16 +8,11 @@
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use sinex_db::DbPoolExt;
 use sinex_node_sdk::{NodeResult, SinexError};
 use sinex_primitives::Seconds;
-use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
-use sinex_primitives::domain::EventSource;
-use sinex_primitives::nats::NatsConnectionConfig;
-use sinex_primitives::{Event, JsonValue};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 use sinex_node_sdk::preflight::{
@@ -126,6 +121,8 @@ struct SystemInfo {
     load_average: f64,
 }
 
+const REPORT_TIMEOUT: Seconds = Seconds::from_secs(120);
+
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -172,6 +169,16 @@ async fn run_complete_verification(
     skip_phases: Vec<VerificationPhase>,
     output_format: OutputFormat,
 ) -> NodeResult<VerificationStatus> {
+    let report = build_verification_report(timeout_secs, skip_phases).await?;
+    let overall_status = report.overall_status.clone();
+    output_report(&report, output_format).await?;
+    Ok(overall_status)
+}
+
+async fn build_verification_report(
+    timeout_secs: Seconds,
+    skip_phases: Vec<VerificationPhase>,
+) -> NodeResult<VerificationReport> {
     let start_time = Instant::now();
     let timeout = Duration::from_secs(timeout_secs.as_secs());
 
@@ -275,15 +282,7 @@ async fn run_complete_verification(
     report.completed_at = Some(sinex_primitives::temporal::now());
     report.duration_ms = Some(start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
 
-    // Output report
-    output_report(&report, output_format).await?;
-
-    // Record verification in database for monitoring
-    if let Err(e) = record_verification_result(&report).await {
-        warn!("Failed to record verification result: {}", e);
-    }
-
-    Ok(overall_status)
+    Ok(report)
 }
 
 async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseResult> {
@@ -400,116 +399,56 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Nod
     Ok(())
 }
 
-async fn record_verification_result(report: &VerificationReport) -> NodeResult<()> {
-    let status_str = match report.overall_status {
-        VerificationStatus::Pass => "healthy",
-        VerificationStatus::Fail => "failed",
-        VerificationStatus::Warning => "degraded",
-    };
+async fn output_report_summary(
+    report: &VerificationReport,
+    format: OutputFormat,
+) -> NodeResult<()> {
+    let phases: Vec<_> = report
+        .phases
+        .iter()
+        .map(|(phase, result)| {
+            serde_json::json!({
+                "phase": phase,
+                "status": result.status,
+                "duration_ms": result.duration_ms,
+            })
+        })
+        .collect();
 
-    let nats_config = NatsConnectionConfig::from_env();
-    let nats_client = nats_config.connect().await.map_err(|e| {
-        SinexError::messaging(format!(
-            "Failed to connect to NATS for verification recording: {e}"
-        ))
-    })?;
-    let js = async_nats::jetstream::new(nats_client);
-    let kv_client = CoordinationKvClient::new(js, "sinex-preflight".to_string());
-    let instance_id = Uuid::new_v4().to_string();
-    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    let now = sinex_primitives::temporal::now().unix_timestamp();
-    let metadata = InstanceMetadata {
-        instance_id: instance_id.clone(),
-        hostname,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        started_at: now,
-        last_heartbeat: now,
-    };
-
-    if kv_client
-        .acquire_leadership(&instance_id)
-        .await
-        .map_err(|e| SinexError::processing(e.to_string()))?
-    {
-        let mut errors = Vec::new();
-        let mut registered_instance = false;
-
-        match kv_client.register_instance(&metadata).await {
-            Ok(()) => {
-                registered_instance = true;
-
-                info!(
-                    service_name = "sinex-preflight",
-                    instance_id = %instance_id,
-                    verification_status = %status_str,
-                    errors_count = report.errors.len(),
-                    warnings_count = report.warnings.len(),
-                    verification_result = ?report.overall_status,
-                    "System preflight verification completed via KV coordination"
-                );
+    match format {
+        OutputFormat::Json => {
+            let summary = serde_json::json!({
+                "overall_status": report.overall_status,
+                "started_at": report.started_at,
+                "completed_at": report.completed_at,
+                "duration_ms": report.duration_ms,
+                "phases": phases,
+                "warnings": report.warnings,
+                "errors": report.errors,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary).map_err(SinexError::serialization)?
+            );
+        }
+        OutputFormat::Text => {
+            println!("Sinex preflight summary: {:?}", report.overall_status);
+            if let Some(duration) = report.duration_ms {
+                println!("Duration: {duration}ms");
             }
-            Err(error) => {
-                errors.push(format!(
-                    "Failed to register verification metadata in KV: {error}"
-                ));
+            for (phase, result) in &report.phases {
+                println!("  {:?}: {:?} ({}ms)", phase, result.status, result.duration_ms);
+            }
+            for warning in &report.warnings {
+                println!("  warning: {warning}");
+            }
+            for error in &report.errors {
+                println!("  error: {error}");
             }
         }
-
-        if let Err(error) =
-            cleanup_verification_coordination(&kv_client, &instance_id, registered_instance).await
-        {
-            errors.push(error.to_string());
-        }
-
-        if !errors.is_empty() {
-            return Err(SinexError::processing(errors.join("; ")));
-        }
-    } else {
-        warn!(
-            "Another preflight verification is already running - skipping duplicate verification"
-        );
     }
 
     Ok(())
-}
-
-async fn cleanup_verification_coordination(
-    kv_client: &CoordinationKvClient,
-    instance_id: &str,
-    registered_instance: bool,
-) -> NodeResult<()> {
-    let release_result = kv_client.release_leadership(instance_id).await;
-    let unregister_result = if registered_instance {
-        Some(kv_client.unregister_instance(instance_id).await)
-    } else {
-        None
-    };
-
-    coordination_cleanup_result(release_result, unregister_result)
-}
-
-fn coordination_cleanup_result(
-    release_result: NodeResult<()>,
-    unregister_result: Option<NodeResult<()>>,
-) -> NodeResult<()> {
-    let mut failures = Vec::new();
-
-    if let Err(error) = release_result {
-        failures.push(format!("release leadership: {error}"));
-    }
-
-    if let Some(Err(error)) = unregister_result {
-        failures.push(format!("unregister instance: {error}"));
-    }
-
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(SinexError::processing(format!(
-            "Verification coordination cleanup failed: {}",
-            failures.join("; ")
-        )))
-    }
 }
 
 async fn run_schema_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
@@ -600,97 +539,16 @@ async fn generate_verification_report(
     detailed: bool,
     output_format: OutputFormat,
 ) -> NodeResult<VerificationStatus> {
-    info!("Generating verification report");
+    info!("Generating fresh verification report");
 
-    // This would query the database for recent verification results
-    // and generate a comprehensive report
-    let database_url = sinex_node_sdk::preflight::resolve_database_url()?;
+    let report = build_verification_report(REPORT_TIMEOUT, Vec::new()).await?;
+    let overall_status = report.overall_status.clone();
 
-    let pool = sqlx::PgPool::connect(&database_url)
-        .await
-        .map_err(|e| SinexError::database(sinex_db::SinexError::from(e)))?;
-    let end_time = sinex_primitives::temporal::now();
-    let start_time = end_time - sinex_primitives::temporal::Duration::hours(24);
-
-    let recent_verifications: Vec<Event<JsonValue>> = pool
-        .events()
-        .get_process_heartbeats(
-            &EventSource::from_static("sinex-preflight"),
-            start_time,
-            end_time,
-        )
-        .await
-        .map_err(SinexError::database)?;
-
-    info!("Verifying environment...");
-    let _env = sinex_primitives::environment::environment();
-    let report = if detailed {
-        serde_json::json!({
-            "verification_count": recent_verifications.len(),
-            "latest_status": recent_verifications.first().map(|v| v.payload.get("health_status")),
-            "system_info": collect_system_info().await?
-        })
+    if detailed {
+        output_report(&report, output_format).await?;
     } else {
-        serde_json::json!({
-            "verification_count": recent_verifications.len(),
-            "latest_status": recent_verifications.first().map(|v| v.payload.get("health_status"))
-        })
-    };
-
-    match output_format {
-        OutputFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
-        ),
-        OutputFormat::Text => {
-            println!("Recent Verification History:");
-            for verification in &recent_verifications {
-                let ts_str = verification
-                    .ts_orig
-                    .map_or_else(|| "UNKNOWN_TIME".to_string(), |t| t.to_string());
-                println!(
-                    "  {} - {} ({})",
-                    ts_str,
-                    verification
-                        .payload
-                        .get("health_status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("UNKNOWN"),
-                    verification
-                        .id
-                        .as_ref()
-                        .map_or_else(|| "NO_ID".to_string(), std::string::ToString::to_string)
-                );
-            }
-        }
+        output_report_summary(&report, output_format).await?;
     }
 
-    Ok(VerificationStatus::Pass)
-}
-
-#[cfg(test)]
-mod tests {
-    // Binary-local helper tests stay inline to avoid exporting cleanup internals just for testing.
-    use super::*;
-
-    #[test]
-    fn coordination_cleanup_result_reports_both_failures() {
-        let error = coordination_cleanup_result(
-            Err(SinexError::processing("release failed")),
-            Some(Err(SinexError::processing("unregister failed"))),
-        )
-        .expect_err("cleanup failures should surface");
-
-        let message = error.to_string();
-        assert!(message.contains("release leadership"));
-        assert!(message.contains("release failed"));
-        assert!(message.contains("unregister instance"));
-        assert!(message.contains("unregister failed"));
-    }
-
-    #[test]
-    fn coordination_cleanup_result_skips_unregister_when_not_registered() {
-        coordination_cleanup_result(Ok(()), None)
-            .expect("cleanup without a registered instance should succeed");
-    }
+    Ok(overall_status)
 }

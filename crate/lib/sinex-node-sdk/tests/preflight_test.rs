@@ -424,6 +424,18 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> TestResult<()> {
         assert!(extensions.contains_key("pg_jsonschema"));
         assert!(extensions.contains_key("vector"));
         assert!(extensions.contains_key("pg_trgm"));
+        for extension in extensions.values() {
+            let extension = extension
+                .as_object()
+                .expect("extension detail should be an object");
+            assert!(extension.contains_key("available"));
+            assert!(extension.contains_key("installed"));
+            assert!(extension.contains_key("default_version"));
+            assert!(
+                !extension.contains_key("can_install"),
+                "read-only preflight must not guess installability with CREATE EXTENSION probes"
+            );
+        }
 
         Ok(())
     })
@@ -1492,6 +1504,71 @@ async fn test_phase6_service_dependencies_descriptor_skips_path_service_binaries
             assert!(!binaries.contains_key("sinex-ingestd"));
             assert!(!binaries.contains_key("sinex-gateway"));
             assert!(!binaries.contains_key("sinex-preflight"));
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_phase6_service_dependencies_reports_optional_binary_probe_errors() -> TestResult<()>
+{
+    let temp = tempfile::tempdir()?;
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "mode": "prepared",
+            "source": "test",
+            "managed_units": []
+        }))?,
+    )?;
+
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir)?;
+    for binary in ["which", "systemctl"] {
+        let output = std::process::Command::new("which").arg(binary).output()?;
+        assert!(
+            output.status.success(),
+            "expected '{binary}' to exist for preflight test"
+        );
+        let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        std::os::unix::fs::symlink(source, bin_dir.join(binary))?;
+    }
+
+    with_env_vars(
+        &[
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+            ("SINEX_EDGE_MODE", "1".to_string()),
+            ("PATH", bin_dir.display().to_string()),
+        ],
+        || async {
+            let (_status, details, messages) = services::verify_service_dependencies().await?;
+            let binaries = details
+                .get("binaries")
+                .and_then(|value| value.get("binaries"))
+                .and_then(Value::as_object)
+                .expect("binaries map should be present");
+            let git = binaries
+                .get("git")
+                .and_then(Value::as_object)
+                .expect("git probe should be present");
+
+            assert_eq!(git.get("available").and_then(Value::as_bool), Some(false));
+            assert!(
+                git.get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|error| error.contains("Binary 'git' not found in PATH"))
+            );
+            assert!(messages.iter().any(|message| {
+                message.contains("Optional binary 'git' unavailable")
+            }));
             Ok(())
         },
     )
