@@ -595,6 +595,8 @@ fn execute_list(
     with_tests: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    let mut warnings = Vec::new();
+
     // Parse --since into an RFC3339 cutoff timestamp
     let since_ts: Option<String> = since.and_then(|s| {
         parse_duration_secs(s).map(|secs| {
@@ -633,35 +635,30 @@ fn execute_list(
                 if enriched {
                     let mut parts = Vec::new();
                     if with_diagnostics {
-                        let counts = db
-                            .get_diagnostic_counts_for_invocation(inv.id)
-                            .unwrap_or_default();
-                        if counts.errors > 0 || counts.warnings > 0 {
-                            parts.push(format!("diag:{}E{}W", counts.errors, counts.warnings));
-                        } else {
-                            parts.push("diag:ok".to_string());
+                        let probe = diagnostic_summary_probe_from_result(
+                            inv.id,
+                            db.get_diagnostic_counts_for_invocation(inv.id),
+                        );
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     if with_stages {
-                        let timings = db
-                            .get_stage_timings_for_invocation(inv.id)
-                            .unwrap_or_default();
-                        if timings.is_empty() {
-                            parts.push("stages:-".to_string());
-                        } else {
-                            let total: f64 = timings.iter().map(|t| t.duration_secs).sum();
-                            parts.push(format!("stages:{:.1}s", total));
+                        let probe =
+                            stage_summary_probe_from_result(inv.id, db.get_stage_timings_for_invocation(inv.id));
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     if with_tests {
-                        let (passed, failed, _) = db
-                            .get_test_counts_for_invocation(inv.id)
-                            .unwrap_or((0, 0, 0));
-                        if passed > 0 || failed > 0 {
-                            parts.push(format!("tests:{}p{}f", passed, failed));
-                        } else {
-                            parts.push("tests:-".to_string());
+                        let probe =
+                            test_summary_probe_from_result(inv.id, db.get_test_counts_for_invocation(inv.id));
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     println!(
                         "{:<6} {:<12} {:<10} {:>8}  {}  {}",
@@ -691,9 +688,13 @@ fn execute_list(
         println!("{json}");
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("Found {} history entries", invocations.len()))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+    for warning in warnings {
+        result = result.with_warning(warning);
+    }
+    Ok(result)
 }
 
 fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<CommandResult> {
@@ -3497,6 +3498,80 @@ struct OptionalProbe<T> {
     issue: Option<String>,
 }
 
+struct HistoryListEnrichmentProbe {
+    fragment: String,
+    issue: Option<String>,
+}
+
+fn diagnostic_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<crate::history::DiagnosticCounts>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok(counts) if counts.errors > 0 || counts.warnings > 0 => HistoryListEnrichmentProbe {
+            fragment: format!("diag:{}E{}W", counts.errors, counts.warnings),
+            issue: None,
+        },
+        Ok(_) => HistoryListEnrichmentProbe {
+            fragment: "diag:ok".to_string(),
+            issue: None,
+        },
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "diag:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read diagnostic summary for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
+fn stage_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<Vec<crate::history::StageTiming>>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok(timings) if timings.is_empty() => HistoryListEnrichmentProbe {
+            fragment: "stages:-".to_string(),
+            issue: None,
+        },
+        Ok(timings) => {
+            let total: f64 = timings.iter().map(|t| t.duration_secs).sum();
+            HistoryListEnrichmentProbe {
+                fragment: format!("stages:{total:.1}s"),
+                issue: None,
+            }
+        }
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "stages:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read stage timings for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
+fn test_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<(i64, i64, i64)>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok((passed, failed, _)) if passed > 0 || failed > 0 => HistoryListEnrichmentProbe {
+            fragment: format!("tests:{}p{}f", passed, failed),
+            issue: None,
+        },
+        Ok(_) => HistoryListEnrichmentProbe {
+            fragment: "tests:-".to_string(),
+            issue: None,
+        },
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "tests:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read test counts for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
 fn infra_timing_probe_from_result<T>(result: Result<Option<T>>) -> OptionalProbe<T> {
     match result {
         Ok(value) => OptionalProbe {
@@ -3570,6 +3645,33 @@ mod tests {
         let probe = exercise_results_probe_from_result(42, Err(eyre!("results exploded")));
         assert!(probe.results.is_empty());
         assert!(probe.issue.unwrap_or_default().contains("results exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_diagnostic_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = diagnostic_summary_probe_from_result(7, Err(eyre!("diag exploded")));
+        assert_eq!(probe.fragment, "diag:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("diag exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stage_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = stage_summary_probe_from_result(7, Err(eyre!("stages exploded")));
+        assert_eq!(probe.fragment, "stages:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("stages exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = test_summary_probe_from_result(7, Err(eyre!("tests exploded")));
+        assert_eq!(probe.fragment, "tests:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("tests exploded"));
         Ok(())
     }
 
