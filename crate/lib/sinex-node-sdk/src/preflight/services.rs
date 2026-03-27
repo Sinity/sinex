@@ -10,7 +10,6 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::DeploymentReadinessMode;
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
@@ -26,6 +25,99 @@ pub enum ServiceStatus {
     Inactive,
     Failed,
     Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemdServiceDetails {
+    pub active_state: String,
+    pub sub_state: String,
+    pub load_state: String,
+    pub unit_type: Option<String>,
+    pub notify_access: Option<String>,
+    pub watchdog_usec: Option<u64>,
+}
+
+impl SystemdServiceDetails {
+    #[must_use]
+    pub fn from_show_output(output: &str) -> Self {
+        let mut active_state = None;
+        let mut sub_state = None;
+        let mut load_state = None;
+        let mut unit_type = None;
+        let mut notify_access = None;
+        let mut watchdog_usec = None;
+
+        for line in output.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                match key {
+                    "ActiveState" => active_state = Some(value.to_string()),
+                    "SubState" => sub_state = Some(value.to_string()),
+                    "LoadState" => load_state = Some(value.to_string()),
+                    "Type" => unit_type = Some(value.to_string()),
+                    "NotifyAccess" => notify_access = Some(value.to_string()),
+                    "WatchdogUSec" => watchdog_usec = value.parse::<u64>().ok(),
+                    _ => {}
+                }
+            }
+        }
+
+        Self {
+            active_state: active_state.unwrap_or_else(|| "unknown".to_string()),
+            sub_state: sub_state.unwrap_or_else(|| "unknown".to_string()),
+            load_state: load_state.unwrap_or_else(|| "unknown".to_string()),
+            unit_type,
+            notify_access,
+            watchdog_usec,
+        }
+    }
+
+    #[must_use]
+    pub fn is_loaded(&self) -> bool {
+        self.load_state == "loaded"
+    }
+
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.active_state == "active"
+    }
+
+    #[must_use]
+    pub fn notify_contract_violations(&self) -> Vec<String> {
+        let mut violations = Vec::new();
+
+        let type_value = self.unit_type.as_deref().unwrap_or("<unset>");
+        if type_value != "notify" {
+            violations.push(format!("type={type_value}"));
+        }
+
+        let notify_access_value = self.notify_access.as_deref().unwrap_or("<unset>");
+        if notify_access_value != "main" {
+            violations.push(format!("notify_access={notify_access_value}"));
+        }
+
+        match self.watchdog_usec {
+            Some(value) if value > 0 => {}
+            Some(value) => violations.push(format!("watchdog_usec={value}")),
+            None => violations.push("watchdog_usec=<unset>".to_string()),
+        }
+
+        violations
+    }
+
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        json!({
+            "available": self.is_loaded(),
+            "status": self.active_state,
+            "sub_status": self.sub_state,
+            "load_state": self.load_state,
+            "is_active": self.is_active(),
+            "is_loaded": self.is_loaded(),
+            "type": self.unit_type,
+            "notify_access": self.notify_access,
+            "watchdog_usec": self.watchdog_usec,
+        })
+    }
 }
 
 impl fmt::Display for ServiceStatus {
@@ -336,29 +428,38 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
         .as_ref()
         .filter(|value| !value.managed_units.is_empty())
         .map(|value| value.managed_units.clone());
-    let enforce_declared_units = descriptor
-        .as_ref()
-        .is_some_and(|value| value.mode == DeploymentReadinessMode::Enabled);
+    let enforce_declared_units = sinex_services.is_some();
 
     // System services that Sinex depends on
     let dependency_services = vec!["postgresql.service", "systemd-resolved.service"];
     let mut missing_declared_units = Vec::new();
+    let mut notify_contract_violations = Vec::new();
 
     if let Some(sinex_services) = sinex_services {
         for service_name in sinex_services {
-            match check_systemd_service(&service_name).await {
+            match inspect_systemd_service(&service_name).await {
                 Ok(service_data) => {
-                    service_info.insert(service_name.to_string(), service_data);
-
-                    let is_available = service_info[&service_name]["available"]
-                        .as_bool()
-                        .unwrap_or(false);
-                    let load_state = service_info[&service_name]["load_state"]
-                        .as_str()
-                        .unwrap_or("unknown");
+                    let service_json = service_data.to_json();
+                    let is_available = service_data.is_loaded();
+                    let load_state = service_data.load_state.as_str();
+                    let contract_violations = service_data.notify_contract_violations();
+                    service_info.insert(service_name.to_string(), service_json);
 
                     if service_name.starts_with("sinex-") && is_available {
-                        messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
+                        if contract_violations.is_empty() {
+                            messages.push(format!(
+                                "✓ Sinex service '{service_name}' has a valid notify/watchdog contract"
+                            ));
+                        } else {
+                            notify_contract_violations.push(format!(
+                                "{service_name} ({})",
+                                contract_violations.join(", ")
+                            ));
+                            messages.push(format!(
+                                "✗ Sinex service '{service_name}' violates the notify/watchdog contract: {}",
+                                contract_violations.join(", ")
+                            ));
+                        }
                     } else if service_name.starts_with("sinex-") {
                         if enforce_declared_units {
                             missing_declared_units
@@ -409,11 +510,12 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
     }
 
     for service_name in dependency_services {
-        match check_systemd_service(service_name).await {
+        match inspect_systemd_service(service_name).await {
             Ok(service_data) => {
-                let status_str = service_data["status"].as_str().unwrap_or("unknown");
+                let service_json = service_data.to_json();
+                let status_str = service_data.active_state.as_str();
                 let status = ServiceStatus::from_str(status_str).unwrap_or(ServiceStatus::Unknown);
-                service_info.insert(service_name.to_string(), service_data.clone());
+                service_info.insert(service_name.to_string(), service_json);
                 if status.is_running() {
                     messages.push(format!("✓ Dependency service '{service_name}' is active"));
                 } else {
@@ -445,19 +547,26 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
         )));
     }
 
+    if !notify_contract_violations.is_empty() {
+        return Err(SinexError::processing(format!(
+            "Declared managed units violate the notify/watchdog contract: {}",
+            notify_contract_violations.join(", ")
+        )));
+    }
+
     Ok(json!({
         "services": service_info,
         "deployment_descriptor_loaded": descriptor_loaded,
     }))
 }
 
-async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
+pub async fn inspect_systemd_service(service_name: &str) -> NodeResult<SystemdServiceDetails> {
     let status_output = run_command_with_timeout(
         "systemctl",
         &[
             "show",
             service_name,
-            "--property=ActiveState,SubState,LoadState",
+            "--property=ActiveState,SubState,LoadState,Type,NotifyAccess,WatchdogUSec",
         ],
     )
     .await?;
@@ -468,48 +577,20 @@ async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
         )));
     }
 
-    let status_text = String::from_utf8_lossy(&status_output.stdout);
-    let mut properties = HashMap::new();
-
-    for line in status_text.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            properties.insert(key.to_string(), value.to_string());
-        }
-    }
-
-    let active_state = properties
-        .get("ActiveState")
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let sub_state = properties
-        .get("SubState")
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let load_state = properties
-        .get("LoadState")
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let is_loaded = load_state == "loaded";
-
-    Ok(json!({
-        "available": is_loaded,
-        "status": active_state,
-        "sub_status": sub_state,
-        "load_state": load_state,
-        "is_active": active_state == "active",
-        "is_loaded": is_loaded
-    }))
+    Ok(SystemdServiceDetails::from_show_output(&String::from_utf8_lossy(
+        &status_output.stdout,
+    )))
 }
 
 async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut postgres_info = HashMap::new();
 
     // Check PostgreSQL service status
-    match check_systemd_service("postgresql.service").await {
+    match inspect_systemd_service("postgresql.service").await {
         Ok(service_data) => {
-            postgres_info.insert("service", service_data.clone());
+            postgres_info.insert("service", service_data.to_json());
 
-            let is_active = service_data["is_active"].as_bool().unwrap_or(false);
+            let is_active = service_data.is_active();
             if is_active {
                 messages.push("✓ PostgreSQL service is active".to_string());
 
@@ -534,7 +615,7 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Val
                     }
                 }
             } else {
-                let status = service_data["status"].as_str().unwrap_or("unknown");
+                let status = service_data.active_state.as_str();
                 messages.push(format!(
                     "✗ PostgreSQL service is not active (status: {status})"
                 ));

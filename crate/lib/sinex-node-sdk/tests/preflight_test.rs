@@ -8,6 +8,7 @@ use sinex_node_sdk::preflight::{
 use sinex_primitives::{environment::SinexEnvironment, nats::JetStreamTopology};
 use std::env;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -145,6 +146,14 @@ where
     }
 
     result
+}
+
+fn write_executable_script(path: &std::path::Path, body: &str) -> TestResult<()> {
+    fs::write(path, body)?;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
 }
 
 async fn ensure_preflight_streams(
@@ -1300,6 +1309,77 @@ async fn test_phase6_service_dependencies_fail_on_malformed_descriptor() -> Test
                     .contains("failed to parse deployment readiness descriptor"),
                 "expected malformed descriptor parse failure, got {error:?}"
             );
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_phase6_service_dependencies_fail_on_invalid_notify_contract() -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "mode": "prepared",
+            "source": "test",
+            "managed_units": ["sinex-ingestd.service"]
+        }))?,
+    )?;
+
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir)?;
+
+    let which_output = std::process::Command::new("which").arg("which").output()?;
+    assert!(which_output.status.success(), "expected 'which' to exist");
+    let which_path = String::from_utf8_lossy(&which_output.stdout).trim().to_string();
+    std::os::unix::fs::symlink(which_path, bin_dir.join("which"))?;
+
+    let systemctl_path = bin_dir.join("systemctl");
+    write_executable_script(
+        &systemctl_path,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'systemd 255\n'
+  exit 0
+fi
+if [ "$1" = "show" ]; then
+  unit="$2"
+  case "$unit" in
+    sinex-ingestd.service)
+      printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nType=simple\nNotifyAccess=main\nWatchdogUSec=0\n'
+      exit 0
+      ;;
+    postgresql.service|systemd-resolved.service)
+      printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=60000000\n'
+      exit 0
+      ;;
+  esac
+fi
+printf 'unexpected invocation: %s\n' "$*" >&2
+exit 1
+"#,
+    )?;
+
+    with_env_vars(
+        &[
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+            ("SINEX_EDGE_MODE", "1".to_string()),
+            ("PATH", bin_dir.display().to_string()),
+        ],
+        || async {
+            let (status, _details, messages) = services::verify_service_dependencies().await?;
+            assert_eq!(status, VerificationStatus::Fail);
+            assert!(messages.iter().any(|message| {
+                message.contains("violates the notify/watchdog contract")
+            }));
             Ok(())
         },
     )
