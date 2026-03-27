@@ -37,6 +37,8 @@ use std::time::Duration;
 pub struct TestHooks {
     /// If set and true, the first processing attempt will fail
     pub fail_once: Option<Arc<AtomicBool>>,
+    /// Number of forced persistence failures remaining.
+    pub persistence_failures_remaining: Option<Arc<AtomicUsize>>,
     /// Counter for tracking message deliveries
     pub delivery_counter: Option<Arc<AtomicU64>>,
     /// Artificial delay to add to processing
@@ -57,6 +59,8 @@ pub struct TestHooks {
 pub struct TestCounters {
     /// Counter for tracking message deliveries (if enabled)
     pub deliveries: Option<Arc<AtomicU64>>,
+    /// Counter for remaining forced persistence failures (if enabled)
+    pub persistence_failures_remaining: Option<Arc<AtomicUsize>>,
     /// Counter for remaining confirmation failures (if enabled)
     pub confirmation_failures: Option<Arc<AtomicUsize>>,
     /// Flag for fail-once behavior (if enabled)
@@ -84,6 +88,14 @@ impl TestCounters {
     #[must_use]
     pub fn remaining_confirmation_failures(&self) -> usize {
         self.confirmation_failures
+            .as_ref()
+            .map_or(0, |c| c.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    /// Get remaining forced persistence failures.
+    #[must_use]
+    pub fn remaining_persistence_failures(&self) -> usize {
+        self.persistence_failures_remaining
             .as_ref()
             .map_or(0, |c| c.load(std::sync::atomic::Ordering::SeqCst))
     }
@@ -158,6 +170,15 @@ impl TestHooksBuilder {
         let flag = Arc::new(AtomicBool::new(true));
         self.hooks.fail_once = Some(flag.clone());
         self.counters.fail_once = Some(flag);
+        self
+    }
+
+    /// Force persistence to fail for the next `count` attempts.
+    #[must_use]
+    pub fn fail_persistence_attempts(mut self, count: usize) -> Self {
+        let counter = Arc::new(AtomicUsize::new(count));
+        self.hooks.persistence_failures_remaining = Some(counter.clone());
+        self.counters.persistence_failures_remaining = Some(counter);
         self
     }
 

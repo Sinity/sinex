@@ -247,7 +247,10 @@ async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
         .process_one(make_event_with_value(
             "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
         )?)
-        .await?
+        .await?;
+    let output = output
+        .into_iter()
+        .next()
         .expect("derived node should emit output");
 
     let value = output.payload["value"]

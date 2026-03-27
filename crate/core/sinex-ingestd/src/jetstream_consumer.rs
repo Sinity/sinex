@@ -56,6 +56,7 @@ pub struct JetStreamConsumer {
     ack_wait: Duration,
     max_ack_pending: i64,
     fail_once: Option<Arc<AtomicBool>>,
+    db_failures_remaining: Option<Arc<AtomicUsize>>,
     post_persist_fail_once: Option<Arc<AtomicBool>>,
     confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
     processing_delay: Option<Duration>,
@@ -149,6 +150,7 @@ const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
+const MAIN_CONSUMER_MAX_DELIVER: i64 = 10;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
@@ -317,6 +319,7 @@ impl JetStreamConsumer {
             ack_wait: Duration::from_secs(30),
             max_ack_pending: DEFAULT_MAX_ACK_PENDING,
             fail_once: None,
+            db_failures_remaining: None,
             post_persist_fail_once: None,
             confirmation_failures_remaining: None,
             processing_delay: None,
@@ -408,6 +411,7 @@ impl JetStreamConsumer {
             Some(fail_once),
             None,
             None,
+            None,
             false,
             None,
         )
@@ -421,6 +425,7 @@ impl JetStreamConsumer {
         topology: JetStreamTopology,
         ack_wait: Duration,
         fail_once: Option<Arc<AtomicBool>>,
+        db_failures_remaining: Option<Arc<AtomicUsize>>,
         processing_delay: Option<Duration>,
         delivery_observer: Option<Arc<AtomicU64>>,
         route_db_errors_to_dlq: bool,
@@ -428,6 +433,7 @@ impl JetStreamConsumer {
     ) -> Self {
         let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
         consumer.fail_once = fail_once;
+        consumer.db_failures_remaining = db_failures_remaining;
         consumer.processing_delay = processing_delay;
         consumer.delivery_observer = delivery_observer;
         consumer.route_db_errors_to_dlq = route_db_errors_to_dlq;
@@ -536,7 +542,7 @@ impl JetStreamConsumer {
         consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
-        consumer_spec.max_deliver = 10;
+        consumer_spec.max_deliver = MAIN_CONSUMER_MAX_DELIVER;
         let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
@@ -993,8 +999,8 @@ impl JetStreamConsumer {
                 }
 
                 error!("Failed to persist batch: {}", e);
-                if self.route_db_errors_to_dlq {
-                    for prepared in &batch {
+                for prepared in &batch {
+                    if self.should_route_terminal_persistence_failure(&prepared.message) {
                         if let Err(err) = self
                             .route_to_dlq_and_ack(
                                 &prepared.message,
@@ -1008,21 +1014,17 @@ impl JetStreamConsumer {
                                 "Failed to route persistence error to DLQ"
                             );
                         }
-                    }
-                } else {
-                    for prepared in &batch {
-                        if let Err(err) = prepared
-                            .message
-                            .ack_with(jetstream::AckKind::Nak(None))
-                            .await
-                        {
-                            warn!(
-                                event_id = %prepared.parsed_id,
-                                error = %err,
-                                "Failed to NAK after persistence failure"
-                            );
-                            self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                        }
+                    } else if let Err(err) = prepared
+                        .message
+                        .ack_with(jetstream::AckKind::Nak(None))
+                        .await
+                    {
+                        warn!(
+                            event_id = %prepared.parsed_id,
+                            error = %err,
+                            "Failed to NAK after persistence failure"
+                        );
+                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
                     }
                 }
                 let failed_count = batch.len() as u64;
@@ -1126,6 +1128,16 @@ impl JetStreamConsumer {
             return Err(SinexError::database("forced transient failure"));
         }
 
+        if let Some(remaining) = &self.db_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                    current.checked_sub(1)
+                })
+                .is_ok()
+        {
+            return Err(SinexError::database("forced persistent failure"));
+        }
+
         let to_persist = self.filter_cached_batch(batch);
         if to_persist.is_empty() {
             return Ok(PersistBatchResult { inserted_ids: None });
@@ -1204,6 +1216,23 @@ impl JetStreamConsumer {
         Ok(PersistBatchResult {
             inserted_ids: Some(inserted_ids),
         })
+    }
+
+    fn should_route_terminal_persistence_failure(&self, msg: &jetstream::Message) -> bool {
+        if self.route_db_errors_to_dlq {
+            return true;
+        }
+
+        match msg.info() {
+            Ok(info) => info.delivered >= MAIN_CONSUMER_MAX_DELIVER,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Failed to inspect JetStream delivery metadata for persistence failure"
+                );
+                false
+            }
+        }
     }
 
     fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {

@@ -54,6 +54,21 @@ pub struct DevOrchestrator {
     shutdown_requested: Arc<AtomicBool>,
 }
 
+async fn stream_reader_lines<R, F>(reader: R, context_label: &str, mut emit: F) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    F: FnMut(String),
+{
+    let mut lines = BufReader::new(reader).lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => emit(line),
+            Ok(None) => return Ok(()),
+            Err(error) => bail!("failed to read {context_label}: {error}"),
+        }
+    }
+}
+
 impl DevOrchestrator {
     /// Create a new orchestrator
     #[must_use]
@@ -89,22 +104,24 @@ impl DevOrchestrator {
 
         // Handle stdout
         if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
             tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[build] {line}");
+                if let Err(error) =
+                    stream_reader_lines(stdout, "build stdout", |line| println!("[build] {line}"))
+                        .await
+                {
+                    eprintln!("[build] {error}");
                 }
             });
         }
 
         // Handle stderr
         if let Some(stderr) = child.stderr.take() {
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
             tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[build] {line}");
+                if let Err(error) =
+                    stream_reader_lines(stderr, "build stderr", |line| eprintln!("[build] {line}"))
+                        .await
+                {
+                    eprintln!("[build] {error}");
                 }
             });
         }
@@ -162,24 +179,30 @@ impl DevOrchestrator {
 
         // Stream stdout
         if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
             let tag = label.to_owned();
             tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{tag}] {line}");
+                if let Err(error) =
+                    stream_reader_lines(stdout, &format!("{tag} stdout"), |line| {
+                        println!("[{tag}] {line}");
+                    })
+                    .await
+                {
+                    eprintln!("[run] {error}");
                 }
             });
         }
 
         // Stream stderr
         if let Some(stderr) = child.stderr.take() {
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
             let tag = label.to_owned();
             tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{tag}] {line}");
+                if let Err(error) =
+                    stream_reader_lines(stderr, &format!("{tag} stderr"), |line| {
+                        eprintln!("[{tag}] {line}");
+                    })
+                    .await
+                {
+                    eprintln!("[run] {error}");
                 }
             });
         }
@@ -406,4 +429,54 @@ impl DevOrchestrator {
 pub async fn run_binary(args: RunArgs, workspace_root: Utf8PathBuf) -> Result<()> {
     let mut orchestrator = DevOrchestrator::new(args, workspace_root);
     orchestrator.run().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_reader_lines;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_stream_reader_lines_collects_utf8_lines() -> ::xtask::sandbox::TestResult<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (reader, mut writer) = tokio::io::duplex(64);
+        writer.write_all(b"alpha\nbeta\n").await?;
+        drop(writer);
+
+        let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collected_clone = collected.clone();
+        stream_reader_lines(reader, "test stdout", move |line| {
+            collected_clone
+                .lock()
+                .expect("collector lock should not be poisoned")
+                .push(line);
+        })
+        .await?;
+
+        assert_eq!(
+            *collected
+                .lock()
+                .expect("collector lock should not be poisoned"),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stream_reader_lines_surfaces_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (reader, mut writer) = tokio::io::duplex(64);
+        writer.write_all(&[0xff, b'\n']).await?;
+        drop(writer);
+
+        let error = stream_reader_lines(reader, "build stdout", |_| {})
+            .await
+            .expect_err("invalid utf8 should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read build stdout"));
+        assert!(message.contains("valid UTF-8"));
+        Ok(())
+    }
 }

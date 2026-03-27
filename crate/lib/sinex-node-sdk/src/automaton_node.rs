@@ -71,7 +71,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
-use crate::checkpoint::{CheckpointManager, CheckpointState};
+use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
@@ -440,7 +440,7 @@ where
     async fn load_state(&mut self) -> NodeResult<()> {
         // Priority 1: file-based checkpoint (hot reload scenario)
         if self.shutdown_config.restore_state_on_startup
-            && let Some(persisted) = self.try_restore_from_file().await
+            && let Some(persisted) = self.try_restore_from_file().await?
         {
             self.persisted_state = persisted;
             return Ok(());
@@ -452,10 +452,12 @@ where
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-        if let Some(persisted) = checkpoint_state
-            .data
-            .and_then(|data| serde_json::from_value::<PersistedState<P::State>>(data).ok())
-        {
+        if let Some(data) = checkpoint_state.data {
+            let persisted: PersistedState<P::State> = decode_checkpoint_data(
+                data,
+                "automaton checkpoint state",
+                self.node.name(),
+            )?;
             info!(
                 node = %self.node.name(),
                 events_processed = persisted.events_processed,
@@ -477,37 +479,35 @@ where
     /// Try to restore persisted state from a hot-reload file checkpoint.
     ///
     /// Returns the deserialized state on success, cleaning up the file.
-    /// Returns `None` if no file exists, data is missing, or deserialization fails.
-    async fn try_restore_from_file(&self) -> Option<PersistedState<P::State>> {
+    /// Returns `Ok(None)` if no file exists or checkpoint data is absent.
+    async fn try_restore_from_file(&self) -> NodeResult<Option<PersistedState<P::State>>> {
         let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
-        let file_state = CheckpointState::load_from_file(&checkpoint_path).await?;
-        let data = file_state.data?;
+        let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
+            return Ok(None);
+        };
+        let Some(data) = file_state.data else {
+            return Ok(None);
+        };
 
-        match serde_json::from_value::<PersistedState<P::State>>(data) {
-            Ok(persisted) => {
-                info!(
-                    node = %self.node.name(),
-                    events_processed = persisted.events_processed,
-                    "Restored state from hot reload file"
-                );
-                if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
-                    error!(
-                        node = %self.node.name(),
-                        error = %e,
-                        "Failed to delete hot reload file after loading state"
-                    );
-                }
-                Some(persisted)
-            }
-            Err(e) => {
-                warn!(
-                    node = %self.node.name(),
-                    error = %e,
-                    "Failed to deserialize file checkpoint state"
-                );
-                None
-            }
-        }
+        let persisted: PersistedState<P::State> = decode_checkpoint_data(
+            data,
+            "automaton hot reload state",
+            self.node.name(),
+        )?;
+        info!(
+            node = %self.node.name(),
+            events_processed = persisted.events_processed,
+            "Restored state from hot reload file"
+        );
+        CheckpointState::delete_file(&checkpoint_path)
+            .await
+            .map_err(|error| {
+                SinexError::io("Failed to delete hot reload file after loading state")
+                    .with_context("node", self.node.name())
+                    .with_context("path", checkpoint_path.display().to_string())
+                    .with_std_error(&error)
+            })?;
+        Ok(Some(persisted))
     }
 
     /// Save state to file for hot reload.

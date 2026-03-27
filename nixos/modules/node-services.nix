@@ -8,7 +8,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
-    mkDatabasePasswordUnitConfig
     renderDatabaseUrl
     ;
   cfg = config.services.sinex;
@@ -36,26 +35,38 @@ let
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
-  postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" ];
+  postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
     set -euo pipefail
-    cert="${tlsDir}/gateway.crt"
-    key="${tlsDir}/gateway.key"
-    if [[ -f "$cert" && -f "$key" ]]; then
+    cert="${tlsDir}/server.pem"
+    key="${tlsDir}/server-key.pem"
+    ca="${tlsDir}/ca.pem"
+    if [[ -f "$cert" && -f "$key" && -f "$ca" ]]; then
       echo "Sinex gateway TLS credentials already present, skipping."
       exit 0
     fi
     mkdir -p "${tlsDir}"
     chmod 750 "${tlsDir}"
-    ${pkgs.openssl}/bin/openssl req -x509 -newkey ed25519 \
-      -keyout "$key" -out "$cert" \
-      -days 3650 -nodes \
-      -subj "/CN=sinex-gateway/O=sinex" \
-      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
-    # Files must be readable by the gateway service user, not only by root.
-    chown ${serviceUser}:${serviceUser} "$key" "$cert"
-    chmod 640 "$key" "$cert"
+    "${sinexPackage}/bin/xtask" --format human infra tls-init-gateway \
+      --output-dir "${tlsDir}" \
+      --san localhost \
+      --san 127.0.0.1 \
+      --ca-name "Sinex Gateway CA" \
+      --validity-days 3650
+    # Gateway needs the server cert, server key, and trust anchor at runtime.
+    chown root:${serviceUser} "$key" "$cert" "$ca"
+    chmod 640 "$key" "$cert" "$ca"
+    # Keep client and CA private keys root-only; they are operator artifacts, not service inputs.
+    if [[ -f "${tlsDir}/client.pem" ]]; then
+      chmod 644 "${tlsDir}/client.pem"
+    fi
+    if [[ -f "${tlsDir}/client-key.pem" ]]; then
+      chmod 600 "${tlsDir}/client-key.pem"
+    fi
+    if [[ -f "${tlsDir}/ca-key.pem" ]]; then
+      chmod 600 "${tlsDir}/ca-key.pem"
+    fi
     echo "Sinex gateway TLS credentials generated at ${tlsDir}"
   '';
 
@@ -105,6 +116,31 @@ let
   inferredNatsTls =
     natsTlsCfg.requireTls
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
+  collectReadablePaths = paths: filter (path: path != null) paths;
+  databaseSecretAssertPaths = collectReadablePaths [
+    (if cfg.database.enable then cfg.database.passwordFile else null)
+  ];
+  natsSecretAssertPaths = collectReadablePaths [
+    effectiveNatsCaCertFile
+    effectiveNatsClientCertFile
+    effectiveNatsClientKeyFile
+    effectiveNatsTokenFile
+    effectiveNatsCredsFile
+    effectiveNatsNkeySeedFile
+  ];
+  gatewaySecretAssertPaths = collectReadablePaths (
+    [
+      gatewayAdminTokenFile
+      cfg.core.gateway.tlsCertFile
+      cfg.core.gateway.tlsKeyFile
+    ]
+    ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ]
+  );
+  readableUnitAssertions = paths:
+    let
+      readablePaths = collectReadablePaths paths;
+    in
+    optionalAttrs (readablePaths != []) { AssertPathIsReadable = readablePaths; };
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
   renderBindReadOnlyPaths = mounts:
@@ -166,8 +202,9 @@ let
     blobDir
   ];
   restartRateLimits = {
-    StartLimitIntervalSec = 300;
-    StartLimitBurst = 5;
+    # Long-running capture services must recover after transient infra outages
+    # without requiring a manual `systemctl reset-failed`.
+    StartLimitIntervalSec = 0;
   };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -276,7 +313,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
-        unitConfig = restartRateLimits;
+        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
@@ -318,10 +355,9 @@ let
         wants = coreWants;
         unitConfig =
           restartRateLimits
-          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null)
-          // optionalAttrs (gatewayAdminTokenFile != null) {
-            ConditionPathReadable = gatewayAdminTokenFile;
-          };
+          // readableUnitAssertions (
+            databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
+          );
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -716,9 +752,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
-        unitConfig =
-          restartRateLimits
-          // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
+        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
@@ -757,9 +791,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig =
-        restartRateLimits
-        // mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
+      unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
           name = params.binary;

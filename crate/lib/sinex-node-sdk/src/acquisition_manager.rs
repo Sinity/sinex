@@ -635,7 +635,6 @@ pub struct MaterialBuilder<'a> {
     manager: &'a AcquisitionManager,
     source_identifier: String,
     metadata: JsonValue,
-    material_id: Option<Uuid>,
 }
 
 impl<'a> MaterialBuilder<'a> {
@@ -644,7 +643,6 @@ impl<'a> MaterialBuilder<'a> {
             manager,
             source_identifier: source_identifier.into(),
             metadata: json!({}),
-            material_id: None,
         }
     }
 
@@ -666,17 +664,10 @@ impl<'a> MaterialBuilder<'a> {
         self
     }
 
-    #[must_use]
-    pub fn with_material_id(mut self, material_id: Uuid) -> Self {
-        self.material_id = Some(material_id);
-        self
-    }
-
     pub async fn begin(self) -> NodeResult<SourceMaterialHandle> {
         self.manager.ensure_streams_ready().await?;
 
-        // Historical replays can supply a stable material ID so repeated scans remain idempotent.
-        let material_id = self.material_id.unwrap_or_else(Uuid::now_v7);
+        let material_id = Uuid::now_v7();
 
         // Create temporary file for local buffering
         let temp_dir = self

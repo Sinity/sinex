@@ -9,7 +9,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
-    mkDatabasePasswordUnitConfig
     renderDatabaseUrl
     ;
 
@@ -657,7 +656,7 @@ in
                 };
                 tlsCertFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/gateway.crt" else null;
+                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
                   description = ''
                     Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_GATEWAY_TLS_CERT</literal>.
@@ -665,7 +664,7 @@ in
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/gateway.key" else null;
+                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
                   description = ''
                     Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_GATEWAY_TLS_KEY</literal>.
@@ -684,12 +683,11 @@ in
                   type = bool;
                   default = false;
                   description = ''
-                    Automatically generate a self-signed TLS certificate for the gateway on first boot.
-                    Stores credentials at <literal>''${stateRoot}/tls/gateway.{crt,key}</literal> and
-                    sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
-                    Those paths are then exported as
-                    <literal>SINEX_GATEWAY_TLS_CERT</literal> /
-                    <literal>SINEX_GATEWAY_TLS_KEY</literal>.
+                    Automatically generate an rcgen-backed local PKI for the gateway on first boot.
+                    Stores credentials at
+                    <literal>''${stateRoot}/tls/{server.pem,server-key.pem,ca.pem,client.pem,client-key.pem}</literal>
+                    and sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
+                    The generated CA becomes the gateway trust anchor for deployment-readiness checks.
                     Suitable for single-host deployments. For production clusters, provide real certs.
                   '';
                 };
@@ -1283,6 +1281,11 @@ in
               options = {
                 enable = mkOption { type = bool; default = true; description = "Enable preflight verification gates."; };
                 timeoutSec = mkOption { type = positive; default = 120; description = "Preflight timeout in seconds."; };
+                schemaApplyTimeoutSec = mkOption {
+                  type = positive;
+                  default = 600;
+                  description = "Schema-apply timeout in seconds.";
+                };
                 skip = mkOption {
                   type = listOf (enum [
                     "database"
@@ -1485,7 +1488,7 @@ in
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
       gatewayTlsTrustAnchorFile =
-        if cfg.core.gateway.autoGenerateTls then gatewayTlsCertFile else null;
+        if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/ca.pem" else null;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
       gatewayProbeListenAddress =
         if hasPrefix "0.0.0.0:" cfg.core.gateway.listenAddress then
@@ -1805,7 +1808,6 @@ in
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
         systemd.services.sinex-dlq-cleanup = {
           description = "Sinex DLQ cleanup";
-          unitConfig = mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
           serviceConfig = {
             Environment = [
               "DATABASE_URL=${databaseUrl}"

@@ -32,7 +32,4 @@ in
         exec ${command}
       '';
 
-  mkDatabasePasswordUnitConfig =
-    passwordFile:
-    optionalAttrs (passwordFile != null) { ConditionPathReadable = toString passwordFile; };
 }

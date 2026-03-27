@@ -11,8 +11,7 @@
  * All verification is done via SELECT queries and schema introspection.
  */
 
-use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexError};
-use async_nats::jetstream::kv;
+use crate::{NodeResult, SinexError};
 use futures::StreamExt;
 
 use serde_json::{Value, json};
@@ -20,7 +19,6 @@ use sqlx::PgPool;
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 use tracing::info;
-use uuid::Uuid;
 
 use super::{
     VerificationStatus, resolve_database_url, resolve_nats_url, runtime_database_expected,
@@ -444,46 +442,9 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     })?;
     let js = async_nats::jetstream::new(client);
     let bucket = crate::checkpoint::checkpoint_bucket_name(None);
-    let kv_store = match js
-        .create_key_value(kv::Config {
-            bucket: bucket.clone(),
-            history: 64,
-            ..Default::default()
-        })
-        .await
-    {
-        Ok(store) => Ok(store),
-        Err(_) => js.get_key_value(&bucket).await,
-    }
-    .map_err(|e| {
-        SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {e}"))
+    js.get_key_value(&bucket).await.map_err(|e| {
+        SinexError::processing(format!("Failed to open checkpoint KV bucket '{bucket}': {e}"))
     })?;
-
-    let consumer_name = format!("preflight-{}", Uuid::now_v7().to_string().to_lowercase());
-    let manager = CheckpointManager::new(
-        kv_store,
-        "preflight-checkpoint".to_string(),
-        "default".to_string(),
-        consumer_name.clone(),
-    );
-
-    let state = CheckpointState {
-        checkpoint: Checkpoint::None,
-        processed_count: 1,
-        last_activity: sinex_primitives::temporal::Timestamp::now(),
-        data: Some(json!({ "preflight": true })),
-        version: 2,
-        revision: 0,
-    };
-
-    manager
-        .save_checkpoint(&state)
-        .await
-        .map_err(|e| SinexError::processing(format!("Failed to persist checkpoint to KV: {e}")))?;
-    manager
-        .reset_checkpoint()
-        .await
-        .map_err(|e| SinexError::processing(format!("Failed to delete checkpoint from KV: {e}")))?;
 
     let required_streams = vec![
         env.nats_stream_name("SINEX_RAW_EVENTS"),
@@ -527,8 +488,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     Ok(json!({
         "checkpoint_kv": true,
         "checkpoint_bucket": bucket,
-        "required_streams": required_streams,
-        "consumer_name": consumer_name
+        "required_streams": required_streams
     }))
 }
 

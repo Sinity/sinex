@@ -45,6 +45,28 @@ impl Default for DerivedNodeConfig {
     }
 }
 
+fn serialize_output<T: Serialize>(
+    output: DerivedOutput<T>,
+) -> Result<DerivedOutput<JsonValue>, NodeLogicError> {
+    let json_payload = serde_json::to_value(&output.payload)
+        .map_err(|e| NodeLogicError::Processing(format!("Failed to serialize output: {e}")))?;
+    Ok(DerivedOutput {
+        payload: json_payload,
+        ts_orig: output.ts_orig,
+        source_event_ids: output.source_event_ids,
+        temporal_policy: output.temporal_policy,
+        semantics_version: output.semantics_version,
+        scope_key: output.scope_key,
+        equivalence_key: output.equivalence_key,
+    })
+}
+
+fn serialize_outputs<T: Serialize>(
+    outputs: Vec<DerivedOutput<T>>,
+) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+    outputs.into_iter().map(serialize_output).collect()
+}
+
 // ── TransducerNode ─────────────────────────────────────────────────────
 
 /// A 1:1 event transducer: one input event produces zero or one output event.
@@ -233,11 +255,11 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     /// Derive the live scope key from a trigger event.
     ///
     /// Return an empty vector to skip live processing for this trigger. Returning more than one
-    /// key is rejected by the adapter because the live path can emit at most one output event per
-    /// trigger.
+    /// key is rejected by the adapter because the live path can reconcile at most one scope per
+    /// trigger, even though that reconciliation may emit multiple output events.
     fn scope_keys(&self, input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String>;
 
-    /// Reconcile a scope: given the trigger and current state, produce output.
+    /// Reconcile a scope: given the trigger and current state, produce zero or more outputs.
     fn reconcile(
         &mut self,
         state: &mut Self::State,
@@ -245,7 +267,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> impl std::future::Future<
-        Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
+        Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send;
 
     /// Recompute a scope from its full working set after invalidation.
@@ -271,12 +293,10 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
             let mut recomputed_state = Self::State::default();
             let mut outputs = Vec::new();
             for input in working_set {
-                if let Some(output) = self
-                    .reconcile(&mut recomputed_state, scope_key, input, context)
-                    .await?
-                {
-                    outputs.push(output);
-                }
+                outputs.extend(
+                    self.reconcile(&mut recomputed_state, scope_key, input, context)
+                        .await?,
+                );
             }
             *state = recomputed_state;
             Ok(outputs)
@@ -324,7 +344,7 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
         context: &DerivedTriggerContext,
-    ) -> impl std::future::Future<Output = Result<Option<DerivedOutput<JsonValue>>, NodeLogicError>> + Send;
+    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError>> + Send;
 
     /// Process a scope invalidation signal.
     ///
@@ -393,27 +413,15 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
 
-        match self.0.process(state, input, context).await? {
-            Some(output) => {
-                let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                    NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
-                })?;
-                Ok(Some(DerivedOutput {
-                    payload: json_payload,
-                    ts_orig: output.ts_orig,
-                    source_event_ids: output.source_event_ids,
-                    temporal_policy: output.temporal_policy,
-                    semantics_version: output.semantics_version,
-                    scope_key: output.scope_key,
-                    equivalence_key: output.equivalence_key,
-                }))
-            }
-            None => Ok(None),
-        }
+        self.0
+            .process(state, input, context)
+            .await?
+            .map(|output| vec![output])
+            .map_or_else(|| Ok(Vec::new()), serialize_outputs)
     }
 
     /// Transducers ignore invalidation — their outputs are archived with inputs.
@@ -476,7 +484,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
 
@@ -485,25 +493,13 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
 
         // Check if window is complete
         if self.0.window_complete(state) {
-            match self.0.emit(state, context).await? {
-                Some(output) => {
-                    let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                        NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
-                    })?;
-                    Ok(Some(DerivedOutput {
-                        payload: json_payload,
-                        ts_orig: output.ts_orig,
-                        source_event_ids: output.source_event_ids,
-                        temporal_policy: output.temporal_policy,
-                        semantics_version: output.semantics_version,
-                        scope_key: output.scope_key,
-                        equivalence_key: output.equivalence_key,
-                    }))
-                }
-                None => Ok(None),
-            }
+            self.0
+                .emit(state, context)
+                .await?
+                .map(|output| vec![output])
+                .map_or_else(|| Ok(Vec::new()), serialize_outputs)
         } else {
-            Ok(None)
+            Ok(Vec::new())
         }
     }
 
@@ -594,31 +590,17 @@ where
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
 
         let scope_keys = self.0.scope_keys(&input, context);
 
         match scope_keys.as_slice() {
-            [] => Ok(None),
-            [scope_key] => match self.0.reconcile(state, scope_key, input, context).await? {
-                Some(output) => {
-                    let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                        NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
-                    })?;
-                    Ok(Some(DerivedOutput {
-                        payload: json_payload,
-                        ts_orig: output.ts_orig,
-                        source_event_ids: output.source_event_ids,
-                        temporal_policy: output.temporal_policy,
-                        semantics_version: output.semantics_version,
-                        scope_key: output.scope_key,
-                        equivalence_key: output.equivalence_key,
-                    }))
-                }
-                None => Ok(None),
-            },
+            [] => Ok(Vec::new()),
+            [scope_key] => serialize_outputs(
+                self.0.reconcile(state, scope_key, input, context).await?,
+            ),
             _ => Err(NodeLogicError::Processing(format!(
                 "ScopeReconcilerNode '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
                 self.0.name(),

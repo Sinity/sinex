@@ -10,7 +10,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Cached cargo metadata to avoid running the command multiple times.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct WorkspaceMetadata {
     packages: Vec<String>,
     reverse_deps: HashMap<String, HashSet<String>>,
@@ -25,39 +25,35 @@ struct WorkspaceMetadata {
 static WORKSPACE_METADATA: OnceLock<WorkspaceMetadata> = OnceLock::new();
 
 impl WorkspaceMetadata {
-    /// Load workspace metadata from cargo (single call).
-    fn load() -> Result<Self> {
-        let output = ProcessBuilder::cargo()
-            .args(["metadata", "--format-version", "1", "--no-deps"])
-            .with_description("cargo metadata")
-            .run()
-            .context("failed to run cargo metadata")?;
-
-        let metadata: serde_json::Value =
-            serde_json::from_str(&output.stdout).context("failed to parse cargo metadata")?;
-
+    fn parse_metadata(metadata: &serde_json::Value) -> Result<Self> {
         let packages_array = metadata["packages"]
             .as_array()
             .context("no packages in metadata")?;
 
-        // Extract package names
-        let packages: Vec<String> = packages_array
-            .iter()
-            .filter_map(|p| p["name"].as_str().map(String::from))
-            .collect();
-
-        // Build forward dependency map
+        let mut packages = Vec::with_capacity(packages_array.len());
         let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
-        for pkg in packages_array {
-            let name = pkg["name"].as_str().unwrap_or_default().to_string();
-            let deps = pkg["dependencies"]
-                .as_array()
-                .map(|deps| {
-                    deps.iter()
-                        .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
-                        .collect::<HashSet<_>>()
+
+        for (package_index, pkg) in packages_array.iter().enumerate() {
+            let name = pkg["name"].as_str().with_context(|| {
+                format!("cargo metadata package[{package_index}] is missing a string name")
+            })?;
+            let deps = pkg["dependencies"].as_array().with_context(|| {
+                format!("cargo metadata package[{name}] is missing dependencies array")
+            })?;
+            let deps = deps
+                .iter()
+                .enumerate()
+                .map(|(dependency_index, dep)| {
+                    dep["name"].as_str().map(str::to_owned).with_context(|| {
+                        format!(
+                            "cargo metadata package[{name}] dependency[{dependency_index}] is missing a string name"
+                        )
+                    })
                 })
-                .unwrap_or_default();
+                .collect::<Result<HashSet<_>>>()?;
+
+            let name = name.to_owned();
+            packages.push(name.clone());
             forward_deps.insert(name, deps);
         }
 
@@ -76,6 +72,19 @@ impl WorkspaceMetadata {
             packages,
             reverse_deps,
         })
+    }
+
+    /// Load workspace metadata from cargo (single call).
+    fn load() -> Result<Self> {
+        let output = ProcessBuilder::cargo()
+            .args(["metadata", "--format-version", "1", "--no-deps"])
+            .with_description("cargo metadata")
+            .run()
+            .context("failed to run cargo metadata")?;
+
+        let metadata: serde_json::Value =
+            serde_json::from_str(&output.stdout).context("failed to parse cargo metadata")?;
+        Self::parse_metadata(&metadata)
     }
 }
 
@@ -479,6 +488,67 @@ mod tests {
         assert!(affected.contains("b"));
         assert!(affected.contains("c"));
         assert!(affected.contains("d"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_workspace_metadata_rejects_missing_package_name() -> TestResult<()> {
+        let metadata = serde_json::json!({
+            "packages": [
+                {
+                    "dependencies": []
+                }
+            ]
+        });
+
+        let error = WorkspaceMetadata::parse_metadata(&metadata)
+            .expect_err("missing package name should surface");
+        assert!(format!("{error:#}").contains("package[0] is missing a string name"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_workspace_metadata_rejects_missing_dependency_name() -> TestResult<()> {
+        let metadata = serde_json::json!({
+            "packages": [
+                {
+                    "name": "xtask",
+                    "dependencies": [
+                        {}
+                    ]
+                }
+            ]
+        });
+
+        let error = WorkspaceMetadata::parse_metadata(&metadata)
+            .expect_err("missing dependency name should surface");
+        assert!(format!("{error:#}").contains("package[xtask] dependency[0] is missing a string name"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_workspace_metadata_builds_reverse_deps() -> TestResult<()> {
+        let metadata = serde_json::json!({
+            "packages": [
+                {
+                    "name": "xtask",
+                    "dependencies": [
+                        { "name": "sinex-primitives" }
+                    ]
+                },
+                {
+                    "name": "sinex-primitives",
+                    "dependencies": []
+                }
+            ]
+        });
+
+        let parsed = WorkspaceMetadata::parse_metadata(&metadata)?;
+        assert_eq!(parsed.packages, vec!["xtask".to_string(), "sinex-primitives".to_string()]);
+        assert_eq!(
+            parsed.reverse_deps.get("sinex-primitives"),
+            Some(&HashSet::from(["xtask".to_string()]))
+        );
         Ok(())
     }
 

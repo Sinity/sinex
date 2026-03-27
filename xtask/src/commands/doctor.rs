@@ -122,8 +122,8 @@ fn detect_tls_check() -> Option<TlsCheck> {
         None
     }?;
 
-    let server_cert_path = resolve_tls_artifact(active_dir, &["server.pem", "gateway.crt"]);
-    let server_key_path = resolve_tls_artifact(active_dir, &["server-key.pem", "gateway.key"]);
+    let server_cert_path = resolve_tls_artifact(active_dir, &["server.pem"]);
+    let server_key_path = resolve_tls_artifact(active_dir, &["server-key.pem"]);
     let client_cert_exists = resolve_tls_artifact(active_dir, &["client.pem"]).is_some();
     let ca_exists = resolve_tls_artifact(active_dir, &["ca.pem"]).is_some();
 
@@ -2913,11 +2913,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_detect_tls_check_accepts_gateway_cert_names() -> ::xtask::sandbox::TestResult<()>
+    async fn test_detect_tls_check_prefers_rcgen_cert_names() -> ::xtask::sandbox::TestResult<()>
     {
         let temp = tempfile::tempdir()?;
-        let cert = temp.path().join("gateway.crt");
-        let key = temp.path().join("gateway.key");
+        let cert = temp.path().join("server.pem");
+        let key = temp.path().join("server-key.pem");
         std::fs::write(&cert, "not-a-real-cert")?;
         std::fs::write(&key, "not-a-real-key")?;
 
@@ -2932,8 +2932,8 @@ mod tests {
     #[sinex_test]
     async fn test_detect_tls_check_reports_validation_errors() -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
-        let cert = temp.path().join("gateway.crt");
-        let key = temp.path().join("gateway.key");
+        let cert = temp.path().join("server.pem");
+        let key = temp.path().join("server-key.pem");
         std::fs::write(&cert, "not-a-real-cert")?;
         std::fs::write(&key, "not-a-real-key")?;
 

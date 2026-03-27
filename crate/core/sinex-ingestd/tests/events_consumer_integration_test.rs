@@ -221,6 +221,7 @@ async fn start_consumer_with_hooks(
         topology.clone(),
         ack_wait,
         hooks.fail_once.clone(),
+        hooks.persistence_failures_remaining.clone(),
         hooks.processing_delay,
         hooks.delivery_counter.clone(),
         hooks.route_db_errors_to_dlq,

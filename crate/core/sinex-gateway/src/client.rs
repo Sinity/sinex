@@ -27,6 +27,13 @@ pub enum ClientError {
     Gateway(String),
 }
 
+fn format_http_error(status: reqwest::StatusCode, body: Option<&str>) -> String {
+    match body.map(str::trim).filter(|body| !body.is_empty()) {
+        Some(body) => format!("HTTP Error: {status}: {body}"),
+        None => format!("HTTP Error: {status}"),
+    }
+}
+
 /// A client for the Sinex Gateway JSON-RPC API.
 ///
 /// Handles:
@@ -67,10 +74,12 @@ impl GatewayClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Gateway(format!(
-                "HTTP Error: {}",
-                response.status()
-            )));
+            let status = response.status();
+            let body = match response.text().await {
+                Ok(body) => Some(body),
+                Err(error) => Some(format!("<failed to read error body: {error}>")),
+            };
+            return Err(ClientError::Gateway(format_http_error(status, body.as_deref())));
         }
 
         let rpc_response: JsonRpcResponse<R> = response.json().await?;
@@ -184,5 +193,22 @@ impl GatewayClientBuilder {
             base_url: self.base_url,
             inner,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_http_error;
+
+    #[test]
+    fn format_http_error_includes_non_empty_body() {
+        let message = format_http_error(reqwest::StatusCode::BAD_REQUEST, Some("rpc exploded"));
+        assert_eq!(message, "HTTP Error: 400 Bad Request: rpc exploded");
+    }
+
+    #[test]
+    fn format_http_error_ignores_blank_body() {
+        let message = format_http_error(reqwest::StatusCode::UNAUTHORIZED, Some("   "));
+        assert_eq!(message, "HTTP Error: 401 Unauthorized");
     }
 }
