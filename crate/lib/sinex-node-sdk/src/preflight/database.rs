@@ -633,7 +633,7 @@ async fn verify_schema_integrity(
 
     if !missing_tables.is_empty() {
         return Err(SinexError::processing(format!(
-            "Missing {} critical table(s): {}. Run schema apply (`xtask db apply`) before starting the node.",
+            "Missing {} critical table(s): {}. Run schema apply (`xtask infra schema-apply`) before starting the node.",
             missing_tables.len(),
             missing_tables.join(", ")
         )));
