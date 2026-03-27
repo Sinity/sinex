@@ -178,8 +178,10 @@ pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use sqlite_source::stage_stable_material;
 pub use sqlite_source::{
-    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
-    read_rows_after, read_rows_with_params,
+    SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
+    SqliteTableCheckError,
+    ensure_sqlite_with_tables, import_sqlite_history_lenient, import_sqlite_history_strict,
+    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, read_rows_with_params,
 };
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]

@@ -4,9 +4,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Params, Row};
 #[cfg(feature = "messaging")]
 use serde_json::Value as JsonValue;
-use sinex_primitives::Uuid;
+use sinex_primitives::{Timestamp, Uuid};
 use std::path::Path;
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, future::Future};
 use tracing::warn;
 
 fn open_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
@@ -60,6 +60,47 @@ impl fmt::Display for SqliteTableCheckError {
 }
 
 impl Error for SqliteTableCheckError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteHistoryImportReport<Warning = String> {
+    pub processed_rows: usize,
+    pub last_row_id: i64,
+    pub warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqliteHistoryRowOutcome {
+    Processed,
+    Skipped,
+}
+
+#[derive(Debug)]
+pub enum SqliteHistoryImportError<ReadError, ProcessError> {
+    Read(ReadError),
+    Process(ProcessError),
+}
+
+impl<ReadError: fmt::Display, ProcessError: fmt::Display> fmt::Display
+    for SqliteHistoryImportError<ReadError, ProcessError>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read(error) => write!(f, "{error}"),
+            Self::Process(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl<ReadError: Error + 'static, ProcessError: Error + 'static> Error
+    for SqliteHistoryImportError<ReadError, ProcessError>
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Read(error) => Some(error),
+            Self::Process(error) => Some(error),
+        }
+    }
+}
 
 pub fn ensure_sqlite_with_tables(
     path: &Utf8Path,
@@ -160,6 +201,77 @@ pub fn max_row_id_for_query(path: &Utf8Path, query: &str) -> Result<i64, rusqlit
     let conn = open_read_only(path)?;
     let max_id: Option<i64> = conn.query_row(query, [], |row| row.get(0)).optional()?;
     Ok(max_id.unwrap_or(0))
+}
+
+pub async fn import_sqlite_history_lenient<Entry, Warning, Read, ReadError, Process, ProcessFuture>(
+    from_row_id: i64,
+    end_time: Option<Timestamp>,
+    read: Read,
+    mut process: Process,
+) -> Result<SqliteHistoryImportReport<Warning>, ReadError>
+where
+    Read: FnOnce(i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), ReadError>,
+    Process: FnMut(Entry) -> ProcessFuture,
+    ProcessFuture: Future<Output = Result<SqliteHistoryRowOutcome, Warning>>,
+{
+    let (entries, last_row_id) = read(from_row_id, end_time)?;
+    let mut processed_rows = 0usize;
+    let mut warnings = Vec::new();
+
+    for entry in entries {
+        match process(entry).await {
+            Ok(outcome) => {
+                if matches!(outcome, SqliteHistoryRowOutcome::Processed) {
+                    processed_rows += 1;
+                }
+            }
+            Err(warning) => warnings.push(warning),
+        }
+    }
+
+    Ok(SqliteHistoryImportReport {
+        processed_rows,
+        last_row_id,
+        warnings,
+    })
+}
+
+pub async fn import_sqlite_history_strict<
+    Entry,
+    Read,
+    ReadError,
+    Process,
+    ProcessFuture,
+    ProcessError,
+>(
+    from_row_id: i64,
+    end_time: Option<Timestamp>,
+    read: Read,
+    mut process: Process,
+) -> Result<SqliteHistoryImportReport<()>, SqliteHistoryImportError<ReadError, ProcessError>>
+where
+    Read: FnOnce(i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), ReadError>,
+    Process: FnMut(Entry) -> ProcessFuture,
+    ProcessFuture: Future<Output = Result<SqliteHistoryRowOutcome, ProcessError>>,
+{
+    let (entries, last_row_id) =
+        read(from_row_id, end_time).map_err(SqliteHistoryImportError::Read)?;
+    let mut processed_rows = 0usize;
+
+    for entry in entries {
+        let outcome = process(entry)
+            .await
+            .map_err(SqliteHistoryImportError::Process)?;
+        if matches!(outcome, SqliteHistoryRowOutcome::Processed) {
+            processed_rows += 1;
+        }
+    }
+
+    Ok(SqliteHistoryImportReport {
+        processed_rows,
+        last_row_id,
+        warnings: Vec::new(),
+    })
 }
 
 #[must_use]
