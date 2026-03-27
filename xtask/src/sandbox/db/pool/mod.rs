@@ -44,9 +44,10 @@ use metrics::POOL_METRICS;
 use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     create_database_from_template, database_exists, detect_connection_budget,
-    drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
+    drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    recreate_pool_database, store_pool_meta, url_with_db_name, wait_for_database_absence,
+    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
+    wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -634,7 +635,7 @@ impl DatabasePool {
 
                     if exists {
                         // Ensure permissions are granted on pre-existing databases (CI restarts, etc)
-                        let _ = grant_pool_database_permissions(&name).await;
+                        grant_pool_database_permissions_checked(&name).await?;
                         // Existing DBs are reconciled declaratively; recreate only when unrecoverable
                         // drift is detected (e.g. stale Timescale shared library).
                         let db_url = url_with_db_name(&base_url, &name)
@@ -724,8 +725,7 @@ impl DatabasePool {
                                         updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                         last_error: None,
                                     };
-                                    let _ =
-                                        store_pool_meta(conn.as_mut(), &name, &meta).await;
+                                    store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                                 }
                                 CreateDatabaseOutcome::AlreadyExists => {
                                     eprintln!(
@@ -741,7 +741,7 @@ impl DatabasePool {
                                 updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                 last_error: None,
                             };
-                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
+                            store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                         }
                     } else {
                         match create_database_from_template(
@@ -760,15 +760,14 @@ impl DatabasePool {
                                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                     last_error: None,
                                 };
-                                let _ =
-                                    store_pool_meta(conn.as_mut(), &name, &meta).await;
+                                store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                             }
                             CreateDatabaseOutcome::AlreadyExists => {
                                 eprintln!(
                                     "  Database {name} already exists after creation race; reusing"
                                 );
                                 // Ensure permissions are granted even when database was created concurrently
-                                let _ = grant_pool_database_permissions(&name).await;
+                                grant_pool_database_permissions_checked(&name).await?;
                             }
                         }
                     }
@@ -1205,7 +1204,16 @@ impl DatabasePool {
                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                     last_error: Some(e.to_string()),
                 };
-                let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
+                if let Err(error) =
+                    store_pool_meta_checked(lock_conn.as_mut(), &slot.name, &dirty_meta).await
+                {
+                    slog!(
+                        Level::Warn,
+                        "meta_persist_failed",
+                        slot = slot.name,
+                        error = error.to_string()
+                    );
+                }
                 release_slot(slot, pool, &mut lock_conn, lock_id).await;
                 Err(())
             }

@@ -239,6 +239,12 @@ pub(super) async fn grant_pool_database_permissions(db_name: &str) -> TestResult
     crate::sandbox::db::permissions::grant_pool_database_permissions(db_name).await
 }
 
+pub(super) async fn grant_pool_database_permissions_checked(db_name: &str) -> TestResult<()> {
+    grant_pool_database_permissions(db_name)
+        .await
+        .wrap_err_with(|| format!("failed to grant pool database permissions for {db_name}"))
+}
+
 // ── Create from template ────────────────────────────────────────────────────
 
 pub(super) async fn create_database_from_template(
@@ -272,7 +278,7 @@ pub(super) async fn create_database_from_template(
     {
         Ok(_) => {
             // Grant permissions on the newly created database in CI environment
-            let _ = grant_pool_database_permissions(name).await;
+            grant_pool_database_permissions_checked(name).await?;
             Ok(CreateDatabaseOutcome::Created)
         }
         Err(err) => {
@@ -320,7 +326,7 @@ pub(super) async fn create_database_from_template_admin(
     .await
     {
         Ok(_) => {
-            let _ = grant_pool_database_permissions(name).await;
+            grant_pool_database_permissions_checked(name).await?;
             Ok(CreateDatabaseOutcome::Created)
         }
         Err(err) => {
@@ -371,7 +377,7 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
                 CreateDatabaseOutcome::AlreadyExists => {}
             }
         }
-        let _ = grant_pool_database_permissions(db_name).await;
+        grant_pool_database_permissions_checked(db_name).await?;
 
         // Converge schema on every existing slot DB before marking metadata clean.
         // This prevents "metadata says current, schema is stale" false positives.
@@ -389,7 +395,7 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
             updated_at_rfc3339: Timestamp::now().format_rfc3339(),
             last_error: None,
         };
-        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
+        store_pool_meta_checked(&mut template_guard.admin_conn, db_name, &meta).await?;
         Ok(())
     }
     .await;
@@ -461,7 +467,7 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
             &template_name,
         )
         .await?;
-        let _ = grant_pool_database_permissions(db_name).await;
+        grant_pool_database_permissions_checked(db_name).await?;
         let db_url = url_with_db_name(&base_url, db_name)?;
         super::reset::ensure_pool_db_invariants(&db_url).await?;
         let meta = PoolMeta {
@@ -471,7 +477,7 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
             updated_at_rfc3339: Timestamp::now().format_rfc3339(),
             last_error: None,
         };
-        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
+        store_pool_meta_checked(&mut template_guard.admin_conn, db_name, &meta).await?;
         Ok(())
     }
     .await;
@@ -603,6 +609,16 @@ pub(super) async fn store_pool_meta(
         .execute(conn)
         .await?;
     Ok(())
+}
+
+pub(super) async fn store_pool_meta_checked(
+    conn: &mut PgConnection,
+    db_name: &str,
+    meta: &PoolMeta,
+) -> TestResult<()> {
+    store_pool_meta(conn, db_name, meta)
+        .await
+        .wrap_err_with(|| format!("failed to persist pool metadata for {db_name}"))
 }
 
 // ── Admin connection helpers ────────────────────────────────────────────────
