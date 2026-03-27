@@ -150,9 +150,10 @@ pub struct TetherClient {
 impl TetherClient {
     /// Create a new tether client
     pub fn new(config: TetherConfig) -> Result<Self> {
+        let accept_invalid_gateway_certs = should_accept_invalid_gateway_certs(&config.gateway_url);
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .danger_accept_invalid_certs(true) // For development - proper certs in production
+            .danger_accept_invalid_certs(accept_invalid_gateway_certs)
             .build()
             .context("Failed to create HTTP client")?;
 
@@ -276,6 +277,15 @@ impl TetherClient {
 
         Ok(())
     }
+}
+
+fn should_accept_invalid_gateway_certs(gateway_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(gateway_url) else {
+        return false;
+    };
+
+    url.host_str()
+        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]"))
 }
 
 fn format_http_failure_body<E: std::fmt::Display>(
@@ -607,6 +617,17 @@ mod tests {
         let suffix = name.trim_start_matches("dev-testuser-");
         assert_eq!(suffix.len(), 15);
         assert!(suffix.chars().all(|c| c.is_ascii_digit() || c == 'T'));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_invalid_gateway_certs_only_allowed_for_loopback(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        assert!(should_accept_invalid_gateway_certs("https://localhost:9999"));
+        assert!(should_accept_invalid_gateway_certs("https://127.0.0.1:9999"));
+        assert!(should_accept_invalid_gateway_certs("https://[::1]:9999"));
+        assert!(!should_accept_invalid_gateway_certs("https://gateway.prod.sinex.io:9999"));
+        assert!(!should_accept_invalid_gateway_certs("not-a-url"));
         Ok(())
     }
 }

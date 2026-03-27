@@ -572,7 +572,7 @@ async fn run_template_schema_apply(
         ));
     }
 
-    grant_template_permissions(&template_pool).await;
+    grant_template_permissions(&template_pool).await?;
 
     // Seed well-known test fixture data for FK constraints
     sqlx::query(TEMPLATE_SEED_SQL)
@@ -586,32 +586,29 @@ async fn run_template_schema_apply(
 }
 
 /// Grant schema permissions to the non-superuser role in the template database.
-async fn grant_template_permissions(template_pool: &DbPool) {
+async fn grant_template_permissions(template_pool: &DbPool) -> TestResult<()> {
     let Ok(Some(granter)) = crate::sandbox::db::permissions::PermissionGranter::from_env() else {
-        return;
+        return Ok(());
     };
     let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
         url.split("://")
             .nth(1)
             .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
     }) else {
-        return;
+        return Ok(());
     };
 
     eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
-    use sinex_schema::schema_registry;
-    for schema in schema_registry::SINEX_SCHEMAS {
-        if let Err(e) = granter
-            .grant_schema_access(template_pool, schema.name)
+    for schema in crate::sandbox::db::permissions::granted_schema_names() {
+        granter
+            .grant_schema_access(template_pool, schema)
             .await
-        {
-            tracing::warn!(
-                error = %e,
-                schema = schema.name,
-                "Failed to grant permissions on schema in template database"
-            );
-        }
+            .wrap_err_with(|| {
+                format!("failed to grant permissions on schema {schema} in template database")
+            })?;
     }
+
+    Ok(())
 }
 
 fn cache_template_name(template_name: &str) {
