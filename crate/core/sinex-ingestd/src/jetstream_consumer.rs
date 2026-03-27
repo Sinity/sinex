@@ -290,6 +290,17 @@ impl JetStreamConsumer {
         }
     }
 
+    fn require_inserted_ids(
+        inserted_ids: Option<Vec<Uuid>>,
+        attempted_rows: usize,
+    ) -> IngestdResult<Vec<Uuid>> {
+        inserted_ids.ok_or_else(|| {
+            SinexError::invalid_state(format!(
+                "Event repository omitted inserted_ids for a non-empty stream batch of {attempted_rows} row(s)"
+            ))
+        })
+    }
+
     pub fn new(
         nats_client: NatsClient,
         pool: DbPool,
@@ -1188,7 +1199,7 @@ impl JetStreamConsumer {
             err
         })?;
 
-        let inserted_ids = result.inserted_ids.unwrap_or_default();
+        let inserted_ids = Self::require_inserted_ids(result.inserted_ids, to_persist.len())?;
         self.remember_batch(batch);
         Ok(PersistBatchResult {
             inserted_ids: Some(inserted_ids),
@@ -1622,6 +1633,25 @@ mod tests {
         .expect_err("strict mode must reject events without schema bindings");
 
         assert!(err.to_string().contains("Strict validation enabled"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_inserted_ids_accepts_present_repository_ids() -> TestResult<()> {
+        let ids = vec![Uuid::now_v7()];
+        let accepted = JetStreamConsumer::require_inserted_ids(Some(ids.clone()), 1)?;
+        assert_eq!(accepted, ids);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_inserted_ids_rejects_missing_repository_ids() -> TestResult<()> {
+        let err = JetStreamConsumer::require_inserted_ids(None, 2)
+            .expect_err("missing inserted_ids must surface as an invalid repository contract");
+        assert!(
+            err.to_string().contains("Event repository omitted inserted_ids"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 }
