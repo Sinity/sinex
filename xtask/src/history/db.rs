@@ -36,6 +36,24 @@ fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -
     }
 }
 
+fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(|error| match error {
+                rusqlite::Error::SqliteFailure(inner, _) => Some(inner.code),
+                _ => None,
+            })
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ffi::ErrorCode::DatabaseBusy
+                        | rusqlite::ffi::ErrorCode::DatabaseLocked
+                )
+            })
+    })
+}
+
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -261,8 +279,15 @@ impl HistoryDb {
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
         db.is_synthetic = db.check_synthetic()?;
-        db.cleanup_stale_invocations()
-            .context("failed to clean up stale invocations")?;
+        if let Err(error) = db.cleanup_stale_invocations() {
+            if is_sqlite_lock_error(&error) {
+                eprintln!(
+                    "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"
+                );
+            } else {
+                return Err(error).context("failed to clean up stale invocations");
+            }
+        }
         Ok(db)
     }
 
@@ -3663,6 +3688,45 @@ mod tests {
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to mark stale invocations as cancelled"));
         assert!(message.contains("no such column: finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_skips_locked_stale_cleanup() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-locked-stale-cleanup.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2000-01-01T00:00:00Z",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64
+            ],
+        )?;
+        drop(db);
+
+        let lock_conn = Connection::open(&db_path)?;
+        lock_conn.execute_batch("BEGIN EXCLUSIVE TRANSACTION;")?;
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            status, "running",
+            "locked cleanup should be skipped instead of failing open"
+        );
+
+        lock_conn.execute_batch("ROLLBACK;")?;
         Ok(())
     }
 
