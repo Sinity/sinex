@@ -39,27 +39,49 @@ fn list_workspace_packages() -> Vec<String> {
         .args(["metadata", "--format-version=1", "--no-deps", "--quiet"])
         .output();
 
-    let Ok(out) = out else { return vec![] };
-    if !out.status.success() {
-        return vec![];
-    }
-
-    let meta: serde_json::Value = match serde_json::from_slice(&out.stdout) {
-        Ok(v) => v,
-        Err(_) => return vec![],
+    let packages = match out {
+        Ok(output) => workspace_packages_from_metadata_output(&output),
+        Err(error) => Err(color_eyre::eyre::eyre!("failed to invoke cargo metadata: {error}")),
     };
 
-    let mut names: Vec<String> = meta["packages"]
+    match packages {
+        Ok(names) => names,
+        Err(error) => {
+            eprintln!("[xtask] failed to list workspace packages for completions: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn workspace_packages_from_metadata_output(output: &std::process::Output) -> Result<Vec<String>> {
+    use color_eyre::eyre::{Context, eyre};
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return match output.status.code() {
+            Some(code) if stderr.is_empty() => Err(eyre!("cargo metadata failed with exit code {code}")),
+            Some(code) => Err(eyre!(
+                "cargo metadata failed with exit code {code}: {stderr}"
+            )),
+            None if stderr.is_empty() => Err(eyre!("cargo metadata terminated by signal")),
+            None => Err(eyre!("cargo metadata terminated by signal: {stderr}")),
+        };
+    }
+
+    let meta: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("failed to parse cargo metadata JSON for completions")?;
+
+    let packages = meta["packages"]
         .as_array()
-        .map(|pkgs| {
-            pkgs.iter()
-                .filter_map(|p| p["name"].as_str())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+        .ok_or_else(|| eyre!("cargo metadata JSON omitted packages array"))?;
+
+    let mut names: Vec<String> = packages
+        .iter()
+        .filter_map(|p| p["name"].as_str())
+        .map(String::from)
+        .collect();
     names.sort();
-    names
+    Ok(names)
 }
 
 /// Run target names from the static BINARIES table in run.rs + bundle names
@@ -175,6 +197,7 @@ impl XtaskCommand for CompletionsCommand {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
 
     #[sinex_test]
     async fn test_completions_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -235,6 +258,37 @@ mod tests {
             !output.contains(":PACKAGES:_default"),
             "zsh post-processor should remove static fallback"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_packages_from_metadata_output_reports_invalid_json()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: br#"{"packages":"nope"}"#.to_vec(),
+            stderr: Vec::new(),
+        };
+
+        let error = workspace_packages_from_metadata_output(&output)
+            .expect_err("invalid cargo metadata JSON should surface");
+        assert!(error.to_string().contains("packages array"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_packages_from_metadata_output_reports_failed_status()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(2 << 8),
+            stdout: Vec::new(),
+            stderr: b"metadata boom".to_vec(),
+        };
+
+        let error = workspace_packages_from_metadata_output(&output)
+            .expect_err("cargo metadata failure should surface");
+        assert!(error.to_string().contains("exit code 2"));
+        assert!(error.to_string().contains("metadata boom"));
         Ok(())
     }
 }
