@@ -366,7 +366,7 @@ where
     pub async fn process_one(
         &mut self,
         event: Event<JsonValue>,
-    ) -> NodeResult<Option<Event<JsonValue>>> {
+    ) -> NodeResult<Vec<Event<JsonValue>>> {
         let context = DerivedTriggerContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
 
@@ -392,16 +392,11 @@ where
         }
 
         match result {
-            Ok(Some(output)) => {
-                let output_event = self.build_output_event(output, source_event_id, &context)?;
+            Ok(outputs) => {
+                let output_events = self.build_output_events(outputs, source_event_id, &context)?;
                 self.persisted_state.events_processed += 1;
                 self.events_since_checkpoint += 1;
-                Ok(Some(output_event))
-            }
-            Ok(None) => {
-                self.persisted_state.events_processed += 1;
-                self.events_since_checkpoint += 1;
-                Ok(None)
+                Ok(output_events)
             }
             Err(e) => {
                 let action = self.node.handle_error_derived(&e);
@@ -410,18 +405,30 @@ where
                         warn!(node = %self.node.name(), error = %e, "Skipping event");
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
-                        Ok(None)
+                        Ok(Vec::new())
                     }
                     ErrorAction::SendToDLQ => {
                         self.send_to_dlq_or_fail(&event, &e).await?;
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
-                        Ok(None)
+                        Ok(Vec::new())
                     }
                     ErrorAction::Retry => Err(e.into()),
                 }
             }
         }
+    }
+
+    fn build_output_events(
+        &self,
+        outputs: Vec<DerivedOutput<JsonValue>>,
+        fallback_source_id: Id<Event<JsonValue>>,
+        context: &DerivedTriggerContext,
+    ) -> NodeResult<Vec<Event<JsonValue>>> {
+        outputs
+            .into_iter()
+            .map(|output| self.build_output_event(output, fallback_source_id, context))
+            .collect()
     }
 
     /// Build an output `Event<JsonValue>` from a `DerivedOutput<JsonValue>`.
@@ -494,8 +501,7 @@ where
 
         for event in events {
             match self.process_one(event).await {
-                Ok(Some(output_event)) => outputs.push(output_event),
-                Ok(None) => {}
+                Ok(mut output_events) => outputs.append(&mut output_events),
                 Err(e) => {
                     error!(node = %self.node.name(), error = %e, "Error processing event in batch");
                 }
@@ -1115,17 +1121,18 @@ where
                     )
                     .await
                 {
-                    Ok(Some(output)) => {
-                        let output_event =
-                            self.build_output_event(output, ctx.trigger_event_id, &ctx)?;
+                    Ok(outputs) => {
+                        let output_events =
+                            self.build_output_events(outputs, ctx.trigger_event_id, &ctx)?;
                         if let Some(ref sender) = self.event_sender {
-                            sender.send(output_event).await.map_err(|_| {
-                                SinexError::lifecycle("Event channel closed during replay")
-                            })?;
-                            events_emitted += 1;
+                            for output_event in output_events {
+                                sender.send(output_event).await.map_err(|_| {
+                                    SinexError::lifecycle("Event channel closed during replay")
+                                })?;
+                                events_emitted += 1;
+                            }
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => {
                         warn!(node = %self.node.name(), error = %e, "Error in historical replay, skipping");
                     }
