@@ -1,6 +1,6 @@
 //! Stack configuration and status tracking.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -272,6 +272,48 @@ pub fn ensure_directories(config: &StackConfig) -> Result<()> {
     Ok(())
 }
 
+fn summarize_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn probe_annex_available(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    match output {
+        Ok(output) if output.status.success() => Ok(true),
+        Ok(output) => {
+            bail!(
+                "git-annex version probe failed: {}",
+                summarize_command_output(&output)
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).wrap_err("failed to run git-annex version probe"),
+    }
+}
+
+fn require_successful_command(
+    description: &str,
+    output: std::io::Result<std::process::Output>,
+) -> Result<()> {
+    let output = output.wrap_err_with(|| format!("failed to run {description}"))?;
+    if !output.status.success() {
+        bail!(
+            "{description} failed: {}",
+            summarize_command_output(&output)
+        );
+    }
+    Ok(())
+}
+
 pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
     if config.annex_data().join(".git").exists() {
         if verbose {
@@ -280,7 +322,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    if Command::new("git-annex").arg("version").output().is_err() {
+    if !probe_annex_available(Command::new("git-annex").arg("version").output())? {
         if verbose {
             println!("git-annex not found, skipping annex initialization");
         }
@@ -293,29 +335,45 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     fs::create_dir_all(config.annex_data())?;
 
-    let _ = Command::new("git")
-        .args(["init"])
-        .current_dir(config.annex_data())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    require_successful_command(
+        "git init for annex repository",
+        Command::new("git")
+            .args(["init"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git-annex")
-        .args(["init", "sinex-dev-isolated"])
-        .current_dir(config.annex_data())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    require_successful_command(
+        "git-annex init for annex repository",
+        Command::new("git-annex")
+            .args(["init", "sinex-dev-isolated"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git")
-        .args(["config", "annex.thin", "true"])
-        .current_dir(config.annex_data())
-        .status();
+    require_successful_command(
+        "git config annex.thin",
+        Command::new("git")
+            .args(["config", "annex.thin", "true"])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
-    let _ = Command::new("git")
-        .args(["config", "annex.backend", &config.annex.backend])
-        .current_dir(config.annex_data())
-        .status();
+    require_successful_command(
+        "git config annex.backend",
+        Command::new("git")
+            .args(["config", "annex.backend", &config.annex.backend])
+            .current_dir(config.annex_data())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output(),
+    )?;
 
     if verbose {
         println!("Git-annex initialized");
@@ -472,12 +530,51 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::StackConfig;
+    use super::{probe_annex_available, require_successful_command};
     use std::path::Path;
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn nats_port_matches_flake_hash_for_sinex_checkout() {
         let checkout = Path::new("/realm/project/sinex");
         assert_eq!(StackConfig::port_offset_for_checkout(checkout), 86);
         assert_eq!(StackConfig::nats_port_for_checkout(checkout), 4308);
+    }
+
+    #[test]
+    fn probe_annex_available_treats_missing_binary_as_absent() {
+        let available = probe_annex_available(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        )))
+        .unwrap();
+        assert!(!available);
+    }
+
+    #[test]
+    fn probe_annex_available_reports_nonzero_status() {
+        let error = probe_annex_available(Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"git-annex broken".to_vec(),
+        }))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("git-annex broken"));
+    }
+
+    #[test]
+    fn require_successful_command_reports_failure_output() {
+        let error = require_successful_command(
+            "git init for annex repository",
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            }),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("permission denied"));
+        assert!(message.contains("git init for annex repository"));
     }
 }
