@@ -18,6 +18,7 @@ use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
+use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::utils::ResourceGuard;
 use sqlx::PgPool;
 
@@ -950,13 +951,7 @@ impl IngestService {
             ..Default::default()
         };
 
-        let kv = match js.create_key_value(kv_config).await {
-            Ok(store) => store,
-            Err(_) => js
-                .get_key_value(&bucket)
-                .await
-                .map_err(|e| SinexError::kv("Failed to get schema KV bucket").with_source(e))?,
-        };
+        let kv = create_or_open_kv_store(js, kv_config).await?;
 
         // Parse schema IDs and fetch in bulk via centralized repository
         let schema_ids: Vec<Uuid> = entries

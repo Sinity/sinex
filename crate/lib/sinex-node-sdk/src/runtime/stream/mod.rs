@@ -40,6 +40,7 @@ use sinex_db::models::SourceMaterial;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
+use sinex_primitives::nats::create_or_open_kv_store;
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
@@ -285,20 +286,14 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
     // nats_kv_bucket_name() returns base_name (e.g. "dev_sinex_checkpoints")
     // We need to prepend "KV_" prefix for NATS bucket naming
     let bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
-    let kv_store = match js
-        .create_key_value(kv::Config {
+    let kv_store = create_or_open_kv_store(
+        &js,
+        kv::Config {
             bucket: bucket.clone(),
             ..Default::default()
-        })
-        .await
-    {
-        Ok(store) => store,
-        Err(create_err) => js.get_key_value(&bucket).await.map_err(|e| {
-            SinexError::lifecycle(format!(
-                "Failed to create/open checkpoint KV bucket (create: {create_err}, open: {e})"
-            ))
-        })?,
-    };
+        },
+    )
+    .await?;
 
     Ok(kv_store)
 }

@@ -13,6 +13,7 @@ use crate::config::GatewayConfig;
 use async_nats::jetstream::Context;
 use async_nats::jetstream::kv::{Config as KvConfig, Store};
 use color_eyre::eyre::{Context as _, Result};
+use sinex_primitives::nats::create_or_open_kv_store;
 use std::num::NonZeroU32;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -98,13 +99,9 @@ impl DistributedRateLimiter {
             ..Default::default()
         };
 
-        let kv = match jetstream.create_key_value(kv_config).await {
-            Ok(store) => store,
-            Err(_) => jetstream
-                .get_key_value("sinex_gateway_rate_limits")
-                .await
-                .wrap_err("Failed to create/get rate limit KV bucket")?,
-        };
+        let kv = create_or_open_kv_store(&jetstream, kv_config)
+            .await
+            .wrap_err("Failed to create/get rate limit KV bucket")?;
 
         Ok(Self {
             kv,
