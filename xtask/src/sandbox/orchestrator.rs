@@ -6,6 +6,7 @@
 //! `start_test_ingestd_with_config`.
 
 use crate::sandbox::prelude::*;
+use color_eyre::eyre::WrapErr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -55,15 +56,17 @@ impl TestIngestdHandle {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
         // Dump debug log file
-        let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
-        if let Ok(content) = std::fs::read_to_string(&debug_log) {
-            if content.is_empty() {
+        let debug_log = ingestd_debug_log_path_for_test_process();
+        match read_ingestd_debug_log(&debug_log) {
+            Ok(None) => {
                 eprintln!("📋 ingestd log: EMPTY");
-            } else {
+            }
+            Ok(Some(content)) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
                 eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
             }
+            Err(error) => eprintln!("📋 ingestd log unavailable: {error:#}"),
         }
         if let Some(reader) = self.stderr_reader.take() {
             let _ = reader.await;
@@ -75,6 +78,20 @@ impl TestIngestdHandle {
 impl Drop for TestIngestdHandle {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
+    }
+}
+
+pub(crate) fn ingestd_debug_log_path_for_test_process() -> PathBuf {
+    PathBuf::from(format!("/tmp/sinex-ingestd-{}.log", std::process::id()))
+}
+
+pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<String>> {
+    let content = std::fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed to read ingestd debug log '{}'", path.display()))?;
+    if content.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(content))
     }
 }
 
@@ -462,6 +479,7 @@ pub async fn start_test_ingestd_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[sinex_test]
     async fn captured_output_stdout_json_lines_surfaces_invalid_json() -> TestResult<()> {
@@ -507,6 +525,35 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("failed to read workspace candidate manifest"));
         assert!(message.contains(workspace_root.join("Cargo.toml").display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_reports_missing_file() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let error = read_ingestd_debug_log(&tempdir.path().join("missing.log")).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read ingestd debug log"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_treats_empty_file_as_empty() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "")?;
+        assert!(read_ingestd_debug_log(&debug_log)?.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn read_ingestd_debug_log_preserves_non_empty_content() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "line one\nline two\n")?;
+        assert_eq!(
+            read_ingestd_debug_log(&debug_log)?,
+            Some("line one\nline two\n".to_string())
+        );
         Ok(())
     }
 }

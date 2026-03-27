@@ -392,34 +392,43 @@ impl<'ctx> PipelineScope<'ctx> {
             self.namespace().prefix()
         );
 
-        if let Ok(nats) = self.ctx.nats_handle() {
-            match nats.log_tail(LOG_TAIL) {
+        match self.ctx.nats_handle() {
+            Ok(nats) => match nats.log_tail(LOG_TAIL) {
                 Some(tail) if !tail.is_empty() => {
                     eprintln!("--- nats log tail ---\n{tail}");
                 }
                 _ => {
                     eprintln!("--- nats log tail unavailable ---");
                 }
+            },
+            Err(error) => {
+                eprintln!("--- nats log tail unavailable: {error:#} ---");
             }
         }
 
         // Read the file-based ingestd debug log (written by the orchestrator subprocess).
         // The log file is named after the TEST process PID, not the child process PID.
-        let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
-        if let Ok(content) = std::fs::read_to_string(&debug_log)
-            && !content.is_empty()
-        {
-            let lines: Vec<&str> = content.lines().collect();
-            let start = lines.len().saturating_sub(LOG_TAIL);
-            eprintln!(
-                "--- ingestd log tail ({} lines, showing last {}) ---",
-                lines.len(),
-                lines.len() - start
-            );
-            for line in &lines[start..] {
-                eprintln!("{line}");
+        let debug_log = crate::sandbox::orchestrator::ingestd_debug_log_path_for_test_process();
+        match crate::sandbox::orchestrator::read_ingestd_debug_log(&debug_log) {
+            Ok(Some(content)) => {
+                let lines: Vec<&str> = content.lines().collect();
+                let start = lines.len().saturating_sub(LOG_TAIL);
+                eprintln!(
+                    "--- ingestd log tail ({} lines, showing last {}) ---",
+                    lines.len(),
+                    lines.len() - start
+                );
+                for line in &lines[start..] {
+                    eprintln!("{line}");
+                }
+                return;
             }
-            return;
+            Ok(None) => {
+                eprintln!("--- ingestd log tail unavailable: debug log empty ---");
+            }
+            Err(error) => {
+                eprintln!("--- ingestd log tail unavailable: {error:#} ---");
+            }
         }
 
         // Fallback: check in-process captured logs
