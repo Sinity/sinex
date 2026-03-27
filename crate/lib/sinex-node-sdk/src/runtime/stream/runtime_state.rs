@@ -12,7 +12,7 @@ use serde_json::Value;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Seconds};
+use sinex_primitives::{JsonValue, Seconds, Uuid};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -45,6 +45,26 @@ impl NodeRuntimeState {
     #[must_use]
     pub fn service_info(&self) -> &ServiceInfo {
         &self.service_info
+    }
+
+    #[must_use]
+    pub fn node_name(&self) -> &str {
+        self.service_info.node_name()
+    }
+
+    #[must_use]
+    pub fn instance_id(&self) -> &str {
+        self.service_info.instance_id()
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        self.service_info.version()
+    }
+
+    #[must_use]
+    pub fn node_run_id(&self) -> Option<Uuid> {
+        self.service_info.node_run_id()
     }
 
     #[must_use]

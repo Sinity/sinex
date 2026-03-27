@@ -24,10 +24,12 @@ use serde_json::json;
 use sinex_node_sdk::{
     EventTransport,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
+    import_sqlite_history_strict,
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
     stage_stable_material,
+    SqliteHistoryImportError, SqliteHistoryRowOutcome,
     watcher_handle::WatcherHandle,
 };
 use sinex_primitives::{
@@ -636,42 +638,52 @@ impl IngestorNode for DesktopNode {
         })?;
 
         let start_row_id = Self::historical_activitywatch_start_row(state, &from);
-        let (entries, last_row_id) = read_activitywatch_history(&db_path, start_row_id, until.end_time())
-            .map_err(|error| {
-                SinexError::io(format!(
-                    "Failed to read ActivityWatch history from {db_path}: {error}"
-                ))
-            })?;
-
         let mut first_ts = None;
         let mut last_ts = None;
-        let mut events_processed = 0u64;
+        let node = &*self;
+        let import_report = import_sqlite_history_strict(
+            start_row_id,
+            until.end_time(),
+            |from_row_id, end_time| read_activitywatch_history(&db_path, from_row_id, end_time),
+            |entry| {
+                let db_path = db_path.clone();
+                let started_at = entry.started_at;
+                let ended_at = entry.ended_at;
+                if first_ts.is_none() {
+                    first_ts = Some(started_at);
+                }
+                last_ts = Some(ended_at);
+                async move {
+                    node.emit_activitywatch_entry(&db_path, &entry)
+                        .await
+                        .map(|()| SqliteHistoryRowOutcome::Processed)
+                }
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            SqliteHistoryImportError::Read(error) => SinexError::io(format!(
+                "Failed to read ActivityWatch history from {db_path}: {error}"
+            )),
+            SqliteHistoryImportError::Process(error) => error,
+        })?;
 
-        for entry in &entries {
-            self.emit_activitywatch_entry(&db_path, entry).await?;
-            if first_ts.is_none() {
-                first_ts = Some(entry.started_at);
-            }
-            last_ts = Some(entry.ended_at);
-            events_processed = events_processed.saturating_add(1);
-        }
-
-        if last_row_id > state.activitywatch_last_row_id {
-            state.activitywatch_last_row_id = last_row_id;
+        if import_report.last_row_id > state.activitywatch_last_row_id {
+            state.activitywatch_last_row_id = import_report.last_row_id;
         }
 
         Ok(ScanReport {
-            events_processed,
+            events_processed: import_report.processed_rows as u64,
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::external(
-                json!({ "activitywatch_row_id": last_row_id }),
-                format!("ActivityWatch row {last_row_id}"),
+                json!({ "activitywatch_row_id": import_report.last_row_id }),
+                format!("ActivityWatch row {}", import_report.last_row_id),
             ),
             time_range: first_ts.zip(last_ts),
             node_stats: HashMap::new(),
             successful_targets: vec!["desktop_activitywatch_historical".to_string()],
             failed_targets: Vec::new(),
-            warnings: if entries.is_empty() {
+            warnings: if import_report.processed_rows == 0 {
                 vec![format!(
                     "No new ActivityWatch rows found in {} beyond row {}",
                     db_path, start_row_id

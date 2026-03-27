@@ -23,7 +23,6 @@ use super::{
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use libc;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
@@ -240,7 +239,10 @@ async fn restore_state_params(
     };
 
     let hasher = rebuild_hasher(&temp_path).await?;
-    let buffered_slices = load_buffered_slices(&state_dir.join(BUFFER_DIR_NAME)).await?;
+    let mut buffered_slices = load_buffered_slices(&state_dir.join(BUFFER_DIR_NAME)).await?;
+    prune_stale_buffered_slices(material_id, state_snapshot.expected_offset, &mut buffered_slices)
+        .await?;
+    let buffered_bytes = buffered_slice_bytes(&buffered_slices).await?;
 
     // Acquire semaphore permit for restored assemblies (same as new assemblies)
     let permit = assembler
@@ -263,6 +265,7 @@ async fn restore_state_params(
         expected_offset: state_snapshot.expected_offset,
         slice_count: state_snapshot.slice_count,
         buffered_slices,
+        buffered_bytes,
         state_dir: state_dir.to_path_buf(),
         started_at: Timestamp::parse_rfc3339(&state_snapshot.started_at)
             .unwrap_or_else(|_| Timestamp::now()),
@@ -386,6 +389,53 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
     }
 
     Ok(buffered_slices)
+}
+
+async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> IngestdResult<i64> {
+    let mut total = 0i64;
+    for path in buffered_slices.values() {
+        let metadata = fs::metadata(path).await.map_err(|e| {
+            SinexError::io(format!("Failed to stat buffered slice {}", path.display()))
+                .with_source(e)
+        })?;
+        total += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+    }
+    Ok(total)
+}
+
+async fn prune_stale_buffered_slices(
+    material_id: Uuid,
+    expected_offset: i64,
+    buffered_slices: &mut BTreeMap<i64, PathBuf>,
+) -> IngestdResult<()> {
+    let stale_offsets = buffered_slices
+        .keys()
+        .copied()
+        .filter(|offset| *offset < expected_offset)
+        .collect::<Vec<_>>();
+
+    for offset in stale_offsets {
+        if let Some(path) = buffered_slices.remove(&offset) {
+            if let Err(error) = fs::remove_file(&path).await {
+                warn!(
+                    material_id = %material_id,
+                    offset,
+                    path = %path.display(),
+                    error = %error,
+                    "Failed to remove stale buffered slice recovered from disk"
+                );
+            } else {
+                debug!(
+                    material_id = %material_id,
+                    offset,
+                    path = %path.display(),
+                    "Dropped stale buffered slice recovered from disk"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Append an entry to the WAL, wrapped in a `WalEntryEnvelope` with CRC32 checksum.
@@ -539,11 +589,50 @@ pub(super) async fn handle_slice(
     use std::cmp::Ordering;
     match offset.cmp(&state.expected_offset) {
         Ordering::Equal => {
+            let projected_total = state.total_staged_bytes().saturating_add(data.len() as i64);
+            if projected_total > assembler.max_material_size_bytes {
+                let current_total = state.total_staged_bytes();
+                let buffered_count = state.buffered_slices.len();
+                let expected_offset = state.expected_offset;
+                state.phase = AssemblyPhase::Finalizing;
+                drop(state);
+
+                assembler
+                    .route_material_error(
+                        material_id,
+                        "material_size_limit_exceeded",
+                        serde_json::json!({
+                            "offset": offset,
+                            "incoming_bytes": data.len(),
+                            "expected_offset": expected_offset,
+                            "buffered_count": buffered_count,
+                            "current_total_bytes": current_total,
+                            "projected_total_bytes": projected_total,
+                            "max_material_size_bytes": assembler.max_material_size_bytes,
+                        }),
+                    )
+                    .await;
+                assembler
+                    .finalize_failed_material_claimed(
+                        material_id,
+                        "material_size_limit_exceeded",
+                    )
+                    .await;
+                return Ok(());
+            }
+
             append_slice_data(assembler, &mut state, material_id, &data).await?;
             flush_buffered_slices(assembler, &mut state, material_id).await?;
         }
         Ordering::Greater => {
-            if state.buffered_slices.len() >= assembler.max_buffered_slices {
+            if state.buffered_slices.contains_key(&offset) {
+                debug!(
+                    material_id = %material_id,
+                    offset,
+                    expected = state.expected_offset,
+                    "Ignoring duplicate buffered slice"
+                );
+            } else if state.buffered_slices.len() >= assembler.max_buffered_slices {
                 // ... error handling for max buffer ...
                 // (Truncated for brevity in this single-tool edit, but I should preserve the logic)
                 // I will assume logic is similar but we need to route error.
@@ -569,31 +658,69 @@ pub(super) async fn handle_slice(
                     )
                     .await;
                 assembler
-                    .finalize_failed_material(material_id, "buffered_slice_limit_exceeded")
+                    .finalize_failed_material_claimed(
+                        material_id,
+                        "buffered_slice_limit_exceeded",
+                    )
                     .await;
                 return Ok(());
-            }
+            } else {
+                let projected_total = state.total_staged_bytes().saturating_add(data.len() as i64);
+                if projected_total > assembler.max_material_size_bytes {
+                    let current_total = state.total_staged_bytes();
+                    let buffered_count = state.buffered_slices.len();
+                    let expected_offset = state.expected_offset;
+                    let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
+                    state.phase = AssemblyPhase::Finalizing;
+                    drop(state);
 
-            let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
-            state.buffered_slices.insert(offset, buffer_path.clone());
+                    assembler
+                        .route_material_error(
+                            material_id,
+                            "material_size_limit_exceeded",
+                            serde_json::json!({
+                                "offset": offset,
+                                "incoming_bytes": data.len(),
+                                "expected_offset": expected_offset,
+                                "buffered_count": buffered_count,
+                                "buffered_offsets": buffered_offsets,
+                                "current_total_bytes": current_total,
+                                "projected_total_bytes": projected_total,
+                                "max_material_size_bytes": assembler.max_material_size_bytes,
+                            }),
+                        )
+                        .await;
+                    assembler
+                        .finalize_failed_material_claimed(
+                            material_id,
+                            "material_size_limit_exceeded",
+                        )
+                        .await;
+                    return Ok(());
+                }
 
-            // Log buffering event
-            append_wal_entry(
-                assembler,
-                &mut state,
-                WalEntry::BufferedSlice {
+                let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
+                state.buffered_bytes += data.len() as i64;
+                state.buffered_slices.insert(offset, buffer_path.clone());
+
+                // Log buffering event
+                append_wal_entry(
+                    assembler,
+                    &mut state,
+                    WalEntry::BufferedSlice {
+                        offset,
+                        path: buffer_path,
+                    },
+                )
+                .await?;
+
+                debug!(
+                    material_id = %material_id,
                     offset,
-                    path: buffer_path,
-                },
-            )
-            .await?;
-
-            debug!(
-                material_id = %material_id,
-                offset,
-                expected = state.expected_offset,
-                "Buffered out-of-order slice"
-            );
+                    expected = state.expected_offset,
+                    "Buffered out-of-order slice"
+                );
+            }
         }
         Ordering::Less => {
             debug!(material_id = %material_id, offset, expected = state.expected_offset, "Ignoring duplicate or overlapping slice");
@@ -673,21 +800,11 @@ async fn flush_buffered_slices(
             break;
         }
 
-        let buf_path = state.buffered_slices.remove(&next_offset).ok_or_else(|| {
+        let buf_path = state.buffered_slices.get(&next_offset).cloned().ok_or_else(|| {
             SinexError::service(format!(
                 "Missing buffered slice for {material_id} at offset {next_offset}"
             ))
         })?;
-
-        // Log taking from buffer
-        append_wal_entry(
-            assembler,
-            state,
-            WalEntry::BufferedSliceTaken {
-                offset: next_offset,
-            },
-        )
-        .await?;
 
         let buffered_data = fs::read(&buf_path).await.map_err(|e| {
             SinexError::io(format!(
@@ -698,8 +815,26 @@ async fn flush_buffered_slices(
 
         append_slice_data(assembler, state, material_id, &buffered_data).await?;
 
-        if let Err(e) = fs::remove_file(&buf_path).await {
-            warn!(path = %buf_path.display(), "Failed to remove buffered slice file: {}", e);
+        let removed_path = state.buffered_slices.remove(&next_offset).ok_or_else(|| {
+            SinexError::service(format!(
+                "Missing buffered slice for {material_id} at offset {next_offset} during removal"
+            ))
+        })?;
+        state.buffered_bytes = state
+            .buffered_bytes
+            .saturating_sub(buffered_data.len() as i64);
+
+        append_wal_entry(
+            assembler,
+            state,
+            WalEntry::BufferedSliceTaken {
+                offset: next_offset,
+            },
+        )
+        .await?;
+
+        if let Err(e) = fs::remove_file(&removed_path).await {
+            warn!(path = %removed_path.display(), "Failed to remove buffered slice file: {}", e);
         }
     }
     Ok(())
@@ -741,48 +876,198 @@ async fn persist_buffered_slice(
 pub(super) async fn import_into_annex(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> IngestdResult<(AnnexKey, PathBuf)> {
-    let relative_utf8 = Utf8PathBuf::from(format!("materials/{}.bin", state.material_id));
-    let repo_path = assembler.annex.repo_path();
-    let target_path_utf8 = repo_path.join(&relative_utf8);
+) -> IngestdResult<AnnexKey> {
+    let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
+        SinexError::io(format!(
+            "Staging path is not valid utf-8 for annex import: {}",
+            path.display()
+        ))
+    })?;
 
-    if let Some(parent) = target_path_utf8.parent() {
-        fs::create_dir_all(parent.as_std_path())
-            .await
-            .map_err(|e| {
-                SinexError::io(format!(
-                    "Failed to create annex target directory {}",
-                    parent.as_str()
-                ))
-                .with_source(e)
-            })?;
-    }
-
-    let target_path: PathBuf = target_path_utf8.clone().into_std_path_buf();
-
-    if let Err(e) = fs::rename(&state.temp_path, &target_path).await {
-        if e.raw_os_error() == Some(libc::EXDEV) {
-            fs::copy(&state.temp_path, &target_path)
-                .await
-                .map_err(|copy_err| {
-                    SinexError::io("Failed to copy assembled file into annex").with_source(copy_err)
-                })?;
-            fs::remove_file(&state.temp_path)
-                .await
-                .map_err(|remove_err| {
-                    SinexError::io("Failed to remove staging file after copy")
-                        .with_source(remove_err)
-                })?;
-        } else {
-            return Err(SinexError::io("Failed to move assembled file into annex").with_source(e));
-        }
-    }
-
-    let annex_key = assembler
+    assembler
         .annex
-        .add_file(&relative_utf8)
+        .add_file(&staging_path)
         .await
-        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))?;
+        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))
+}
 
-    Ok((annex_key, target_path))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MaterialReadySet;
+    use camino::Utf8PathBuf;
+    use serde_json::json;
+    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use std::sync::Arc;
+    use xtask::sandbox::prelude::*;
+
+    async fn test_assembler(
+        ctx: &TestContext,
+    ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("io-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            512 * 1024 * 1024,
+            300,
+            3_600,
+            90,
+        )?;
+
+        Ok((assembler, annex_dir, state_dir))
+    }
+
+    #[sinex_test]
+    async fn import_into_annex_preserves_staging_file_until_cleanup(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let temp_path = state_dir.path().join("assembled.bin");
+        tokio::fs::write(&temp_path, b"staged-content").await?;
+
+        let final_state = FinalizationState {
+            material_id: Uuid::now_v7(),
+            temp_path: temp_path.clone(),
+            expected_offset: 14,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://annex".to_string(),
+            started_at: Timestamp::now(),
+        };
+
+        let annex_key = import_into_annex(&assembler, &final_state).await?;
+        assert!(!annex_key.key.is_empty());
+        assert!(
+            temp_path.exists(),
+            "annex import should preserve the staging file until cleanup succeeds"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_slice_ignores_duplicate_buffered_offset_without_growing_state(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("io-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            512 * 1024 * 1024,
+            300,
+            3_600,
+            90,
+        )?;
+
+        let material_id = Uuid::now_v7();
+        handle_slice(&assembler, material_id, 4, b"late".to_vec()).await?;
+        handle_slice(&assembler, material_id, 4, b"late".to_vec()).await?;
+
+        let state = assembler
+            .get_state_handle(&material_id)
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing assembler state"))?;
+        let state = state.lock().await;
+        assert_eq!(state.buffered_slices.len(), 1);
+        assert_eq!(state.buffered_bytes, 4);
+        assert_eq!(state.total_staged_bytes(), 4);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_slice_rejects_material_that_exceeds_size_limit(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("io-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            8,
+            300,
+            3_600,
+            90,
+        )?;
+
+        let material_id = Uuid::now_v7();
+        handle_slice(&assembler, material_id, 0, b"12345".to_vec()).await?;
+        handle_slice(&assembler, material_id, 5, b"6789".to_vec()).await?;
+
+        assert!(
+            assembler.get_state_handle(&material_id).await.is_none(),
+            "oversized material should be failed and cleaned up"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn prune_stale_buffered_slices_removes_replayed_offsets() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let stale_path = dir.path().join("0.bin");
+        let future_path = dir.path().join("8.bin");
+        tokio::fs::write(&stale_path, b"stale").await?;
+        tokio::fs::write(&future_path, b"future").await?;
+
+        let mut buffered = BTreeMap::from([(0, stale_path.clone()), (8, future_path.clone())]);
+        prune_stale_buffered_slices(Uuid::now_v7(), 4, &mut buffered).await?;
+
+        assert_eq!(buffered.keys().copied().collect::<Vec<_>>(), vec![8]);
+        assert!(!stale_path.exists());
+        assert!(future_path.exists());
+        Ok(())
+    }
 }

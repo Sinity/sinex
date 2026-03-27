@@ -1,7 +1,7 @@
 //! PKM (Personal Knowledge Management) types
 
 use crate::JsonValue;
-use crate::domain::{Entity, EntityRelation, EntityTypeName, RelationType, UserId};
+use crate::domain::{Entity, EntityRelation, EntityTypeName, RelationType};
 use crate::events::{Event, SourceMaterial};
 use crate::ids::Id;
 use serde::{Deserialize, Serialize};
@@ -21,9 +21,6 @@ pub struct CreateNoteRequest {
     /// Optional tags
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    /// Creator identifier
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<UserId>,
 }
 
 /// Response: `pkm.create_note`
@@ -50,9 +47,6 @@ pub struct CreateEntitiesRequest {
     pub source_material_id: Id<SourceMaterial>,
     /// List of entities to create
     pub entities: Vec<EntityDefinition>,
-    /// Creator identifier
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<UserId>,
 }
 
 /// Response: `pkm.create_entities_from_list`

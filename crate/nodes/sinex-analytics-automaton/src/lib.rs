@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::temporal::{Timestamp, now};
 use std::collections::{HashMap, VecDeque};
@@ -43,6 +44,10 @@ impl WindowedNode for AnalyticsAutomaton {
     }
     fn output_event_type(&self) -> &'static str {
         "analytics.insight"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     async fn accumulate(

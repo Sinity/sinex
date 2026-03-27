@@ -66,6 +66,12 @@ pub struct SourceMaterialHandle {
     slice_count: usize,
     bytes_written: i64,
     started_at: Timestamp,
+    pending_begin: Option<PendingMaterialBegin>,
+}
+
+struct PendingMaterialBegin {
+    source_identifier: String,
+    metadata: JsonValue,
 }
 
 impl SourceMaterialHandle {
@@ -358,15 +364,14 @@ impl AcquisitionManager {
         material_id: Uuid,
         source_identifier: &str,
         metadata: JsonValue,
+        started_at: Timestamp,
     ) -> NodeResult<()> {
-        let started_at = Timestamp::now().format_rfc3339();
-
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
             material_kind: self.source_type.clone(),
             source_identifier: source_identifier.to_string(),
             metadata,
-            started_at,
+            started_at: started_at.format_rfc3339(),
         };
 
         let subject = self
@@ -387,6 +392,27 @@ impl AcquisitionManager {
         Ok(())
     }
 
+    async fn ensure_begin_published(&self, handle: &mut SourceMaterialHandle) -> NodeResult<()> {
+        let Some(begin) = handle.pending_begin.take() else {
+            return Ok(());
+        };
+
+        if let Err(error) = self
+            .publish_begin(
+                handle.material_id,
+                &begin.source_identifier,
+                begin.metadata.clone(),
+                handle.started_at,
+            )
+            .await
+        {
+            handle.pending_begin = Some(begin);
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
     /// Append data slice to material
     ///
     /// Writes locally and publishes slice to NATS
@@ -395,6 +421,8 @@ impl AcquisitionManager {
         handle: &mut SourceMaterialHandle,
         data: &[u8],
     ) -> NodeResult<()> {
+        self.ensure_begin_published(handle).await?;
+
         // Write to temp file
         if let Some(ref mut file) = handle.temp_file {
             file.write_all(data).await?;
@@ -510,6 +538,8 @@ impl AcquisitionManager {
         _reason: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
+        self.ensure_begin_published(handle).await?;
+
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
             file.flush().await?;
@@ -670,11 +700,6 @@ impl<'a> MaterialBuilder<'a> {
             "Created new source material"
         );
 
-        // Publish begin message to NATS
-        self.manager
-            .publish_begin(material_id, &self.source_identifier, self.metadata)
-            .await?;
-
         Ok(SourceMaterialHandle {
             material_id,
             temp_file: Some(temp_file),
@@ -683,6 +708,10 @@ impl<'a> MaterialBuilder<'a> {
             slice_count: 0,
             bytes_written: 0,
             started_at: Timestamp::now(),
+            pending_begin: Some(PendingMaterialBegin {
+                source_identifier: self.source_identifier,
+                metadata: self.metadata,
+            }),
         })
     }
 }

@@ -176,7 +176,7 @@ pub async fn handle_lifecycle_archive(
     )?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         source = ?request.source,
         before = ?request.before,
         dry_run = request.dry_run,
@@ -232,7 +232,7 @@ pub async fn handle_lifecycle_archive(
     });
     let operation = pool
         .state()
-        .start_operation("archive", &auth.token_prefix, scope)
+        .start_operation("archive", auth.actor_id(), scope)
         .await
         .map_err(|e| {
             SinexError::database("Failed to persist archive operation").with_source(e.to_string())
@@ -284,7 +284,7 @@ pub async fn handle_lifecycle_archive(
             &cascade_ids,
             reason,
             &operation_id.to_string(),
-            &auth.token_prefix,
+            auth.actor_id(),
         )
         .await
     {
@@ -354,7 +354,7 @@ pub async fn handle_lifecycle_restore(
     }
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         event_count = request.event_ids.len(),
         dry_run = request.dry_run,
         "Lifecycle restore operation initiated"
@@ -386,7 +386,7 @@ pub async fn handle_lifecycle_restore(
     });
     let operation = pool
         .state()
-        .start_operation("restore", &auth.token_prefix, scope)
+        .start_operation("restore", auth.actor_id(), scope)
         .await
         .map_err(|e| {
             SinexError::database("Failed to persist restore operation").with_source(e.to_string())
@@ -686,7 +686,7 @@ pub async fn handle_tombstone_create(
 
     info!(
         operation_id = %operation_id,
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         source = ?request.source,
         before = ?request.before,
         "Creating tombstone operation"
@@ -744,7 +744,7 @@ pub async fn handle_tombstone_create(
         limit,
         reason: request.reason.clone(),
         cascade_analysis: Some(cascade_analysis),
-        created_by: auth.token_prefix.clone(),
+        created_by: auth.actor_id().to_string(),
         created_at: now.format_rfc3339(),
         expires_at: expires_at.format_rfc3339(),
         approved_by: None,
@@ -767,7 +767,7 @@ pub async fn handle_tombstone_create(
         operation.limit,
     );
     pool.state()
-        .create_tombstone_operation(&operation_id, &auth.token_prefix, scope, preview_summary)
+        .create_tombstone_operation(&operation_id, auth.actor_id(), scope, preview_summary)
         .await
         .map_err(|e| {
             SinexError::database("Failed to persist tombstone operation").with_source(e.to_string())
@@ -930,7 +930,7 @@ pub async fn handle_tombstone_approve(
     }
 
     operation.state = TombstoneOperationState::Executing;
-    operation.approved_by = Some(auth.token_prefix.clone());
+    operation.approved_by = Some(auth.actor_id().to_string());
     operation.approved_at = Some(now.format_rfc3339());
     operation.started_at = Some(now.format_rfc3339());
     sync_tombstone_phase(&mut operation);
@@ -953,7 +953,7 @@ pub async fn handle_tombstone_approve(
 
     info!(
         operation_id = %request.operation_id,
-        approved_by = %auth.token_prefix,
+        actor = %auth.actor_id(),
         "Tombstone operation approved, executing..."
     );
 
@@ -1096,8 +1096,8 @@ pub async fn handle_tombstone_cancel(
     operation.state = TombstoneOperationState::Cancelled;
     operation.finished_at = Some(finished_at.format_rfc3339());
     operation.error_details = Some(match request.reason.as_deref() {
-        Some(reason) => format!("Cancelled by {}: {reason}", auth.token_prefix),
-        None => format!("Cancelled by {}", auth.token_prefix),
+        Some(reason) => format!("Cancelled by {}: {reason}", auth.actor_id()),
+        None => format!("Cancelled by {}", auth.actor_id()),
     });
     sync_tombstone_phase(&mut operation);
 
@@ -1118,7 +1118,7 @@ pub async fn handle_tombstone_cancel(
 
     info!(
         operation_id = %request.operation_id,
-        cancelled_by = %auth.token_prefix,
+        actor = %auth.actor_id(),
         "Tombstone operation cancelled"
     );
 

@@ -1,7 +1,9 @@
 //! `JetStream` consumer integration tests
 
+#[path = "support.rs"]
+mod support;
+
 use async_nats::jetstream;
-use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_ingestd::material_ready_set::MaterialReadySet;
@@ -12,12 +14,16 @@ use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use support::{
+    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+    wait_for_last_stream_message_by_subject,
+};
 
 /// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
+    pool: &sinex_db::DbPool,
     nats_client: &async_nats::Client,
     namespace: &str,
     source: &str,
@@ -25,8 +31,9 @@ async fn publish_event(
     payload: serde_json::Value,
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
+    ensure_fixture_source_material(pool).await?;
     let env = sinex_primitives::environment();
-    let event_id = overrides.id.unwrap_or_default();
+    let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
     let ts_orig = overrides
         .ts_orig
         .unwrap_or_else(|| temporal::now().format_rfc3339());
@@ -38,8 +45,7 @@ async fn publish_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "node_run_id": Uuid::now_v7().to_string(),
-        "source_material_id": "00000000-0000-7000-8000-000000000000",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
     });
 
@@ -94,6 +100,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = EventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -116,13 +123,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
         Arc::new(RwLock::new(validator)),
         topology.clone(),
     );
-    let handle = tokio::spawn(async move { consumer.run().await });
-
-    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
-    nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
-        .await?;
+    let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
         handle,
@@ -140,6 +141,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = EventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -151,21 +153,19 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
     );
-    let events_stream = topology.events_stream.clone();
-
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology,
     );
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
-
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
+    let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer)
         .await?;
 
     let event_id = Uuid::now_v7();
     publish_event(
+        &ctx.pool,
         &nats_client,
         &namespace,
         "test",
@@ -201,7 +201,6 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
-    let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
@@ -215,8 +214,7 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
         ctx.pipeline_namespace().consumer_name("ingestd-ready-set"),
         Some(&namespace),
     );
-    let events_stream = topology.events_stream.clone();
-
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
@@ -224,10 +222,8 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
         topology,
     )
     .with_ready_set(MaterialReadySet::new());
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
-
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
-        .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     let material_id = Uuid::now_v7();
     ctx.ensure_specific_material(material_id, Some("gateway-inline"))
@@ -266,6 +262,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = EventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -277,32 +274,20 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         ctx.pipeline_namespace().consumer_name("ingestd-confirm"),
         Some(&namespace),
     );
-    let events_stream = topology.events_stream.clone();
-    let confirmations_stream = topology.confirmations_stream.clone();
-
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology,
     );
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
-
-    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
-    nats.wait_for_stream(&js, &events_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
-        .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     let event_id = Uuid::now_v7();
-    let confirmation_subject = format!(
-        "{}.{}",
-        ctx.pipeline_namespace().subject("events.confirmations"),
-        event_id
-    );
-    let mut confirmation_sub = nats_client.subscribe(confirmation_subject).await?;
 
     publish_event(
+        &ctx.pool,
         &nats_client,
         &namespace,
         "test",
@@ -315,12 +300,13 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     )
     .await?;
 
-    let confirmation = timeout(
-        Duration::from_secs(Timeouts::SHORT),
-        confirmation_sub.next(),
+    let confirmation_subject = format!("{}{}", ready_topology.confirmations_prefix, event_id);
+    let confirmation = wait_for_last_stream_message_by_subject(
+        &js,
+        &ready_topology.confirmations_stream,
+        &confirmation_subject,
     )
-    .await?
-    .expect("confirmation message");
+    .await?;
     let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
     assert_eq!(confirm_payload["event_id"], event_id.to_string());
 
@@ -352,13 +338,16 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     );
     let events_stream = topology.events_stream.clone();
 
+    ensure_fixture_source_material(&pool).await?;
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology,
     );
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
@@ -435,7 +424,6 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
     let validator = EventValidator::new(false);
 
     let js = ctx.jetstream().await?;
-    let nats = ctx.nats_handle()?;
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
@@ -444,8 +432,7 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
         ctx.pipeline_namespace().consumer_name("ingestd-db-fallback"),
         Some(&namespace),
     );
-    let events_stream = topology.events_stream.clone();
-
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
@@ -453,10 +440,8 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
         topology,
     )
     .with_ready_set(MaterialReadySet::new());
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
-
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
-        .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     let material_record = ctx
         .pool
@@ -495,7 +480,6 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     let validator = EventValidator::new(false);
 
     let js = ctx.jetstream().await?;
-    let nats = ctx.nats_handle()?;
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
@@ -504,24 +488,19 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
     );
-    let events_stream = topology.events_stream.clone();
     let dlq_stream = topology.dlq_stream.clone();
-
+    let ready_topology = topology.clone();
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology,
     );
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
-
-    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
-    nats.wait_for_stream(&js, &events_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &dlq_stream, stream_timeout)
-        .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     let bad_event_id = publish_event(
+        &ctx.pool,
         &nats_client,
         &namespace,
         "test",
@@ -535,6 +514,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     .await?;
 
     let good_event_id = publish_event(
+        &ctx.pool,
         &nats_client,
         &namespace,
         "test",
@@ -594,6 +574,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     };
 
     publish_event(
+        &ctx.pool,
         &nats_client,
         &setup.namespace,
         "idempotency",
@@ -607,6 +588,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 
     // Publish the exact same payload again to simulate replay / duplicate delivery.
     publish_event(
+        &ctx.pool,
         &nats_client,
         &setup.namespace,
         "idempotency",
@@ -652,6 +634,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     let invalid_total = 5;
     for idx in 0..invalid_total {
         publish_event(
+            &ctx.pool,
             &nats_client,
             &setup.namespace,
             "validation",
@@ -667,6 +650,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
 
     // Follow the invalid batch with a valid event to prove the consumer keeps making progress.
     let good_id = publish_event(
+        &ctx.pool,
         &nats_client,
         &setup.namespace,
         "validation",

@@ -5947,6 +5947,7 @@ dependencies = [
  "proptest",
  "rand 0.10.0",
  "regex",
+ "rustls 0.23.34",
  "schemars",
  "serde",
  "serde_json",

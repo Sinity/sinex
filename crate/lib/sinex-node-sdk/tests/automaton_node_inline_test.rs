@@ -9,6 +9,7 @@ use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
 use sinex_node_sdk::{DerivedNodeConfig, NodeLogicError, TransducerNode};
 use sinex_primitives::domain::{ProcessingMode, SyntheticTemporalPolicy, TriggerKind};
 use sinex_primitives::events::Event;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use xtask::sandbox::prelude::*;
@@ -45,6 +46,10 @@ impl TransducerNode for TestNodeLogic {
 
     fn output_event_type(&self) -> &'static str {
         "test.output"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     async fn process(

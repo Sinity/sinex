@@ -70,7 +70,10 @@ Add to your NixOS configuration:
   services.sinex = {
     enable = true;
     users.target = "yourusername";  # REQUIRED: match the user defined above
+    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token"; # REQUIRED when gateway is enabled
   };
+
+  environment.etc."sinex/gateway-admin-token".text = "replace-me-admin:admin";
 }
 ```
 
@@ -107,29 +110,32 @@ sudo nixos-rebuild switch --flake .#your-host
 > services.sinex.package = inputs.sinex.packages.${pkgs.stdenv.hostPlatform.system}.sinex;
 > ```
 
-### Service Group Controls
+### Service Bundle Controls
 
-You can toggle major service bundles via `services.sinex.serviceManagement.serviceGroups`:
+The upstream module exposes real feature toggles directly:
 
 ```nix
-services.sinex.serviceManagement.serviceGroups = {
-  core = true;        # ingestd, gateway, nodes, NATS
-  maintenance = false; # DLQ cleanup, git-annex timers, resource monitors
-  monitoring = false;  # Prometheus, Grafana, exporters
+services.sinex = {
+  core.enable = true;                    # ingestd + gateway
+  nodes.enable = true;                   # node units
+  lifecycle.maintenance.enable = false;  # DLQ/blob maintenance timers
+  observability.enable = false;          # journald/logging integration
+  observability.monitoring.enable = false; # Prometheus/Grafana/exporters
 };
 
 # Typical development overrides
 services.sinex.nodes = {
   enable = true;
   coordination.enable = false;
-  eventSources.filesystem = {
+  filesystem = {
     enable = true;
     instances = 1;
   };
 };
 ```
 
-Set the maintenance or monitoring flags to `true` when you need the supporting timers or observability stack.
+If you want higher-level activation profiles such as `foundation` / `capture` / `full`, use the
+`sinnix` wrapper module. The upstream `services.sinex` module keeps those switches explicit.
 
 ### Satellite Secrets & TLS
 
@@ -267,7 +273,8 @@ sudo nixos-rebuild test --flake .#exampleDevSandbox
 ```
 
 Switch permanently only after merging the example into your host configuration.
-> **Note**: The remote node example expects existing PostgreSQL/NATS endpoints and does not provision them locally.
+> **Note**: The remote node example expects an existing remote NATS endpoint (feeding a central
+> ingestd/gateway deployment) and explicitly disables local PostgreSQL/NATS provisioning.
 
 ## Architecture Overview
 
@@ -646,11 +653,11 @@ sudo -u sinex psql sinex_dev -c "SELECT 1;"
 # Check JetStream status
 nats --server nats://127.0.0.1:4222 server report jetstream
 
-# Check gRPC socket
-ls -la /run/sinex/ingest.sock
-
-# Test gateway readiness
+# Check the gateway readiness surface
 curl -k https://127.0.0.1:9999/ready
+
+# Inspect the managed unit contract
+systemctl show sinex-ingestd --property=Type,NotifyAccess,WatchdogUSec
 
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
@@ -730,9 +737,9 @@ df -h /var/lib/sinex
 systemctl status sinex-filesystem-1
 journalctl -u sinex-filesystem-1 -f
 
-# Verify ingestd socket
-ls -la /run/sinex/ingest.sock
-sudo -u sinex timeout 5 grpcurl -unix /run/sinex/ingest.sock list
+# Verify gateway readiness instead of a nonexistent ingestd socket
+curl -k https://127.0.0.1:9999/ready
+journalctl -u sinex-ingestd --since "10 minutes ago"
 
 # Check database connectivity
 sudo -u sinex psql sinex_dev -c "SELECT COUNT(*) FROM core.events;"
@@ -1007,14 +1014,13 @@ in
       };
     };
     
-    # Add to health checks
-    services.sinex.monitoring.healthChecks = {
-      "sinex-my-service" = {
-        command = "${pkgs.curl}/bin/curl -f http://localhost:${toString cfg.port}/health";
-        interval = "30s";
-        timeout = "5s";
-      };
-    };
+    # If the service exposes Prometheus metrics, wire it into the monitoring stack.
+    services.sinex.observability.monitoring.prometheus.extraScrapeConfigs = [
+      {
+        job_name = "sinex-my-service";
+        static_configs = [{ targets = [ "127.0.0.1:${toString cfg.port}" ]; }];
+      }
+    ];
   };
 }
 ```

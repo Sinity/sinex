@@ -15,6 +15,7 @@ use crate::automaton_node::{ErrorAction, NodeLogicError};
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::DerivedNodeModel;
+use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
 /// Configuration for the derived node adapter.
@@ -69,6 +70,7 @@ pub trait TransducerNode: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
+    fn output_privacy_context(&self) -> ProcessingContext;
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::Transducer
     }
@@ -125,6 +127,7 @@ pub trait WindowedNode: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
+    fn output_privacy_context(&self) -> ProcessingContext;
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::Windowed
     }
@@ -222,6 +225,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
+    fn output_privacy_context(&self) -> ProcessingContext;
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::ScopeReconciler
     }
@@ -311,6 +315,7 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
     fn input_event_type(&self) -> &'static str;
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
+    fn output_privacy_context(&self) -> ProcessingContext;
     fn node_model(&self) -> DerivedNodeModel;
 
     /// Process a single event through the node's model-specific logic.
@@ -375,6 +380,9 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
     }
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
+    }
+    fn output_privacy_context(&self) -> ProcessingContext {
+        self.0.output_privacy_context()
     }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()
@@ -455,6 +463,9 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
     }
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
+    }
+    fn output_privacy_context(&self) -> ProcessingContext {
+        self.0.output_privacy_context()
     }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()
@@ -570,6 +581,9 @@ where
     }
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
+    }
+    fn output_privacy_context(&self) -> ProcessingContext {
+        self.0.output_privacy_context()
     }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()

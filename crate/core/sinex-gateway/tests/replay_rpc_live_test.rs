@@ -272,6 +272,11 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         Some("Planning"),
         "newly created operation should be in Planning state"
     );
+    assert_eq!(
+        plan_result["operation"]["actor"].as_str(),
+        Some("admin:token:live-rpc"),
+        "gateway RPC must ignore caller-supplied replay actor params"
+    );
 
     // ── Step 2: Preview via HTTP RPC ────────────────────────────────
     let preview_result = gw
@@ -306,6 +311,11 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     assert_eq!(
         approve_result["operation"]["state"].as_str(),
         Some("Approved")
+    );
+    assert_eq!(
+        approve_result["operation"]["approved_by"].as_str(),
+        Some("admin:token:live-rpc"),
+        "gateway RPC must persist the authenticated approver identity"
     );
 
     // ── Step 4: Execute via HTTP RPC ────────────────────────────────

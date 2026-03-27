@@ -6,10 +6,11 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
+use crate::schema::{EventPayloadSchemas, NodeRuns, SourceMaterialRegistry, TableDef};
 use sea_query::{
-    Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction, Iden,
-    Index, IndexCreateStatement, IndexOrder, IntoIden, Table, TableCreateStatement,
+    Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey,
+    ForeignKeyAction, ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, IndexOrder,
+    IntoIden, Table, TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -142,6 +143,8 @@ impl Events {
     /// Generates the `CREATE TABLE` statement for `core.events`.
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
+        let mut node_run_foreign_key = Self::create_node_run_foreign_key();
+
         Table::create()
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
@@ -228,6 +231,20 @@ impl Events {
                     .to(EventPayloadSchemas::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::SetNull)
             )
+            .foreign_key(&mut node_run_foreign_key)
+            .to_owned()
+    }
+
+    /// Generates the named foreign key for `events.node_run_id`.
+    ///
+    /// Fresh databases receive this during `CREATE TABLE`; existing databases
+    /// converge the same named constraint via the schema convergence engine.
+    #[must_use]
+    pub fn create_node_run_foreign_key() -> ForeignKeyCreateStatement {
+        ForeignKey::create()
+            .name("events_node_run_id_fkey")
+            .from(Self::table_iden(), Events::NodeRunId)
+            .to(NodeRuns::table_iden(), Alias::new("id"))
             .to_owned()
     }
 

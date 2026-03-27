@@ -1,4 +1,4 @@
-use futures::future::try_join_all;
+use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_primitives::error::SinexError;
@@ -127,7 +127,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                     .await?;
                     Ok::<bool, sinex_primitives::error::SinexError>(
                         material.status.as_str() == "completed"
-                            && ledger_count.unwrap_or(0) >= 1
+                            && ledger_count.unwrap_or(0) >= 2
                     )
                 }
             },
@@ -170,6 +170,113 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         1,
         "expected exactly one staged_at ledger entry"
     );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
+/// Dropping a never-written handle should not orphan a material registry row.
+#[sinex_test]
+async fn material_acquisition_drop_before_first_slice_does_not_publish_orphan(
+    ctx: TestContext,
+) -> Result<()> {
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "drop-source", "/drop/path");
+
+    let handle = manager.begin_material("drop-before-first-slice").await?;
+    let material_id = handle.material_id;
+    let temp_path = handle.temp_path().to_path_buf();
+    drop(handle);
+
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let temp_path = temp_path.clone();
+                async move { Ok::<bool, SinexError>(!temp_path.exists()) }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?;
+    assert!(
+        material.is_none(),
+        "dropped pre-slice handles should not create a durable material row"
+    );
+
+    let ledger_count: Option<i64> = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
+        material_id
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        ledger_count.unwrap_or_default(),
+        0,
+        "dropped pre-slice handles should not write temporal ledger entries"
+    );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
+/// Zero-byte finalize must still publish begin so ingestd can record the failure honestly.
+#[sinex_test]
+async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestContext) -> Result<()> {
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let dlq_subject = sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
+    let mut dlq_sub = nats_client.subscribe(dlq_subject).await?;
+
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "empty-source", "/empty/path");
+
+    let handle = manager.begin_material("empty-finalize").await?;
+    let material_id = handle.material_id;
+    manager.finalize(handle, "empty finalize").await?;
+
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                async move {
+                    let staged_at_count: Option<i64> = sqlx::query_scalar!(
+                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'staged_at'",
+                        material_id
+                    )
+                    .fetch_one(&pool)
+                    .await?;
+                    Ok::<bool, color_eyre::Report>(staged_at_count.unwrap_or_default() == 1)
+                }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
+    loop {
+        if let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(500), dlq_sub.next()).await {
+            let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+            if payload["error"] == "empty_material"
+                && payload["material_id"] == material_id.to_string()
+            {
+                break;
+            }
+        }
+
+        if tokio::time::Instant::now() > deadline {
+            bail!("timed out waiting for empty_material DLQ entry");
+        }
+    }
 
     ingest_handle.stop().await?;
     Ok(())

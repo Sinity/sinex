@@ -6,7 +6,7 @@ use crate::{
 use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::JsonValue;
+use sinex_primitives::{JsonValue, Uuid};
 use sinex_primitives::events::Event;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,25 +20,47 @@ pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
 #[derive(Debug, Clone)]
 pub struct ServiceInfo {
     service_name: String,
+    node_name: String,
     host: String,
     work_dir: PathBuf,
     dry_run: bool,
+    instance_id: String,
+    version: String,
+    node_run_id: Option<Uuid>,
 }
 
 impl ServiceInfo {
     #[must_use]
-    pub fn new(service_name: String, host: String, work_dir: PathBuf, dry_run: bool) -> Self {
+    pub fn new(
+        service_name: String,
+        node_name: String,
+        host: String,
+        work_dir: PathBuf,
+        dry_run: bool,
+        instance_id: String,
+        version: String,
+        node_run_id: Option<Uuid>,
+    ) -> Self {
         Self {
             service_name,
+            node_name,
             host,
             work_dir,
             dry_run,
+            instance_id,
+            version,
+            node_run_id,
         }
     }
 
     #[must_use]
     pub fn service_name(&self) -> &str {
         &self.service_name
+    }
+
+    #[must_use]
+    pub fn node_name(&self) -> &str {
+        &self.node_name
     }
 
     #[must_use]
@@ -55,6 +77,21 @@ impl ServiceInfo {
     pub fn dry_run(&self) -> bool {
         self.dry_run
     }
+
+    #[must_use]
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    #[must_use]
+    pub fn node_run_id(&self) -> Option<Uuid> {
+        self.node_run_id
+    }
 }
 
 /// Emit events while respecting dry-run semantics.
@@ -62,6 +99,7 @@ impl ServiceInfo {
 pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
+    default_node_run_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 }
@@ -72,6 +110,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
+            default_node_run_id: None,
             #[cfg(feature = "messaging")]
             validator: None,
         }
@@ -88,6 +127,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
+            default_node_run_id: None,
             validator: Some(validator),
         }
     }
@@ -102,18 +142,29 @@ impl EventEmitter {
         Arc::clone(&self.sender)
     }
 
+    #[must_use]
+    pub fn with_default_node_run_id(mut self, node_run_id: Uuid) -> Self {
+        self.default_node_run_id = Some(node_run_id);
+        self
+    }
+
     /// Rebuild this emitter around a different sender while preserving validation and dry-run policy.
     #[must_use]
     pub fn clone_with_sender(&self, sender: EventSender) -> Self {
         Self {
             sender: Arc::new(sender),
             dry_run: self.dry_run,
+            default_node_run_id: self.default_node_run_id,
             #[cfg(feature = "messaging")]
             validator: self.validator.clone(),
         }
     }
 
-    pub async fn emit(&self, event: Event<JsonValue>) -> Result<(), SinexError> {
+    pub async fn emit(&self, mut event: Event<JsonValue>) -> Result<(), SinexError> {
+        if event.node_run_id.is_none() {
+            event.node_run_id = self.default_node_run_id;
+        }
+
         // Validate before emitting (if validator present)
         if let Some(validator) = &self.validator {
             validator

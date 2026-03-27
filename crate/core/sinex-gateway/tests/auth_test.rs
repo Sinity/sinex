@@ -1,4 +1,8 @@
-use sinex_gateway::auth::{Role, TokenRoleError};
+use sinex_gateway::{
+    auth::{Role, TokenRoleError},
+    rpc_server::RpcAuthContext,
+};
+use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -62,5 +66,43 @@ async fn test_role_display() -> TestResult<()> {
     assert_eq!(Role::ReadOnly.to_string(), "readonly");
     assert_eq!(Role::Write.to_string(), "write");
     assert_eq!(Role::Admin.to_string(), "admin");
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_actor_maps_gateway_roles_to_valid_replay_roles() -> TestResult<()> {
+    let now = temporal::now();
+
+    let readonly = RpcAuthContext {
+        token_prefix: "readtok".to_string(),
+        actor_id: "token:readtok".to_string(),
+        authenticated_at: now,
+        role: Role::ReadOnly,
+    };
+    assert_eq!(readonly.replay_actor(), "user:token:readtok");
+
+    let write = RpcAuthContext {
+        token_prefix: "writetok".to_string(),
+        actor_id: "token:writetok".to_string(),
+        authenticated_at: now,
+        role: Role::Write,
+    };
+    assert_eq!(write.replay_actor(), "operator:token:writetok");
+
+    let admin = RpcAuthContext {
+        token_prefix: "admintok".to_string(),
+        actor_id: "token:admintok".to_string(),
+        authenticated_at: now,
+        role: Role::Admin,
+    };
+    assert_eq!(admin.replay_actor(), "admin:token:admintok");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_actor_preserves_system_identity() -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    assert_eq!(auth.replay_actor(), "system:local");
     Ok(())
 }

@@ -225,6 +225,11 @@ impl EventQuery {
 
         if let Some(ref payload) = self.payload {
             payload.validate_depth(0)?;
+            if let Some(ref cursor) = self.cursor {
+                cursor.validate(payload.has_positive_text_search())?;
+            }
+        } else if let Some(ref cursor) = self.cursor {
+            cursor.validate(false)?;
         }
 
         Ok(())
@@ -255,9 +260,84 @@ impl Default for EventQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cursor {
     #[serde(default)]
-    pub after: Option<Id<Event<JsonValue>>>,
+    pub after: Option<CursorAnchor>,
     #[serde(default)]
-    pub before: Option<Id<Event<JsonValue>>>,
+    pub before: Option<CursorAnchor>,
+}
+
+impl Cursor {
+    #[must_use]
+    pub fn after_id(id: Id<Event<JsonValue>>) -> Self {
+        Self {
+            after: Some(CursorAnchor::from_id(id)),
+            before: None,
+        }
+    }
+
+    #[must_use]
+    pub fn after_anchor(anchor: CursorAnchor) -> Self {
+        Self {
+            after: Some(anchor),
+            before: None,
+        }
+    }
+
+    fn validate(&self, requires_relevance_score: bool) -> Result<(), SinexError> {
+        match (&self.after, &self.before) {
+            (Some(_), Some(_)) => {
+                return Err(SinexError::validation(
+                    "cursor cannot specify both after and before anchors",
+                ));
+            }
+            (None, None) => return Err(SinexError::validation("cursor anchor is missing")),
+            _ => {}
+        }
+
+        for (label, anchor) in [("after", self.after.as_ref()), ("before", self.before.as_ref())] {
+            let Some(anchor) = anchor else {
+                continue;
+            };
+
+            if let Some(score) = anchor.relevance_score {
+                if !score.is_finite() {
+                    return Err(SinexError::validation("cursor relevance_score must be finite")
+                        .with_context("anchor", label)
+                        .with_context("relevance_score", score.to_string()));
+                }
+            } else if requires_relevance_score {
+                return Err(
+                    SinexError::validation("text-search pagination cursor requires relevance_score")
+                        .with_context("anchor", label),
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Stable cursor anchor for ordered event listings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorAnchor {
+    pub id: Id<Event<JsonValue>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance_score: Option<f64>,
+}
+
+impl CursorAnchor {
+    #[must_use]
+    pub fn from_id(id: Id<Event<JsonValue>>) -> Self {
+        Self {
+            id,
+            relevance_score: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_relevance_score(mut self, relevance_score: f64) -> Self {
+        self.relevance_score = Some(relevance_score);
+        self
+    }
 }
 
 /// Sort direction for event listing.
@@ -315,6 +395,61 @@ impl PayloadFilter {
             | Self::Path { .. } => {}
         }
         Ok(())
+    }
+
+    #[must_use]
+    pub fn has_positive_text_search(&self) -> bool {
+        match self {
+            Self::TextSearch { .. } => true,
+            Self::And { filters } | Self::Or { filters } => {
+                filters.iter().any(Self::has_positive_text_search)
+            }
+            Self::Not { .. }
+            | Self::Contains { .. }
+            | Self::HasKey { .. }
+            | Self::Path { .. } => false,
+        }
+    }
+
+    #[must_use]
+    pub fn contains_text_search(&self) -> bool {
+        match self {
+            Self::TextSearch { .. } => true,
+            Self::And { filters } | Self::Or { filters } => {
+                filters.iter().any(Self::contains_text_search)
+            }
+            Self::Not { filter } => filter.contains_text_search(),
+            Self::Contains { .. } | Self::HasKey { .. } | Self::Path { .. } => false,
+        }
+    }
+
+    #[must_use]
+    pub fn positive_text_search_terms(&self) -> Vec<String> {
+        let mut terms = Vec::new();
+        self.collect_positive_text_search_terms(false, &mut terms);
+        terms
+    }
+
+    fn collect_positive_text_search_terms(&self, negated: bool, terms: &mut Vec<String>) {
+        match self {
+            Self::TextSearch { text } if !negated => {
+                if !terms.iter().any(|existing| existing == text) {
+                    terms.push(text.clone());
+                }
+            }
+            Self::And { filters } | Self::Or { filters } => {
+                for filter in filters {
+                    filter.collect_positive_text_search_terms(negated, terms);
+                }
+            }
+            Self::Not { filter } => {
+                filter.collect_positive_text_search_terms(!negated, terms);
+            }
+            Self::Contains { .. }
+            | Self::TextSearch { .. }
+            | Self::HasKey { .. }
+            | Self::Path { .. } => {}
+        }
     }
 }
 
@@ -425,7 +560,7 @@ pub enum EventQueryResult {
     Events {
         events: Vec<QueryResultEvent>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        next_cursor: Option<String>,
+        next_cursor: Option<Cursor>,
         #[serde(skip_serializing_if = "Option::is_none")]
         total_estimate: Option<i64>,
     },
@@ -508,6 +643,14 @@ impl SubscriptionFilter {
     /// Validate the filter (depth check on payload filter).
     pub fn validate(&self) -> Result<(), SinexError> {
         if let Some(ref pf) = self.payload {
+            if pf.contains_text_search() {
+                return Err(
+                    SinexError::validation(
+                        "SubscriptionFilter does not support payload text search",
+                    )
+                    .with_context("reason", "events.stream uses in-memory matching, not PostgreSQL full-text search"),
+                );
+            }
             pf.validate_depth(0)?;
             // Apply tighter depth limit for in-memory evaluation
             Self::check_depth(pf, 0)?;
@@ -565,7 +708,7 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
         PayloadFilter::TextSearch { text } => {
             // Substring search across serialized payload
             let serialized = serde_json::to_string(payload).unwrap_or_default();
-            serialized.contains(text.as_str())
+            serialized.to_lowercase().contains(&text.to_lowercase())
         }
         PayloadFilter::HasKey { key } => payload.get(key.as_str()).is_some(),
         PayloadFilter::Path { path, op } => {
@@ -662,7 +805,7 @@ fn like_match(s: &str, pattern: &str) -> bool {
                     }
                     continue;
                 }
-                ch if s[s_idx].eq_ignore_ascii_case(&ch) => {
+                ch if s[s_idx] == ch => {
                     s_idx += 1;
                     p_idx += 1;
                     continue;

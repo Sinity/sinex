@@ -20,6 +20,7 @@ use sinex_primitives::events::payloads::{
     AtuinCommandExecutedPayload, BashCommandExecutedPayload, CanonicalCommandPayload,
     FishCommandExecutedPayload, KittyCommandExecutedPayload, ZshCommandExecutedPayload,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::now;
 use tracing::info;
 
@@ -48,6 +49,10 @@ impl TransducerNode for TerminalCommandCanonicalizer {
 
     fn output_event_type(&self) -> &'static str {
         CanonicalCommandPayload::EVENT_TYPE.as_static_str()
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Command
     }
 
     async fn process(

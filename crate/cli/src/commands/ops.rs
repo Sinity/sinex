@@ -1,7 +1,6 @@
 use clap::Subcommand;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_primitives::utils::json_helpers::get_str;
+use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -25,7 +24,7 @@ EXAMPLES:
     sinexctl ops get 01HQ2KM...
 
     # Start a new maintenance operation
-    sinexctl ops start -t maintenance -o admin@example.com
+    sinexctl ops start -t maintenance
 
     # Cancel an operation
     sinexctl ops cancel 01HQ2KM... -r 'No longer needed'
@@ -36,10 +35,6 @@ pub enum OpsCommands {
         /// Operation type (e.g., "replay", "migration", "maintenance")
         #[arg(long, short = 't')]
         operation_type: String,
-
-        /// Operator identifier (user or service name)
-        #[arg(long, short = 'o')]
-        operator: String,
 
         /// Scope JSON (optional)
         #[arg(long, short = 's')]
@@ -96,7 +91,6 @@ impl OpsCommands {
         match self {
             Self::Start {
                 operation_type,
-                operator,
                 scope,
                 format,
             } => {
@@ -105,18 +99,12 @@ impl OpsCommands {
                     .map(|s| serde_json::from_str(s))
                     .transpose()?;
 
-                let operation_id = with_spinner_result(
+                let response = with_spinner_result(
                     format!("Starting {operation_type} operation..."),
                     "Operation started",
-                    client.ops_start(operation_type, operator, scope_json),
+                    client.ops_start(operation_type, scope_json),
                 )
                 .await?;
-
-                let response = OpsStartResponse {
-                    operation_id,
-                    operation_type: operation_type.clone(),
-                    operator: operator.clone(),
-                };
 
                 CommandOutput::single(response, format_ops_start_table).display(format)?;
             }
@@ -160,64 +148,60 @@ impl OpsCommands {
     }
 }
 
-/// Response for ops.start command
-#[derive(Debug, Serialize, Deserialize)]
-struct OpsStartResponse {
-    operation_id: String,
-    operation_type: String,
-    operator: String,
-}
-
 /// Format ops start response as table
 fn format_ops_start_table(response: &OpsStartResponse) -> String {
     let mut output = String::new();
     output.push_str("Operation started successfully\n");
-    output.push_str(&format!("  ID: {}\n", response.operation_id));
-    output.push_str(&format!("  Type: {}\n", response.operation_type));
-    output.push_str(&format!("  Operator: {}\n", response.operator));
+    output.push_str(&format!("  ID: {}\n", response.operation.id));
+    output.push_str(&format!("  Type: {}\n", response.operation.operation_type));
+    output.push_str(&format!("  Operator: {}\n", response.operation.operator));
     output
 }
 
 /// Format ops list as table
-fn format_ops_list_table(operations: &[Value]) -> String {
+fn format_ops_list_table(operations: &[OpsOperation]) -> String {
     let mut output = String::new();
     output.push_str("Operations:\n");
     output.push_str(&format!("{}\n", "─".repeat(80)));
     for op in operations {
-        output.push_str(&format!("ID: {}\n", get_str(op, "operation_id")));
-        output.push_str(&format!("Type: {}\n", get_str(op, "operation_type")));
-        output.push_str(&format!("Status: {}\n", get_str(op, "status")));
-        output.push_str(&format!("Started: {}\n", get_str(op, "started_at")));
+        output.push_str(&format!("ID: {}\n", op.id));
+        output.push_str(&format!("Type: {}\n", op.operation_type));
+        output.push_str(&format!("Status: {}\n", op.result_status));
+        output.push_str(&format!("Operator: {}\n", op.operator));
+        if let Some(duration_ms) = op.duration_ms {
+            output.push_str(&format!("Duration: {} ms\n", duration_ms));
+        }
+        if let Some(message) = op.result_message.as_deref() {
+            output.push_str(&format!("Message: {message}\n"));
+        }
         output.push_str(&format!("{}\n", "─".repeat(80)));
     }
     output
 }
 
 /// Format ops get response as table
-fn format_ops_get_table(operation: &Value) -> String {
+fn format_ops_get_table(operation: &OpsOperation) -> String {
     let mut output = String::new();
     output.push_str("Operation Details:\n");
-    output.push_str(&format!("  ID: {}\n", get_str(operation, "operation_id")));
-    output.push_str(&format!(
-        "  Type: {}\n",
-        get_str(operation, "operation_type")
-    ));
-    output.push_str(&format!("  Status: {}\n", get_str(operation, "status")));
-    output.push_str(&format!("  Operator: {}\n", get_str(operation, "operator")));
-    output.push_str(&format!(
-        "  Started: {}\n",
-        get_str(operation, "started_at")
-    ));
-    if operation.get("completed_at").is_some() {
-        output.push_str(&format!(
-            "  Completed: {}\n",
-            get_str(operation, "completed_at")
-        ));
+    output.push_str(&format!("  ID: {}\n", operation.id));
+    output.push_str(&format!("  Type: {}\n", operation.operation_type));
+    output.push_str(&format!("  Status: {}\n", operation.result_status));
+    output.push_str(&format!("  Operator: {}\n", operation.operator));
+    if let Some(duration_ms) = operation.duration_ms {
+        output.push_str(&format!("  Duration: {} ms\n", duration_ms));
     }
-    if let Some(scope) = operation.get("scope")
+    if let Some(message) = operation.result_message.as_deref() {
+        output.push_str(&format!("  Message: {message}\n"));
+    }
+    if let Some(scope) = operation.scope.as_ref()
         && let Ok(pretty_scope) = serde_json::to_string_pretty(scope)
     {
         output.push_str(&format!("  Scope: {pretty_scope}\n"));
+    }
+    if let Some(summary) = operation.preview_summary.as_ref()
+        && let Ok(pretty_summary) = serde_json::to_string_pretty(summary)
+    {
+        output.push_str(&format!("  Summary: {pretty_summary}\n"));
     }
     output
 }

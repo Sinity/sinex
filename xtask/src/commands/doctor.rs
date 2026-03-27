@@ -12,6 +12,7 @@ use serde_json::Value as JsonValue;
 use sinex_node_sdk::preflight::configuration::{
     validate_activitywatch_db, validate_terminal_history_source,
 };
+use sinex_node_sdk::preflight::services::inspect_systemd_service;
 use sinex_primitives::{
     DeploymentDatabaseRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
     environment::SinexEnvironment, nats::NatsConnectionConfig,
@@ -685,6 +686,8 @@ pub struct DeploymentReadinessItem {
     /// `"pass"`, `"fail"`, or `"skip"`
     pub status: String,
     pub description: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub blocking: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -712,6 +715,7 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "pass".into(),
             description: description.into(),
+            blocking: true,
         }
     }
 
@@ -720,6 +724,7 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "fail".into(),
             description: description.into(),
+            blocking: true,
         }
     }
 
@@ -728,8 +733,30 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "skip".into(),
             description: description.into(),
+            blocking: false,
         }
     }
+
+    fn skip_blocking(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "skip".into(),
+            description: description.into(),
+            blocking: true,
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn deployment_readiness_overall(items: &[DeploymentReadinessItem]) -> bool {
+    let failed = items.iter().any(|item| item.status == "fail");
+    let blocking_skipped = items
+        .iter()
+        .any(|item| item.status == "skip" && item.blocking);
+    !failed && !blocking_skipped
 }
 
 fn normalize_gateway_base_url(url: &str) -> String {
@@ -1216,7 +1243,7 @@ fn current_process_uid() -> Option<u32> {
         })
 }
 
-fn check_node_entrypoints(
+async fn check_node_entrypoints(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
     let Some(descriptor) = descriptor else {
@@ -1244,11 +1271,8 @@ fn check_node_entrypoints(
     let mut notify_contract_violations = Vec::new();
 
     for unit in units {
-        let output = match std::process::Command::new("systemctl")
-            .args(["show", unit, "--property=LoadState,Type,NotifyAccess"])
-            .output()
-        {
-            Ok(output) => output,
+        let service_data = match inspect_systemd_service(unit).await {
+            Ok(service_data) => service_data,
             Err(error) => {
                 return DeploymentReadinessItem::fail(
                     "node-entrypoints",
@@ -1257,45 +1281,14 @@ fn check_node_entrypoints(
             }
         };
 
-        let properties = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() {
+        if !service_data.is_loaded() {
             unavailable.push(unit.clone());
             continue;
         }
 
-        let mut load_state = None;
-        let mut unit_type = None;
-        let mut notify_access = None;
-        for line in properties.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                match key {
-                    "LoadState" => load_state = Some(value.to_string()),
-                    "Type" => unit_type = Some(value.to_string()),
-                    "NotifyAccess" => notify_access = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
-
-        if load_state
-            .as_deref()
-            .is_none_or(|value| value == "not-found" || value.is_empty())
-        {
-            unavailable.push(unit.clone());
-            continue;
-        }
-
-        if descriptor.mode == DeploymentReadinessMode::Enabled {
-            let type_value = unit_type.as_deref().unwrap_or("<unset>");
-            if type_value != "notify" {
-                notify_contract_violations.push(format!("{unit} type={type_value}"));
-            }
-
-            let notify_access_value = notify_access.as_deref().unwrap_or("<unset>");
-            if notify_access_value != "main" {
-                notify_contract_violations
-                    .push(format!("{unit} notify_access={notify_access_value}"));
-            }
+        let contract_violations = service_data.notify_contract_violations();
+        if !contract_violations.is_empty() {
+            notify_contract_violations.push(format!("{unit} {}", contract_violations.join(", ")));
         }
     }
 
@@ -1321,17 +1314,10 @@ fn check_node_entrypoints(
 
     DeploymentReadinessItem::pass(
         "node-entrypoints",
-        if descriptor.mode == DeploymentReadinessMode::Enabled {
-            format!(
-                "Managed Sinex units are present in systemd with notify contract intact: {}",
-                units.join(", ")
-            )
-        } else {
-            format!(
-                "Managed Sinex units are present in systemd: {}",
-                units.join(", ")
-            )
-        },
+        format!(
+            "Managed Sinex units are present in systemd with notify/watchdog contract intact: {}",
+            units.join(", ")
+        ),
     )
 }
 
@@ -1343,7 +1329,7 @@ fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
     }
 
     let Some(current_uid) = current_process_uid() else {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::skip_blocking(
             "realm-accessible",
             format!(
                 "Could not determine the current principal; rerun as {} or root to validate /realm access honestly",
@@ -1353,7 +1339,7 @@ fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
     };
 
     if current_uid != target.uid && current_uid != 0 {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::skip_blocking(
             "realm-accessible",
             format!(
                 "Current principal uid {} differs from target uid {}; rerun as {} or root to validate /realm access",
@@ -2314,7 +2300,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     let cfg = crate::config::config();
     let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![descriptor_item, check_node_entrypoints(descriptor.as_ref())];
+    let mut items = vec![descriptor_item, check_node_entrypoints(descriptor.as_ref()).await];
 
     match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
@@ -2370,7 +2356,11 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     items.push(check_nats_streams(cfg.nats_url.as_deref(), descriptor.as_ref()).await);
     items.push(check_gateway_ready(cfg.gateway_url.as_deref(), descriptor.as_ref()).await);
 
-    let overall_pass = items.iter().all(|i| i.status != "fail");
+    let failed = items.iter().any(|item| item.status == "fail");
+    let blocking_skipped = items
+        .iter()
+        .any(|item| item.status == "skip" && item.blocking);
+    let overall_pass = deployment_readiness_overall(&items);
 
     if ctx.is_human() {
         println!("\n{}", style("Deployment Readiness:").bold());
@@ -2378,6 +2368,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             let (icon, styled_status) = match item.status.as_str() {
                 "pass" => (style("✓").green(), style("PASS").green()),
                 "fail" => (style("✗").red(), style("FAIL").red()),
+                "skip" if item.blocking => (style("!").yellow(), style("SKIP*").yellow()),
                 _ => (style("–").dim(), style("SKIP").dim()),
             };
             println!(
@@ -2391,7 +2382,12 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
         if overall_pass {
             println!(
                 "{}",
-                style("✓ Deployment readiness: all checks passed or skipped").green()
+                style("✓ Deployment readiness: all blocking checks passed").green()
+            );
+        } else if blocking_skipped && !failed {
+            println!(
+                "{}",
+                style("! Deployment readiness: required checks were skipped").yellow()
             );
         } else {
             println!(
@@ -2414,6 +2410,19 @@ mod tests {
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
     use ::xtask::sandbox::EnvGuard;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_executable_script(
+        path: &std::path::Path,
+        body: &str,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        fs::write(path, body)?;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+        Ok(())
+    }
 
     fn sample_descriptor() -> DeploymentReadinessDescriptor {
         DeploymentReadinessDescriptor {
@@ -2620,6 +2629,42 @@ mod tests {
         assert_eq!(json["overall"], false);
         assert_eq!(json["items"][0]["name"], "gateway-ready");
         assert_eq!(json["items"][1]["status"], "fail");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_deployment_readiness_overall_rejects_blocking_skips()
+    -> ::xtask::sandbox::TestResult<()> {
+        let items = vec![
+            DeploymentReadinessItem::pass("descriptor", "loaded"),
+            DeploymentReadinessItem::skip_blocking(
+                "realm-accessible",
+                "rerun as the deployment target",
+            ),
+        ];
+
+        assert!(
+            !deployment_readiness_overall(&items),
+            "blocking skips must keep deployment readiness false"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_realm_accessible_marks_principal_mismatch_as_blocking_skip()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("UID", "1000");
+        let target = TargetIdentity {
+            user: "probe-user".to_string(),
+            uid: 4242,
+            home: PathBuf::from("/tmp/probe-home"),
+        };
+
+        let item = check_realm_accessible(&target);
+        assert_eq!(item.status, "skip");
+        assert!(item.blocking);
+        assert!(item.description.contains("rerun as probe-user or root"));
         Ok(())
     }
 
@@ -3539,9 +3584,47 @@ mod tests {
             mode: DeploymentReadinessMode::Prepared,
             managed_units: Vec::new(),
             ..Default::default()
-        }));
+        }))
+        .await;
         assert_eq!(item.status, "skip");
         assert!(item.description.contains("managed units"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_node_entrypoints_requires_watchdog_contract()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+
+        write_executable_script(
+            &bin_dir.join("systemctl"),
+            r#"#!/bin/sh
+if [ "$1" = "show" ] && [ "$2" = "sinex-ingestd.service" ]; then
+  printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=0\n'
+  exit 0
+fi
+printf 'unexpected invocation: %s\n' "$*" >&2
+exit 1
+"#,
+        )?;
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let item = check_node_entrypoints(Some(&DeploymentReadinessDescriptor {
+            mode: DeploymentReadinessMode::Prepared,
+            managed_units: vec!["sinex-ingestd.service".to_string()],
+            ..Default::default()
+        }))
+        .await;
+
+        drop(env);
+        assert_eq!(std::env::var("PATH").unwrap_or_default(), original_path);
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("watchdog_usec=0"));
         Ok(())
     }
 

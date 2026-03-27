@@ -183,6 +183,7 @@ let
       Group = serviceUser;
       Restart = "on-failure";
       RestartSec = 10;
+      WatchdogSec = "60s";
       Environment = env;
       ProtectSystem = "strict";
       ProtectHome = true;

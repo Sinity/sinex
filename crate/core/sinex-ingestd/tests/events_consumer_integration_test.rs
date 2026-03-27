@@ -1,5 +1,8 @@
 //! Integration coverage for the `JetStream` consumer covering batching, DLQ, and retry paths.
 
+#[path = "support.rs"]
+mod support;
+
 use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
@@ -17,6 +20,11 @@ use tokio_stream::StreamExt;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{ChaosInjector, TestHooks, TestSnapshot};
+
+use support::{
+    FIXTURE_SOURCE_MATERIAL_ID, consume_one_stream_message, ensure_fixture_source_material,
+    spawn_consumer_and_wait_ready, wait_for_last_stream_message_by_subject,
+};
 
 /// Helper for publishing test events with a specific source to NATS.
 struct TestNodePublisher {
@@ -50,7 +58,7 @@ impl TestNodePublisher {
         overrides: EventOverrides,
     ) -> TestResult<Uuid> {
         let env = environment();
-        let event_id = overrides.id.unwrap_or_default();
+        let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
         let ts_orig = overrides
             .ts_orig
             .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
@@ -62,10 +70,9 @@ impl TestNodePublisher {
             "payload": payload,
             "ts_orig": ts_orig,
             "host": "test-host",
-            "node_run_id": Uuid::now_v7().to_string(),
             // Provenance: every event must have either source_material_id or source_event_ids.
-            // Use the well-known test fixture material seeded into every test database.
-            "source_material_id": "00000000-0000-7000-8000-000000000000",
+            // Use the well-known test fixture material refreshed by start_consumer_with_hooks.
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
             "anchor_byte": 0,
         });
 
@@ -77,10 +84,8 @@ impl TestNodePublisher {
                 event_type.replace('.', "_")
             ),
         );
-        let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
         self.nats_client
-            .publish_with_headers(subject, headers, serde_json::to_vec(&event)?.into())
+            .publish(subject, serde_json::to_vec(&event)?.into())
             .await?;
         self.nats_client.flush().await?;
 
@@ -116,7 +121,7 @@ async fn publish_event(
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
-    let event_id = overrides.id.unwrap_or_default();
+    let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
     let ts_orig = overrides
         .ts_orig
         .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
@@ -128,8 +133,7 @@ async fn publish_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "node_run_id": Uuid::now_v7().to_string(),
-        "source_material_id": "00000000-0000-7000-8000-000000000000",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
     });
 
@@ -193,6 +197,7 @@ async fn start_consumer_with_hooks(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = EventValidator::new(hooks.validate);
 
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -221,15 +226,7 @@ async fn start_consumer_with_hooks(
         hooks.route_db_errors_to_dlq,
         hooks.confirmation_failures.clone(),
     );
-    let handle = tokio::spawn(async move { consumer.run().await });
-
-    let stream_timeout = Duration::from_secs(Timeouts::SHORT);
-    nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &topology.confirmations_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
-        .await?;
+    let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
         nats_client,
@@ -238,28 +235,6 @@ async fn start_consumer_with_hooks(
         topology,
         namespace,
     })
-}
-
-async fn consume_one_stream_message(
-    js: &jetstream::Context,
-    stream_name: &str,
-    consumer_name: &str,
-) -> TestResult<jetstream::Message> {
-    let stream = js.get_stream(stream_name).await?;
-    let consumer = stream
-        .get_or_create_consumer(
-            consumer_name,
-            jetstream::consumer::pull::Config {
-                durable_name: Some(consumer_name.to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
-    let mut messages = consumer.messages().await?;
-    let next_message = timeout(Duration::from_secs(Timeouts::SHORT), messages.next()).await?;
-    let message = next_message.ok_or_else(|| eyre!("no message available in stream {stream_name}"))?;
-    let message = message.map_err(|error| eyre!(error.to_string()))?;
-    Ok(message)
 }
 
 #[sinex_test]
@@ -333,6 +308,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         .nats_client
         .subscribe(confirmation_subject.clone())
         .await?;
+    setup.nats_client.flush().await?;
 
     publish_event(
         &setup.nats_client,
@@ -427,23 +403,25 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         format!("confirm.{suffix}"),
         Some(setup.namespace.clone()),
     );
-    let event_id = publisher
-        .publish("confirmation.test", json!({"confirm": true}))
+    let event_id = Uuid::now_v7();
+    publisher
+        .publish_with_overrides(
+            "confirmation.test",
+            json!({"confirm": true}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
         .await?;
 
-    let confirmation_subject = format!(
-        "{}.{}",
-        ctx.pipeline_namespace().subject("events.confirmations"),
-        event_id
-    );
-    let mut sub = setup
-        .nats_client
-        .subscribe(confirmation_subject.clone())
-        .await?;
-
-    let msg = timeout(Duration::from_secs(Timeouts::SHORT), sub.next())
-        .await?
-        .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
+    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let msg = wait_for_last_stream_message_by_subject(
+        &setup.js,
+        &setup.topology.confirmations_stream,
+        &confirmation_subject,
+    )
+    .await?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
     assert_eq!(payload["event_id"], event_id.to_string());
     assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
@@ -460,7 +438,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
+async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_redelivery(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -477,15 +455,6 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
             .await?;
 
     let event_id = Uuid::now_v7();
-    let confirmation_subject = format!(
-        "{}.{}",
-        ctx.pipeline_namespace().subject("events.confirmations"),
-        event_id
-    );
-    let mut sub = setup
-        .nats_client
-        .subscribe(confirmation_subject.clone())
-        .await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
@@ -508,20 +477,22 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         || {
             let deliveries = counters.deliveries.clone();
             async move {
-                Ok::<bool, SinexError>(
-                    deliveries
-                        .as_ref()
-                        .is_some_and(|d| d.load(Ordering::Relaxed) >= 2),
-                )
+                Ok::<bool, SinexError>(deliveries.as_ref().is_some_and(|d| {
+                    d.load(Ordering::Relaxed) == 1
+                }))
             }
         },
         Timeouts::MEDIUM,
     )
     .await?;
 
-    let msg = timeout(Duration::from_secs(Timeouts::MEDIUM), sub.next())
-        .await?
-        .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
+    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let msg = wait_for_last_stream_message_by_subject(
+        &setup.js,
+        &setup.topology.confirmations_stream,
+        &confirmation_subject,
+    )
+    .await?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
     assert_eq!(payload["event_id"], event_id.to_string());
     assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
@@ -532,7 +503,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         .await?;
     assert_eq!(
         count, 1,
-        "idempotency must hold under confirmation redelivery"
+        "idempotency must hold while confirmations are retried durably"
     );
 
     setup.handle.abort();

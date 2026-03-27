@@ -3,12 +3,26 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::{
-    config::GatewayConfig, handlers::handle_store_blob, service_container::ServiceContainer,
+    auth::Role,
+    config::GatewayConfig,
+    handlers::handle_store_blob,
+    rpc_server::RpcAuthContext,
+    service_container::ServiceContainer,
 };
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::temporal;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::{TestContext, TestResult, sinex_test};
+
+fn write_auth() -> RpcAuthContext {
+    RpcAuthContext {
+        token_prefix: "blobtest".to_string(),
+        actor_id: "token:blobtest".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Write,
+    }
+}
 
 fn require_git_annex() -> TestResult<()> {
     which("git-annex")
@@ -20,7 +34,7 @@ async fn blob_test_services(
     ctx: TestContext,
     repo_name: &str,
     max_blob_bytes: usize,
-) -> TestResult<(TempDir, ServiceContainer)> {
+) -> TestResult<(TestContext, TempDir, ServiceContainer)> {
     let ctx = ctx.with_nats().shared().await?;
     let annex_dir = TempDir::new()?;
     let repo_path = annex_dir.path().join(repo_name);
@@ -39,13 +53,15 @@ async fn blob_test_services(
     config.nats.url = ctx.nats_handle()?.client_url().to_string();
 
     let services = ServiceContainer::new(&config).await?;
-    Ok((annex_dir, services))
+    Ok((ctx, annex_dir, services))
 }
 
 #[sinex_test]
 async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_annex_dir, services) = blob_test_services(ctx, "gateway-blob-test", 1024 * 1024).await?;
+    let (_ctx, _annex_dir, services) =
+        blob_test_services(ctx, "gateway-blob-test", 1024 * 1024).await?;
+    let auth = write_auth();
 
     // Simulate a 10MB upload with no authentication metadata.
     let oversized_blob = vec![0u8; 10 * 1024 * 1024];
@@ -54,7 +70,9 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
         "content_type": "application/octet-stream",
         "content": BASE64_STANDARD.encode(&oversized_blob)});
 
-    let err = handle_store_blob(&services, params).await.unwrap_err();
+    let err = handle_store_blob(&services, params, &auth)
+        .await
+        .unwrap_err();
 
     assert!(
         err.to_string()
@@ -68,9 +86,10 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let pool = ctx.pool().clone();
-    let (_annex_dir, services) =
+    let (_ctx, _annex_dir, services) =
         blob_test_services(ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
+    let pool = services.pool().clone();
+    let auth = write_auth();
 
     let before: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&pool)
@@ -81,7 +100,7 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
         "content_type": "text/plain",
         "content": BASE64_STANDARD.encode(b"hello gateway")});
 
-    handle_store_blob(&services, params).await?;
+    handle_store_blob(&services, params, &auth).await?;
 
     let after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&pool)
@@ -98,8 +117,9 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_annex_dir, services) =
+    let (_ctx, _annex_dir, services) =
         blob_test_services(ctx, "gateway-blob-malformed-params", 5 * 1024 * 1024).await?;
+    let auth = write_auth();
 
     let params = serde_json::json!({
         "filename": ["not-a-string"],
@@ -107,10 +127,42 @@ async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) 
         "content": BASE64_STANDARD.encode(b"hello gateway")
     });
 
-    let error = handle_store_blob(&services, params)
+    let error = handle_store_blob(&services, params, &auth)
         .await
         .expect_err("malformed optional blob params must fail");
     assert!(error.to_string().contains("filename"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn content_store_blob_uses_authenticated_actor_for_operations_log(
+    ctx: TestContext,
+) -> TestResult<()> {
+    require_git_annex()?;
+    let (_ctx, _annex_dir, services) =
+        blob_test_services(ctx, "gateway-blob-operator-audit", 5 * 1024 * 1024).await?;
+    let pool = services.pool().clone();
+    let auth = write_auth();
+
+    let params = serde_json::json!({
+        "filename": "audited.txt",
+        "content_type": "text/plain",
+        "source": "import://browser-export",
+        "content": BASE64_STANDARD.encode(b"hello audited gateway")
+    });
+
+    handle_store_blob(&services, params, &auth).await?;
+
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT operator, scope->>'source' FROM core.operations_log \
+         WHERE operation_type = 'content.store' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await?;
+
+    assert_eq!(row.0, auth.actor_id());
+    assert_eq!(row.1.as_deref(), Some("import://browser-export"));
 
     Ok(())
 }

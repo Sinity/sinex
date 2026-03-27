@@ -63,6 +63,7 @@ use sinex_primitives::{
     events::{Event, Provenance},
     ids::Id,
 };
+use sinex_primitives::privacy::{self, ProcessingContext};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -265,6 +266,9 @@ pub trait AutomatonNode: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
+
+    /// Privacy context used to sanitize emitted output payloads.
+    fn output_privacy_context(&self) -> ProcessingContext;
 
     /// Process a single event.
     ///
@@ -640,6 +644,17 @@ where
                 let output_payload = serde_json::to_value(&output_result.payload).map_err(|e| {
                     SinexError::processing(format!("Failed to serialize output: {e}"))
                 })?;
+                let privacy_context = self.node.output_privacy_context();
+                let filtered_output_payload =
+                    privacy::engine().process_json(&output_payload, privacy_context);
+                if filtered_output_payload != output_payload {
+                    debug!(
+                        node = %self.node.name(),
+                        output_event_type = %self.node.output_event_type(),
+                        ?privacy_context,
+                        "Applied privacy filtering to automaton output payload"
+                    );
+                }
 
                 // Convert node-provided Uuid source_event_ids to typed EventIds
                 let typed_ids: Vec<Id<Event<JsonValue>>> = output_result
@@ -656,7 +671,7 @@ where
                     id: Some(Id::new()),
                     source: EventSource::new(self.node.output_event_source())?,
                     event_type: EventType::new(self.node.output_event_type())?,
-                    payload: output_payload,
+                    payload: filtered_output_payload,
                     ts_orig: Some(output_result.ts_orig),
                     host: HostName::new(&self.host)?,
                     node_run_id: None,
@@ -915,13 +930,7 @@ where
 
             match next_cursor {
                 Some(c) => {
-                    let uuid = c
-                        .parse::<Uuid>()
-                        .map_err(|e| SinexError::processing(format!("Invalid cursor UUID: {e}")))?;
-                    cursor = Some(sinex_primitives::Cursor {
-                        after: Some(Id::from_uuid(uuid)),
-                        before: None,
-                    });
+                    cursor = Some(c);
                 }
                 None => break,
             }

@@ -107,10 +107,14 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
 
         let service_info = ServiceInfo::new(
+            service_name.clone(),
             service_name,
             crate::sandbox::local_test_host().into_string(),
             work_dir.clone().into_std_path_buf(),
             dry_run,
+            format!("sandbox-instance-{}", Uuid::now_v7().simple()),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
         );
 
         let runtime = NodeRuntimeState::new(service_info, handles, raw_config, work_dir);

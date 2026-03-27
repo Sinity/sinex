@@ -82,7 +82,7 @@ pub async fn handle_nodes_drain(
         .map_err(|e| SinexError::serialization("invalid drain request").with_std_error(&e))?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         node_id = %drain_params.node_id,
         reason = ?drain_params.reason,
         "Node drain initiated"
@@ -142,7 +142,7 @@ pub async fn handle_nodes_resume(
         .map_err(|e| SinexError::serialization("invalid resume request").with_std_error(&e))?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         node_id = %resume_params.node_id,
         "Node resume initiated"
     );
@@ -200,7 +200,7 @@ pub async fn handle_nodes_set_horizon(
         .map_err(|e| SinexError::serialization("invalid set-horizon request").with_std_error(&e))?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         node_id = %horizon_params.node_id,
         horizon = %horizon_params.horizon,
         "Node set-horizon initiated"

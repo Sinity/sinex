@@ -26,13 +26,11 @@ async fn start_test_operation(
     ctx: &TestContext,
     auth: &RpcAuthContext,
     operation_type: &str,
-    operator: &str,
 ) -> TestResult<OpsStartResponse> {
     let start_result = handle_ops_start(
         ctx.pool(),
         json!({
             "operation_type": operation_type,
-            "operator": operator,
         }),
         auth,
     )
@@ -71,7 +69,6 @@ async fn ops_start_creates_operation(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let params = json!({
         "operation_type": "archive",
-        "operator": "test-user",
         "scope": {"key": "value"},
     });
 
@@ -81,13 +78,39 @@ async fn ops_start_creates_operation(ctx: TestContext) -> TestResult<()> {
     assert!(!response.operation.id.is_empty());
     assert_eq!(response.operation.operation_type, "archive");
     assert_eq!(response.operation.result_status, OperationStatus::Running);
-    assert_eq!(response.operation.operator, "test-user");
+    assert_eq!(response.operation.operator, auth.actor_id());
 
     let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
     assert_eq!(persisted.operation.id, response.operation.id);
     assert_eq!(persisted.operation.operation_type, "archive");
     assert_eq!(persisted.operation.result_status, OperationStatus::Running);
-    assert_eq!(persisted.operation.operator, "test-user");
+    assert_eq!(persisted.operation.operator, auth.actor_id());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_uses_authenticated_actor_over_payload_operator(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "archive",
+                "operator": "forged-payload-operator",
+                "scope": {"key": "value"},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operator, auth.actor_id());
+
+    let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
+    assert_eq!(persisted.operation.operator, auth.actor_id());
 
     Ok(())
 }
@@ -99,7 +122,6 @@ async fn ops_start_rejects_unknown_operation_type(ctx: TestContext) -> TestResul
         ctx.pool(),
         json!({
             "operation_type": "test-operation",
-            "operator": "test-user",
         }),
         &auth,
     )
@@ -114,7 +136,7 @@ async fn ops_start_rejects_unknown_operation_type(ctx: TestContext) -> TestResul
 async fn ops_list_returns_operations(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
 
-    let started = start_test_operation(&ctx, &auth, "restore", "tester").await?;
+    let started = start_test_operation(&ctx, &auth, "restore").await?;
 
     let result = handle_ops_list(ctx.pool(), json!({}), &auth).await?;
     let response: OpsListResponse = serde_json::from_value(result)?;
@@ -148,7 +170,7 @@ async fn ops_list_rejects_non_positive_limit(ctx: TestContext) -> TestResult<()>
 #[sinex_test]
 async fn ops_get_returns_operation(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
-    let start_response = start_test_operation(&ctx, &auth, "purge", "tester").await?;
+    let start_response = start_test_operation(&ctx, &auth, "purge").await?;
     let operation_id = &start_response.operation.id;
 
     let result = handle_ops_get(ctx.pool(), json!({ "operation_id": operation_id }), &auth).await?;
@@ -156,7 +178,7 @@ async fn ops_get_returns_operation(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(response.operation.id, *operation_id);
     assert_eq!(response.operation.operation_type, "purge");
-    assert_eq!(response.operation.operator, "tester");
+    assert_eq!(response.operation.operator, auth.actor_id());
     assert_eq!(response.operation.result_status, OperationStatus::Running);
 
     Ok(())
@@ -165,7 +187,7 @@ async fn ops_get_returns_operation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn ops_cancel_stops_running_operation(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
-    let start_response = start_test_operation(&ctx, &auth, "archive", "tester").await?;
+    let start_response = start_test_operation(&ctx, &auth, "archive").await?;
     let operation_id = &start_response.operation.id;
 
     let result = handle_ops_cancel(
@@ -203,7 +225,7 @@ async fn ops_cancel_stops_running_operation(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 async fn ops_cancel_rejects_non_running_operation(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
-    let start_response = start_test_operation(&ctx, &auth, "archive", "tester").await?;
+    let start_response = start_test_operation(&ctx, &auth, "archive").await?;
     let operation_id = &start_response.operation.id;
 
     let first_cancel = handle_ops_cancel(
@@ -236,6 +258,36 @@ async fn ops_cancel_rejects_non_running_operation(ctx: TestContext) -> TestResul
     assert!(
         persisted.operation.result_message == first_response.operation.result_message,
         "second cancel should not mutate stored cancellation payload"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_cancel_defaults_reason_to_authenticated_actor(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let start_response = start_test_operation(&ctx, &auth, "archive").await?;
+    let operation_id = &start_response.operation.id;
+
+    let result = handle_ops_cancel(
+        ctx.pool(),
+        json!({
+            "operation_id": operation_id,
+        }),
+        &auth,
+    )
+    .await?;
+    let response: OpsCancelResponse = serde_json::from_value(result)?;
+
+    assert_eq!(
+        response.operation.result_message,
+        Some(format!("Cancelled by {}", auth.actor_id()))
+    );
+
+    let persisted = get_operation(&ctx, &auth, operation_id).await?;
+    assert_eq!(
+        persisted.operation.result_message,
+        Some(format!("Cancelled by {}", auth.actor_id()))
     );
 
     Ok(())
