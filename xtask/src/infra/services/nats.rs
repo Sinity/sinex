@@ -11,15 +11,7 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
     let mut killed = 0;
 
     // Find all nats-server processes
-    let output = Command::new("pgrep").args(["-f", "nats-server"]).output();
-
-    let pids: Vec<u32> = match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| line.trim().parse().ok())
-            .collect(),
-        _ => return Ok(0), // No nats-server processes found
-    };
+    let pids = parse_nats_pgrep_output(Command::new("pgrep").args(["-f", "nats-server"]).output())?;
 
     if pids.is_empty() {
         return Ok(0);
@@ -68,6 +60,27 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
     }
 
     Ok(killed)
+}
+
+fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Result<Vec<u32>> {
+    let output = output.wrap_err("failed to inspect running nats-server processes with pgrep")?;
+    match output.status.code() {
+        Some(0) => Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()),
+        Some(1) => Ok(Vec::new()),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            bail!("pgrep -f nats-server exited unsuccessfully{suffix}");
+        }
+    }
 }
 
 /// Check if a process has been running longer than the given threshold (in seconds).
@@ -548,6 +561,50 @@ LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=
             }),
         )?;
         assert_eq!(port, Some(4222));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_spawn_failures() -> TestResult<()> {
+        let error = parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to inspect running nats-server processes with pgrep"));
+        assert!(message.contains("pgrep exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_treats_exit_one_as_no_matches() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let pids = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }))?;
+            assert!(pids.is_empty());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(512),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("pgrep -f nats-server exited unsuccessfully"));
+            assert!(message.contains("permission denied"));
+        }
         Ok(())
     }
 
