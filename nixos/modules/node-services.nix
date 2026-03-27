@@ -39,9 +39,10 @@ let
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
     set -euo pipefail
-    cert="${tlsDir}/gateway.crt"
-    key="${tlsDir}/gateway.key"
-    if [[ -f "$cert" && -f "$key" ]]; then
+    cert="${tlsDir}/server.pem"
+    key="${tlsDir}/server-key.pem"
+    ca="${tlsDir}/ca.pem"
+    if [[ -f "$cert" && -f "$key" && -f "$ca" ]]; then
       echo "Sinex gateway TLS credentials already present, skipping."
       exit 0
     fi
