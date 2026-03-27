@@ -345,9 +345,21 @@ fn hash_schema_sources() -> Result<String> {
 /// contains no `.rs` files.
 fn hash_contracts_dir() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
-    let file_contents = collect_rust_sources_from_dir(&payloads_dir, "")
+    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/events/payloads");
+    hash_contracts_dir_from(&payloads_dir)
+}
+
+fn hash_contracts_dir_from(payloads_dir: &Path) -> Result<String> {
+    if !payloads_dir.exists() {
+        return Ok("empty".to_string());
+    }
+
+    let file_contents = collect_rust_sources_from_dir(payloads_dir, "")
         .wrap_err("failed to collect event payload contracts")?;
+    if file_contents.is_empty() {
+        return Ok("empty".to_string());
+    }
+
     Ok(hash_named_sources(&file_contents))
 }
 
@@ -1235,6 +1247,29 @@ mod tests {
         }))
         .unwrap_err();
         assert!(format!("{error:#}").contains("permission denied"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_returns_empty_for_missing_directory() -> TestResult<()> {
+        let dir = tempdir()?;
+        let missing = dir.path().join("missing-payloads");
+        assert_eq!(hash_contracts_dir_from(&missing)?, "empty");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_hashes_rust_sources_only() -> TestResult<()> {
+        let dir = tempdir()?;
+        std::fs::write(dir.path().join("alpha.rs"), "pub struct Alpha;")?;
+        std::fs::write(dir.path().join("beta.txt"), "ignored")?;
+
+        let hash = hash_contracts_dir_from(dir.path())?;
+        std::fs::write(dir.path().join("beta.txt"), "ignored differently")?;
+        let hash_after_non_rust_change = hash_contracts_dir_from(dir.path())?;
+
+        assert_ne!(hash, "empty");
+        assert_eq!(hash, hash_after_non_rust_change);
         Ok(())
     }
 
