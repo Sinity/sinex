@@ -472,7 +472,8 @@ impl JobManager {
     /// List recent jobs (up to limit), reaping zombies first and pruning old ones.
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
         self.reap_zombies()?;
-        let _ = self.prune(7); // auto-prune completed jobs older than 7 days
+        self.prune(7)
+            .context("failed to prune completed background jobs")?;
         let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
@@ -511,7 +512,8 @@ impl JobManager {
     /// List only active (running) jobs, reaping zombies first and pruning old ones.
     pub fn list_active(&self) -> Result<Vec<Job>> {
         self.reap_zombies()?;
-        let _ = self.prune(7); // auto-prune completed jobs older than 7 days
+        self.prune(7)
+            .context("failed to prune completed background jobs")?;
         let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs
@@ -605,13 +607,24 @@ impl JobManager {
         };
 
         // Clean orphan directories (no DB lock held)
-        if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
-            for entry in entries.filter_map(std::result::Result::ok) {
-                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>()
-                    && !valid_ids.contains(&id)
-                {
-                    let _ = fs::remove_dir_all(entry.path());
-                }
+        let entries = fs::read_dir(&self.jobs_dir)
+            .with_context(|| format!("failed to read jobs directory {}", self.jobs_dir.display()))?;
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "failed to enumerate a background job entry in {}",
+                    self.jobs_dir.display()
+                )
+            })?;
+            if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>()
+                && !valid_ids.contains(&id)
+            {
+                fs::remove_dir_all(entry.path()).with_context(|| {
+                    format!(
+                        "failed to remove orphaned background job directory {}",
+                        entry.path().display()
+                    )
+                })?;
             }
         }
 
@@ -811,6 +824,103 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("no archived stdout content recorded for terminal job"));
         assert!(message.contains("completed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prune_surfaces_jobs_dir_read_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        fs::remove_dir_all(&jobs_dir)?;
+        fs::write(&jobs_dir, "occupied")?;
+
+        let error = manager
+            .prune(7)
+            .expect_err("jobs-dir read failures should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read jobs directory"));
+        assert!(message.contains(jobs_dir.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prune_surfaces_orphan_directory_removal_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+        let orphan_path = jobs_dir.join("123");
+        fs::write(&orphan_path, "occupied")?;
+
+        let error = manager
+            .prune(7)
+            .expect_err("orphan removal failures should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to remove orphaned background job directory"));
+        assert!(message.contains(orphan_path.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_list_recent_surfaces_prune_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        fs::remove_dir_all(&jobs_dir)?;
+        fs::write(&jobs_dir, "occupied")?;
+
+        let error = match manager.list_recent(10) {
+            Ok(_) => panic!("list_recent should surface prune failures"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to prune completed background jobs"));
+        assert!(message.contains("failed to read jobs directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_list_active_surfaces_prune_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        fs::remove_dir_all(&jobs_dir)?;
+        fs::write(&jobs_dir, "occupied")?;
+
+        let error = match manager.list_active() {
+            Ok(_) => panic!("list_active should surface prune failures"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to prune completed background jobs"));
+        assert!(message.contains("failed to read jobs directory"));
         Ok(())
     }
 }
