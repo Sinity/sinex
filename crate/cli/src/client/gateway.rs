@@ -32,7 +32,7 @@ use sinex_primitives::rpc::{
     },
     methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
-    ops::OpsStartResponse,
+    ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     replay::{
         ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
         ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
@@ -789,20 +789,23 @@ impl GatewayClient {
         operation_type: Option<String>,
         status: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<OpsOperation>> {
         let params = json!({
             "operation_type": operation_type,
             "status": status,
             "limit": limit.unwrap_or(50)
         });
         let result = self.call_rpc("ops.list", params).await?;
-        serde_json::from_value(result).map_err(Into::into)
+        let response: OpsListResponse = serde_json::from_value(result)?;
+        Ok(response.operations)
     }
 
     /// Get operation details
-    pub async fn ops_get(&self, operation_id: &str) -> Result<Value> {
+    pub async fn ops_get(&self, operation_id: &str) -> Result<OpsOperation> {
         let params = json!({ "operation_id": operation_id });
-        self.call_rpc("ops.get", params).await
+        let result = self.call_rpc("ops.get", params).await?;
+        let response: OpsGetResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     /// Cancel an operation
