@@ -2208,8 +2208,15 @@ impl TerminalNode {
         checkpoint: &Checkpoint,
         key: &str,
     ) -> NodeResult<Option<HistoryState>> {
-        let Checkpoint::External { position, .. } = checkpoint else {
-            return Ok(None);
+        let position = match checkpoint {
+            Checkpoint::None => return Ok(None),
+            Checkpoint::External { position, .. } => position,
+            _ => {
+                return Err(
+                    SinexError::checkpoint("terminal history requires an external per-source checkpoint")
+                        .with_context("checkpoint", checkpoint.description()),
+                );
+            }
         };
 
         let checkpoint: TerminalHistoryCheckpoint = serde_json::from_value(position.clone())
@@ -2334,14 +2341,26 @@ impl IngestorNode for TerminalNode {
                 Ok(None) => None,
                 Err(error) => {
                     warnings.push(ctx.strict_warning(format!(
-                        "ignoring unreadable checkpoint state and falling back to local state: {error}"
+                        "incoming checkpoint state is unusable for historical replay: {error}"
                     )));
                     warn!(
                         source = %checkpoint_key,
                         error = %error,
-                        "Ignoring unreadable terminal checkpoint state and falling back to local state"
+                        "Historical terminal scan refused unusable incoming checkpoint state"
                     );
-                    None
+                    failed_targets.push((
+                        checkpoint_key.clone(),
+                        format!("failed to restore incoming terminal checkpoint state: {error}"),
+                    ));
+                    let preserved_state = ctx.load_state().await.map_err(|load_error| {
+                        SinexError::processing(
+                            "failed to preserve local terminal state after checkpoint restore failure",
+                        )
+                        .with_context("source", checkpoint_key.clone())
+                        .with_source(load_error)
+                    })?;
+                    checkpoint_states.insert(checkpoint_key, preserved_state.unwrap_or_default());
+                    continue;
                 }
             };
             let outcome = ctx
@@ -2757,6 +2776,22 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn terminal_history_checkpoint_rejects_incompatible_variants() -> TestResult<()> {
+        let error = TerminalNode::checkpoint_state_for_source(
+            &Checkpoint::timestamp(Timestamp::now(), None),
+            "atuin:/tmp/history.db",
+        )
+        .expect_err("timestamp checkpoints should not be accepted for terminal per-source state");
+
+        assert!(
+            error
+                .to_string()
+                .contains("terminal history requires an external per-source checkpoint")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
@@ -3133,6 +3168,93 @@ mod tests {
                 .contains("configured Atuin history source"),
             "unexpected failure: {:?}",
             report.failed_targets
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_reports_invalid_incoming_checkpoint_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-checkpoint")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::timestamp(Timestamp::now(), None),
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        let checkpoint_key = format!("atuin:{history_path}");
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, checkpoint_key);
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("failed to restore incoming terminal checkpoint state"),
+            "unexpected failure: {:?}",
+            report.failed_targets
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("incoming checkpoint state is unusable for historical replay")),
+            "expected checkpoint warning, got {:?}",
+            report.warnings
+        );
+        assert!(
+            TerminalNode::checkpoint_state_for_source(
+                &report.final_checkpoint,
+                &format!("atuin:{history_path}")
+            )?
+            .is_some(),
+            "failed target should preserve its local/default state in the returned checkpoint"
         );
 
         Ok(())
