@@ -1092,8 +1092,8 @@ impl HistoryDb {
     ) -> Result<()> {
         let finished_at = Timestamp::now().format_rfc3339();
 
-        let stdout_content = stdout_path.and_then(|p| std::fs::read_to_string(p).ok());
-        let stderr_content = stderr_path.and_then(|p| std::fs::read_to_string(p).ok());
+        let stdout_content = Self::read_background_job_log(stdout_path, "stdout")?;
+        let stderr_content = Self::read_background_job_log(stderr_path, "stderr")?;
 
         self.conn.execute(
             r"UPDATE background_jobs
@@ -1112,6 +1112,22 @@ impl HistoryDb {
         }
 
         Ok(())
+    }
+
+    fn read_background_job_log(
+        path: Option<&std::path::Path>,
+        stream_name: &str,
+    ) -> Result<Option<String>> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let content = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "failed to read archived {stream_name} log from {}",
+                path.display()
+            )
+        })?;
+        Ok(Some(content))
     }
 
     /// Get log content for a completed job (reads from `background_job_logs`).
@@ -4095,6 +4111,31 @@ mod tests {
         assert!(stderr.is_some());
         assert_eq!(stdout.unwrap(), "test stdout output\nmultiline output");
         assert_eq!(stderr.unwrap(), "test stderr output\nerror line");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_log_read_failures_surface() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-log-read-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let stdout_path = dir.path().join("missing-stdout.log");
+        let stderr_path = dir.path().join("missing-stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("check", &[], 77778, &stdout_path, &stderr_path)?;
+
+        let error = db
+            .finish_background_job(
+                job_id,
+                JobLifecycleStatus::Completed,
+                Some(0),
+                0.5,
+                Some(&stdout_path),
+                Some(&stderr_path),
+            )
+            .expect_err("missing archived log should surface");
+        assert!(format!("{error:#}").contains("failed to read archived stdout log"));
         Ok(())
     }
 
