@@ -693,6 +693,8 @@ struct ReplayExecutionEngine {
     scan_completion_timeout: Duration,
     #[cfg(test)]
     checkpoint_failures_remaining: Option<Arc<AtomicUsize>>,
+    #[cfg(test)]
+    scope_metadata_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug)]
@@ -713,6 +715,8 @@ impl ReplayExecutionEngine {
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
             #[cfg(test)]
             checkpoint_failures_remaining: None,
+            #[cfg(test)]
+            scope_metadata_failures_remaining: None,
         }
     }
 
@@ -731,6 +735,15 @@ impl ReplayExecutionEngine {
     #[cfg(test)]
     fn with_checkpoint_failures(mut self, checkpoint_failures_remaining: Arc<AtomicUsize>) -> Self {
         self.checkpoint_failures_remaining = Some(checkpoint_failures_remaining);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_scope_metadata_failures(
+        mut self,
+        scope_metadata_failures_remaining: Arc<AtomicUsize>,
+    ) -> Self {
+        self.scope_metadata_failures_remaining = Some(scope_metadata_failures_remaining);
         self
     }
 
@@ -1008,6 +1021,23 @@ impl ReplayExecutionEngine {
             .wrap_err(context)
     }
 
+    #[cfg(test)]
+    fn maybe_fail_scope_metadata_collection(&self) -> Result<()> {
+        if let Some(remaining) = &self.scope_metadata_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay scope metadata collection failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_scope_metadata_collection(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Pagination batch size for collecting scope events from the database.
     const SCOPE_QUERY_BATCH_SIZE: i64 = 500;
 
@@ -1211,6 +1241,9 @@ impl ReplayExecutionEngine {
         if cascade_ids.is_empty() {
             return Ok(Vec::new());
         }
+
+        self.maybe_fail_scope_metadata_collection()
+            .wrap_err("Failed to collect replay cascade scope metadata")?;
 
         // Query scope_key and event_type for cascade events that have scope_keys
         let rows = sqlx::query!(
@@ -1508,8 +1541,7 @@ impl ReplayExecutionEngine {
         // Collect scope metadata before archiving (events move to audit after)
         let scope_metadata = self
             .collect_cascade_scope_metadata(pool, &cascade_ids)
-            .await
-            .unwrap_or_default();
+            .await?;
 
         let archived_count = self
             .archive_cascade(pool, &cascade_ids, operation_id, executor_name)
@@ -3039,6 +3071,102 @@ mod tests {
         assert_eq!(
             archived_count, 0,
             "pre-ack dispatch failures must not leave the archived cascade behind"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-scope-metadata-failure"))
+            .await?;
+        let event = DynamicPayload::new(
+            "scope-metadata-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-scope-metadata-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let mut scope = sample_scope();
+        scope.node_id = "scope-metadata-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:scope-metadata-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
+            .with_scope_metadata_failures(Arc::new(AtomicUsize::new(1)));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("scope metadata collection failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to collect replay cascade scope metadata")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed
+                .error_details
+                .as_deref()
+                .is_some_and(|details| details.contains("Failed to collect replay cascade scope metadata")),
+            "failure details should include scope metadata context: {:?}",
+            failed.error_details
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "scope metadata failure must leave the live row untouched"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "scope metadata failure must abort before archiving the cascade"
         );
 
         Ok(())
