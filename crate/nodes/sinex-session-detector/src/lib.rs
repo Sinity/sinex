@@ -3,8 +3,8 @@
 //! Session detector -- [`WindowedNode`] implementation.
 //!
 //! Model classification: **Windowed** -- accumulates events, detects session
-//! boundaries when the gap between the current wall-clock time and the last
-//! observed event exceeds a configurable threshold (default 5 minutes).
+//! boundaries when the gap between consecutive event timestamps exceeds a
+//! configurable threshold (default 5 minutes).
 //! Emits `activity.session.boundary` events with session metadata.
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,12 @@ pub struct SessionState {
 
     /// Session counter for generating deterministic session IDs.
     pub session_counter: u64,
+
+    /// Whether a gap was detected between the last event and the current one.
+    /// Set in `accumulate()` using event timestamps (not wall clock), making
+    /// session boundary detection deterministic and replay-correct.
+    #[serde(default)]
+    pub gap_detected: bool,
 }
 
 impl Default for SessionState {
@@ -59,6 +65,7 @@ impl Default for SessionState {
             sources: BTreeSet::new(),
             event_ids: Vec::new(),
             session_counter: 0,
+            gap_detected: false,
         }
     }
 }
@@ -71,6 +78,7 @@ impl SessionState {
         self.event_count = 0;
         self.sources.clear();
         self.event_ids.clear();
+        self.gap_detected = false;
     }
 }
 
@@ -111,6 +119,16 @@ impl WindowedNode for SessionDetector {
         let event_time = context.ts_orig.unwrap_or_else(now);
         let source = context.source.as_str().to_string();
 
+        // Detect session gap using event timestamps (replay-correct).
+        // A gap is detected when the incoming event's ts_orig is more than
+        // gap_threshold after the last event's ts_orig. This uses event
+        // time, not wall clock, so replay produces the same boundaries.
+        if let Some(last_time) = state.last_event_time {
+            if state.event_count > 0 && (event_time - last_time) >= gap_threshold() {
+                state.gap_detected = true;
+            }
+        }
+
         // Initialize session start if this is the first event
         if state.session_start.is_none() {
             state.session_start = Some(event_time);
@@ -133,15 +151,9 @@ impl WindowedNode for SessionDetector {
     }
 
     fn window_complete(&self, state: &Self::State) -> bool {
-        let Some(last_event_time) = state.last_event_time else {
-            return false;
-        };
-
-        // A session boundary is detected when the gap between "now" and the
-        // last event exceeds the threshold. This means the window triggers on
-        // the *next* event after a gap, or during periodic ticks.
-        let elapsed = now() - last_event_time;
-        elapsed >= gap_threshold() && state.event_count > 0
+        // Gap detection is done in accumulate() using event timestamps,
+        // making it deterministic and replay-correct.
+        state.gap_detected && state.event_count > 0
     }
 
     async fn emit(
