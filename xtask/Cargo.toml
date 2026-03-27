@@ -39,7 +39,7 @@ guppy = "0.17"
 libc = "0.2"
 
 # TLS certificate generation
-rcgen       = { workspace = true }
+rcgen       = { workspace = true, features = ["pem", "x509-parser"] }
 x509-parser = "0.16"
 time        = { workspace = true }
 

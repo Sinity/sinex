@@ -1,7 +1,7 @@
 //! NATS configuration and connection helpers.
 
 use crate::SinexError;
-use async_nats::{Client, ConnectOptions};
+use async_nats::{Client, ConnectOptions, jetstream};
 use bon::Builder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -267,6 +267,21 @@ impl NatsConnectionConfig {
                     .to_string(),
             )),
         }
+    }
+}
+
+pub async fn create_or_open_kv_store(
+    js: &jetstream::Context,
+    config: jetstream::kv::Config,
+) -> Result<jetstream::kv::Store, SinexError> {
+    let bucket = config.bucket.clone();
+    match js.create_key_value(config).await {
+        Ok(store) => Ok(store),
+        Err(create_err) => js.get_key_value(&bucket).await.map_err(|open_err| {
+            SinexError::kv(format!(
+                "Failed to create/open NATS KV bucket {bucket} (create: {create_err}, open: {open_err})"
+            ))
+        }),
     }
 }
 

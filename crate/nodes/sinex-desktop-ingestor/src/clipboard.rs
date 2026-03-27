@@ -10,7 +10,7 @@ use sinex_primitives::Seconds;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::privacy::{self, ProcessingContext};
-use sinex_primitives::{Id, Uuid};
+use sinex_primitives::Uuid;
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -443,8 +443,6 @@ impl ClipboardWatcher {
                 SinexError::processing("Failed to serialize clipboard event").with_source(e)
             })?
         };
-        event.id = Some(Id::from_uuid(Uuid::now_v7()));
-
         stage_context
             .emit_event_with_provenance(event, material_id, Some(0), Some(data_bytes.len() as i64))
             .await?;

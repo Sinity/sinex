@@ -16,7 +16,7 @@
 //! - Contract payload file content changes (detected via blake3 hash)
 //! - Git HEAD commit change (new commit or branch switch)
 //! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
-//! - `xtask db reset` (explicitly invalidates the cache)
+//! - `xtask reset --yes --db` (explicitly invalidates the cache)
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::{Deserialize, Serialize};
@@ -411,7 +411,7 @@ fn hash_named_sources(file_contents: &std::collections::BTreeMap<String, Vec<u8>
 
 /// Delete the preflight result cache file, forcing a full preflight on the next run.
 ///
-/// Called by `xtask db reset` after dropping and recreating the database.
+/// Called by `xtask reset --yes --db` after dropping and recreating the database.
 /// `xtask infra reset` achieves the same by deleting the entire `.sinex/preflight/` directory.
 pub fn invalidate_cache() {
     let path = cache_path();
@@ -687,7 +687,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
             output_dir: tls_dir.to_path_buf(),
             san: vec!["localhost".to_string(), "127.0.0.1".to_string()],
             ca_name: "Sinex Dev CA".to_string(),
-            validity_days: 365,
+            validity_days: crate::tls::DEFAULT_DEV_CERT_VALIDITY_DAYS,
             force: false,
         };
         crate::tls::generate_dev_certs(&config)?;

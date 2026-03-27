@@ -7,6 +7,10 @@ use std::process::{Command, Stdio};
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
+const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 16;
+const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 8;
+const POSTGRES_MAX_WORKER_PROCESSES: u16 =
+    TIMESCALEDB_MAX_BACKGROUND_WORKERS + POSTGRES_WORKER_PROCESS_HEADROOM;
 
 #[derive(Debug, Clone)]
 pub struct PostgresConfig {
@@ -465,9 +469,9 @@ unix_socket_directories = '{}'
 listen_addresses = ''
 port = {}
 max_connections = 800
-max_worker_processes = 24
+max_worker_processes = {}
 shared_preload_libraries = 'timescaledb'
-timescaledb.max_background_workers = 16
+timescaledb.max_background_workers = {}
 log_destination = 'stderr'
 logging_collector = on
 log_directory = '{}'
@@ -475,6 +479,8 @@ log_filename = 'postgres.log'
 {MANAGED_CONFIG_END}",
             self.config.run_dir.display(),
             self.config.port,
+            POSTGRES_MAX_WORKER_PROCESSES,
+            TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             self.config.logs_dir.display()
         )
     }
@@ -697,8 +703,12 @@ mod tests {
 
         let config = fs::read_to_string(manager.config.data_dir.join("postgresql.conf"))?;
         assert!(config.contains(MANAGED_CONFIG_BEGIN));
-        assert!(config.contains("max_worker_processes = 24"));
-        assert!(config.contains("timescaledb.max_background_workers = 16"));
+        assert!(config.contains(&format!(
+            "max_worker_processes = {POSTGRES_MAX_WORKER_PROCESSES}"
+        )));
+        assert!(config.contains(&format!(
+            "timescaledb.max_background_workers = {TIMESCALEDB_MAX_BACKGROUND_WORKERS}"
+        )));
         assert!(!config.contains("port = 1111"));
         Ok(())
     }
@@ -721,6 +731,16 @@ mod tests {
         assert_eq!(config.matches(MANAGED_CONFIG_BEGIN).count(), 1);
         assert!(config.contains("port = 55432"));
         assert!(!config.contains("port = 1111"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_postgres_worker_process_budget_leaves_headroom() -> TestResult<()> {
+        assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
+        assert_eq!(
+            POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
+            POSTGRES_WORKER_PROCESS_HEADROOM
+        );
         Ok(())
     }
 }

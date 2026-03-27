@@ -10,7 +10,7 @@
 
 use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;
-use crate::automaton_node::{ErrorAction, NodeLogicError};
+use crate::processing::{ErrorAction, NodeLogicError};
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;

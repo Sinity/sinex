@@ -337,30 +337,37 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     }
 
     for (binary_name, description) in optional_binaries {
-        if let Ok(binary_data) = check_binary_availability(binary_name).await {
-            binary_info.insert(
-                binary_name.to_string(),
-                json!({
-                    "available": true,
-                    "description": description,
-                    "required": false,
-                    "path": binary_data.path,
-                    "version": binary_data.version
-                }),
-            );
+        match check_binary_availability(binary_name).await {
+            Ok(binary_data) => {
+                binary_info.insert(
+                    binary_name.to_string(),
+                    json!({
+                        "available": true,
+                        "description": description,
+                        "required": false,
+                        "path": binary_data.path,
+                        "version": binary_data.version
+                    }),
+                );
 
-            messages.push(format!("✓ Optional binary '{binary_name}' available"));
-        } else {
-            binary_info.insert(
-                binary_name.to_string(),
-                json!({
-                    "available": false,
-                    "description": description,
-                    "required": false
-                }),
-            );
+                messages.push(format!("✓ Optional binary '{binary_name}' available"));
+            }
+            Err(error) => {
+                binary_info.insert(
+                    binary_name.to_string(),
+                    json!({
+                        "available": false,
+                        "description": description,
+                        "required": false,
+                        "error": error.to_string()
+                    }),
+                );
 
-            debug!("Optional binary '{}' not found", binary_name);
+                messages.push(format!(
+                    "ℹ Optional binary '{binary_name}' unavailable: {error}"
+                ));
+                debug!("Optional binary '{}' unavailable: {}", binary_name, error);
+            }
         }
     }
 
@@ -763,16 +770,7 @@ async fn verify_service_configuration(messages: &mut Vec<String>) -> NodeResult<
     let mut found_unit_files = Vec::new();
 
     for unit_path in unit_paths {
-        if let Ok(mut entries) = tokio::fs::read_dir(unit_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let file_name = entry.file_name();
-                let file_name_str = file_name.to_string_lossy();
-
-                if file_name_str.starts_with("sinex-") && file_name_str.ends_with(".service") {
-                    found_unit_files.push(format!("{unit_path}/{file_name_str}"));
-                }
-            }
-        }
+        found_unit_files.extend(discover_unit_files_in_path(unit_path).await?);
     }
 
     config_info.insert(
@@ -797,6 +795,46 @@ async fn verify_service_configuration(messages: &mut Vec<String>) -> NodeResult<
     Ok(json!(config_info))
 }
 
+async fn discover_unit_files_in_path(unit_path: &str) -> NodeResult<Vec<String>> {
+    let mut entries = match tokio::fs::read_dir(unit_path).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(SinexError::processing(format!(
+                "Failed to inspect systemd unit directory '{unit_path}': {error}"
+            )));
+        }
+    };
+
+    let mut found = Vec::new();
+    loop {
+        match entries.next_entry().await {
+            Ok(Some(entry)) => {
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy();
+                let file_type = entry.file_type().await.map_err(|error| {
+                    SinexError::processing(format!(
+                        "Failed to inspect file type for systemd unit entry '{}/{}': {error}",
+                        unit_path, file_name_str
+                    ))
+                })?;
+                if file_type.is_file()
+                    && file_name_str.starts_with("sinex-")
+                    && file_name_str.ends_with(".service")
+                {
+                    found.push(format!("{unit_path}/{file_name_str}"));
+                }
+            }
+            Ok(None) => return Ok(found),
+            Err(error) => {
+                return Err(SinexError::processing(format!(
+                    "Failed to read entry from systemd unit directory '{unit_path}': {error}"
+                )));
+            }
+        }
+    }
+}
+
 fn redact_password(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         let mut redacted = parsed.clone();
@@ -806,5 +844,48 @@ fn redact_password(url: &str) -> String {
         redacted.to_string()
     } else {
         "[REDACTED]".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are justified here because they exercise private
+    // preflight helpers without widening the service-verification API surface.
+    use super::discover_unit_files_in_path;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn discover_unit_files_in_path_reports_non_directory_paths() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bogus_path = temp.path().join("not-a-directory");
+        std::fs::write(&bogus_path, "x")?;
+
+        let error = discover_unit_files_in_path(bogus_path.to_str().expect("utf8 path"))
+            .await
+            .expect_err("non-directory path should fail honestly");
+
+        assert!(error.to_string().contains("Failed to inspect systemd unit directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn discover_unit_files_in_path_finds_only_sinex_service_units() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        std::fs::write(temp.path().join("sinex-ingestd.service"), [])?;
+        std::fs::write(temp.path().join("sinex-gateway.service"), [])?;
+        std::fs::write(temp.path().join("postgresql.service"), [])?;
+        std::fs::create_dir(temp.path().join("sinex-dir.service"))?;
+
+        let mut found = discover_unit_files_in_path(temp.path().to_str().expect("utf8 path")).await?;
+        found.sort();
+
+        assert_eq!(
+            found,
+            vec![
+                format!("{}/sinex-gateway.service", temp.path().display()),
+                format!("{}/sinex-ingestd.service", temp.path().display()),
+            ]
+        );
+        Ok(())
     }
 }

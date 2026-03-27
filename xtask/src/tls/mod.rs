@@ -20,5 +20,8 @@
 mod generate;
 mod verify;
 
-pub use generate::{CertConfig, generate_ca, generate_client_cert, generate_dev_certs};
+pub use generate::{
+    CertConfig, DEFAULT_DEV_CERT_VALIDITY_DAYS, generate_ca, generate_client_cert,
+    generate_dev_certs,
+};
 pub use verify::{TlsCheckOptions, check_tls_config};

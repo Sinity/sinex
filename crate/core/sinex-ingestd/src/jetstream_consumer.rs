@@ -132,19 +132,85 @@ impl JetStreamTopology {
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLSTATE for foreign-key violation.
-const SQLSTATE_FOREIGN_KEY_VIOLATION: &str = "23503";
+const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
+const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
+const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
 
-fn is_source_material_fk_violation(err: &SinexError) -> bool {
+fn is_foreign_key_violation(err: &SinexError) -> bool {
+    err.context_map()
+        .get("sqlstate")
+        .is_some_and(|value| value == "23503")
+        || err
+            .to_string()
+            .contains("Foreign key constraint violation")
+}
+
+fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
     err.context_map()
         .get("error_class")
         .is_some_and(|value| value == ERROR_CLASS_SOURCE_MATERIAL_FK)
         || err
             .context_map()
-            .get("sqlstate")
-            .is_some_and(|value| value == SQLSTATE_FOREIGN_KEY_VIOLATION)
+            .get("constraint")
+            .is_some_and(|value| value == EVENTS_SOURCE_MATERIAL_ID_FKEY)
+}
+
+fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
+    batch.iter().all(|prepared| {
+        matches!(prepared.event.provenance, Provenance::Material { .. })
+            && prepared.event.payload_schema_id.is_none()
+            && prepared.event.node_run_id.is_none()
+    })
+}
+
+fn rows_depend_only_on_source_material_fk(batch: &[StreamBatchRow]) -> bool {
+    batch.iter().all(|row| {
+        row.source_material_id.is_some()
+            && row
+                .source_event_ids
+                .as_ref()
+                .is_none_or(|source_ids| source_ids.is_empty())
+            && row.payload_schema_id.is_none()
+            && row.node_run_id.is_none()
+    })
+}
+
+fn is_source_material_fk_violation_for_prepared_batch(
+    err: &SinexError,
+    batch: &[&PreparedEvent],
+) -> bool {
+    has_explicit_source_material_fk_marker(err)
+        || (is_foreign_key_violation(err) && batch_depends_only_on_source_material_fk(batch))
+}
+
+fn is_source_material_fk_violation_for_stream_batch(
+    err: &SinexError,
+    batch: &[StreamBatchRow],
+) -> bool {
+    has_explicit_source_material_fk_marker(err)
+        || (is_foreign_key_violation(err) && rows_depend_only_on_source_material_fk(batch))
+}
+
+fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
+    if has_explicit_source_material_fk_marker(err)
+        || sinex_db::query_helpers::is_retryable_db_error(err)
+    {
+        return false;
+    }
+
+    if is_foreign_key_violation(err) {
+        return true;
+    }
+
+    err.context_map()
+        .get("sqlstate")
+        .is_some_and(|value| {
+            value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
+                || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
+        })
 }
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
@@ -839,200 +905,247 @@ impl JetStreamConsumer {
             batch.iter().collect()
         };
 
-        let persist_result = self.persist_batch_optimized(&batch).await;
-        match persist_result {
-            Ok(persisted) => {
-                let persisted_set = persisted
-                    .inserted_ids
-                    .as_ref()
-                    .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
-                if let Some(fail_flag) = &self.post_persist_fail_once
-                    && fail_flag.swap(false, Ordering::SeqCst)
-                {
-                    return Err(SinexError::database("forced post-persist failure"));
-                }
-                if let Some(delay) = self.processing_delay {
-                    tokio::time::sleep(delay).await;
-                }
-                // Publish confirmations concurrently for the entire batch.
-                // This is the primary throughput optimization: O(1) wall-clock time
-                // instead of O(n) serial NATS round-trips per batch.
-                let confirmation_futs: Vec<_> = batch
-                    .iter()
-                    .map(|prepared| self.publish_confirmation_with_retry(&prepared.parsed_id))
-                    .collect();
-                let confirmation_results = join_all(confirmation_futs).await;
+        self.persist_and_confirm_prepared_batch(&batch).await
+    }
 
-                let mut ack_messages = Vec::with_capacity(batch.len());
-                let mut nack_prepared = Vec::new();
-                for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
-                    match result {
-                        Ok(()) => {
-                            if let Some(set) = &persisted_set
-                                && !set.contains(&prepared.parsed_id)
-                            {
-                                debug!(
+    #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
+    async fn persist_and_confirm_prepared_batch(
+        &self,
+        batch: &[&PreparedEvent],
+    ) -> IngestdResult<()> {
+        let mut pending_batches = vec![batch.to_vec()];
+
+        while let Some(batch) = pending_batches.pop() {
+            let persist_result = self.persist_batch_optimized(&batch).await;
+            match persist_result {
+                Ok(persisted) => {
+                    let persisted_set = persisted
+                        .inserted_ids
+                        .as_ref()
+                        .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
+                    if let Some(fail_flag) = &self.post_persist_fail_once
+                        && fail_flag.swap(false, Ordering::SeqCst)
+                    {
+                        return Err(SinexError::database("forced post-persist failure"));
+                    }
+                    if let Some(delay) = self.processing_delay {
+                        tokio::time::sleep(delay).await;
+                    }
+                    // Publish confirmations concurrently for the entire batch.
+                    // This is the primary throughput optimization: O(1) wall-clock time
+                    // instead of O(n) serial NATS round-trips per batch.
+                    let confirmation_futs: Vec<_> = batch
+                        .iter()
+                        .map(|prepared| self.publish_confirmation_with_retry(&prepared.parsed_id))
+                        .collect();
+                    let confirmation_results = join_all(confirmation_futs).await;
+
+                    let mut ack_messages = Vec::with_capacity(batch.len());
+                    let mut nack_prepared = Vec::new();
+                    for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
+                        match result {
+                            Ok(()) => {
+                                if let Some(set) = &persisted_set
+                                    && !set.contains(&prepared.parsed_id)
+                                {
+                                    debug!(
+                                        event_id = %prepared.parsed_id,
+                                        "Re-published confirmation for already persisted event"
+                                    );
+                                }
+                                ack_messages.push(&prepared.message);
+                            }
+                            Err(err) => {
+                                warn!(
                                     event_id = %prepared.parsed_id,
-                                    "Re-published confirmation for already persisted event"
+                                    error = %err,
+                                    "Failed to publish confirmation after retries"
+                                );
+                                self.stats
+                                    .confirmation_failures
+                                    .fetch_add(1, Ordering::Relaxed);
+                                match self.enqueue_confirmation_retry(&prepared.parsed_id).await {
+                                    Ok(()) => {
+                                        info!(
+                                            event_id = %prepared.parsed_id,
+                                            "Queued durable confirmation retry after publish failure"
+                                        );
+                                        self.stats
+                                            .confirmation_retries_enqueued
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        ack_messages.push(&prepared.message);
+                                    }
+                                    Err(retry_err) => {
+                                        error!(
+                                            event_id = %prepared.parsed_id,
+                                            error = %retry_err,
+                                            "Failed to queue durable confirmation retry; falling back to raw message redelivery"
+                                        );
+                                        self.stats
+                                            .confirmation_retry_failures
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        nack_prepared.push(prepared);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let ack_futs: Vec<_> =
+                        ack_messages.iter().map(|message| message.ack()).collect();
+                    let ack_results = join_all(ack_futs).await;
+                    for result in &ack_results {
+                        if let Err(e) = result {
+                            return Err(SinexError::network(format!("Failed to ack: {e}")));
+                        }
+                    }
+
+                    if !nack_prepared.is_empty() {
+                        let nak_futs: Vec<_> = nack_prepared
+                            .iter()
+                            .map(|prepared| {
+                                prepared
+                                    .message
+                                    .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
+                            })
+                            .collect();
+                        let nak_results = join_all(nak_futs).await;
+                        for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
+                            if let Err(err) = result {
+                                warn!(
+                                    event_id = %prepared.parsed_id,
+                                    error = %err,
+                                    "Failed to NAK after confirmation publish failure"
+                                );
+                                self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        let processed_count = ack_messages.len() as u64;
+                        if processed_count > 0 {
+                            self.stats
+                                .events_processed
+                                .fetch_add(processed_count, Ordering::Relaxed);
+                            if let Some(ref handle) = self.heartbeat_handle {
+                                handle.increment_events_processed(processed_count);
+                            }
+                        }
+                        let failed_count = nack_prepared.len() as u64;
+                        self.stats
+                            .events_failed
+                            .fetch_add(failed_count, Ordering::Relaxed);
+                        if let Some(ref handle) = self.heartbeat_handle {
+                            handle.record_error("confirmation publish failure");
+                        }
+                        continue;
+                    }
+
+                    let count = ack_messages.len() as u64;
+                    self.stats
+                        .events_processed
+                        .fetch_add(count, Ordering::Relaxed);
+                    if let Some(ref handle) = self.heartbeat_handle {
+                        handle.increment_events_processed(count);
+                    }
+                    info!("Processed and confirmed {} events", batch.len());
+                }
+                Err(e) => {
+                    // Check if this is a transient FK violation (source material not yet registered).
+                    // Safety net: the ready set should prevent most FK violations, but races are
+                    // possible (e.g. material registered between ready-set check and DB insert).
+                let is_fk_error = is_source_material_fk_violation_for_prepared_batch(&e, &batch);
+                    if is_fk_error {
+                        debug!(
+                            batch_size = batch.len(),
+                            "FK violation on batch - source material likely still registering; NAKing with delay"
+                        );
+                        for prepared in &batch {
+                            if let Err(err) = prepared
+                                .message
+                                .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+                                .await
+                            {
+                                warn!(
+                                    event_id = %prepared.parsed_id,
+                                    error = %err,
+                                    "Failed to NAK after FK violation"
+                                );
+                                self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        // Don't count as failed - this is a transient condition
+                        continue;
+                    }
+
+                    if is_isolatable_batch_persistence_failure(&e) {
+                        if batch.len() > 1 {
+                            let split_at = batch.len() / 2;
+                            warn!(
+                                batch_size = batch.len(),
+                                split_at,
+                                sqlstate = ?e.context_map().get("sqlstate"),
+                                constraint = ?e.context_map().get("constraint"),
+                                "Splitting batch to isolate non-retryable persistence failure"
+                            );
+                            pending_batches.push(batch[split_at..].to_vec());
+                            pending_batches.push(batch[..split_at].to_vec());
+                            continue;
+                        }
+
+                        let prepared = batch[0];
+                        warn!(
+                            event_id = %prepared.parsed_id,
+                            sqlstate = ?e.context_map().get("sqlstate"),
+                            constraint = ?e.context_map().get("constraint"),
+                            "Routing isolated non-retryable persistence failure to DLQ"
+                        );
+                        self.route_to_dlq_and_ack(
+                            &prepared.message,
+                            format!("Persistence error: {e}"),
+                        )
+                        .await?;
+                        self.stats.events_failed.fetch_add(1, Ordering::Relaxed);
+                        if let Some(ref handle) = self.heartbeat_handle {
+                            handle.record_error("isolated persistence failure");
+                        }
+                        continue;
+                    }
+
+                    error!("Failed to persist batch: {}", e);
+                    for prepared in &batch {
+                        if self.should_route_terminal_persistence_failure(&prepared.message) {
+                            if let Err(err) = self
+                                .route_to_dlq_and_ack(
+                                    &prepared.message,
+                                    format!("Persistence error: {e}"),
+                                )
+                                .await
+                            {
+                                warn!(
+                                    event_id = %prepared.parsed_id,
+                                    error = %err,
+                                    "Failed to route persistence error to DLQ"
                                 );
                             }
-                            ack_messages.push(&prepared.message);
-                        }
-                        Err(err) => {
+                        } else if let Err(err) = prepared
+                            .message
+                            .ack_with(jetstream::AckKind::Nak(None))
+                            .await
+                        {
                             warn!(
                                 event_id = %prepared.parsed_id,
                                 error = %err,
-                                "Failed to publish confirmation after retries"
-                            );
-                            self.stats
-                                .confirmation_failures
-                                .fetch_add(1, Ordering::Relaxed);
-                            match self.enqueue_confirmation_retry(&prepared.parsed_id).await {
-                                Ok(()) => {
-                                    info!(
-                                        event_id = %prepared.parsed_id,
-                                        "Queued durable confirmation retry after publish failure"
-                                    );
-                                    self.stats
-                                        .confirmation_retries_enqueued
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    ack_messages.push(&prepared.message);
-                                }
-                                Err(retry_err) => {
-                                    error!(
-                                        event_id = %prepared.parsed_id,
-                                        error = %retry_err,
-                                        "Failed to queue durable confirmation retry; falling back to raw message redelivery"
-                                    );
-                                    self.stats
-                                        .confirmation_retry_failures
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    nack_prepared.push(prepared);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let ack_futs: Vec<_> = ack_messages.iter().map(|message| message.ack()).collect();
-                let ack_results = join_all(ack_futs).await;
-                for result in &ack_results {
-                    if let Err(e) = result {
-                        return Err(SinexError::network(format!("Failed to ack: {e}")));
-                    }
-                }
-
-                if !nack_prepared.is_empty() {
-                    let nak_futs: Vec<_> = nack_prepared
-                        .iter()
-                        .map(|prepared| {
-                            prepared
-                                .message
-                                .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
-                        })
-                        .collect();
-                    let nak_results = join_all(nak_futs).await;
-                    for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
-                        if let Err(err) = result {
-                            warn!(
-                                event_id = %prepared.parsed_id,
-                                error = %err,
-                                "Failed to NAK after confirmation publish failure"
+                                "Failed to NAK after persistence failure"
                             );
                             self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    let processed_count = ack_messages.len() as u64;
-                    if processed_count > 0 {
-                        self.stats
-                            .events_processed
-                            .fetch_add(processed_count, Ordering::Relaxed);
-                        if let Some(ref handle) = self.heartbeat_handle {
-                            handle.increment_events_processed(processed_count);
-                        }
-                    }
-                    let failed_count = nack_prepared.len() as u64;
+                    let failed_count = batch.len() as u64;
                     self.stats
                         .events_failed
                         .fetch_add(failed_count, Ordering::Relaxed);
                     if let Some(ref handle) = self.heartbeat_handle {
-                        handle.record_error("confirmation publish failure");
+                        handle.record_error("batch persistence failure");
                     }
-                    return Ok(());
-                }
-
-                let count = ack_messages.len() as u64;
-                self.stats
-                    .events_processed
-                    .fetch_add(count, Ordering::Relaxed);
-                if let Some(ref handle) = self.heartbeat_handle {
-                    handle.increment_events_processed(count);
-                }
-                info!("Processed and confirmed {} events", batch.len());
-            }
-            Err(e) => {
-                // Check if this is a transient FK violation (source material not yet registered).
-                // Safety net: the ready set should prevent most FK violations, but races are
-                // possible (e.g. material registered between ready-set check and DB insert).
-                let is_fk_error = is_source_material_fk_violation(&e);
-                if is_fk_error {
-                    debug!(
-                        batch_size = batch.len(),
-                        "FK violation on batch - source material likely still registering; NAKing with delay"
-                    );
-                    for prepared in &batch {
-                        if let Err(err) = prepared
-                            .message
-                            .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
-                            .await
-                        {
-                            warn!(
-                                event_id = %prepared.parsed_id,
-                                error = %err,
-                                "Failed to NAK after FK violation"
-                            );
-                            self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                    // Don't count as failed - this is a transient condition
-                    return Ok(());
-                }
-
-                error!("Failed to persist batch: {}", e);
-                for prepared in &batch {
-                    if self.should_route_terminal_persistence_failure(&prepared.message) {
-                        if let Err(err) = self
-                            .route_to_dlq_and_ack(
-                                &prepared.message,
-                                format!("Persistence error: {e}"),
-                            )
-                            .await
-                        {
-                            warn!(
-                                event_id = %prepared.parsed_id,
-                                error = %err,
-                                "Failed to route persistence error to DLQ"
-                            );
-                        }
-                    } else if let Err(err) = prepared
-                        .message
-                        .ack_with(jetstream::AckKind::Nak(None))
-                        .await
-                    {
-                        warn!(
-                            event_id = %prepared.parsed_id,
-                            error = %err,
-                            "Failed to NAK after persistence failure"
-                        );
-                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                let failed_count = batch.len() as u64;
-                self.stats
-                    .events_failed
-                    .fetch_add(failed_count, Ordering::Relaxed);
-                if let Some(ref handle) = self.heartbeat_handle {
-                    handle.record_error("batch persistence failure");
                 }
             }
         }
@@ -1200,7 +1313,7 @@ impl JetStreamConsumer {
             ))
         })?
         .map_err(|err| {
-            if is_source_material_fk_violation(&err) {
+            if is_source_material_fk_violation_for_stream_batch(&err, &rows) {
                 warn!(
                     batch_size = to_persist.len(),
                     "INSERT hit FK violation (source_material not yet registered); will retry"

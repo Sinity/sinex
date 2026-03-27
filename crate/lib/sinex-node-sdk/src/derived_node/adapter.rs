@@ -8,8 +8,8 @@ use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
-use crate::automaton_node::{ErrorAction, PersistedState};
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
+use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,

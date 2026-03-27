@@ -8,7 +8,7 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use sinex_primitives::events::{Event, payloads::LogLinePayload};
+use sinex_primitives::events::{Event, EventPayload, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -817,7 +817,8 @@ impl StageAsYouGoNode for LogFileStageNode {
                 .sum::<usize>() as i64;
             let offset_end = offset_start + line.len() as i64;
 
-            // Create event for this log line directly with unified Event<T>
+            // Build the log-line event with material provenance up front instead of
+            // fabricating placeholder synthesis ancestry only to overwrite it later.
             let payload = LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
@@ -828,20 +829,19 @@ impl StageAsYouGoNode for LogFileStageNode {
                 source_material_id: source_material_id.to_string(),
             };
 
-            // Create typed event and convert to JsonValue for emission
-            let typed_event = Event::new(
-                payload,
-                sinex_primitives::events::builder::Provenance::Synthesis {
-                    source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::events::builder::EventId::from_uuid(Uuid::now_v7()),
-                    ),
-                    operation_id: None,
-                },
-            );
-
-            // Convert to JsonValue event for emission — leave event.id as None so
-            // emit_event_with_provenance assigns an ID downstream.
-            let mut event = typed_event.to_json_event()?;
+            let mut event = payload
+                .from_material(source_material_id)
+                .with_offset_start(offset_start)
+                .map_err(|error| SinexError::processing("Failed to set log line offset start").with_source(error))?
+                .with_offset_end(offset_end)
+                .map_err(|error| SinexError::processing("Failed to set log line offset end").with_source(error))?
+                .build()
+                .map_err(|error| SinexError::processing("Failed to build log line event").with_source(error))?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("Failed to convert log line event to JSON")
+                        .with_source(error)
+                })?;
             // Use the material's started_at as fallback ts_orig — this value is
             // persisted in the temporal ledger by ingestd, making it reproducible
             // on replay (unlike an ephemeral Timestamp::now()).

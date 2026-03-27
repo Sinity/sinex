@@ -16,6 +16,7 @@ use sinex_node_sdk::{
 use sinex_primitives::{Event, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use tokio::sync::mpsc;
 
+use super::nats::create_or_open_kv_store;
 use super::{EphemeralNats, Sandbox};
 
 /// Fully wired runtime scaffold for node integration tests.
@@ -72,16 +73,18 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
 
         // Create checkpoint KV store
         let js = async_nats::jetstream::new(nats_client);
-        let kv = js
-            .create_key_value(async_nats::jetstream::kv::Config {
+        let kv = create_or_open_kv_store(
+            &js,
+            async_nats::jetstream::kv::Config {
                 bucket: format!(
                     "KV_{}",
                     sinex_primitives::environment().nats_kv_bucket_name("sinex_checkpoints")
                 ),
                 history: 1,
                 ..Default::default()
-            })
-            .await?;
+            },
+        )
+        .await?;
 
         let checkpoint_manager = Arc::new(CheckpointManager::new(
             kv,

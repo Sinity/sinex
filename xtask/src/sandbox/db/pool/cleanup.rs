@@ -9,7 +9,7 @@ use sqlx::pool::PoolConnection;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use super::provisioning::{load_pool_meta, store_pool_meta};
+use super::provisioning::{load_pool_meta, store_pool_meta_checked};
 use super::slot::DatabaseSlot;
 use super::test_database::TestDatabase;
 
@@ -94,7 +94,16 @@ impl CleanupManager {
                     meta.dirty = false;
                     meta.last_error = None;
                     meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                    let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                    if let Err(error) =
+                        store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
+                    {
+                        slog!(
+                            Level::Warn,
+                            "cleanup_meta_persist_failed",
+                            slot = task.slot_name,
+                            error = error.to_string()
+                        );
+                    }
                 }
             }
             Ok(Err(e)) => {
@@ -104,7 +113,16 @@ impl CleanupManager {
                     meta.dirty = true;
                     meta.last_error = Some(e.to_string());
                     meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                    let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                    if let Err(error) =
+                        store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
+                    {
+                        slog!(
+                            Level::Warn,
+                            "cleanup_meta_persist_failed",
+                            slot = task.slot_name,
+                            error = error.to_string()
+                        );
+                    }
                 }
             }
             Err(_) => {

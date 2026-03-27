@@ -1,4 +1,6 @@
 use crate::sandbox::prelude::*;
+use crate::sandbox::db::pool::replace_db_name;
+use sinex_schema::schema_registry;
 
 pub struct PermissionGranter {
     superuser_url: String,
@@ -35,14 +37,20 @@ impl PermissionGranter {
         ];
 
         for query in queries {
-            if let Err(e) = sqlx::query(&query).execute(pool).await {
-                // Some queries might fail if they are already set or if the schema is special
-                tracing::debug!("Grant query failed (ignoring): {} - {}", query, e);
-            }
+            sqlx::query(&query)
+                .execute(pool)
+                .await
+                .wrap_err_with(|| format!("failed to grant schema access for {schema}: {query}"))?;
         }
 
         Ok(())
     }
+}
+
+pub fn granted_schema_names() -> Vec<&'static str> {
+    let mut schemas = vec!["public"];
+    schemas.extend(schema_registry::SINEX_SCHEMAS.iter().map(|schema| schema.name));
+    schemas
 }
 
 pub async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
@@ -50,27 +58,33 @@ pub async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
         return Ok(());
     };
 
-    // Use the superuser URL already stored in the granter
-    let admin_url = &granter.superuser_url;
-
-    // We need to parse and replace the DB name in the URL
-    // For simplicity in xtask, we assume it's a standard postgres URL
-    let db_url = if admin_url.contains('?') {
-        let (base, params) = admin_url.split_once('?').unwrap();
-        format!("{}/{}/?{}", base.trim_end_matches('/'), db_name, params)
-    } else {
-        format!("{}/{}", admin_url.trim_end_matches('/'), db_name)
-    };
+    let db_url = replace_db_name(&granter.superuser_url, db_name);
 
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&db_url)
         .await?;
 
-    granter.grant_schema_access(&pool, "public").await?;
-    granter.grant_schema_access(&pool, "core").await?;
-    granter.grant_schema_access(&pool, "raw").await?;
-    granter.grant_schema_access(&pool, "sinex_schemas").await?;
+    for schema in granted_schema_names() {
+        granter.grant_schema_access(&pool, schema).await?;
+    }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn granted_schema_names_cover_public_and_runtime_schemas() -> TestResult<()> {
+        let schemas = granted_schema_names();
+        assert_eq!(schemas.first().copied(), Some("public"));
+        assert!(schemas.contains(&"core"));
+        assert!(schemas.contains(&"raw"));
+        assert!(schemas.contains(&"sinex_schemas"));
+        assert!(schemas.contains(&"audit"));
+        Ok(())
+    }
 }

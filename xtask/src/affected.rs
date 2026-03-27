@@ -4,8 +4,9 @@
 //! are affected by current changes, then generates a nextest filter expression.
 
 use crate::process::ProcessBuilder;
-use color_eyre::eyre::{ContextCompat, Result, WrapErr};
+use color_eyre::eyre::{ContextCompat, Result, WrapErr, eyre};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -142,37 +143,43 @@ pub fn build_nextest_filter(packages: &[String]) -> String {
 
 /// Get list of changed files from git.
 fn changed_files() -> Result<Vec<String>> {
+    let repo_root = std::env::current_dir().context("failed to determine current working directory")?;
+    changed_files_in(&repo_root)
+}
+
+fn changed_files_in(repo_root: &Path) -> Result<Vec<String>> {
     // Get both staged and unstaged changes
     let output = Command::new("git")
         .args(["diff", "--name-only", "HEAD"])
+        .current_dir(repo_root)
         .output()
-        .context("failed to run git diff")?;
+        .context("failed to run git diff --name-only HEAD")?;
 
     if !output.status.success() {
         // X12: `git diff --name-only HEAD` fails on initial commit (no HEAD yet).
         // Fall back to `git diff --name-only` (unstaged changes only). If that
-        // also fails, log a warning so full-workspace runs are observable rather
-        // than silently triggered by git errors.
+        // also fails, surface the failure instead of silently suppressing scope drift.
         let fallback = Command::new("git")
             .args(["diff", "--name-only"])
+            .current_dir(repo_root)
             .output()
-            .context("failed to run git diff")?;
+            .context("failed to run git diff --name-only")?;
 
         if !fallback.status.success() {
-            let stderr = String::from_utf8_lossy(&fallback.stderr);
-            tracing::warn!(
-                target: "xtask::affected",
-                "git diff failed (treating as full-workspace): {stderr}"
-            );
-            // Return empty — callers treat empty as "check everything" (conservative)
-            return Ok(vec![]);
+            return Err(eyre!(
+                "{}; fallback {}",
+                format_git_failure("git diff --name-only HEAD", &output),
+                format_git_failure("git diff --name-only", &fallback),
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&fallback.stdout);
-        return Ok(stdout
+        let mut files: Vec<String> = stdout
             .lines()
             .map(std::string::ToString::to_string)
-            .collect());
+            .collect();
+        files.extend(untracked_files_in(repo_root)?);
+        return Ok(files);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -182,7 +189,13 @@ fn changed_files() -> Result<Vec<String>> {
         .collect();
 
     // Also include untracked files in crate/, xtask/, and tests/ directories
-    let untracked = Command::new("git")
+    files.extend(untracked_files_in(repo_root)?);
+
+    Ok(files)
+}
+
+fn untracked_files_in(repo_root: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
         .args([
             "ls-files",
             "--others",
@@ -190,16 +203,39 @@ fn changed_files() -> Result<Vec<String>> {
             "crate/",
             "xtask/",
             "tests/",
+            "nixos/",
+            ".config/",
+            "Cargo.toml",
+            "Cargo.lock",
+            "flake.nix",
+            "flake.lock",
         ])
+        .current_dir(repo_root)
         .output()
-        .ok();
+        .context("failed to run git ls-files --others --exclude-standard")?;
 
-    if let Some(out) = untracked {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        files.extend(stdout.lines().map(std::string::ToString::to_string));
+    if !output.status.success() {
+        return Err(eyre!(format_git_failure(
+            "git ls-files --others --exclude-standard crate/ xtask/ tests/",
+            &output,
+        )));
     }
 
-    Ok(files)
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(std::string::ToString::to_string)
+        .collect())
+}
+
+fn format_git_failure(command: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+
+    if stderr.is_empty() {
+        format!("{command} failed with status {}", output.status)
+    } else {
+        format!("{command} failed with status {}: {stderr}", output.status)
+    }
 }
 
 /// Map file paths to their containing packages.
@@ -273,14 +309,15 @@ fn transitive_dependents(
 ///
 /// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
 ///   `xtask test --vm --category smoke`
-pub fn nixos_modules_dirty() -> bool {
-    changed_files().ok().map_or(false, |files| {
-        files.iter().any(|f| {
-            (f.starts_with("nixos/") && f.ends_with(".nix"))
-                || f == "flake.nix"
-                || f == "flake.lock"
-        })
-    })
+pub fn nixos_modules_dirty() -> Result<bool> {
+    let repo_root = std::env::current_dir().context("failed to determine current working directory")?;
+    nixos_modules_dirty_in(&repo_root)
+}
+
+fn nixos_modules_dirty_in(repo_root: &Path) -> Result<bool> {
+    Ok(changed_files_in(repo_root)?.iter().any(|f| {
+        (f.starts_with("nixos/") && f.ends_with(".nix")) || f == "flake.nix" || f == "flake.lock"
+    }))
 }
 
 /// Get a summary of affected packages for display.
@@ -299,7 +336,22 @@ pub fn affected_summary(packages: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{TestResult, sinex_test};
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn run_git(args: &[&str], cwd: &Path) -> TestResult<()> {
+        let output = Command::new("git").args(args).current_dir(cwd).output()?;
+        if !output.status.success() {
+            return Err(color_eyre::eyre::eyre!(
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_path_to_package() -> TestResult<()> {
@@ -559,6 +611,70 @@ mod tests {
             path_to_package("crate/lib/sinex_primitives/src/lib.rs"),
             Some("sinex-primitives".to_string())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_changed_files_includes_untracked_workspace_files() -> TestResult<()> {
+        let repo = tempdir()?;
+        run_git(&["init", "-q"], repo.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], repo.path())?;
+        std::fs::write(repo.path().join("README.md"), "hello\n")?;
+        run_git(&["add", "README.md"], repo.path())?;
+        run_git(&["commit", "-qm", "init"], repo.path())?;
+
+        std::fs::create_dir_all(repo.path().join("xtask/src"))?;
+        std::fs::write(repo.path().join("xtask/src/new.rs"), "// untracked\n")?;
+
+        let changed = changed_files_in(repo.path())?;
+        assert!(changed.contains(&"xtask/src/new.rs".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_changed_files_includes_untracked_workspace_scope_files() -> TestResult<()> {
+        let repo = tempdir()?;
+        run_git(&["init", "-q"], repo.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], repo.path())?;
+        std::fs::write(repo.path().join("README.md"), "hello\n")?;
+        run_git(&["add", "README.md"], repo.path())?;
+        run_git(&["commit", "-qm", "init"], repo.path())?;
+
+        std::fs::create_dir_all(repo.path().join(".config"))?;
+        std::fs::write(repo.path().join(".config/nextest.toml"), "[profile.default]\n")?;
+        std::fs::write(repo.path().join("flake.nix"), "{ }\n")?;
+
+        let changed = changed_files_in(repo.path())?;
+        assert!(changed.contains(&".config/nextest.toml".to_string()));
+        assert!(changed.contains(&"flake.nix".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_changed_files_surfaces_git_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+
+        let error = changed_files_in(dir.path()).expect_err("non-git directory should surface");
+        assert!(format!("{error:#}").contains("git diff --name-only HEAD failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nixos_modules_dirty_detects_untracked_nixos_files() -> TestResult<()> {
+        let repo = tempdir()?;
+        run_git(&["init", "-q"], repo.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], repo.path())?;
+        std::fs::write(repo.path().join("README.md"), "hello\n")?;
+        run_git(&["add", "README.md"], repo.path())?;
+        run_git(&["commit", "-qm", "init"], repo.path())?;
+
+        std::fs::create_dir_all(repo.path().join("nixos/modules"))?;
+        std::fs::write(repo.path().join("nixos/modules/example.nix"), "{}\n")?;
+
+        assert!(nixos_modules_dirty_in(repo.path())?);
         Ok(())
     }
 }

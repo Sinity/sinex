@@ -341,7 +341,7 @@ fn reset_tls(verbose: bool) -> Result<()> {
         output_dir: tls_dir,
         san: vec!["localhost".to_string(), "127.0.0.1".to_string()],
         ca_name: "sinex-dev-ca".to_string(),
-        validity_days: 365,
+        validity_days: crate::tls::DEFAULT_DEV_CERT_VALIDITY_DAYS,
         force: true,
     };
     crate::tls::generate_dev_certs(&cert_config)?;

@@ -541,8 +541,9 @@ impl XtaskCommand for TestCommand {
         let use_affected = !self.all && self.packages.is_empty();
         let affected_filter = if use_affected {
             let stage = ctx.start_stage("affected");
-            let packages = affected::affected_packages()?;
-            ctx.finish_stage(stage, true);
+            let packages = affected::affected_packages();
+            ctx.finish_stage(stage, packages.is_ok());
+            let packages = packages?;
             if packages.is_empty() {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.

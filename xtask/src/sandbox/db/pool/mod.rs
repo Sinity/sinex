@@ -33,6 +33,7 @@ pub use health::{
     PoolHealthReport, acquire_admin_connection, check_pool_health, pool_slot_count, prime_pool,
     reset_pool,
 };
+pub(crate) use config::replace_db_name;
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
 pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
@@ -44,9 +45,10 @@ use metrics::POOL_METRICS;
 use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     create_database_from_template, database_exists, detect_connection_budget,
-    drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
+    drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    recreate_pool_database, store_pool_meta, url_with_db_name, wait_for_database_absence,
+    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
+    wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -451,42 +453,33 @@ impl DatabasePool {
     async fn new(mut config: PoolConfig, force_eager: bool) -> TestResult<Self> {
         // Issue 65: Make connection budget detection mandatory
         // Fail fast if PostgreSQL can't support the requested pool configuration
-        match detect_connection_budget(&config.admin_url).await {
-            Some(budget) => {
-                let previous = config.size;
-                let per_slot = config.slot_max_connections.max(1);
-                let min_required = config.admin_max_connections + per_slot;
+        let budget = detect_connection_budget(&config.admin_url).await?;
+        let previous = config.size;
+        let per_slot = config.slot_max_connections.max(1);
+        let min_required = config.admin_max_connections + per_slot;
 
-                // Fail if PostgreSQL max_connections can't support even one pool slot
-                if budget < min_required {
-                    return Err(eyre!(format!(
-                        "PostgreSQL max_connections ({budget}) is too low for test pool. \
-                         Minimum required: {min_required} (admin: {}, per slot: {}). \
-                         Increase max_connections in postgresql.conf or reduce pool requirements.",
-                        config.admin_max_connections, per_slot
-                    )));
-                }
+        // Fail if PostgreSQL max_connections can't support even one pool slot
+        if budget < min_required {
+            return Err(eyre!(format!(
+                "PostgreSQL max_connections budget ({budget}) is too low for test pool. \
+                 Minimum required: {min_required} (admin: {}, per slot: {}). \
+                 Increase max_connections in postgresql.conf or reduce pool requirements.",
+                config.admin_max_connections, per_slot
+            )));
+        }
 
-                config.apply_connection_budget(budget);
+        config.apply_connection_budget(budget);
 
-                // Warn if the budget significantly constrains the pool
-                if config.size < previous {
-                    let reduction_pct = ((previous - config.size) * 100) / previous;
-                    eprintln!(
-                        "⚠️  Reducing pool size to {} (from {}) to respect Postgres max_connections budget ({budget})",
-                        config.size, previous
-                    );
-                    if reduction_pct > 50 {
-                        eprintln!(
-                            "   ⚠️  Pool reduced by {reduction_pct}% - consider increasing max_connections for better test parallelism"
-                        );
-                    }
-                }
-            }
-            None => {
+        // Warn if the budget significantly constrains the pool
+        if config.size < previous {
+            let reduction_pct = ((previous - config.size) * 100) / previous;
+            eprintln!(
+                "⚠️  Reducing pool size to {} (from {}) to respect Postgres max_connections budget ({budget})",
+                config.size, previous
+            );
+            if reduction_pct > 50 {
                 eprintln!(
-                    "⚠️  Could not detect PostgreSQL max_connections; using default pool size ({})",
-                    config.size
+                    "   ⚠️  Pool reduced by {reduction_pct}% - consider increasing max_connections for better test parallelism"
                 );
             }
         }
@@ -517,7 +510,7 @@ impl DatabasePool {
             .await?;
             let expected_extensions = template_guard.info.extensions.clone();
             let _ = template_guard.release().await;
-            let expected_fingerprint = schema_fingerprint();
+            let expected_fingerprint = Some(schema_fingerprint()?);
 
             let mut slots = Vec::with_capacity(config.size);
             for i in 0..config.size {
@@ -560,7 +553,7 @@ impl DatabasePool {
         )
         .await?;
         let template = template_guard.info.clone();
-        let expected_fingerprint = schema_fingerprint();
+        let expected_fingerprint = Some(schema_fingerprint()?);
 
         let result: Result<Self> = async {
             // Create admin connection
@@ -634,7 +627,7 @@ impl DatabasePool {
 
                     if exists {
                         // Ensure permissions are granted on pre-existing databases (CI restarts, etc)
-                        let _ = grant_pool_database_permissions(&name).await;
+                        grant_pool_database_permissions_checked(&name).await?;
                         // Existing DBs are reconciled declaratively; recreate only when unrecoverable
                         // drift is detected (e.g. stale Timescale shared library).
                         let db_url = url_with_db_name(&base_url, &name)
@@ -718,14 +711,13 @@ impl DatabasePool {
                                         "  Recreated pool database from template: {name}"
                                     );
                                     let meta = PoolMeta {
-                                        fingerprint: schema_fingerprint(),
+                                        fingerprint: Some(schema_fingerprint()?),
                                         extensions: template_ext_versions.clone(),
                                         dirty: false,
                                         updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                         last_error: None,
                                     };
-                                    let _ =
-                                        store_pool_meta(conn.as_mut(), &name, &meta).await;
+                                    store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                                 }
                                 CreateDatabaseOutcome::AlreadyExists => {
                                     eprintln!(
@@ -735,13 +727,13 @@ impl DatabasePool {
                             }
                         } else {
                             let meta = PoolMeta {
-                                fingerprint: schema_fingerprint(),
+                                fingerprint: Some(schema_fingerprint()?),
                                 extensions: template_ext_versions.clone(),
                                 dirty: false,
                                 updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                 last_error: None,
                             };
-                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
+                            store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                         }
                     } else {
                         match create_database_from_template(
@@ -754,21 +746,20 @@ impl DatabasePool {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Created new pool database: {name}");
                                 let meta = PoolMeta {
-                                    fingerprint: schema_fingerprint(),
+                                    fingerprint: Some(schema_fingerprint()?),
                                     extensions: template_ext_versions.clone(),
                                     dirty: false,
                                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                     last_error: None,
                                 };
-                                let _ =
-                                    store_pool_meta(conn.as_mut(), &name, &meta).await;
+                                store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
                             }
                             CreateDatabaseOutcome::AlreadyExists => {
                                 eprintln!(
                                     "  Database {name} already exists after creation race; reusing"
                                 );
                                 // Ensure permissions are granted even when database was created concurrently
-                                let _ = grant_pool_database_permissions(&name).await;
+                                grant_pool_database_permissions_checked(&name).await?;
                             }
                         }
                     }
@@ -1205,7 +1196,16 @@ impl DatabasePool {
                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                     last_error: Some(e.to_string()),
                 };
-                let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
+                if let Err(error) =
+                    store_pool_meta_checked(lock_conn.as_mut(), &slot.name, &dirty_meta).await
+                {
+                    slog!(
+                        Level::Warn,
+                        "meta_persist_failed",
+                        slot = slot.name,
+                        error = error.to_string()
+                    );
+                }
                 release_slot(slot, pool, &mut lock_conn, lock_id).await;
                 Err(())
             }

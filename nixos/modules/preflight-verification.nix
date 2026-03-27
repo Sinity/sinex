@@ -214,8 +214,21 @@ let
           systemctl stop "$unit" || true
         done
         if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-          rm -rf "$DLQ_PATH"
-          mv "$BACKUP_DIR" "$DLQ_PATH"
+          rollback_old=""
+          if [ -e "$DLQ_PATH" ]; then
+            rollback_old="''${DLQ_PATH}.rollback.$(date +%s).$$"
+            mv "$DLQ_PATH" "$rollback_old"
+          fi
+          if ! mv "$BACKUP_DIR" "$DLQ_PATH"; then
+            if [ -n "$rollback_old" ] && [ -e "$rollback_old" ]; then
+              mv "$rollback_old" "$DLQ_PATH" || true
+            fi
+            echo "Failed to restore DLQ backup during rollback" >&2
+            exit 1
+          fi
+          if [ -n "$rollback_old" ] && [ -e "$rollback_old" ]; then
+            rm -rf "$rollback_old"
+          fi
         fi
       fi
       exit 1

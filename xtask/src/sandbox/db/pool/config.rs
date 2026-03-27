@@ -1,5 +1,6 @@
 //! Pool configuration and sizing logic.
 
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use std::path::PathBuf;
 use toml::Value;
 use url::Url;
@@ -54,43 +55,74 @@ impl PoolConfig {
 pub(super) fn default_pool_size() -> usize {
     let cpu_count =
         std::thread::available_parallelism().map_or(MIN_POOL_SIZE, std::num::NonZero::get);
-    let test_threads = nextest_test_threads(cpu_count).unwrap_or(cpu_count).max(1);
+    let test_threads = match nextest_test_threads(cpu_count) {
+        Ok(Some(value)) => value,
+        Ok(None) => cpu_count,
+        Err(error) => {
+            eprintln!(
+                "⚠️  Failed to detect nextest test thread count from .config/nextest.toml: {error:#}. \
+                 Using CPU count ({cpu_count})"
+            );
+            cpu_count
+        }
+    }
+    .max(1);
     let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
     target.max(MIN_POOL_SIZE)
 }
 
-fn nextest_test_threads(cpu_count: usize) -> Option<usize> {
+fn nextest_test_threads(cpu_count: usize) -> Result<Option<usize>> {
     if !is_nextest_run() && nextest_profile_name().is_none() {
-        return None;
+        return Ok(None);
     }
 
     let profile = nextest_profile_name().unwrap_or_else(|| "default".to_string());
-    let config_path = find_nextest_config()?;
-    let raw = std::fs::read_to_string(config_path).ok()?;
-    let config: Value = toml::from_str(&raw).ok()?;
-    let profile_cfg = config.get("profile")?.get(&profile)?;
-    let test_threads = profile_cfg.get("test-threads")?;
+    let Some(config_path) = find_nextest_config() else {
+        return Ok(None);
+    };
+    let raw = std::fs::read_to_string(&config_path)
+        .wrap_err_with(|| format!("failed to read {}", config_path.display()))?;
+    let config: Value = toml::from_str(&raw)
+        .wrap_err_with(|| format!("failed to parse {}", config_path.display()))?;
+    nextest_test_threads_from_config(&config, &profile, cpu_count)
+}
+
+fn nextest_test_threads_from_config(
+    config: &Value,
+    profile: &str,
+    cpu_count: usize,
+) -> Result<Option<usize>> {
+    let Some(profile_cfg) = config.get("profile").and_then(|profiles| profiles.get(profile)) else {
+        return Ok(None);
+    };
+    let Some(test_threads) = profile_cfg.get("test-threads") else {
+        return Ok(None);
+    };
     match test_threads {
-        Value::Integer(value) if *value > 0 => Some(*value as usize),
+        Value::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
         Value::String(value) => parse_num_cpus_expression(value, cpu_count),
-        _ => None,
+        _ => Ok(None),
     }
 }
 
-fn parse_num_cpus_expression(value: &str, cpu_count: usize) -> Option<usize> {
+fn parse_num_cpus_expression(value: &str, cpu_count: usize) -> Result<Option<usize>> {
     let trimmed = value.trim();
     if trimmed == "num-cpus" {
-        return Some(cpu_count);
+        return Ok(Some(cpu_count));
     }
     if let Some(rest) = trimmed.strip_prefix("num-cpus-") {
-        let delta: usize = rest.parse().ok()?;
-        return Some(cpu_count.saturating_sub(delta).max(1));
+        let delta: usize = rest
+            .parse()
+            .map_err(|err| eyre!("invalid nextest test-threads expression `{trimmed}`: {err}"))?;
+        return Ok(Some(cpu_count.saturating_sub(delta).max(1)));
     }
     if let Some(rest) = trimmed.strip_prefix("num-cpus+") {
-        let delta: usize = rest.parse().ok()?;
-        return Some(cpu_count.saturating_add(delta).max(1));
+        let delta: usize = rest
+            .parse()
+            .map_err(|err| eyre!("invalid nextest test-threads expression `{trimmed}`: {err}"))?;
+        return Ok(Some(cpu_count.saturating_add(delta).max(1)));
     }
-    None
+    Ok(None)
 }
 
 fn nextest_profile_name() -> Option<String> {
@@ -134,7 +166,7 @@ pub(super) fn force_user(url: &str, user: &str) -> String {
     }
 }
 
-pub(super) fn replace_db_name(url: &str, db: &str) -> String {
+pub(crate) fn replace_db_name(url: &str, db: &str) -> String {
     if let Ok(mut parsed) = Url::parse(url) {
         parsed.set_path(&format!("/{db}"));
         return parsed.to_string();
@@ -147,4 +179,69 @@ pub(super) fn replace_db_name(url: &str, db: &str) -> String {
         db.to_string()
     };
     format!("{head}/{replaced_tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_parse_num_cpus_expression_supports_offsets() -> Result<()> {
+        assert_eq!(parse_num_cpus_expression("num-cpus", 24)?, Some(24));
+        assert_eq!(parse_num_cpus_expression("num-cpus-2", 24)?, Some(22));
+        assert_eq!(parse_num_cpus_expression("num-cpus+3", 24)?, Some(27));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_num_cpus_expression_rejects_invalid_offsets() -> Result<()> {
+        let err =
+            parse_num_cpus_expression("num-cpus-bad", 24).expect_err("invalid offset should fail");
+        assert!(
+            err.to_string().contains("invalid nextest test-threads expression"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nextest_test_threads_from_config_parses_profile() -> Result<()> {
+        let config: Value = toml::from_str(
+            r#"
+            [profile.default]
+            test-threads = "num-cpus-1"
+            "#,
+        )?;
+        assert_eq!(
+            nextest_test_threads_from_config(&config, "default", 24)?,
+            Some(23)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nextest_test_threads_from_config_ignores_missing_profile() -> Result<()> {
+        let config: Value = toml::from_str(
+            r#"
+            [profile.ci]
+            test-threads = 8
+            "#,
+        )?;
+        assert_eq!(nextest_test_threads_from_config(&config, "default", 24)?, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_replace_db_name_preserves_query_parameters() -> Result<()> {
+        let replaced = replace_db_name(
+            "postgresql://postgres@localhost/sinex_dev?host=/run/postgresql&sslmode=disable",
+            "sinex_test_pool_1",
+        );
+        assert_eq!(
+            replaced,
+            "postgresql://postgres@localhost/sinex_test_pool_1?host=/run/postgresql&sslmode=disable"
+        );
+        Ok(())
+    }
 }

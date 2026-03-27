@@ -364,7 +364,6 @@ impl WindowManagerWatcher {
             )
         })?;
 
-        event.id = Some(Id::from_uuid(Uuid::now_v7()));
         let offset_end = payload_bytes.len() as i64;
 
         stage_context

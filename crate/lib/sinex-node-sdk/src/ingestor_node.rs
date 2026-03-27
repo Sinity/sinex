@@ -189,6 +189,21 @@ impl<I: IngestorNode + Default> Default for IngestorNodeAdapter<I> {
 }
 
 impl<I: IngestorNode> IngestorNodeAdapter<I> {
+    fn effective_final_checkpoint(
+        until: &TimeHorizon,
+        previous_checkpoint: &Checkpoint,
+        reported_checkpoint: Checkpoint,
+    ) -> Checkpoint {
+        if matches!(until, TimeHorizon::Snapshot)
+            && matches!(reported_checkpoint, Checkpoint::None)
+            && !matches!(previous_checkpoint, Checkpoint::None)
+        {
+            return previous_checkpoint.clone();
+        }
+
+        reported_checkpoint
+    }
+
     async fn load_state(&mut self) -> NodeResult<()> {
         // 1. Try file (hot reload)
         if self.shutdown_config.restore_state_on_startup {
@@ -292,7 +307,8 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        let report = match until {
+        let previous_checkpoint = self.state.checkpoint.clone();
+        let mut report = match &until {
             TimeHorizon::Snapshot => {
                 self.ingestor
                     .scan_snapshot(&mut self.state.user_state, args)
@@ -300,7 +316,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
             }
             TimeHorizon::Historical { .. } => {
                 self.ingestor
-                    .scan_historical(&mut self.state.user_state, from, until, args)
+                    .scan_historical(&mut self.state.user_state, from, until.clone(), args)
                     .await?
             }
             TimeHorizon::Continuous => {
@@ -312,7 +328,10 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
             }
         };
 
-        self.state.checkpoint = report.final_checkpoint.clone();
+        let effective_checkpoint =
+            Self::effective_final_checkpoint(&until, &previous_checkpoint, report.final_checkpoint);
+        report.final_checkpoint = effective_checkpoint.clone();
+        self.state.checkpoint = effective_checkpoint;
         self.save_state(false).await?;
         Ok(report)
     }
