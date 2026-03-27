@@ -332,12 +332,23 @@ impl SubscriptionBus {
                         };
 
                         // Parse confirmation payload: { "event_id": "...", "persisted": true, "ts_ingest": "..." }
-                        if let Some(event_id) = Self::parse_confirmation(&msg.payload) {
-                            id_buffer.push(event_id);
+                        match Self::parse_confirmation(&msg.payload) {
+                            Ok(Some(event_id)) => {
+                                id_buffer.push(event_id);
 
-                            // Flush immediately if buffer full
-                            if id_buffer.len() >= BATCH_MAX_IDS {
-                                self.flush_batch(&mut id_buffer, &pool).await;
+                                // Flush immediately if buffer full
+                                if id_buffer.len() >= BATCH_MAX_IDS {
+                                    self.flush_batch(&mut id_buffer, &pool).await;
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                warn!(
+                                    error = %error,
+                                    payload_len = msg.payload.len(),
+                                    payload_preview = %Self::payload_preview(&msg.payload),
+                                    "Ignoring malformed SSE confirmation payload"
+                                );
                             }
                         }
                     }
@@ -355,18 +366,32 @@ impl SubscriptionBus {
     }
 
     /// Parse an event ID from a NATS confirmation message payload.
-    fn parse_confirmation(payload: &[u8]) -> Option<Id<Event<JsonValue>>> {
+    fn parse_confirmation(payload: &[u8]) -> Result<Option<Id<Event<JsonValue>>>, String> {
         #[derive(serde::Deserialize)]
         struct Confirmation {
             event_id: String,
             persisted: bool,
         }
 
-        let conf: Confirmation = serde_json::from_slice(payload).ok()?;
+        let conf: Confirmation = serde_json::from_slice(payload)
+            .map_err(|error| format!("failed to parse confirmation JSON: {error}"))?;
         if !conf.persisted {
-            return None;
+            return Ok(None);
         }
-        conf.event_id.parse().ok()
+        conf.event_id
+            .parse()
+            .map(Some)
+            .map_err(|error| format!("failed to parse confirmation event_id '{}': {error}", conf.event_id))
+    }
+
+    fn payload_preview(payload: &[u8]) -> String {
+        const MAX_PREVIEW_CHARS: usize = 160;
+        let preview = String::from_utf8_lossy(payload);
+        let mut truncated = preview.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        if preview.chars().count() > MAX_PREVIEW_CHARS {
+            truncated.push('…');
+        }
+        truncated
     }
 
     fn snapshot_subscriptions(&self) -> Vec<(u64, Arc<SubscriptionSlot>)> {
@@ -420,5 +445,69 @@ impl SubscriptionBus {
         for sub_id in to_remove {
             self.unregister(sub_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SubscriptionBus;
+    use sinex_primitives::{Id, Uuid};
+    use xtask::sandbox::sinex_test;
+
+    // Inline because these exercise private confirmation parsing/reporting helpers.
+    #[sinex_test]
+    async fn parse_confirmation_accepts_persisted_event() -> TestResult<()> {
+        let event_id = Id::from_uuid(Uuid::now_v7());
+        let payload = serde_json::json!({
+            "event_id": event_id.to_string(),
+            "persisted": true,
+        });
+
+        let parsed = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        assert_eq!(parsed, Some(event_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_confirmation_ignores_unpersisted_event() -> TestResult<()> {
+        let payload = serde_json::json!({
+            "event_id": Uuid::now_v7().to_string(),
+            "persisted": false,
+        });
+
+        let parsed = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        assert!(parsed.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_confirmation_reports_invalid_json() -> TestResult<()> {
+        let error = SubscriptionBus::parse_confirmation(br#"{"event_id":"oops""#)
+            .expect_err("invalid JSON should be reported");
+        assert!(error.contains("failed to parse confirmation JSON"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_confirmation_reports_invalid_event_id() -> TestResult<()> {
+        let payload = serde_json::json!({
+            "event_id": "not-a-uuid",
+            "persisted": true,
+        });
+
+        let error = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
+            .expect_err("invalid event_id should be reported");
+        assert!(error.contains("failed to parse confirmation event_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_preview_truncates_long_payloads() -> TestResult<()> {
+        let preview = SubscriptionBus::payload_preview(&vec![b'a'; 200]);
+        assert!(preview.ends_with('…'));
+        assert_eq!(preview.chars().count(), 161);
+        Ok(())
     }
 }
