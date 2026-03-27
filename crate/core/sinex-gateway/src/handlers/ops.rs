@@ -177,7 +177,7 @@ pub async fn handle_ops_cancel(
 
     let reason = request
         .reason
-        .unwrap_or_else(|| "Cancelled by user".to_string());
+        .unwrap_or_else(|| format!("Cancelled by {}", auth.actor_id()));
 
     let record = pool
         .state()

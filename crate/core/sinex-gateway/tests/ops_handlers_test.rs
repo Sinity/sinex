@@ -264,6 +264,36 @@ async fn ops_cancel_rejects_non_running_operation(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
+async fn ops_cancel_defaults_reason_to_authenticated_actor(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let start_response = start_test_operation(&ctx, &auth, "archive").await?;
+    let operation_id = &start_response.operation.id;
+
+    let result = handle_ops_cancel(
+        ctx.pool(),
+        json!({
+            "operation_id": operation_id,
+        }),
+        &auth,
+    )
+    .await?;
+    let response: OpsCancelResponse = serde_json::from_value(result)?;
+
+    assert_eq!(
+        response.operation.result_message,
+        Some(format!("Cancelled by {}", auth.actor_id()))
+    );
+
+    let persisted = get_operation(&ctx, &auth, operation_id).await?;
+    assert_eq!(
+        persisted.operation.result_message,
+        Some(format!("Cancelled by {}", auth.actor_id()))
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_cancel_replay_updates_replay_state_machine(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let replay = ReplayStateMachine::new(ctx.pool.clone());
