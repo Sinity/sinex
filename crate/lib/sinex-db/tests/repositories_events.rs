@@ -242,6 +242,77 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(ctx: TestCo
 }
 
 #[sinex_test]
+async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let first_id = Uuid::now_v7();
+    let second_id = Uuid::now_v7();
+    let batch = vec![
+        StreamBatchRow {
+            id: first_id,
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.batch.synthesis")?,
+            ts_orig: Timestamp::now(),
+            host: HostName::from_static("localhost"),
+            payload: json!({ "cycle": "first" }),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: Some(vec![EventId::from_uuid(second_id)]),
+            payload_schema_id: None,
+            node_run_id: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        },
+        StreamBatchRow {
+            id: second_id,
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.batch.synthesis")?,
+            ts_orig: Timestamp::now(),
+            host: HostName::from_static("localhost"),
+            payload: json!({ "cycle": "second" }),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: Some(vec![EventId::from_uuid(first_id)]),
+            payload_schema_id: None,
+            node_run_id: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        },
+    ];
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_stream_batch(&batch)
+        .await
+        .expect_err("intra-batch synthesis cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in synthesis provenance within batch"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = uuid::Uuid::now_v7();
     let identifier = format!("test-material-{forced_id}");
@@ -658,6 +729,42 @@ async fn batch_insert_rolls_back_all_chunks_on_late_failure(ctx: TestContext) ->
         "no chunk from the failed batch should remain committed"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn batch_insert_rejects_intra_batch_synthesis_cycles(ctx: TestContext) -> TestResult<()> {
+    let first_id = Id::<Event<serde_json::Value>>::new();
+    let second_id = Id::<Event<serde_json::Value>>::new();
+    let source = EventSource::new("batch-cycle-test")?;
+    let event_type = EventType::new("batch.cycle")?;
+
+    let mut first = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "first" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*second_id.as_uuid())])?
+    .build()?;
+    first.id = Some(first_id);
+
+    let mut second = DynamicPayload::new(source, event_type, json!({ "cycle": "second" }))
+        .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
+        .build()?;
+    second.id = Some(second_id);
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_batch(vec![first, second])
+        .await
+        .expect_err("intra-batch synthesis cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in synthesis provenance within batch"),
+        "unexpected error: {error}"
+    );
     Ok(())
 }
 
