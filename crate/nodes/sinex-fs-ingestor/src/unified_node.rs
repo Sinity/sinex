@@ -540,7 +540,7 @@ impl IngestorNode for FilesystemNode {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        _from: Checkpoint,
+        from: Checkpoint,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let handles = self.spawn_watchers().await?;
@@ -556,7 +556,7 @@ impl IngestorNode for FilesystemNode {
         Ok(ScanReport {
             events_processed: 0,
             duration: std::time::Duration::from_millis(0),
-            final_checkpoint: Checkpoint::None,
+            final_checkpoint: from,
             time_range: None,
             node_stats: HashMap::new(),
             successful_targets: vec!["continuous".to_string()],

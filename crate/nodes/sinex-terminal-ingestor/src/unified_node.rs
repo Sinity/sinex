@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, SqliteHistoryRowOutcome, import_sqlite_history_lenient, stage_stable_material,
+    SourceState, SqliteHistoryRowOutcome, import_sqlite_history_lenient, stage_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -1691,41 +1691,17 @@ async fn record_processed_command_for_test(ctx: &HistoryWatcherContext, command:
 async fn stage_history_material(
     ctx: &HistoryWatcherContext,
     material_bytes: &[u8],
-    stable_key: Option<&str>,
     error_context: &str,
 ) -> NodeResult<Uuid> {
-    if let Some(stable_key) = stable_key {
-        return stage_stable_material(
-            ctx.acquisition.as_ref(),
-            ctx.path.as_str(),
-            stable_key,
-            material_bytes,
-            MATERIAL_REASON_HISTORY,
-            None,
-        )
-        .await
-        .map_err(|error| SinexError::service(error_context).with_source(error));
-    }
-
-    let mut handle = ctx
-        .acquisition
-        .build_material(ctx.path.as_str())
-        .begin()
-        .await
-        .map_err(|error| SinexError::service(error_context).with_source(error))?;
-    let material_id = handle.material_id;
-
-    ctx.acquisition
-        .append_slice(&mut handle, material_bytes)
-        .await
-        .map_err(|error| SinexError::service(error_context).with_source(error))?;
-
-    ctx.acquisition
-        .finalize(handle, MATERIAL_REASON_HISTORY)
-        .await
-        .map_err(|error| SinexError::service(error_context).with_source(error))?;
-
-    Ok(material_id)
+    stage_material(
+        ctx.acquisition.as_ref(),
+        ctx.path.as_str(),
+        material_bytes,
+        MATERIAL_REASON_HISTORY,
+        None,
+    )
+    .await
+    .map_err(|error| SinexError::service(error_context).with_source(error))
 }
 
 fn build_material_json_event<P: EventPayload>(
@@ -1785,7 +1761,6 @@ async fn process_command(
     let material_id = stage_history_material(
         ctx,
         &material_bytes,
-        None,
         "Failed to stage terminal history material",
     )
     .await?;
@@ -1827,11 +1802,9 @@ async fn emit_prepared_fish_entry(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let stable_key = entry.row_id.to_string();
     let material_id = stage_history_material(
         ctx,
         &material_bytes,
-        Some(&stable_key),
         "Failed to stage Fish history material",
     )
     .await?;
@@ -1914,7 +1887,6 @@ async fn emit_prepared_atuin_entry(
     let material_id = stage_history_material(
         ctx,
         &material_bytes,
-        Some(&entry.history_id),
         "Failed to stage Atuin history material",
     )
     .await?;
@@ -2275,7 +2247,7 @@ impl IngestorNode for TerminalNode {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        _from: Checkpoint,
+        from: Checkpoint,
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let contexts = self.build_history_contexts(shutdown_rx.clone())?;
@@ -2318,7 +2290,7 @@ impl IngestorNode for TerminalNode {
         Ok(ScanReport {
             events_processed: 0,
             duration: std::time::Duration::from_millis(0),
-            final_checkpoint: Checkpoint::None,
+            final_checkpoint: from,
             time_range: None,
             node_stats: HashMap::new(),
             successful_targets,
@@ -2688,21 +2660,17 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("echo 'hello from atuin'")
         );
-        let material_uuid = match event.provenance() {
-            Provenance::Material { id, .. } => *id.as_uuid(),
+        match event.provenance() {
+            Provenance::Material { id, .. } => {
+                // Material ID should be a valid UUIDv7 (each observation is a fresh material)
+                assert!(!id.as_uuid().is_nil(), "material ID should not be nil");
+            }
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in Atuin event"
                 ));
             }
         };
-        assert_eq!(
-            material_uuid,
-            Uuid::new_v5(
-                &Uuid::NAMESPACE_URL,
-                format!("{}#{}", watcher_ctx.path, entry.history_id).as_bytes()
-            )
-        );
 
         ingest_handle.stop().await?;
         Ok(())
@@ -3235,6 +3203,73 @@ mod tests {
             "unexpected error: {error}"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_preserves_incoming_checkpoint(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-preserve-checkpoint")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let incoming = TerminalNode::checkpoint_from_states(HashMap::from([(
+            format!("atuin:{history_path}"),
+            HistoryState {
+                sqlite_row_id: Some(42),
+                ..HistoryState::default()
+            },
+        )]))?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let node_task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, incoming.clone(), shutdown_rx)
+                .await
+                .map(|report| (report, incoming))
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+        let (report, incoming) = node_task.await??;
+
+        assert_eq!(report.final_checkpoint, incoming);
         Ok(())
     }
 

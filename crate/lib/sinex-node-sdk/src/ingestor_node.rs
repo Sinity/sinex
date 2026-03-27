@@ -34,6 +34,8 @@ pub struct IngestorState<S> {
     pub user_state: S,
     pub last_checkpoint: sinex_primitives::temporal::Timestamp,
     pub revision: u64,
+    #[serde(default)]
+    pub checkpoint: Checkpoint,
 }
 
 impl<S: Default> Default for IngestorState<S> {
@@ -42,6 +44,7 @@ impl<S: Default> Default for IngestorState<S> {
             user_state: S::default(),
             last_checkpoint: sinex_primitives::temporal::Timestamp::now(),
             revision: 0,
+            checkpoint: Checkpoint::None,
         }
     }
 }
@@ -197,6 +200,11 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
                         "hot reload ingestor state",
                         self.ingestor.name(),
                     )?;
+                    if matches!(self.state.checkpoint, Checkpoint::None)
+                        && !matches!(ckpt.checkpoint, Checkpoint::None)
+                    {
+                        self.state.checkpoint = ckpt.checkpoint;
+                    }
                     CheckpointState::delete_file(&path).await.map_err(|error| {
                         SinexError::io("Failed to delete restored checkpoint file")
                             .with_context("node", self.ingestor.name())
@@ -218,6 +226,11 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
                     self.ingestor.name(),
                 )?;
                 self.state.revision = ckpt.revision;
+                if matches!(self.state.checkpoint, Checkpoint::None)
+                    && !matches!(ckpt.checkpoint, Checkpoint::None)
+                {
+                    self.state.checkpoint = ckpt.checkpoint;
+                }
             } else {
                 self.state = IngestorState::default();
             }
@@ -231,10 +244,7 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         let json_state = serde_json::to_value(&self.state).map_err(SinexError::serialization)?;
 
         let ckpt_state = CheckpointState {
-            checkpoint: Checkpoint::external(
-                serde_json::json!({"v": 1}), // opaque
-                format!("ingestor_{}", self.ingestor.name()),
-            ),
+            checkpoint: self.state.checkpoint.clone(),
             processed_count: 0, // Ingestors might track this in user state if needed
             last_activity: sinex_primitives::temporal::Timestamp::now(),
             data: Some(json_state),
@@ -302,6 +312,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
             }
         };
 
+        self.state.checkpoint = report.final_checkpoint.clone();
         self.save_state(false).await?;
         Ok(report)
     }
@@ -327,18 +338,8 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         self.ingestor.capabilities()
     }
 
-    // Default current_checkpoint impl which returns None or we could implement it
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        // On genuine first run (revision 0), no prior checkpoint exists — gap-fill is not needed
-        if self.state.revision == 0 {
-            return Ok(Checkpoint::None);
-        }
-        // Return serialized state as External checkpoint, enabling gap-fill on restart
-        let state_json = serde_json::to_value(&self.state).unwrap_or(serde_json::Value::Null);
-        Ok(Checkpoint::external(
-            state_json,
-            format!("ingestor_{}", self.ingestor.name()),
-        ))
+        Ok(self.state.checkpoint.clone())
     }
 }
 

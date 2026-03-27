@@ -23,6 +23,12 @@ pub enum Checkpoint {
     },
 }
 
+impl Default for Checkpoint {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl Checkpoint {
     pub fn external(position: serde_json::Value, description: impl Into<String>) -> Self {
         Self::External {
