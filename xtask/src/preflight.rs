@@ -24,6 +24,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::tools::{ToolInfo, ToolManager};
+
 /// Spawn a watchdog thread that prints a "still waiting..." message every `interval` seconds.
 /// Returns a handle that stops the watchdog when dropped.
 fn spawn_watchdog(label: &str, interval_secs: u64) -> WatchdogGuard {
@@ -1027,18 +1029,29 @@ fn read_optional_state_file(path: &Path, label: &str) -> Result<Option<String>> 
 ///
 /// NATS-related tools are checked separately when NATS is needed.
 fn check_required_tools() -> Result<()> {
-    // Core database tools needed for all preflight operations
-    let tools = ["pg_isready", "psql", "createdb"];
-    let missing: Vec<_> = tools
-        .iter()
-        .filter(|t| which::which(t).is_err())
-        .copied()
-        .collect();
+    check_required_tools_with(&["pg_isready", "psql", "createdb"], ToolManager::check_tool)
+}
 
-    if !missing.is_empty() {
+fn check_required_tools_with<F>(tools: &[&str], check_tool: F) -> Result<()>
+where
+    F: Fn(&str) -> Result<ToolInfo>,
+{
+    let mut failures = Vec::new();
+    for tool in tools {
+        match check_tool(tool) {
+            Ok(info) => {
+                if let Some(issue) = info.probe_issue {
+                    failures.push(format!("{tool}: {issue}"));
+                }
+            }
+            Err(error) => failures.push(format!("{tool}: {error}")),
+        }
+    }
+
+    if !failures.is_empty() {
         bail!(
-            "Missing required tools: {}. Enter devshell with `nix develop` or ensure these are on PATH.",
-            missing.join(", ")
+            "Required preflight tools are unavailable or unhealthy: {}. Enter devshell with `nix develop` or ensure these are on PATH.",
+            failures.join("; ")
         );
     }
     Ok(())
@@ -1322,6 +1335,46 @@ mod tests {
         let dir = tempdir()?;
         let error = read_optional_state_file(dir.path(), "state file").unwrap_err();
         assert!(format!("{error:#}").contains("failed to read state file file"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_required_tools_with_accepts_healthy_tools() -> TestResult<()> {
+        check_required_tools_with(&["pg_isready", "psql"], |_tool| {
+            Ok(ToolInfo {
+                path: "/nix/store/fake-tool".into(),
+                version: "1.0.0".to_string(),
+                probe_issue: None,
+            })
+        })?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_required_tools_with_surfaces_missing_and_broken_tools() -> TestResult<()> {
+        let error = check_required_tools_with(&["pg_isready", "psql", "createdb"], |tool| {
+            match tool {
+                "pg_isready" => Ok(ToolInfo {
+                    path: "/nix/store/pg_isready".into(),
+                    version: "pg_isready 16".to_string(),
+                    probe_issue: None,
+                }),
+                "psql" => Err(eyre!("Tool 'psql' not found in PATH")),
+                "createdb" => Ok(ToolInfo {
+                    path: "/nix/store/createdb".into(),
+                    version: "unknown".to_string(),
+                    probe_issue: Some("Failed to run 'createdb --version'".to_string()),
+                }),
+                _ => unreachable!(),
+            }
+        })
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("psql"));
+        assert!(message.contains("not found in PATH"));
+        assert!(message.contains("createdb"));
+        assert!(message.contains("createdb --version"));
         Ok(())
     }
 }
