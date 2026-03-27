@@ -2267,15 +2267,47 @@ async fn check_gateway_ready(
     };
 
     let status = response.status();
-    let body: Option<JsonValue> = response.json().await.ok();
-    let serving = body
-        .as_ref()
-        .and_then(|json| json.get("serving"))
-        .and_then(JsonValue::as_bool);
-    let healthy = body
-        .as_ref()
-        .and_then(|json| json.get("healthy"))
-        .and_then(JsonValue::as_bool);
+    let body_text = match response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!("Failed to read readiness body from {ready_url}: {error}"),
+            );
+        }
+    };
+
+    interpret_gateway_ready_response(&ready_url, status, &body_text)
+}
+
+fn interpret_gateway_ready_response(
+    ready_url: &str,
+    status: reqwest::StatusCode,
+    body_text: &str,
+) -> DeploymentReadinessItem {
+    let trimmed = body_text.trim();
+    if trimmed.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "gateway-ready",
+            format!("{ready_url} returned HTTP {status} with an empty body"),
+        );
+    }
+
+    let body: JsonValue = match serde_json::from_str(trimmed) {
+        Ok(body) => body,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!(
+                    "{ready_url} returned HTTP {status} with a non-JSON body: {error}; body={}",
+                    summarize_gateway_probe_body(trimmed)
+                ),
+            );
+        }
+    };
+
+    let serving = body.get("serving").and_then(JsonValue::as_bool);
+    let healthy = body.get("healthy").and_then(JsonValue::as_bool);
 
     if status.is_success() && serving == Some(true) {
         DeploymentReadinessItem::pass(
@@ -2289,10 +2321,24 @@ async fn check_gateway_ready(
         DeploymentReadinessItem::fail(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?})",
-                serving, healthy
+                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?}, body={})",
+                serving,
+                healthy,
+                summarize_gateway_probe_body(trimmed)
             ),
         )
+    }
+}
+
+fn summarize_gateway_probe_body(body_text: &str) -> String {
+    const MAX_CHARS: usize = 200;
+
+    let compact = body_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        compact
+    } else {
+        let summary = compact.chars().take(MAX_CHARS).collect::<String>();
+        format!("{summary}...")
     }
 }
 
@@ -2612,6 +2658,39 @@ mod tests {
             normalize_gateway_base_url("https://127.0.0.1:9999/"),
             "https://127.0.0.1:9999"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_reports_invalid_json()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            "<html>proxy error</html>",
+        );
+
+        assert_eq!(item.status, "fail");
+        assert!(
+            item.description.contains("non-JSON body"),
+            "unexpected message: {}",
+            item.description
+        );
+        assert!(item.description.contains("proxy error"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_passes_serving_true()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            r#"{"serving":true,"healthy":false}"#,
+        );
+
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("healthy=false"));
         Ok(())
     }
 
