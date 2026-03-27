@@ -2,10 +2,10 @@
 
 use super::rpc_handlers::RpcParams;
 use color_eyre::eyre::{Result, eyre};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::rpc::coordination::{
-    InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
+    GetLeaderResponse, InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
 };
 use sinex_primitives::{
     domain::{HostName, InstanceId, NodeType},
@@ -44,8 +44,18 @@ pub async fn handle_coordination_get_leader(
     kv_client: &CoordinationKvClient,
     _params: Value,
 ) -> Result<Value> {
-    let leader = kv_client.get_leader().await?;
-    Ok(json!({ "leader": leader }))
+    let leader = match kv_client.get_leader().await? {
+        Some(instance_id) => {
+            let metadata = kv_client
+                .get_instance(&instance_id)
+                .await?
+                .ok_or_else(|| eyre!("Leader metadata missing for instance: {instance_id}"))?;
+            Some(metadata_to_instance_info(&metadata, true))
+        }
+        None => None,
+    };
+
+    Ok(serde_json::to_value(GetLeaderResponse { leader })?)
 }
 
 pub async fn handle_coordination_instance_health(

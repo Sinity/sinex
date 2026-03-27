@@ -104,7 +104,32 @@ async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> T
     );
 
     let leader_result = handle_coordination_get_leader(&kv_client, json!({})).await?;
-    assert_eq!(leader_result["leader"].as_str(), Some("leader-a"));
+    assert_eq!(
+        leader_result["leader"]["instance_id"].as_str(),
+        Some("leader-a")
+    );
+    assert_eq!(leader_result["leader"]["is_leader"].as_bool(), Some(true));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn coordination_get_leader_rejects_missing_leader_metadata(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-leader-missing")?;
+
+    assert!(kv_client.acquire_leadership("leader-a").await?);
+
+    let error = handle_coordination_get_leader(&kv_client, json!({}))
+        .await
+        .expect_err("missing leader metadata must fail loudly");
+    assert!(
+        error
+            .to_string()
+            .contains("Leader metadata missing for instance: leader-a")
+    );
 
     Ok(())
 }
