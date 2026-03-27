@@ -21,6 +21,7 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::domain::{InvalidationAction, ProcessingMode, TriggerKind};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::testing::event_stub;
 use sinex_primitives::{Id, JsonValue, Pagination, Uuid};
@@ -129,6 +130,10 @@ impl TransducerNode for TestTransducer {
         "file.processed"
     }
 
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
+    }
+
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -194,6 +199,10 @@ impl ScopeReconcilerNode for TestReconciler {
     }
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
@@ -265,6 +274,10 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
         "measurement.aggregate"
     }
 
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
+    }
+
     fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
         vec!["default".into()]
     }
@@ -330,6 +343,10 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
     }
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
@@ -499,6 +516,10 @@ impl WindowedNode for TestWindowed {
     }
     fn output_event_type(&self) -> &'static str {
         "metric.window"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     async fn accumulate(

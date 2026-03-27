@@ -15,6 +15,7 @@ use sinex_node_sdk::{NodeLogicError, ScopeReconcilerNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -191,6 +192,10 @@ impl ScopeReconcilerNode for HealthAggregator {
     }
     fn output_event_type(&self) -> &'static str {
         "health.aggregated_report"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     fn scope_keys(&self, input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {

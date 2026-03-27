@@ -20,6 +20,7 @@ use crate::{NodeResult, SinexError};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{Operation, Provenance};
 use sinex_primitives::non_empty::NonEmptyVec;
+use sinex_primitives::privacy;
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination};
@@ -422,8 +423,28 @@ where
         fallback_source_id: Id<Event<JsonValue>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
-        let typed_ids: Vec<Id<Event<JsonValue>>> = output
-            .source_event_ids
+        let DerivedOutput {
+            payload,
+            ts_orig,
+            source_event_ids,
+            temporal_policy,
+            semantics_version,
+            scope_key,
+            equivalence_key,
+        } = output;
+
+        let privacy_context = self.node.output_privacy_context();
+        let filtered_payload = privacy::engine().process_json(&payload, privacy_context);
+        if filtered_payload != payload {
+            debug!(
+                node = %self.node.name(),
+                output_event_type = %self.node.output_event_type(),
+                ?privacy_context,
+                "Applied privacy filtering to derived output payload"
+            );
+        }
+
+        let typed_ids: Vec<Id<Event<JsonValue>>> = source_event_ids
             .into_iter()
             .map(Id::from_uuid)
             .collect();
@@ -440,17 +461,17 @@ where
             id: Some(Id::new()),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(self.node.output_event_type())?,
-            payload: output.payload,
-            ts_orig: Some(output.ts_orig),
+            payload: filtered_payload,
+            ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
             node_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
-            temporal_policy: Some(output.temporal_policy),
-            semantics_version: output.semantics_version,
-            scope_key: output.scope_key,
-            equivalence_key: output.equivalence_key,
+            temporal_policy: Some(temporal_policy),
+            semantics_version,
+            scope_key,
+            equivalence_key,
             created_by_operation_id,
             node_model: Some(self.node.node_model()),
         })

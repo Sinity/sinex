@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp, now};
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::BTreeSet;
@@ -95,6 +96,10 @@ impl WindowedNode for SessionDetector {
 
     fn output_event_source(&self) -> &'static str {
         "derived.session-detector"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     async fn accumulate(
