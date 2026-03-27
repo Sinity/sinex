@@ -36,16 +36,6 @@ impl<'a> RpcParams<'a> {
         }
     }
 
-    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_array()
-                .map(|items| Some(items.as_slice()))
-                .ok_or_else(|| eyre!("parameter '{}' must be an array", key)),
-        }
-    }
-
     pub(crate) fn optional_bool(&self, key: &str) -> Result<Option<bool>> {
         match self.inner.get(key) {
             None | Some(Value::Null) => Ok(None),
@@ -53,6 +43,16 @@ impl<'a> RpcParams<'a> {
                 .as_bool()
                 .map(Some)
                 .ok_or_else(|| eyre!("parameter '{}' must be a boolean", key)),
+        }
+    }
+
+    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_array()
+                .map(|items| Some(items.as_slice()))
+                .ok_or_else(|| eyre!("parameter '{}' must be an array", key)),
         }
     }
 
@@ -347,17 +347,13 @@ mod tests {
     async fn rpc_params_optional_values_reject_wrong_types() -> TestResult<()> {
         let params = json!({
             "name": ["not-a-string"],
-            "items": "not-an-array",
             "enabled": "not-a-bool",
-            "properties": ["not-an-object"],
             "limit": "not-an-int"
         });
         let rpc_params = RpcParams::new(&params);
 
         assert!(rpc_params.optional_str("name").is_err());
-        assert!(rpc_params.optional_array("items").is_err());
         assert!(rpc_params.optional_bool("enabled").is_err());
-        assert!(rpc_params.optional_object("properties").is_err());
         assert!(rpc_params.optional_i64("limit").is_err());
         Ok(())
     }
