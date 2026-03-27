@@ -166,12 +166,14 @@ impl RpcRegistry {
 
     /// Register a replay control RPC handler
     ///
-    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`.
+    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`
+    /// and passes through the authenticated actor context.
     pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
                 &'a ReplayControlClient,
                 JsonValue,
+                &'a RpcAuthContext,
             ) -> Pin<
                 Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
             > + Send
@@ -182,13 +184,13 @@ impl RpcRegistry {
         self.methods.insert(
             method,
             RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
+                handler: Arc::new(move |params, services, auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
                         let client = services.replay_control.as_ref().ok_or_else(|| {
                             color_eyre::eyre::eyre!("Replay control bus is not initialized")
                         })?;
-                        f(client, params).await
+                        f(client, params, auth).await
                     })
                 }),
                 required_role: role,
@@ -429,12 +431,12 @@ pub(crate) fn build_registry() -> RpcRegistry {
         .replay_rpc(
             "replay.operation_status",
             Role::ReadOnly,
-            boxed!(handle_replay_operation_status),
+            boxed!(handle_replay_operation_status, 3),
         )
         .replay_rpc(
             "replay.list_operations",
             Role::ReadOnly,
-            boxed!(handle_replay_list_operations),
+            boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
         .pool_rpc(
@@ -529,12 +531,12 @@ pub(crate) fn build_registry() -> RpcRegistry {
         .replay_rpc(
             "replay.create_operation",
             Role::Write,
-            boxed!(handle_replay_create_operation),
+            boxed!(handle_replay_create_operation, 3),
         )
         .replay_rpc(
             "replay.preview_operation",
             Role::Write,
-            boxed!(handle_replay_preview_operation),
+            boxed!(handle_replay_preview_operation, 3),
         )
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
@@ -543,17 +545,17 @@ pub(crate) fn build_registry() -> RpcRegistry {
         .replay_rpc(
             "replay.approve_operation",
             Role::Admin,
-            boxed!(handle_replay_approve_operation),
+            boxed!(handle_replay_approve_operation, 3),
         )
         .replay_rpc(
             "replay.execute_operation",
             Role::Admin,
-            boxed!(handle_replay_execute_operation),
+            boxed!(handle_replay_execute_operation, 3),
         )
         .replay_rpc(
             "replay.cancel_operation",
             Role::Admin,
-            boxed!(handle_replay_cancel_operation),
+            boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
         .register("dlq.requeue", Role::Admin, |params, services, auth| {

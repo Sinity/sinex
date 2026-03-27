@@ -587,6 +587,20 @@ impl RpcAuthContext {
         &self.actor_id
     }
 
+    #[must_use]
+    pub fn replay_actor(&self) -> String {
+        if self.actor_id.starts_with("system:") {
+            return self.actor_id.clone();
+        }
+
+        let replay_role = match self.role {
+            crate::auth::Role::Admin => "admin",
+            crate::auth::Role::Write => "operator",
+            crate::auth::Role::ReadOnly => "user",
+        };
+        format!("{replay_role}:{}", self.actor_id)
+    }
+
     /// Check if the token has at least the required role permission
     #[must_use]
     pub fn has_permission(&self, required: crate::auth::Role) -> bool {

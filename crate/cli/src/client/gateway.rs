@@ -522,7 +522,6 @@ impl GatewayClient {
                 material_filter,
                 filters,
             },
-            actor: Some("service:sinexctl".to_string()),
         };
 
         let result = self
@@ -567,7 +566,6 @@ impl GatewayClient {
         // First approve
         let approve_req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
-            approver: Some("service:sinexctl".to_string()),
         };
         self.call_rpc(
             methods::REPLAY_APPROVE_OPERATION,
@@ -578,7 +576,6 @@ impl GatewayClient {
         // Then execute
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("service:sinexctl".to_string()),
             dry_run: false,
         };
         let result = self
@@ -655,7 +652,6 @@ impl GatewayClient {
     pub async fn replay_approve(&self, operation_id: &str) -> Result<ReplayOperation> {
         let req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
-            approver: Some("service:sinexctl".to_string()),
         };
         let result = self
             .call_rpc(
@@ -676,7 +672,6 @@ impl GatewayClient {
     ) -> Result<ReplayOperation> {
         let req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("service:sinexctl".to_string()),
             dry_run,
         };
         let result = self
@@ -697,7 +692,6 @@ impl GatewayClient {
     ) -> Result<ReplayOperation> {
         let req = ReplayCancelRequest {
             operation_id: operation_id.to_string(),
-            canceller: Some("service:sinexctl".to_string()),
             reason: reason.map(String::from),
         };
         let result = self

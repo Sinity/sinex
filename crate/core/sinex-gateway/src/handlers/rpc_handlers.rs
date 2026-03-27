@@ -1,5 +1,6 @@
 //! Shared RPC helpers and replay method handlers.
 
+use crate::rpc_server::RpcAuthContext;
 use crate::replay_control::ReplayControlClient;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -94,7 +95,6 @@ impl<'a> RpcParams<'a> {
 // Default values for created_by fields when not provided by caller
 pub(crate) const DEFAULT_CREATOR_HOST: &str = "sinex-host";
 pub(crate) const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
-const DEFAULT_REPLAY_ACTOR: &str = "service:sinex-cli";
 
 // Default values for content/blob handling
 pub(crate) const DEFAULT_BLOB_FILENAME: &str = "content.txt";
@@ -173,25 +173,21 @@ pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec
 pub async fn handle_replay_create_operation(
     client: &ReplayControlClient,
     params: Value,
+    auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let actor = params
-        .optional_str("actor")
-        ?
-        .unwrap_or(DEFAULT_REPLAY_ACTOR)
-        .to_string();
-
     let scope_val = params.require_value("scope")?.clone();
     let scope: ReplayScope =
         serde_json::from_value(scope_val).wrap_err("Invalid replay scope payload")?;
 
-    let operation = client.plan(actor, scope).await?;
+    let operation = client.plan(auth.replay_actor(), scope).await?;
     Ok(json!({ "operation": operation }))
 }
 
 pub async fn handle_replay_preview_operation(
     client: &ReplayControlClient,
     params: Value,
+    _auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
@@ -202,56 +198,47 @@ pub async fn handle_replay_preview_operation(
 pub async fn handle_replay_approve_operation(
     client: &ReplayControlClient,
     params: Value,
+    auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
-    let approver = params
-        .optional_str("approver")
-        ?
-        .unwrap_or(DEFAULT_REPLAY_ACTOR)
-        .to_string();
-    let operation = client.approve(operation_id, approver).await?;
+    let operation = client.approve(operation_id, auth.replay_actor()).await?;
     Ok(json!({ "operation": operation }))
 }
 
 pub async fn handle_replay_execute_operation(
     client: &ReplayControlClient,
     params: Value,
+    auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
-    let executor = params
-        .optional_str("executor")
-        ?
-        .unwrap_or(DEFAULT_REPLAY_ACTOR)
-        .to_string();
     let dry_run = params.optional_bool("dry_run")?.unwrap_or(false);
-    let operation = client.execute(operation_id, executor, dry_run).await?;
+    let operation = client
+        .execute(operation_id, auth.replay_actor(), dry_run)
+        .await?;
     Ok(json!({ "operation": operation }))
 }
 
 pub async fn handle_replay_cancel_operation(
     client: &ReplayControlClient,
     params: Value,
+    auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
-    let canceller = params
-        .optional_str("canceller")
-        ?
-        .unwrap_or(DEFAULT_REPLAY_ACTOR)
-        .to_string();
     let reason = params
         .optional_str("reason")
         ?
         .map(std::string::ToString::to_string);
-    let operation = client.cancel(operation_id, canceller, reason).await?;
+    let operation = client.cancel(operation_id, auth.replay_actor(), reason).await?;
     Ok(json!({ "cancelled": true, "operation": operation }))
 }
 
 pub async fn handle_replay_operation_status(
     client: &ReplayControlClient,
     params: Value,
+    _auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
@@ -262,6 +249,7 @@ pub async fn handle_replay_operation_status(
 pub async fn handle_replay_list_operations(
     client: &ReplayControlClient,
     params: Value,
+    _auth: &RpcAuthContext,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let state = params
