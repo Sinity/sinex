@@ -775,38 +775,95 @@ fn record_contracts_deployed() {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ContractsDeployOutcome {
+    Unchanged,
+    SkippedDatabaseNotReady,
+    SkippedProbeFailed(String),
+    Deployed,
+    Failed(String),
+}
+
+impl ContractsDeployOutcome {
+    fn stage_success(&self) -> bool {
+        matches!(self, Self::Unchanged | Self::Deployed)
+    }
+
+    fn cache_converged(&self) -> bool {
+        matches!(self, Self::Unchanged | Self::Deployed)
+    }
+}
+
+fn summarize_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn check_contract_tables_ready(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    let output = output.wrap_err("failed to run contracts readiness probe via psql")?;
+    if !output.status.success() {
+        bail!(
+            "contracts readiness probe failed: {}",
+            summarize_command_output(&output)
+        );
+    }
+    Ok(!output.stdout.is_empty())
+}
+
 /// Auto-deploy contracts if schemas have changed.
 ///
 /// Only deploys if:
 /// 1. Database is ready (contracts check-ready passes)
 /// 2. Schema files have changed since last deploy
-fn auto_deploy_contracts(verbose: bool) -> bool {
+fn auto_deploy_contracts(verbose: bool) -> ContractsDeployOutcome {
     // Skip if no changes detected
     if !contracts_changed_since_last_deploy() {
-        return false;
+        return ContractsDeployOutcome::Unchanged;
     }
 
-    let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
-        return false;
+    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
+        Ok(config) => config,
+        Err(error) => {
+            let message =
+                format!("failed to load stack config before contracts deployment: {error}");
+            eprintln!("⚠️  {message}");
+            return ContractsDeployOutcome::SkippedProbeFailed(message);
+        }
     };
 
     // Check if database is ready for contracts (tables exist)
-    let check_output = std::process::Command::new("psql")
-        .env("PGHOST", config.run_dir())
-        .env("PGPORT", config.postgres.port.to_string())
-        .env("PGUSER", &config.postgres.user)
-        .env("PGDATABASE", &config.postgres.database)
-        .args([
-            "-tAc",
-            "SELECT 1 FROM pg_tables WHERE schemaname='sinex_schemas' AND tablename='event_payload_schemas'",
-        ])
-        .output();
-
-    let tables_exist = check_output.is_ok_and(|out| out.status.success() && !out.stdout.is_empty());
+    let tables_exist = match check_contract_tables_ready(
+        std::process::Command::new("psql")
+            .env("PGHOST", config.run_dir())
+            .env("PGPORT", config.postgres.port.to_string())
+            .env("PGUSER", &config.postgres.user)
+            .env("PGDATABASE", &config.postgres.database)
+            .args([
+                "-tAc",
+                "SELECT 1 FROM pg_tables WHERE schemaname='sinex_schemas' AND tablename='event_payload_schemas'",
+            ])
+            .output(),
+    ) {
+        Ok(ready) => ready,
+        Err(error) => {
+            let message = format!("{error:#}");
+            eprintln!("⚠️  {message}");
+            return ContractsDeployOutcome::SkippedProbeFailed(message);
+        }
+    };
 
     if !tables_exist {
         // Database not ready for contracts yet
-        return false;
+        return ContractsDeployOutcome::SkippedDatabaseNotReady;
     }
 
     eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
@@ -835,22 +892,35 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
         Ok(exit) if exit.success() => {
             eprintln!("✓ Contracts deployed ({:.1}s)", elapsed.as_secs_f64());
             record_contracts_deployed();
-            true
+            ContractsDeployOutcome::Deployed
         }
         Ok(_) => {
             // Non-fatal: contracts deploy failure shouldn't block tests.
             // Don't record hash — will retry next invocation so transient failures self-heal.
-            eprintln!(
-                "⚠️  Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
+            let message = format!(
+                "Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
                 elapsed.as_secs_f64()
             );
-            false
+            eprintln!("⚠️  {message}");
+            ContractsDeployOutcome::Failed(message)
         }
         Err(e) => {
-            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal, will retry next run)");
-            false
+            let message = format!("Contracts deploy failed: {e} (non-fatal, will retry next run)");
+            eprintln!("⚠️  {message}");
+            ContractsDeployOutcome::Failed(message)
         }
     }
+}
+
+fn pending_cache_blockers(schema_pending: bool, contracts_pending: bool) -> Vec<&'static str> {
+    let mut blockers = Vec::new();
+    if schema_pending {
+        blockers.push("schema apply still pending");
+    }
+    if contracts_pending {
+        blockers.push("contracts deployment still pending");
+    }
+    blockers
 }
 
 /// Check for required external tools.
@@ -928,7 +998,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     check_required_tools()?;
 
     let is_interactive = ctx.is_human();
-    let status = InfraStatus::capture();
+    let mut status = InfraStatus::capture();
 
     // 1. Auto-start stack if not running
     // Note: infra start also applies schema, so we only need to check schema apply
@@ -940,9 +1010,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         started.wrap_err(
             "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start",
         )?;
-        // Stack start applies schema — write cache and return.
-        PreflightCache::current().save();
-        return Ok(());
+        status = InfraStatus::capture();
     }
 
     // 2. Auto-generate TLS certs if missing
@@ -959,15 +1027,33 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         let result = auto_apply_schema(is_interactive);
         ctx.finish_stage(stage, result.as_ref().is_ok_and(|&ok| ok));
         result?;
+        status.schema_apply_pending = false;
     }
 
     // 4. Auto-deploy contracts if payload schemas changed
     let stage = ctx.start_stage("contracts-deploy");
-    let deployed = auto_deploy_contracts(is_interactive);
-    ctx.finish_stage(stage, deployed);
+    let contracts_outcome = auto_deploy_contracts(is_interactive);
+    ctx.finish_stage(stage, contracts_outcome.stage_success());
 
-    // Write the preflight result cache so the next invocation can skip this work.
-    PreflightCache::current().save();
+    let blockers = pending_cache_blockers(
+        status.schema_apply_pending || schema_changed_since_last_apply(),
+        !contracts_outcome.cache_converged() && contracts_changed_since_last_deploy(),
+    );
+    if blockers.is_empty() {
+        // Write the preflight result cache so the next invocation can skip this work.
+        PreflightCache::current().save();
+    } else {
+        tracing::warn!(
+            blockers = ?blockers,
+            "preflight completed without converged state; skipping cache save so setup retries next run"
+        );
+        if is_interactive {
+            eprintln!(
+                "⚠️  Preflight is not converged yet ({}); skipping cache save so setup retries next run",
+                blockers.join(", ")
+            );
+        }
+    }
 
     Ok(())
 }
@@ -976,6 +1062,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
     use tempfile::tempdir;
 
     #[sinex_test]
@@ -1021,6 +1108,46 @@ mod tests {
         let error = write_state_file_atomically(&path, "value").unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("failed to create preflight state directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_contract_tables_ready_reports_probe_failures() -> TestResult<()> {
+        let error = check_contract_tables_ready(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "psql missing",
+        )))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("psql missing"));
+
+        let error = check_contract_tables_ready(Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"permission denied".to_vec(),
+        }))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("permission denied"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_pending_cache_blockers_reports_unconverged_setup() -> TestResult<()> {
+        assert_eq!(pending_cache_blockers(false, false), Vec::<&'static str>::new());
+        assert_eq!(
+            pending_cache_blockers(true, false),
+            vec!["schema apply still pending"]
+        );
+        assert_eq!(
+            pending_cache_blockers(false, true),
+            vec!["contracts deployment still pending"]
+        );
+        assert_eq!(
+            pending_cache_blockers(true, true),
+            vec![
+                "schema apply still pending",
+                "contracts deployment still pending"
+            ]
+        );
         Ok(())
     }
 }
