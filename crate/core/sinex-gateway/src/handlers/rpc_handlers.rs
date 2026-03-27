@@ -7,6 +7,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
 use sinex_db::replay::state_machine::{ReplayScope, ReplayState};
+use sinex_primitives::rpc::content::RetrieveBlobResponse;
 use sinex_primitives::{Id, Uuid, domain::Entity};
 
 pub(crate) struct RpcParams<'a> {
@@ -277,11 +278,13 @@ pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
 pub(crate) fn blob_response_payload(
     content: &[u8],
     metadata: &sinex_node_sdk::annex::BlobMetadata,
-) -> Value {
-    json!({
-        "content_base64": BASE64_STANDARD.encode(content),
-        "mime_type": metadata.mime_type.clone(),
-        "size_bytes": metadata.size_bytes,
+) -> Result<RetrieveBlobResponse> {
+    let size = u64::try_from(metadata.size_bytes)
+        .map_err(|_| eyre!("blob metadata reported negative size: {}", metadata.size_bytes))?;
+    Ok(RetrieveBlobResponse {
+        content: BASE64_STANDARD.encode(content),
+        content_type: metadata.mime_type.clone(),
+        size,
     })
 }
 fn max_base64_length(limit_bytes: usize) -> usize {
@@ -305,10 +308,10 @@ mod tests {
             .mime_type("application/octet-stream".into())
             .build();
 
-        let json = blob_response_payload(b"hi", &blob);
-        assert_eq!(json["content_base64"], "aGk=");
-        assert_eq!(json["mime_type"], "application/octet-stream");
-        assert_eq!(json["size_bytes"], 2);
+        let response = blob_response_payload(b"hi", &blob)?;
+        assert_eq!(response.content, "aGk=");
+        assert_eq!(response.content_type.as_deref(), Some("application/octet-stream"));
+        assert_eq!(response.size, 2);
         Ok(())
     }
 
