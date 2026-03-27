@@ -2436,7 +2436,6 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.shutdown_leader_state().await;
         self.shutdown_event_batcher().await;
         Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
-        Self::abort_task(&mut self.command_listener_handle, "node command listener").await;
         Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
 
         self.node.shutdown().await
