@@ -80,6 +80,7 @@ async fn archive_and_restore_operations_are_persisted_and_auditable(
         handle_audit_get(ctx.pool(), json!({ "operation_id": archive.operation_id })).await?,
     )?;
     assert_eq!(archive_audit.event_count, 1);
+    assert_eq!(archive_audit.audit_trail.operation.operator, auth.actor_id());
     assert_eq!(
         archive_audit.audit_trail.affected_events[0].id.to_string(),
         event_id
@@ -102,6 +103,7 @@ async fn archive_and_restore_operations_are_persisted_and_auditable(
         handle_audit_get(ctx.pool(), json!({ "operation_id": restore.operation_id })).await?,
     )?;
     assert_eq!(restore_audit.event_count, 1);
+    assert_eq!(restore_audit.audit_trail.operation.operator, auth.actor_id());
     assert_eq!(
         restore_audit.audit_trail.affected_events[0].id.to_string(),
         event_id
@@ -181,6 +183,8 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
         .await?,
     )?;
     assert_eq!(approve.operation.tombstoned_count, Some(1));
+    assert_eq!(approve.operation.created_by, auth.actor_id());
+    assert_eq!(approve.operation.approved_by.as_deref(), Some(auth.actor_id()));
 
     let audit: AuditGetResponse = serde_json::from_value(
         handle_audit_get(
@@ -260,10 +264,11 @@ async fn tombstone_cancel_persists_terminal_metadata(ctx: TestContext) -> TestRe
         .await?,
     )?;
     assert_eq!(status.operation.state, TombstoneOperationState::Cancelled);
+    assert_eq!(status.operation.created_by, auth.actor_id());
     assert!(status.operation.finished_at.is_some());
     assert_eq!(
         status.operation.error_details.as_deref(),
-        Some("Cancelled by system: operator requested stop")
+        Some("Cancelled by system:local: operator requested stop")
     );
 
     let persisted_duration_ms: i32 = sqlx::query_scalar!(

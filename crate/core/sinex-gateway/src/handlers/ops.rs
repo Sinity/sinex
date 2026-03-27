@@ -45,17 +45,18 @@ pub async fn handle_ops_start(
 
     let request: OpsStartRequest = serde_json::from_value(params)?;
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
+    let actor = auth.actor_id();
 
     let record = pool
         .state()
-        .start_operation(&request.operation_type, &request.operator, scope_jsonb)
+        .start_operation(&request.operation_type, actor, scope_jsonb)
         .await?;
 
     info!(
         token_prefix = %auth.token_prefix,
+        actor = %actor,
         operation_id = %record.id,
         operation_type = %request.operation_type,
-        operator = %request.operator,
         "Operation started"
     );
 
