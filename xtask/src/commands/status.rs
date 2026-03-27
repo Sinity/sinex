@@ -563,18 +563,7 @@ fn probe_git_state(cwd: &Path) -> GitState {
         &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
     )
     .map_or((0, 0), |output| {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = text.trim().split('\t').collect();
-        if parts.len() == 2 {
-            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-        } else {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-                format!("unexpected output: {}", text.trim()),
-            );
-            (0, 0)
-        }
+        parse_git_upstream_counts(&String::from_utf8_lossy(&output.stdout), &mut probe_issues)
     });
 
     let commit = run_git_output(cwd, &mut probe_issues, &["log", "-1", "--format=%h\t%s\t%cr"])
@@ -988,6 +977,44 @@ fn parse_git_age(age: &str) -> Option<i64> {
     } else {
         return None;
     })
+}
+
+fn parse_git_upstream_counts(output: &str, probe_issues: &mut Vec<String>) -> (u32, u32) {
+    let trimmed = output.trim();
+    let parts: Vec<&str> = trimmed.split('\t').collect();
+    if parts.len() != 2 {
+        record_git_probe_issue(
+            probe_issues,
+            &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+            format!("unexpected output: {trimmed}"),
+        );
+        return (0, 0);
+    }
+
+    let ahead = match parts[0].parse::<u32>() {
+        Ok(value) => value,
+        Err(error) => {
+            record_git_probe_issue(
+                probe_issues,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                format!("invalid ahead count `{}`: {error}", parts[0]),
+            );
+            return (0, 0);
+        }
+    };
+    let behind = match parts[1].parse::<u32>() {
+        Ok(value) => value,
+        Err(error) => {
+            record_git_probe_issue(
+                probe_issues,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                format!("invalid behind count `{}`: {error}", parts[1]),
+            );
+            return (0, 0);
+        }
+    };
+
+    (ahead, behind)
 }
 
 // ─── Summary / Compact execution ────────────────────────────────────────────
@@ -2765,6 +2792,28 @@ mod tests {
             .unwrap_or_else(|| panic!("expected git probe failure message"));
         assert!(probe_message.contains("git branch --show-current failed"));
         assert!(probe_message.contains("git status --porcelain failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_git_upstream_counts_accepts_valid_counts(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let mut probe_issues = Vec::new();
+
+        assert_eq!(parse_git_upstream_counts("2\t7\n", &mut probe_issues), (2, 7));
+        assert!(probe_issues.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_git_upstream_counts_reports_invalid_numbers(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let mut probe_issues = Vec::new();
+
+        assert_eq!(parse_git_upstream_counts("2\tnope", &mut probe_issues), (0, 0));
+        let message = probe_issues.join("; ");
+        assert!(message.contains("git rev-list --left-right --count HEAD...@{u} failed"));
+        assert!(message.contains("invalid behind count `nope`"));
         Ok(())
     }
 
