@@ -261,6 +261,19 @@ pub struct NodeScanProgress {
     pub error: Option<String>,
 }
 
+fn encode_control_message<TPayload: Serialize>(
+    payload_kind: &'static str,
+    operation_id: Uuid,
+    node_name: &str,
+    payload: &TPayload,
+) -> NodeResult<Vec<u8>> {
+    serde_json::to_vec(payload).map_err(|error| {
+        SinexError::serialization(format!(
+            "Failed to serialize {payload_kind} for node '{node_name}' operation {operation_id}: {error}"
+        ))
+    })
+}
+
 async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Store> {
     // NATS KV is now mandatory
     let client = match transport {
@@ -633,6 +646,24 @@ struct FailedDispatchedScanOutcome {
 }
 
 impl<T: Node + 'static> NodeRunner<T> {
+    fn log_shutdown_join_result(task_name: &str, result: Result<(), tokio::task::JoinError>) {
+        match result {
+            Ok(()) => {
+                debug!(task = task_name, "Task finished before shutdown cleanup");
+            }
+            Err(join_error) if join_error.is_cancelled() => {
+                debug!(task = task_name, "Task aborted during shutdown cleanup");
+            }
+            Err(join_error) => {
+                warn!(
+                    task = task_name,
+                    error = %join_error,
+                    "Task exited unexpectedly during shutdown cleanup"
+                );
+            }
+        }
+    }
+
     fn build_instance_id(host: &str) -> String {
         format!("{host}-{}-{}", std::process::id(), Uuid::now_v7().simple())
     }
@@ -673,6 +704,78 @@ impl<T: Node + 'static> NodeRunner<T> {
         })?;
         let config_hash = blake3::hash(&encoded).to_hex().to_string();
         Ok((Some(config_hash), Some(canonical)))
+    }
+
+    async fn publish_scan_ack(
+        nats_client: &async_nats::Client,
+        reply: Option<async_nats::Subject>,
+        ack: &NodeScanAck,
+    ) {
+        let Some(reply) = reply else {
+            return;
+        };
+
+        let payload = match encode_control_message(
+            "scan acknowledgement",
+            ack.operation_id,
+            &ack.node_name,
+            ack,
+        ) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(
+                    operation_id = %ack.operation_id,
+                    node = %ack.node_name,
+                    error = %error,
+                    "Failed to encode scan acknowledgement"
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = nats_client.publish(reply.clone(), payload.into()).await {
+            warn!(
+                operation_id = %ack.operation_id,
+                node = %ack.node_name,
+                subject = %reply,
+                error = %error,
+                "Failed to publish scan acknowledgement"
+            );
+        }
+    }
+
+    async fn publish_scan_progress(
+        nats_client: &async_nats::Client,
+        subject: String,
+        progress: &NodeScanProgress,
+    ) {
+        let payload = match encode_control_message(
+            "scan progress update",
+            progress.operation_id,
+            &progress.node_name,
+            progress,
+        ) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(
+                    operation_id = %progress.operation_id,
+                    node = %progress.node_name,
+                    error = %error,
+                    "Failed to encode scan progress update"
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = nats_client.publish(subject.clone(), payload.into()).await {
+            warn!(
+                operation_id = %progress.operation_id,
+                node = %progress.node_name,
+                subject = %subject,
+                error = %error,
+                "Failed to publish scan progress update"
+            );
+        }
     }
 
     #[cfg(feature = "db")]
@@ -1281,7 +1384,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
                     Ok(cmd) => cmd,
                     Err(err) => {
-                        warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                    warn!(error = %err, "Failed to deserialize NodeScanCommand");
                         if let Some(reply) = msg.reply {
                             let nack = NodeScanAck {
                                 operation_id: Uuid::now_v7(),
@@ -1289,12 +1392,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 accepted: false,
                                 error: Some(format!("Failed to deserialize command: {err}")),
                             };
-                            let _ = nats_client
-                                .publish(
-                                    reply,
-                                    serde_json::to_vec(&nack).unwrap_or_default().into(),
-                                )
-                                .await;
+                            Self::publish_scan_ack(&nats_client, Some(reply), &nack).await;
                         }
                         continue;
                     }
@@ -1311,11 +1409,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
                         )),
                     };
-                    if let Some(reply) = msg.reply {
-                        let _ = nats_client
-                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                            .await;
-                    }
+                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
                     continue;
                 }
 
@@ -1328,11 +1422,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' does not support historical scans (supports_historical = false)"
                         )),
                     };
-                    if let Some(reply) = msg.reply {
-                        let _ = nats_client
-                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                            .await;
-                    }
+                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
                     continue;
                 }
 
@@ -1346,11 +1436,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .to_string(),
                         ),
                     };
-                    if let Some(reply) = msg.reply {
-                        let _ = nats_client
-                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                            .await;
-                    }
+                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
                     continue;
                 }
 
@@ -1361,11 +1447,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("Node was started without a replay worker factory".to_string()),
                     };
-                    if let Some(reply) = msg.reply {
-                        let _ = nats_client
-                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                            .await;
-                    }
+                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
                     continue;
                 };
 
@@ -1376,11 +1458,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("A scan is already in progress on this node".to_string()),
                     };
-                    if let Some(reply) = msg.reply {
-                        let _ = nats_client
-                            .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                            .await;
-                    }
+                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
                     continue;
                 }
 
@@ -1390,11 +1468,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     accepted: true,
                     error: None,
                 };
-                if let Some(reply) = msg.reply {
-                    let _ = nats_client
-                        .publish(reply, serde_json::to_vec(&ack).unwrap_or_default().into())
-                        .await;
-                }
+                Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
 
                 info!(
                     operation_id = %operation_id,
@@ -1424,14 +1498,12 @@ impl<T: Node + 'static> NodeRunner<T> {
                         final_report: None,
                         error: None,
                     };
-                    let _ = scan_client
-                        .publish(
-                            progress_subject.clone(),
-                            serde_json::to_vec(&start_progress)
-                                .unwrap_or_default()
-                                .into(),
-                        )
-                        .await;
+                    Self::publish_scan_progress(
+                        &scan_client,
+                        progress_subject.clone(),
+                        &start_progress,
+                    )
+                    .await;
 
                     let scan_outcome = Self::execute_dispatched_scan(
                         factory,
@@ -1478,22 +1550,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                         }
                     };
 
-                    if let Err(err) = scan_client
-                        .publish(
-                            progress_subject,
-                            serde_json::to_vec(&final_progress)
-                                .unwrap_or_default()
-                                .into(),
-                        )
-                        .await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %scan_node_name,
-                            error = %err,
-                            "Failed to publish final scan progress"
-                        );
-                    }
+                    Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                        .await;
 
                     scan_active.store(false, Ordering::SeqCst);
                 });
@@ -2396,7 +2454,6 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.shutdown_leader_state().await;
         self.shutdown_event_batcher().await;
         Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
-        Self::abort_task(&mut self.command_listener_handle, "node command listener").await;
         Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
 
         self.node.shutdown().await
@@ -2405,15 +2462,14 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn abort_task(handle: &mut Option<tokio::task::JoinHandle<()>>, name: &str) {
         if let Some(h) = handle.take() {
             h.abort();
-            let _ = h.await;
-            debug!("Aborted {name}");
+            Self::log_shutdown_join_result(name, h.await);
         }
     }
 
     async fn shutdown_leader_state(&mut self) {
         if let Some(state) = self.leader_state.take() {
             state.heartbeat_handle.abort();
-            let _ = state.heartbeat_handle.await;
+            Self::log_shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await);
             if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
                 warn!(error = %err, "Failed to release leadership on shutdown");
             }
@@ -2431,5 +2487,65 @@ impl<T: Node + 'static> NodeRunner<T> {
                 Err(join_err) => error!(error = %join_err, "Failed to join event batcher task"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these cover private control-plane encoding helpers.
+    use super::*;
+    use serde::ser::Error as _;
+    use xtask::sandbox::prelude::*;
+
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(S::Error::custom("boom"))
+        }
+    }
+
+    #[sinex_test]
+    async fn encode_control_message_serializes_scan_ack() -> TestResult<()> {
+        let operation_id = Uuid::now_v7();
+        let ack = NodeScanAck {
+            operation_id,
+            node_name: "test-node".to_string(),
+            accepted: true,
+            error: None,
+        };
+
+        let encoded = encode_control_message(
+            "scan acknowledgement",
+            operation_id,
+            &ack.node_name,
+            &ack,
+        )?;
+        let decoded: NodeScanAck = serde_json::from_slice(&encoded)?;
+
+        assert_eq!(decoded.operation_id, operation_id);
+        assert!(decoded.accepted);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn encode_control_message_reports_serialization_failure() -> TestResult<()> {
+        let operation_id = Uuid::now_v7();
+        let err = encode_control_message(
+            "scan acknowledgement",
+            operation_id,
+            "test-node",
+            &FailingSerialize,
+        )
+        .expect_err("failing serializers must surface explicit control-plane errors");
+
+        let text = err.to_string();
+        assert!(text.contains("Failed to serialize scan acknowledgement"));
+        assert!(text.contains("test-node"));
+        assert!(text.contains(&operation_id.to_string()));
+        Ok(())
     }
 }

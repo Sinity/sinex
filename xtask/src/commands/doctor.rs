@@ -15,7 +15,7 @@ use sinex_node_sdk::preflight::configuration::{
 use sinex_node_sdk::preflight::services::inspect_systemd_service;
 use sinex_primitives::{
     DeploymentDatabaseRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
-    environment::SinexEnvironment, nats::NatsConnectionConfig,
+    environment::SinexEnvironment, nats::NatsConnectionConfig, rpc::system::SystemHealthResponse,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,8 @@ pub(crate) struct ToolCheck {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,28 +387,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     ];
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
-        let check_result = ToolManager::check_tool(tool);
-        let info = check_result.unwrap_or_else(|_| {
+        let tool_check = build_tool_check(tool, ToolManager::check_tool(tool));
+        if !tool_check.available {
             all_ok = false;
-            ToolInfo::unavailable(tool)
-        });
-        let available = info.is_available;
-        let version = if info.is_available {
-            Some(info.version)
-        } else {
-            None
-        };
-        let path = if info.is_available {
-            Some(info.path.display().to_string())
-        } else {
-            None
-        };
-        tool_checks.push(ToolCheck {
-            name: tool.to_string(),
-            available,
-            version,
-            path,
-        });
+        }
+        tool_checks.push(tool_check);
     }
 
     // Batch validation summary for missing tools
@@ -485,8 +470,8 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         // Tools
         println!("\n{}", style("Required Tools:").bold());
         for tool in &report.tools {
-            let version_str = tool.version.as_deref().unwrap_or("");
-            print_check(&tool.name, tool.available, Some(version_str));
+            let detail = tool_check_detail(tool);
+            print_check(&tool.name, tool.available, detail.as_deref());
         }
 
         // Installation guidance for missing tools
@@ -610,6 +595,34 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     };
     let detail_str = detail.map(|d| format!(" ({d})")).unwrap_or_default();
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
+}
+
+fn tool_check_detail(tool: &ToolCheck) -> Option<String> {
+    match (tool.version.as_deref(), tool.message.as_deref()) {
+        (Some(version), Some(message)) => Some(format!("{version}; {message}")),
+        (Some(version), None) => Some(version.to_string()),
+        (None, Some(message)) => Some(message.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn build_tool_check(name: &str, result: Result<ToolInfo>) -> ToolCheck {
+    match result {
+        Ok(info) => ToolCheck {
+            name: name.to_string(),
+            available: info.probe_issue.is_none(),
+            version: Some(info.version),
+            path: Some(info.path.display().to_string()),
+            message: info.probe_issue,
+        },
+        Err(error) => ToolCheck {
+            name: name.to_string(),
+            available: false,
+            version: None,
+            path: None,
+            message: Some(error.to_string()),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1634,12 +1647,10 @@ fn check_hyprland_socket(
     }
 
     match std::fs::read_dir(&hypr_dir) {
-        Ok(entries) => {
-            let candidates: Vec<PathBuf> = entries
-                .filter_map(|entry| entry.ok().map(|value| value.path()))
-                .filter(|path| path.join(".socket2.sock").exists())
-                .collect();
-            match candidates.as_slice() {
+        Ok(entries) => match collect_hyprland_socket_candidates(
+            entries.map(|entry| entry.map(|value| value.path())),
+        ) {
+            Ok(candidates) => match candidates.as_slice() {
                 [candidate] => DeploymentReadinessItem::pass(
                     "hyprland-socket",
                     format!("Found Hyprland event socket under {}", candidate.display()),
@@ -1658,13 +1669,31 @@ fn check_hyprland_socket(
                         hypr_dir.display()
                     ),
                 ),
-            }
-        }
+            },
+            Err(error) => DeploymentReadinessItem::fail(
+                "hyprland-socket",
+                format!("Could not inspect {}: {error}", hypr_dir.display()),
+            ),
+        },
         Err(e) => DeploymentReadinessItem::fail(
             "hyprland-socket",
             format!("Could not read {}: {e}", hypr_dir.display()),
         ),
     }
+}
+
+fn collect_hyprland_socket_candidates<I>(entries: I) -> std::io::Result<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = std::io::Result<PathBuf>>,
+{
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let path = entry?;
+        if path.join(".socket2.sock").exists() {
+            candidates.push(path);
+        }
+    }
+    Ok(candidates)
 }
 
 fn check_activitywatch_db(
@@ -2431,28 +2460,66 @@ fn interpret_gateway_ready_response(
         }
     };
 
-    let serving = body.get("serving").and_then(JsonValue::as_bool);
-    let healthy = body.get("healthy").and_then(JsonValue::as_bool);
+    let response: SystemHealthResponse = match serde_json::from_value(body) {
+        Ok(response) => response,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!(
+                    "{ready_url} returned HTTP {status} with a non-conforming health body: {error}; body={}",
+                    summarize_gateway_probe_body(trimmed)
+                ),
+            );
+        }
+    };
 
-    if status.is_success() && serving == Some(true) {
+    if status.is_success() && response.serving {
         DeploymentReadinessItem::pass(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (healthy={})",
-                healthy.unwrap_or(false)
+                "{ready_url} returned HTTP {status} (status={}, healthy={}, reasons={})",
+                response.status,
+                response.healthy,
+                summarize_gateway_degradation_reasons(&response)
             ),
         )
     } else {
         DeploymentReadinessItem::fail(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?}, body={})",
-                serving,
-                healthy,
-                summarize_gateway_probe_body(trimmed)
+                "{ready_url} returned HTTP {status} (status={}, serving={}, healthy={}, reasons={}, components={})",
+                response.status,
+                response.serving,
+                response.healthy,
+                summarize_gateway_degradation_reasons(&response),
+                summarize_gateway_components(&response)
             ),
         )
     }
+}
+
+fn summarize_gateway_degradation_reasons(response: &SystemHealthResponse) -> String {
+    if response.degradation_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        response.degradation_reasons.join("; ")
+    }
+}
+
+fn summarize_gateway_components(response: &SystemHealthResponse) -> String {
+    let replay = &response.components.replay_control;
+    format!(
+        "database={} connected={}, nats={} connected={} latency_ms={:?}, replay_control={} enabled={} connected={} last_error={}",
+        response.components.database.status,
+        response.components.database.connected,
+        response.components.nats.status,
+        response.components.nats.connected,
+        response.components.nats.latency_ms,
+        replay.status,
+        replay.enabled,
+        replay.connected,
+        replay.last_error.as_deref().unwrap_or("none"),
+    )
 }
 
 fn summarize_gateway_probe_body(body_text: &str) -> String {
@@ -2643,12 +2710,14 @@ mod tests {
                     available: true,
                     version: Some("1.95.0-nightly".into()),
                     path: Some("/nix/store/.../rustc".into()),
+                    message: None,
                 },
                 ToolCheck {
                     name: "ast-grep".into(),
                     available: false,
                     version: None,
                     path: None,
+                    message: Some("Tool 'ast-grep' not found in PATH".into()),
                 },
             ],
             environment: Some(serde_json::json!({
@@ -2682,10 +2751,12 @@ mod tests {
         assert_eq!(json["tools"][0]["name"], "rustc");
         assert_eq!(json["tools"][0]["available"], true);
         assert!(json["tools"][0]["version"].is_string());
+        assert!(json["tools"][0]["message"].is_null());
         assert_eq!(json["tools"][1]["available"], false);
         // Unavailable tool should have null version and no path
         assert!(json["tools"][1]["version"].is_null());
         assert!(json["tools"][1].get("path").is_none() || json["tools"][1]["path"].is_null());
+        assert!(json["tools"][1]["message"].is_string());
 
         // Overall (agents use: .data.overall)
         assert_eq!(json["overall"], false);
@@ -2698,6 +2769,42 @@ mod tests {
         assert!(json["postgres_extensions"].is_array());
         assert_eq!(json["postgres_extensions"][0], "pgvector");
         assert!(json.get("postgres_extensions_error").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_tool_check_surfaces_probe_errors() -> ::xtask::sandbox::TestResult<()> {
+        let check = build_tool_check(
+            "ast-grep",
+            Err(color_eyre::eyre::eyre!("Tool 'ast-grep' not found in PATH")),
+        );
+        assert!(!check.available);
+        assert!(check.version.is_none());
+        assert!(check.path.is_none());
+        assert!(
+            check
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("not found in PATH"))
+        );
+
+        let check = build_tool_check(
+            "rustc",
+            Ok(ToolInfo {
+                path: PathBuf::from("/nix/store/.../rustc"),
+                version: "unknown".to_string(),
+                probe_issue: Some("Failed to run 'rustc --version'".to_string()),
+            }),
+        );
+        assert!(!check.available);
+        assert_eq!(check.version.as_deref(), Some("unknown"));
+        assert_eq!(check.path.as_deref(), Some("/nix/store/.../rustc"));
+        assert!(
+            check
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("rustc --version"))
+        );
         Ok(())
     }
 
@@ -2879,11 +2986,41 @@ mod tests {
         let item = interpret_gateway_ready_response(
             "https://127.0.0.1:9999/ready",
             reqwest::StatusCode::OK,
-            r#"{"serving":true,"healthy":false}"#,
+            r#"{
+                "status":"degraded",
+                "healthy":false,
+                "serving":true,
+                "degradation_reasons":["NATS unavailable"],
+                "components":{
+                    "database":{"status":"healthy","connected":true},
+                    "nats":{"status":"unhealthy","connected":false,"latency_ms":42.0,"detail":"timed out"},
+                    "replay_control":{"status":"healthy","enabled":true,"connected":true}
+                }
+            }"#,
         );
 
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("healthy=false"));
+        assert!(item.description.contains("status=degraded"));
+        assert!(item.description.contains("NATS unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_rejects_non_conforming_health_body()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            r#"{"serving":true,"healthy":false}"#,
+        );
+
+        assert_eq!(item.status, "fail");
+        assert!(
+            item.description.contains("non-conforming health body"),
+            "unexpected message: {}",
+            item.description
+        );
         Ok(())
     }
 
@@ -3522,6 +3659,37 @@ mod tests {
         );
         assert_eq!(item.status, "fail");
         assert!(item.description.contains("Multiple Hyprland instances"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_hyprland_socket_candidates_reports_entry_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = collect_hyprland_socket_candidates(vec![Err(std::io::Error::other(
+            "readdir exploded",
+        ))])
+        .unwrap_err();
+
+        assert!(error.to_string().contains("readdir exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_hyprland_socket_candidates_keeps_only_event_sockets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let matching = temp.path().join("one");
+        let ignored = temp.path().join("two");
+        std::fs::create_dir_all(&matching)?;
+        std::fs::create_dir_all(&ignored)?;
+        std::fs::write(matching.join(".socket2.sock"), "")?;
+
+        let candidates = collect_hyprland_socket_candidates(vec![
+            Ok(matching.clone()),
+            Ok(ignored.clone()),
+        ])?;
+
+        assert_eq!(candidates, vec![matching]);
         Ok(())
     }
 

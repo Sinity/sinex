@@ -1,7 +1,7 @@
 //! Codebase snapshot command - promoted from analyze snapshot
 
-use color_eyre::eyre::{Result, WrapErr, bail};
-use serde::Serialize;
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -582,7 +582,7 @@ fn collect_scope_includes(scope: &str) -> Result<Vec<String>> {
 /// Use `cargo metadata` to find a crate and its transitive workspace dependencies,
 /// returning their directory paths as include globs.
 fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
-    let metadata = cargo_metadata(
+    let metadata: CargoMetadataDocument = cargo_metadata(
         ["metadata", "--format-version=1", "--no-deps", "--quiet"],
         "workspace package metadata",
     )?;
@@ -590,22 +590,7 @@ fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
     let workspace_root = crate::config::workspace_root();
 
     // Build name → relative_dir map for all workspace members
-    let mut name_to_dir: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    if let Some(packages) = metadata["packages"].as_array() {
-        for pkg in packages {
-            let name = pkg["name"].as_str().unwrap_or("").to_string();
-            let manifest = pkg["manifest_path"].as_str().unwrap_or("");
-            if !manifest.is_empty() {
-                let manifest_path = std::path::Path::new(manifest);
-                if let Some(crate_dir) = manifest_path.parent() {
-                    if let Ok(rel) = crate_dir.strip_prefix(&workspace_root) {
-                        name_to_dir.insert(name, rel.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-    }
+    let name_to_dir = workspace_package_dirs(&metadata, &workspace_root)?;
 
     if name_to_dir.is_empty() {
         bail!("workspace package metadata returned no packages");
@@ -614,7 +599,7 @@ fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
         bail!("scope '{crate_name}' did not match a workspace package or predefined alias");
     }
 
-    let full_meta = cargo_metadata(
+    let full_meta: CargoMetadataDocument = cargo_metadata(
         [
             "metadata",
             "--format-version=1",
@@ -629,7 +614,7 @@ fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
     let mut included_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     included_names.insert(crate_name.to_string());
 
-    collect_transitive_workspace_deps(crate_name, &full_meta, &mut included_names);
+    collect_transitive_workspace_deps(crate_name, &full_meta, &mut included_names)?;
 
     // Map crate names to directory globs
     let mut patterns: Vec<String> = included_names
@@ -650,71 +635,116 @@ fn collect_crate_scope(crate_name: &str) -> Result<Vec<String>> {
 /// Walk the cargo metadata dependency graph to find transitive workspace deps.
 fn collect_transitive_workspace_deps(
     root_name: &str,
-    metadata: &serde_json::Value,
+    metadata: &CargoMetadataDocument,
     result: &mut std::collections::HashSet<String>,
-) {
-    // Build id → (name, deps_names) index
-    let mut id_to_name: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    let mut id_to_deps: std::collections::HashMap<&str, Vec<&str>> =
-        std::collections::HashMap::new();
-    let workspace_members: std::collections::HashSet<&str> = metadata["workspace_members"]
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-
-    if let Some(packages) = metadata["packages"].as_array() {
-        for pkg in packages {
-            let id = pkg["id"].as_str().unwrap_or("");
-            let name = pkg["name"].as_str().unwrap_or("");
-            id_to_name.insert(id, name);
-            let dep_names: Vec<&str> = pkg["dependencies"]
-                .as_array()
-                .map(|deps| deps.iter().filter_map(|d| d["name"].as_str()).collect())
-                .unwrap_or_default();
-            id_to_deps.insert(id, dep_names);
-        }
-    }
-
-    // Find root package id
-    let root_id = id_to_name
+) -> Result<()> {
+    let workspace_member_ids: std::collections::HashSet<&str> = metadata
+        .workspace_members
         .iter()
-        .find(|&(_, &name)| name == root_name)
-        .map(|(&id, _)| id);
+        .map(String::as_str)
+        .collect();
+    let packages_by_id: std::collections::HashMap<&str, &CargoMetadataPackage> = metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package))
+        .collect();
+    let workspace_id_by_name: std::collections::HashMap<&str, &str> = metadata
+        .packages
+        .iter()
+        .filter(|package| workspace_member_ids.contains(package.id.as_str()))
+        .map(|package| (package.name.as_str(), package.id.as_str()))
+        .collect();
 
-    let Some(root_id) = root_id else { return };
+    let root_id = workspace_id_by_name
+        .get(root_name)
+        .copied()
+        .ok_or_else(|| eyre!("scope '{root_name}' was missing from workspace dependency metadata"))?;
 
     // BFS over dep graph — only follow workspace members
     let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
     queue.push_back(root_id);
 
     while let Some(pkg_id) = queue.pop_front() {
-        if let Some(&name) = id_to_name.get(pkg_id) {
-            // Check if this is a workspace member
-            if workspace_members.iter().any(|m| m.contains(name)) {
-                result.insert(name.to_string());
-                // Follow its dependencies
-                if let Some(dep_names) = id_to_deps.get(pkg_id) {
-                    for dep_name in dep_names {
-                        if let Some((&dep_id, _)) =
-                            id_to_name.iter().find(|&(_, &n)| n == *dep_name)
-                        {
-                            if workspace_members.iter().any(|m| m.contains(dep_name))
-                                && !result.contains(*dep_name)
-                            {
-                                queue.push_back(dep_id);
-                            }
-                        }
+        if !workspace_member_ids.contains(pkg_id) {
+            continue;
+        }
+
+        let package = packages_by_id.get(pkg_id).ok_or_else(|| {
+            eyre!("workspace dependency metadata omitted package entry for id '{pkg_id}'")
+        })?;
+
+        if result.insert(package.name.clone()) {
+            for dependency in &package.dependencies {
+                if let Some(dep_id) = workspace_id_by_name.get(dependency.name.as_str()) {
+                    if !result.contains(dependency.name.as_str()) {
+                        queue.push_back(dep_id);
                     }
                 }
             }
         }
     }
+
+    Ok(())
 }
 
-fn cargo_metadata<I, S>(args: I, description: &str) -> Result<serde_json::Value>
+fn workspace_package_dirs(
+    metadata: &CargoMetadataDocument,
+    workspace_root: &Path,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut name_to_dir = std::collections::HashMap::new();
+
+    for package in &metadata.packages {
+        let crate_dir = package.manifest_path.parent().ok_or_else(|| {
+            eyre!(
+                "workspace package {} manifest path {} has no parent directory",
+                package.name,
+                package.manifest_path.display()
+            )
+        })?;
+        let relative_dir = crate_dir.strip_prefix(workspace_root).map_err(|_| {
+            eyre!(
+                "workspace package {} manifest {} resolved outside workspace root {}",
+                package.name,
+                package.manifest_path.display(),
+                workspace_root.display()
+            )
+        })?;
+        name_to_dir.insert(
+            package.name.clone(),
+            relative_dir.to_string_lossy().to_string(),
+        );
+    }
+
+    Ok(name_to_dir)
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoMetadataDocument {
+    #[serde(default)]
+    packages: Vec<CargoMetadataPackage>,
+    #[serde(default)]
+    workspace_members: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoMetadataPackage {
+    id: String,
+    name: String,
+    manifest_path: PathBuf,
+    #[serde(default)]
+    dependencies: Vec<CargoMetadataDependency>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoMetadataDependency {
+    name: String,
+}
+
+fn cargo_metadata<I, S, T>(args: I, description: &str) -> Result<T>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
+    T: DeserializeOwned,
 {
     let output = ProcessBuilder::cargo()
         .args(args)
@@ -861,7 +891,7 @@ exit 101
         write_executable_script(
             &bin_dir.join("cargo"),
             r#"#!/bin/sh
-printf '%s\n' '{"packages":[{"name":"sinex-db","manifest_path":"/realm/project/sinex/crate/lib/sinex-db/Cargo.toml"}]}'
+printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0","name":"sinex-db","manifest_path":"/realm/project/sinex/crate/lib/sinex-db/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0"]}'
 "#,
         )?;
 
@@ -874,6 +904,54 @@ printf '%s\n' '{"packages":[{"name":"sinex-db","manifest_path":"/realm/project/s
             error.to_string().contains("missing-crate"),
             "unexpected error: {error:?}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_crate_scope_reports_malformed_package_metadata()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("cargo"),
+            r#"#!/bin/sh
+printf '%s\n' '{"packages":[{"name":"sinex-db"}],"workspace_members":[]}'
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let error =
+            collect_crate_scope("sinex-db").expect_err("malformed metadata should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("workspace package metadata"));
+        assert!(message.contains("cargo metadata JSON"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_crate_scope_reports_manifest_outside_workspace()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir)?;
+        write_executable_script(
+            &bin_dir.join("cargo"),
+            r#"#!/bin/sh
+printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex-db","manifest_path":"/tmp/outside/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///tmp/outside#0.1.0"]}'
+"#,
+        )?;
+
+        let mut env = EnvGuard::new();
+        env.set("PATH", bin_dir.display().to_string());
+
+        let error = collect_crate_scope("sinex-db")
+            .expect_err("workspace path drift should surface");
+        let message = error.to_string();
+        assert!(message.contains("outside workspace root"));
+        assert!(message.contains("/tmp/outside/Cargo.toml"));
         Ok(())
     }
 

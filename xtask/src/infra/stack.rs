@@ -636,6 +636,41 @@ pub fn dir_size(path: &Path) -> DirectorySizeProbe {
     }
 }
 
+fn collect_snapshot_names<I>(dir: &Path, entries: I) -> SnapshotListProbe
+where
+    I: IntoIterator<Item = std::io::Result<std::ffi::OsString>>,
+{
+    let mut snapshots = Vec::new();
+    let mut issues = Vec::new();
+
+    for entry in entries {
+        match entry {
+            Ok(name) => {
+                let name = name.to_string_lossy();
+                if name.ends_with(".tar.zst") {
+                    snapshots.push(name.trim_end_matches(".tar.zst").to_string());
+                } else if name.ends_with(".sql.zst") {
+                    snapshots.push(name.trim_end_matches(".sql.zst").to_string());
+                }
+            }
+            Err(error) => issues.push(format!(
+                "failed to read snapshot entry in {}: {error}",
+                dir.display()
+            )),
+        }
+    }
+
+    snapshots.sort();
+    SnapshotListProbe {
+        snapshots,
+        issue: if issues.is_empty() {
+            None
+        } else {
+            Some(issues.join("; "))
+        },
+    }
+}
+
 // Re-export list_snapshots if needed by commands (it was used in Status)
 // or move it to crate::utils if it's generic enough. It seems specific to stack layout.
 pub struct SnapshotListProbe {
@@ -652,26 +687,10 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
         };
     }
     match fs::read_dir(dir) {
-        Ok(entries) => {
-            let mut snapshots: Vec<String> = entries
-                .filter_map(std::result::Result::ok)
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    if name.ends_with(".tar.zst") {
-                        Some(name.trim_end_matches(".tar.zst").to_string())
-                    } else if name.ends_with(".sql.zst") {
-                        Some(name.trim_end_matches(".sql.zst").to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            snapshots.sort();
-            SnapshotListProbe {
-                snapshots,
-                issue: None,
-            }
-        }
+        Ok(entries) => collect_snapshot_names(
+            dir,
+            entries.map(|entry| entry.map(|entry| entry.file_name())),
+        ),
         Err(error) => SnapshotListProbe {
             snapshots: Vec::new(),
             issue: Some(format!(
@@ -686,10 +705,12 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 mod tests {
     use super::StackConfig;
     use super::{
-        dir_size, list_snapshots, probe_annex_available, require_successful_command,
+        collect_snapshot_names, dir_size, list_snapshots, probe_annex_available,
+        require_successful_command,
         sync_event_payload_schemas_for_database_url,
     };
     use crate::sandbox::prelude::*;
+    use std::ffi::OsString;
     use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
@@ -761,6 +782,27 @@ mod tests {
         let probe = list_snapshots(temp.path());
         assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
         assert!(probe.issue.is_none());
+    }
+
+    #[test]
+    fn collect_snapshot_names_reports_entry_failures_without_dropping_snapshots() {
+        let probe = collect_snapshot_names(
+            Path::new("/tmp/snapshots"),
+            [
+                Ok(OsString::from("b.tar.zst")),
+                Err(std::io::Error::other("entry read failed")),
+                Ok(OsString::from("a.sql.zst")),
+                Ok(OsString::from("ignore.txt")),
+            ],
+        );
+
+        assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
+        assert!(
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("failed to read snapshot entry")
+        );
     }
 
     #[test]

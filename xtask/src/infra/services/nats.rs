@@ -65,10 +65,7 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
 fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Result<Vec<u32>> {
     let output = output.wrap_err("failed to inspect running nats-server processes with pgrep")?;
     match output.status.code() {
-        Some(0) => Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| line.trim().parse().ok())
-            .collect()),
+        Some(0) => parse_nats_pid_lines(&String::from_utf8_lossy(&output.stdout)),
         Some(1) => Ok(Vec::new()),
         _ => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -81,6 +78,21 @@ fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Res
             bail!("pgrep -f nats-server exited unsuccessfully{suffix}");
         }
     }
+}
+
+fn parse_nats_pid_lines(stdout: &str) -> Result<Vec<u32>> {
+    let mut pids = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let pid = trimmed
+            .parse::<u32>()
+            .wrap_err_with(|| format!("pgrep -f nats-server produced invalid PID line {trimmed:?}"))?;
+        pids.push(pid);
+    }
+    Ok(pids)
 }
 
 /// Check if a process has been running longer than the given threshold (in seconds).
@@ -132,8 +144,17 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
     false
 }
 
-fn parse_listener_port(listener: &str) -> Option<u16> {
-    listener.rsplit(':').next()?.parse::<u16>().ok()
+fn parse_listener_port(listener: &str) -> Result<u16> {
+    if !listener.contains(':') {
+        bail!("missing port separator in listener {listener:?}");
+    }
+    let raw_port = listener
+        .rsplit(':')
+        .next()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing port separator in listener {listener:?}"))?;
+    raw_port
+        .parse::<u16>()
+        .wrap_err_with(|| format!("failed to parse NATS listener port from {listener:?}"))
 }
 
 /// Parse ps etime format: [[DD-]HH:]MM:SS -> seconds
@@ -476,13 +497,24 @@ fn listener_port_for_pid_probe(
     }
 
     let pid_marker = format!("pid={pid}");
-    Ok(String::from_utf8_lossy(&output.stdout)
+    let matching_line = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter(|line| line.contains("LISTEN"))
         .filter(|line| line.contains("nats-server"))
         .find(|line| line.contains(&pid_marker))
-        .and_then(|line| line.split_whitespace().nth(3))
-        .and_then(parse_listener_port))
+        .map(str::to_owned);
+
+    let Some(matching_line) = matching_line else {
+        return Ok(None);
+    };
+
+    let listener = matching_line
+        .split_whitespace()
+        .nth(3)
+        .ok_or_else(|| color_eyre::eyre::eyre!(
+            "ss -ltnp produced malformed listener row for NATS pid {pid}: {matching_line}"
+        ))?;
+    Ok(Some(parse_listener_port(listener)?))
 }
 
 #[cfg(test)]
@@ -502,16 +534,19 @@ mod tests {
 
     #[sinex_test]
     async fn parses_ipv4_and_wildcard_listener_ports() -> TestResult<()> {
-        assert_eq!(parse_listener_port("*:4321"), Some(4321));
-        assert_eq!(parse_listener_port("127.0.0.1:4250"), Some(4250));
-        assert_eq!(parse_listener_port("[::]:4222"), Some(4222));
+        assert_eq!(parse_listener_port("*:4321")?, 4321);
+        assert_eq!(parse_listener_port("127.0.0.1:4250")?, 4250);
+        assert_eq!(parse_listener_port("[::]:4222")?, 4222);
         Ok(())
     }
 
     #[sinex_test]
     async fn rejects_non_numeric_listener_ports() -> TestResult<()> {
-        assert_eq!(parse_listener_port("*"), None);
-        assert_eq!(parse_listener_port("localhost:http"), None);
+        let missing_separator = parse_listener_port("*").unwrap_err();
+        assert!(format!("{missing_separator:#}").contains("missing port separator"));
+
+        let invalid_port = parse_listener_port("localhost:http").unwrap_err();
+        assert!(format!("{invalid_port:#}").contains("failed to parse NATS listener port"));
         Ok(())
     }
 
@@ -565,6 +600,26 @@ LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=
     }
 
     #[sinex_test]
+    async fn listener_port_for_pid_probe_reports_malformed_listener_rows() -> TestResult<()> {
+        let error = listener_port_for_pid_probe(
+            123,
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: br#"State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid=123,fd=7))
+"#
+                .to_vec(),
+                stderr: Vec::new(),
+            }),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("missing port separator"));
+        assert!(message.contains("malformed-listener"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn parse_nats_pgrep_output_reports_spawn_failures() -> TestResult<()> {
         let error = parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
         let message = format!("{error:#}");
@@ -585,6 +640,25 @@ LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=
                 stderr: Vec::new(),
             }))?;
             assert!(pids.is_empty());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_invalid_pid_lines() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"123\nnot-a-pid\n".to_vec(),
+                stderr: Vec::new(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("produced invalid PID line"));
+            assert!(message.contains("not-a-pid"));
         }
         Ok(())
     }

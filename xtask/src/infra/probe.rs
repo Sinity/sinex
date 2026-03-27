@@ -37,13 +37,6 @@ impl NatsProbe {
 }
 
 #[must_use]
-pub fn current_nats_port() -> u16 {
-    StackConfig::for_current_checkout()
-        .map(|config| config.nats.port)
-        .unwrap_or(4222)
-}
-
-#[must_use]
 pub fn probe_postgres() -> PostgresProbe {
     let start = Instant::now();
     let config = match StackConfig::for_current_checkout() {
@@ -102,22 +95,14 @@ pub fn probe_nats() -> NatsProbe {
     let port = config.nats.port;
     let manager = NatsManager::new(config.to_shared_nats());
     let running = manager.is_running();
-    let reachable = TcpStream::connect_timeout(
+    let reachability = TcpStream::connect_timeout(
         &SocketAddr::from(([127, 0, 0, 1], port)),
         Duration::from_millis(500),
-    )
-    .is_ok();
+    );
+    let reachable = reachability.is_ok();
+    let reachability_issue = reachability.err().map(|error| error.to_string());
     let latency_ms = start.elapsed().as_millis() as u64;
-    let message = match (running, reachable) {
-        (true, true) => None,
-        (true, false) => Some(format!(
-            "nats-server PID is tracked but port {port} is not accepting connections"
-        )),
-        (false, true) => Some(format!(
-            "NATS is reachable on port {port}, but no managed nats-server PID is tracked"
-        )),
-        (false, false) => Some(format!("NATS is not reachable on port {port}")),
-    };
+    let message = nats_probe_message(running, reachable, port, reachability_issue.as_deref());
 
     NatsProbe {
         running,
@@ -125,5 +110,58 @@ pub fn probe_nats() -> NatsProbe {
         latency_ms,
         port,
         message,
+    }
+}
+
+fn nats_probe_message(
+    running: bool,
+    reachable: bool,
+    port: u16,
+    reachability_issue: Option<&str>,
+) -> Option<String> {
+    match (running, reachable) {
+        (true, true) => None,
+        (true, false) => Some(match reachability_issue {
+            Some(issue) => format!(
+                "nats-server PID is tracked but port {port} is not accepting connections: {issue}"
+            ),
+            None => format!("nats-server PID is tracked but port {port} is not accepting connections"),
+        }),
+        (false, true) => Some(format!(
+            "NATS is reachable on port {port}, but no managed nats-server PID is tracked"
+        )),
+        (false, false) => Some(match reachability_issue {
+            Some(issue) => format!("NATS is not reachable on port {port}: {issue}"),
+            None => format!("NATS is not reachable on port {port}"),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn nats_probe_message_includes_connect_error_for_unreachable_port() -> TestResult<()> {
+        let message =
+            nats_probe_message(false, false, 4222, Some("Connection refused (os error 111)"));
+
+        assert_eq!(
+            message.as_deref(),
+            Some("NATS is not reachable on port 4222: Connection refused (os error 111)")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nats_probe_message_preserves_pid_drift_signal() -> TestResult<()> {
+        let message = nats_probe_message(false, true, 4222, None);
+
+        assert_eq!(
+            message.as_deref(),
+            Some("NATS is reachable on port 4222, but no managed nats-server PID is tracked")
+        );
+        Ok(())
     }
 }

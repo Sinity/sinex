@@ -15,19 +15,8 @@ pub struct ToolInfo {
     pub path: PathBuf,
     /// Version string (from --version or similar)
     pub version: String,
-    /// Whether the tool is available and functional
-    pub is_available: bool,
-}
-
-impl ToolInfo {
-    /// Create a new `ToolInfo` for an unavailable tool
-    pub(crate) fn unavailable(name: &str) -> Self {
-        Self {
-            path: PathBuf::from(name),
-            version: String::from("not found"),
-            is_available: false,
-        }
-    }
+    /// Additional probe detail when the binary exists but validation was incomplete
+    pub probe_issue: Option<String>,
 }
 
 /// Manages detection and validation of external tools
@@ -47,20 +36,22 @@ impl ToolManager {
     /// ```ignore
     /// use xtask::tools::ToolManager;
     /// let info = ToolManager::check_tool("cargo").unwrap();
-    /// assert!(info.is_available);
+    /// assert!(info.probe_issue.is_none());
     /// ```
     pub(crate) fn check_tool(name: &str) -> Result<ToolInfo> {
         // Try to find tool in PATH using which crate
         let path = which(name).with_context(|| format!("Tool '{name}' not found in PATH"))?;
 
         // Get version by running --version
-        let version =
-            Self::get_tool_version(name, &path).unwrap_or_else(|_| String::from("unknown"));
+        let (version, probe_issue) = match Self::get_tool_version(name, &path) {
+            Ok(version) => (version, None),
+            Err(error) => (String::from("unknown"), Some(error.to_string())),
+        };
 
         Ok(ToolInfo {
             path,
             version,
-            is_available: true,
+            probe_issue,
         })
     }
 
@@ -173,13 +164,31 @@ impl ToolManager {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use ::xtask::sandbox::EnvGuard;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_executable_script(
+        path: &std::path::Path,
+        body: &str,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        fs::write(path, body)?;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_unavailable_tool_info() -> TestResult<()> {
-        let info = ToolInfo::unavailable("missing-tool");
-        assert!(!info.is_available);
+        let info = ToolInfo {
+            path: PathBuf::from("missing-tool"),
+            version: String::from("not found"),
+            probe_issue: None,
+        };
         assert_eq!(info.version, "not found");
         assert_eq!(info.path, PathBuf::from("missing-tool"));
+        assert!(info.probe_issue.is_none());
         Ok(())
     }
 
@@ -189,9 +198,9 @@ mod tests {
         let result = ToolManager::check_tool("cargo");
         assert!(result.is_ok());
         let info = result?;
-        assert!(info.is_available);
         assert!(info.path.exists());
         assert!(!info.version.is_empty());
+        assert!(info.probe_issue.is_none());
         Ok(())
     }
 
@@ -211,6 +220,28 @@ mod tests {
         let info = result?;
         assert!(!info.version.is_empty());
         assert!(!info.version.contains("unknown"));
+        assert!(info.probe_issue.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_tool_preserves_version_probe_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let tool_path = temp.path().join("broken-tool");
+        write_executable_script(&tool_path, "#!/bin/sh\nexit 7\n")?;
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        let combined_path = format!("{}:{original_path}", temp.path().display());
+        let mut env = EnvGuard::new();
+        env.set("PATH", combined_path);
+
+        let info = ToolManager::check_tool("broken-tool")?;
+        assert_eq!(info.version, "unknown");
+        assert!(
+            info.probe_issue
+                .as_deref()
+                .is_some_and(|message| message.contains("--version"))
+        );
         Ok(())
     }
 

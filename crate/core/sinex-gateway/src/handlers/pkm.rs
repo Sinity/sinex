@@ -2,9 +2,13 @@
 
 use super::rpc_handlers::{RpcParams, decode_note_content, validate_entity_link_ids, validate_entity_name};
 use crate::rpc_server::RpcAuthContext;
-use color_eyre::eyre::{Context, ContextCompat, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
-use sinex_primitives::{Event, Id, JsonValue, domain::Entity};
+use sinex_primitives::rpc::pkm::{
+    CreateEntitiesRequest, CreateEntitiesResponse, CreateNoteRequest, CreateNoteResponse,
+    LinkEntitiesRequest, LinkEntitiesResponse,
+};
+use sinex_primitives::{Event, Id, JsonValue, domain::EntityRelation};
 use sinex_services::PkmService;
 
 pub async fn handle_create_note(
@@ -12,26 +16,19 @@ pub async fn handle_create_note(
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let event_id = Id::<Event<JsonValue>>::from_uuid(params.require_uuid("event_id")?);
-    let content_b64 = params.require_str("content").wrap_err("Missing content")?;
-
-    let content = decode_note_content(content_b64)?;
-
-    let tags = params
+    RpcParams::new(&params)
         .optional_array("tags")
-        ?
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|value| value.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+        .wrap_err("invalid `tags` parameter")?;
+    let request: CreateNoteRequest =
+        serde_json::from_value(params).wrap_err("invalid `pkm.create_note` request")?;
+    let content = decode_note_content(&request.content)?;
 
     let annotation_id = service
-        .create_note(event_id, &content, tags, auth.actor_id(), None)
+        .create_note(request.event_id, &content, request.tags, auth.actor_id(), None)
         .await?;
-    Ok(json!({ "annotation_id": annotation_id.to_string() }))
+    Ok(serde_json::to_value(CreateNoteResponse {
+        annotation_id: Id::<Event<JsonValue>>::from_uuid(annotation_id),
+    })?)
 }
 
 pub async fn handle_create_entities(
@@ -39,65 +36,58 @@ pub async fn handle_create_entities(
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let source_material_id = params.require_uuid("source_material_id")?;
-
-    let entities = params
+    RpcParams::new(&params)
         .optional_array("entities")
-        ?
-        .map(|arr| {
-            arr.iter()
-                .map(|value| {
-                    let name = value
-                        .get("name")
-                        .and_then(|field| field.as_str())
-                        .wrap_err("Missing entity name")?;
-                    validate_entity_name(name)?;
-                    let entity_type = value
-                        .get("type")
-                        .and_then(|field| field.as_str())
-                        .wrap_err("Missing entity type")?;
-                    Ok((name.to_string(), entity_type.to_string()))
-                })
-                .collect::<Result<Vec<_>>>()
+        .wrap_err("invalid `entities` parameter")?;
+    let request: CreateEntitiesRequest =
+        serde_json::from_value(params).wrap_err("invalid `pkm.create_entities` request")?;
+    let entities = request
+        .entities
+        .iter()
+        .map(|entity| {
+            validate_entity_name(&entity.name)?;
+            Ok((entity.name.clone(), entity.entity_type.to_string()))
         })
-        .transpose()?
-        .unwrap_or_default();
+        .collect::<Result<Vec<_>>>()?;
 
     let entity_ids = service
-        .create_entities_from_source_material(source_material_id, entities, auth.actor_id())
+        .create_entities_from_source_material(
+            *request.source_material_id.as_uuid(),
+            entities,
+            auth.actor_id(),
+        )
         .await?;
-    Ok(
-        json!({ "entity_ids": entity_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>() }),
-    )
+    Ok(serde_json::to_value(CreateEntitiesResponse {
+        entity_ids: entity_ids.into_iter().map(Id::from_uuid).collect(),
+    })?)
 }
 
 pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let from_entity_id = Id::<Entity>::from_uuid(params.require_uuid("from_entity_id")?);
-    let to_entity_id = Id::<Entity>::from_uuid(params.require_uuid("to_entity_id")?);
-    validate_entity_link_ids(&from_entity_id, &to_entity_id)?;
-
-    let relationship_type = params.require_str("relationship_type")?;
-    let properties = params
-        .optional_object("properties")
-        ?
-        .map(|obj| {
-            obj.iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
+    RpcParams::new(&params)
+        .optional_object("metadata")
+        .wrap_err("invalid `metadata` parameter")?;
+    let request: LinkEntitiesRequest =
+        serde_json::from_value(params).wrap_err("invalid `pkm.link_entities` request")?;
+    validate_entity_link_ids(&request.from_entity_id, &request.to_entity_id)?;
+    let metadata = request.metadata.unwrap_or_else(|| json!({}));
+    let properties = metadata
+        .as_object()
+        .ok_or_else(|| eyre!("metadata must be an object"))?
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
 
     let relation_id = service
         .link_entities(
-            from_entity_id,
-            to_entity_id,
-            relationship_type,
+            request.from_entity_id,
+            request.to_entity_id,
+            &request.relation_type.to_string(),
             properties,
-            None,
+            request.source_material_id.map(|id| *id.as_uuid()),
         )
         .await?;
 
-    Ok(json!({ "relation_id": relation_id.to_string() }))
+    Ok(serde_json::to_value(LinkEntitiesResponse {
+        relation_id: Id::<EntityRelation>::from_uuid(relation_id),
+    })?)
 }

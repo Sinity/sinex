@@ -5,7 +5,9 @@ use sinex_gateway::{
     rpc_server::RpcAuthContext,
 };
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::knowledge_graph::CreateEntity;
 use sinex_services::PkmService;
+use sinex_primitives::rpc::pkm::{CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse};
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
 use xtask::sandbox::prelude::*;
 
@@ -77,14 +79,14 @@ async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> Tes
         serde_json::json!({
             "from_entity_id": Uuid::now_v7(),
             "to_entity_id": Uuid::now_v7(),
-            "relationship_type": "related_to",
-            "properties": ["not-an-object"]
+            "relation_type": "related_to",
+            "metadata": ["not-an-object"]
         }),
     )
     .await
     .expect_err("malformed relation properties must fail");
 
-    assert!(error.to_string().contains("properties"));
+    assert!(error.to_string().contains("metadata"));
     Ok(())
 }
 
@@ -117,10 +119,8 @@ async fn pkm_create_note_uses_authenticated_actor_over_payload_created_by(
         &auth,
     )
     .await?;
-    let annotation_id = response["annotation_id"]
-        .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("annotation_id missing from response"))?
-        .parse::<Uuid>()?;
+    let response: CreateNoteResponse = serde_json::from_value(response)?;
+    let annotation_id = *response.annotation_id.as_uuid();
 
     let annotations = ctx.pool().events().get_annotations(event_id).await?;
     let annotation = annotations
@@ -146,16 +146,14 @@ async fn pkm_create_entities_uses_authenticated_actor_over_payload_created_by(
         &service,
         serde_json::json!({
             "source_material_id": material_id.as_uuid(),
-            "entities": [{ "name": "Sinex", "type": "project" }],
+            "entities": [{ "name": "Sinex", "entity_type": "project" }],
             "created_by": "forged-payload-user"
         }),
         &auth,
     )
     .await?;
-    let entity_id = response["entity_ids"][0]
-        .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("entity_ids missing from response"))?
-        .parse::<Uuid>()?;
+    let response: CreateEntitiesResponse = serde_json::from_value(response)?;
+    let entity_id = *response.entity_ids[0].as_uuid();
 
     let entity = ctx
         .pool()
@@ -165,5 +163,54 @@ async fn pkm_create_entities_uses_authenticated_actor_over_payload_created_by(
         .ok_or_else(|| color_eyre::eyre::eyre!("created entity missing from database"))?;
 
     assert_eq!(entity.properties["created_by"].as_str(), Some(auth.actor_id()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = PkmService::new(ctx.pool().clone());
+    let material_id = ctx.create_source_material(Some("pkm-link-source-material")).await?;
+    let from = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(CreateEntity::project("Sinex"))
+        .await?;
+    let to = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(CreateEntity::tool("Codex"))
+        .await?;
+
+    let response = handle_link_entities(
+        &service,
+        serde_json::json!({
+            "from_entity_id": from.id,
+            "to_entity_id": to.id,
+            "relation_type": "uses",
+            "metadata": { "note": "operator supplied" },
+            "source_material_id": material_id,
+        }),
+    )
+    .await?;
+    let response: LinkEntitiesResponse = serde_json::from_value(response)?;
+
+    let relations = ctx
+        .pool()
+        .knowledge_graph()
+        .get_entity_relations(from.id, Some("uses"), true)
+        .await?;
+    let relation = relations
+        .into_iter()
+        .find(|relation| relation.id == response.relation_id)
+        .ok_or_else(|| color_eyre::eyre::eyre!("created relation missing from database"))?;
+
+    assert_eq!(relation.properties["note"].as_str(), Some("operator supplied"));
+    let expected_source_material_id = material_id.to_string();
+    assert_eq!(
+        relation.properties["_system_metadata"]["source_material_id"].as_str(),
+        Some(expected_source_material_id.as_str())
+    );
     Ok(())
 }

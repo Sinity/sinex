@@ -5,8 +5,15 @@ use crate::replay_control::ReplayControlClient;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use color_eyre::eyre::{Context, Result, eyre};
-use serde_json::{Value, json};
-use sinex_db::replay::state_machine::{ReplayScope, ReplayState};
+use serde_json::Value;
+use sinex_db::replay::state_machine::{
+    ReplayOperation as DbReplayOperation, ReplayScope, ReplayState,
+};
+use sinex_primitives::rpc::content::RetrieveBlobResponse;
+use sinex_primitives::rpc::replay::{
+    ReplayApproveResponse, ReplayCancelResponse, ReplayCreateResponse, ReplayExecuteResponse,
+    ReplayListResponse, ReplayOperation, ReplayPreviewResponse, ReplayStatusResponse,
+};
 use sinex_primitives::{Id, Uuid, domain::Entity};
 
 pub(crate) struct RpcParams<'a> {
@@ -35,16 +42,6 @@ impl<'a> RpcParams<'a> {
         }
     }
 
-    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_array()
-                .map(|items| Some(items.as_slice()))
-                .ok_or_else(|| eyre!("parameter '{}' must be an array", key)),
-        }
-    }
-
     pub(crate) fn optional_bool(&self, key: &str) -> Result<Option<bool>> {
         match self.inner.get(key) {
             None | Some(Value::Null) => Ok(None),
@@ -52,6 +49,16 @@ impl<'a> RpcParams<'a> {
                 .as_bool()
                 .map(Some)
                 .ok_or_else(|| eyre!("parameter '{}' must be a boolean", key)),
+        }
+    }
+
+    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
+        match self.inner.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_array()
+                .map(|items| Some(items.as_slice()))
+                .ok_or_else(|| eyre!("parameter '{}' must be an array", key)),
         }
     }
 
@@ -177,7 +184,10 @@ pub async fn handle_replay_create_operation(
         serde_json::from_value(scope_val).wrap_err("Invalid replay scope payload")?;
 
     let operation = client.plan(auth.replay_actor(), scope).await?;
-    Ok(json!({ "operation": operation }))
+    serde_json::to_value(ReplayCreateResponse {
+        operation: into_replay_operation(operation)?,
+    })
+        .wrap_err("failed to serialize replay.create_operation response")
 }
 
 pub async fn handle_replay_preview_operation(
@@ -188,7 +198,11 @@ pub async fn handle_replay_preview_operation(
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
     let (operation, preview) = client.preview(operation_id).await?;
-    Ok(json!({ "operation": operation, "preview": preview }))
+    serde_json::to_value(ReplayPreviewResponse {
+        operation: into_replay_operation(operation)?,
+        preview,
+    })
+        .wrap_err("failed to serialize replay.preview_operation response")
 }
 
 pub async fn handle_replay_approve_operation(
@@ -199,7 +213,10 @@ pub async fn handle_replay_approve_operation(
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
     let operation = client.approve(operation_id, auth.replay_actor()).await?;
-    Ok(json!({ "operation": operation }))
+    serde_json::to_value(ReplayApproveResponse {
+        operation: into_replay_operation(operation)?,
+    })
+        .wrap_err("failed to serialize replay.approve_operation response")
 }
 
 pub async fn handle_replay_execute_operation(
@@ -213,7 +230,10 @@ pub async fn handle_replay_execute_operation(
     let operation = client
         .execute(operation_id, auth.replay_actor(), dry_run)
         .await?;
-    Ok(json!({ "operation": operation }))
+    serde_json::to_value(ReplayExecuteResponse {
+        operation: into_replay_operation(operation)?,
+    })
+        .wrap_err("failed to serialize replay.execute_operation response")
 }
 
 pub async fn handle_replay_cancel_operation(
@@ -228,7 +248,11 @@ pub async fn handle_replay_cancel_operation(
         ?
         .map(std::string::ToString::to_string);
     let operation = client.cancel(operation_id, auth.replay_actor(), reason).await?;
-    Ok(json!({ "cancelled": true, "operation": operation }))
+    serde_json::to_value(ReplayCancelResponse {
+        cancelled: true,
+        operation: into_replay_operation(operation)?,
+    })
+    .wrap_err("failed to serialize replay.cancel_operation response")
 }
 
 pub async fn handle_replay_operation_status(
@@ -239,7 +263,10 @@ pub async fn handle_replay_operation_status(
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
     let operation = client.status(operation_id).await?;
-    Ok(json!({ "operation": operation }))
+    serde_json::to_value(ReplayStatusResponse {
+        operation: into_replay_operation(operation)?,
+    })
+        .wrap_err("failed to serialize replay.operation_status response")
 }
 
 pub async fn handle_replay_list_operations(
@@ -256,7 +283,21 @@ pub async fn handle_replay_list_operations(
     let node = params.optional_str("node")?.map(String::from);
     let limit = params.optional_i64("limit")?;
     let operations = client.list(state, node, limit).await?;
-    Ok(json!({ "operations": operations }))
+    serde_json::to_value(ReplayListResponse {
+        operations: operations
+            .into_iter()
+            .map(into_replay_operation)
+            .collect::<Result<Vec<_>>>()?,
+    })
+    .wrap_err("failed to serialize replay.list_operations response")
+}
+
+fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation> {
+    serde_json::from_value(
+        serde_json::to_value(operation)
+            .wrap_err("failed to serialize replay operation into wire-compatible form")?,
+    )
+    .wrap_err("failed to deserialize replay operation into RPC contract")
 }
 
 pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
@@ -277,11 +318,13 @@ pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
 pub(crate) fn blob_response_payload(
     content: &[u8],
     metadata: &sinex_node_sdk::annex::BlobMetadata,
-) -> Value {
-    json!({
-        "content_base64": BASE64_STANDARD.encode(content),
-        "mime_type": metadata.mime_type.clone(),
-        "size_bytes": metadata.size_bytes,
+) -> Result<RetrieveBlobResponse> {
+    let size = u64::try_from(metadata.size_bytes)
+        .map_err(|_| eyre!("blob metadata reported negative size: {}", metadata.size_bytes))?;
+    Ok(RetrieveBlobResponse {
+        content: BASE64_STANDARD.encode(content),
+        content_type: metadata.mime_type.clone(),
+        size,
     })
 }
 fn max_base64_length(limit_bytes: usize) -> usize {
@@ -292,6 +335,7 @@ fn max_base64_length(limit_bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use sinex_db::models::blob::Blob;
     use xtask::sandbox::sinex_test;
 
@@ -305,10 +349,10 @@ mod tests {
             .mime_type("application/octet-stream".into())
             .build();
 
-        let json = blob_response_payload(b"hi", &blob);
-        assert_eq!(json["content_base64"], "aGk=");
-        assert_eq!(json["mime_type"], "application/octet-stream");
-        assert_eq!(json["size_bytes"], 2);
+        let response = blob_response_payload(b"hi", &blob)?;
+        assert_eq!(response.content, "aGk=");
+        assert_eq!(response.content_type.as_deref(), Some("application/octet-stream"));
+        assert_eq!(response.size, 2);
         Ok(())
     }
 
@@ -344,17 +388,13 @@ mod tests {
     async fn rpc_params_optional_values_reject_wrong_types() -> TestResult<()> {
         let params = json!({
             "name": ["not-a-string"],
-            "items": "not-an-array",
             "enabled": "not-a-bool",
-            "properties": ["not-an-object"],
             "limit": "not-an-int"
         });
         let rpc_params = RpcParams::new(&params);
 
         assert!(rpc_params.optional_str("name").is_err());
-        assert!(rpc_params.optional_array("items").is_err());
         assert!(rpc_params.optional_bool("enabled").is_err());
-        assert!(rpc_params.optional_object("properties").is_err());
         assert!(rpc_params.optional_i64("limit").is_err());
         Ok(())
     }

@@ -21,6 +21,7 @@ use serde::Serialize;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use std::any::Any;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusCommand {
@@ -563,21 +564,10 @@ fn probe_git_state(cwd: &Path) -> GitState {
         &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
     )
     .map_or((0, 0), |output| {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = text.trim().split('\t').collect();
-        if parts.len() == 2 {
-            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-        } else {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-                format!("unexpected output: {}", text.trim()),
-            );
-            (0, 0)
-        }
+        parse_git_upstream_counts(&String::from_utf8_lossy(&output.stdout), &mut probe_issues)
     });
 
-    let commit = run_git_output(cwd, &mut probe_issues, &["log", "-1", "--format=%h\t%s\t%cr"])
+    let commit = run_git_output(cwd, &mut probe_issues, &["log", "-1", "--format=%h\t%s\t%ct"])
         .and_then(|output| {
             let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let parts: Vec<&str> = text.splitn(3, '\t').collect();
@@ -612,7 +602,25 @@ fn probe_git_state(cwd: &Path) -> GitState {
             (!shortstat.is_empty()).then_some(shortstat)
         });
 
-    let last_age = commit.as_ref().and_then(|(_, _, age)| parse_git_age(age));
+    let now_unix_ts = current_unix_timestamp_secs();
+    let last_age = commit.as_ref().and_then(|(_, _, commit_unix_ts)| match now_unix_ts {
+        Some(now_unix_ts) => parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["log", "-1", "--format=%h\t%s\t%ct"],
+                format!("unexpected commit timestamp: {commit_unix_ts}"),
+            );
+            None
+        }),
+        None => {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["log", "-1", "--format=%h\t%s\t%ct"],
+                "system clock is before the Unix epoch".to_string(),
+            );
+            None
+        }
+    });
     let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
     let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
 
@@ -963,31 +971,55 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     })
 }
 
-/// Parse git's relative age string (e.g. "32 minutes ago", "2 hours ago") into minutes.
-fn parse_git_age(age: &str) -> Option<i64> {
-    let parts: Vec<&str> = age.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
+fn current_unix_timestamp_secs() -> Option<i64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+}
+
+/// Parse a git commit timestamp (`%ct`) into a relative age in minutes.
+fn parse_git_commit_age_mins(commit_unix_ts: &str, now_unix_ts: i64) -> Option<i64> {
+    let commit_unix_ts = commit_unix_ts.parse::<i64>().ok()?;
+    Some((now_unix_ts - commit_unix_ts).max(0) / 60)
+}
+
+fn parse_git_upstream_counts(output: &str, probe_issues: &mut Vec<String>) -> (u32, u32) {
+    let trimmed = output.trim();
+    let parts: Vec<&str> = trimmed.split('\t').collect();
+    if parts.len() != 2 {
+        record_git_probe_issue(
+            probe_issues,
+            &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+            format!("unexpected output: {trimmed}"),
+        );
+        return (0, 0);
     }
-    let n: i64 = parts[0].parse().ok()?;
-    let unit = parts[1];
-    Some(if unit.starts_with("second") {
-        0
-    } else if unit.starts_with("minute") {
-        n
-    } else if unit.starts_with("hour") {
-        n * 60
-    } else if unit.starts_with("day") {
-        n * 60 * 24
-    } else if unit.starts_with("week") {
-        n * 60 * 24 * 7
-    } else if unit.starts_with("month") {
-        n * 60 * 24 * 30
-    } else if unit.starts_with("year") {
-        n * 60 * 24 * 365
-    } else {
-        return None;
-    })
+
+    let ahead = match parts[0].parse::<u32>() {
+        Ok(value) => value,
+        Err(error) => {
+            record_git_probe_issue(
+                probe_issues,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                format!("invalid ahead count `{}`: {error}", parts[0]),
+            );
+            return (0, 0);
+        }
+    };
+    let behind = match parts[1].parse::<u32>() {
+        Ok(value) => value,
+        Err(error) => {
+            record_git_probe_issue(
+                probe_issues,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                format!("invalid behind count `{}`: {error}", parts[1]),
+            );
+            return (0, 0);
+        }
+    };
+
+    (ahead, behind)
 }
 
 // ─── Summary / Compact execution ────────────────────────────────────────────
@@ -2769,6 +2801,28 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_parse_git_upstream_counts_accepts_valid_counts(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let mut probe_issues = Vec::new();
+
+        assert_eq!(parse_git_upstream_counts("2\t7\n", &mut probe_issues), (2, 7));
+        assert!(probe_issues.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_git_upstream_counts_reports_invalid_numbers(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let mut probe_issues = Vec::new();
+
+        assert_eq!(parse_git_upstream_counts("2\tnope", &mut probe_issues), (0, 0));
+        let message = probe_issues.join("; ");
+        assert!(message.contains("git rev-list --left-right --count HEAD...@{u} failed"));
+        assert!(message.contains("invalid behind count `nope`"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
         let stopped = ServiceStatus {
             name: "sinex-ingestd".into(),
@@ -2809,14 +2863,16 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_git_age() -> ::xtask::sandbox::TestResult<()> {
-        assert_eq!(parse_git_age("5 seconds ago"), Some(0));
-        assert_eq!(parse_git_age("32 minutes ago"), Some(32));
-        assert_eq!(parse_git_age("2 hours ago"), Some(120));
-        assert_eq!(parse_git_age("1 day ago"), Some(60 * 24));
-        assert_eq!(parse_git_age("3 weeks ago"), Some(60 * 24 * 7 * 3));
-        assert_eq!(parse_git_age(""), None);
-        assert_eq!(parse_git_age("garbage"), None);
+    async fn test_parse_git_commit_age_mins() -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(parse_git_commit_age_mins("100", 100), Some(0));
+        assert_eq!(parse_git_commit_age_mins("40", 100), Some(1));
+        assert_eq!(
+            parse_git_commit_age_mins("0", 60 * 60 * 24 * 3),
+            Some(60 * 24 * 3)
+        );
+        assert_eq!(parse_git_commit_age_mins("200", 100), Some(0));
+        assert_eq!(parse_git_commit_age_mins("", 100), None);
+        assert_eq!(parse_git_commit_age_mins("garbage", 100), None);
         Ok(())
     }
 }

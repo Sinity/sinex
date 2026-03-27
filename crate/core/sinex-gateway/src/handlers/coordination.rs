@@ -2,10 +2,10 @@
 
 use super::rpc_handlers::RpcParams;
 use color_eyre::eyre::{Result, eyre};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::rpc::coordination::{
-    InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
+    GetLeaderResponse, InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
 };
 use sinex_primitives::{
     domain::{HostName, InstanceId, NodeType},
@@ -28,11 +28,13 @@ pub async fn handle_coordination_list_instances(
     _params: Value,
 ) -> Result<Value> {
     let instances = kv_client.list_instances().await?;
-    let leader = kv_client.get_leader().await?.unwrap_or_default();
+    let leader = kv_client.get_leader().await?;
 
     let instance_infos: Vec<InstanceInfo> = instances
         .iter()
-        .map(|meta| metadata_to_instance_info(meta, meta.instance_id == leader))
+        .map(|meta| {
+            metadata_to_instance_info(meta, leader.as_deref() == Some(meta.instance_id.as_str()))
+        })
         .collect();
 
     Ok(serde_json::to_value(ListInstancesResponse {
@@ -44,8 +46,18 @@ pub async fn handle_coordination_get_leader(
     kv_client: &CoordinationKvClient,
     _params: Value,
 ) -> Result<Value> {
-    let leader = kv_client.get_leader().await?;
-    Ok(json!({ "leader": leader }))
+    let leader = match kv_client.get_leader().await? {
+        Some(instance_id) => {
+            let metadata = kv_client
+                .get_instance(&instance_id)
+                .await?
+                .ok_or_else(|| eyre!("Leader metadata missing for instance: {instance_id}"))?;
+            Some(metadata_to_instance_info(&metadata, true))
+        }
+        None => None,
+    };
+
+    Ok(serde_json::to_value(GetLeaderResponse { leader })?)
 }
 
 pub async fn handle_coordination_instance_health(
@@ -56,7 +68,7 @@ pub async fn handle_coordination_instance_health(
     let instance_id = params.require_str("instance_id")?;
 
     let metadata = kv_client.get_instance(instance_id).await?;
-    let leader = kv_client.get_leader().await?.unwrap_or_default();
+    let leader = kv_client.get_leader().await?;
 
     match metadata {
         Some(meta) => {
@@ -64,7 +76,7 @@ pub async fn handle_coordination_instance_health(
             let heartbeat_age_secs = now - meta.last_heartbeat;
             let is_healthy =
                 heartbeat_age_secs < kv_client.instance_stale_timeout().as_secs() as i64;
-            let is_leader = meta.instance_id == leader;
+            let is_leader = leader.as_deref() == Some(meta.instance_id.as_str());
 
             Ok(serde_json::to_value(InstanceHealthResponse {
                 instance: metadata_to_instance_info(&meta, is_leader),

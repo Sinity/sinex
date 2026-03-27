@@ -12,7 +12,7 @@ use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, timeout};
@@ -273,6 +273,34 @@ impl ConsumerStats {
 }
 
 impl JetStreamConsumer {
+    fn log_observer_error(metric: &'static str, error: &sinex_node_sdk::SelfObservationError) {
+        warn!(metric, error = %error, "Failed to emit ingestd telemetry");
+    }
+
+    async fn emit_observer_gauge(
+        &self,
+        metric: &'static str,
+        value: f64,
+        labels: Option<HashMap<String, String>>,
+    ) {
+        if let Some(ref observer) = self.observer
+            && let Err(error) = observer.emit_gauge(metric, value, labels).await
+        {
+            Self::log_observer_error(metric, &error);
+        }
+    }
+
+    fn require_inserted_ids(
+        inserted_ids: Option<Vec<Uuid>>,
+        attempted_rows: usize,
+    ) -> IngestdResult<Vec<Uuid>> {
+        inserted_ids.ok_or_else(|| {
+            SinexError::invalid_state(format!(
+                "Event repository omitted inserted_ids for a non-empty stream batch of {attempted_rows} row(s)"
+            ))
+        })
+    }
+
     pub fn new(
         nats_client: NatsClient,
         pool: DbPool,
@@ -570,17 +598,17 @@ impl JetStreamConsumer {
                     self.check_stream_capacity(&stream_name).await;
                 }
                 _ = lag_check_interval.tick() => {
-                    if let Some(ref observer) = self.observer {
+                    if self.observer.is_some() {
                         match lag_consumer.info().await {
                             Ok(info) => {
-                                let mut labels = std::collections::HashMap::new();
+                                let mut labels = HashMap::new();
                                 labels.insert("consumer".to_string(), self.topology.consumer_durable.clone());
-                                let _ = observer.emit_gauge(
+                                self.emit_observer_gauge(
                                     "ingestd.consumer.lag.pending",
                                     info.num_pending as f64,
                                     Some(labels.clone()),
                                 ).await;
-                                let _ = observer.emit_gauge(
+                                self.emit_observer_gauge(
                                     "ingestd.consumer.lag.ack_pending",
                                     info.num_ack_pending as f64,
                                     Some(labels),
@@ -666,7 +694,7 @@ impl JetStreamConsumer {
                 "query_builder"
             };
             let val_stats = self.validator.read().await.stats();
-            let _ = observer
+            if let Err(error) = observer
                 .emit_ingestd_batch_stats(
                     batch_size,
                     fetch_to_ack_ms,
@@ -681,7 +709,10 @@ impl JetStreamConsumer {
                     val_stats.invalid,
                     val_stats.coverage_pct(),
                 )
-                .await;
+                .await
+            {
+                Self::log_observer_error("ingestd.batch", &error);
+            }
         }
 
         result
@@ -1168,7 +1199,7 @@ impl JetStreamConsumer {
             err
         })?;
 
-        let inserted_ids = result.inserted_ids.unwrap_or_default();
+        let inserted_ids = Self::require_inserted_ids(result.inserted_ids, to_persist.len())?;
         self.remember_batch(batch);
         Ok(PersistBatchResult {
             inserted_ids: Some(inserted_ids),
@@ -1492,54 +1523,63 @@ impl JetStreamConsumer {
     async fn check_stream_capacity(&self, stream_name: &str) {
         match self.js.get_stream(stream_name).await {
             Ok(mut stream) => {
-                if let Ok(info) = stream.info().await {
-                    let state = info.state.clone();
-                    let config = info.config.clone();
+                match stream.info().await {
+                    Ok(info) => {
+                        let state = info.state.clone();
+                        let config = info.config.clone();
 
-                    // Emit stream stats via self-observer
-                    if let Some(ref observer) = self.observer
-                        && let Err(e) = observer
-                            .emit_stream_stats(
-                                stream_name,
-                                state.messages,
-                                config.max_messages as u64,
-                                state.bytes,
-                                config.max_bytes as u64,
-                                state.consumer_count as u32,
-                                state.first_sequence,
-                                state.last_sequence,
-                            )
-                            .await
-                    {
-                        debug!("Failed to emit stream stats: {}", e);
-                    }
+                        // Emit stream stats via self-observer
+                        if let Some(ref observer) = self.observer
+                            && let Err(error) = observer
+                                .emit_stream_stats(
+                                    stream_name,
+                                    state.messages,
+                                    config.max_messages as u64,
+                                    state.bytes,
+                                    config.max_bytes as u64,
+                                    state.consumer_count as u32,
+                                    state.first_sequence,
+                                    state.last_sequence,
+                                )
+                                .await
+                        {
+                            Self::log_observer_error("ingestd.stream", &error);
+                        }
 
-                    // Check message count capacity
-                    if config.max_messages > 0 {
-                        let usage_ratio = state.messages as f64 / config.max_messages as f64;
-                        if usage_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
-                            warn!(
-                                stream = %stream_name,
-                                messages = state.messages,
-                                max_messages = config.max_messages,
-                                usage_percent = format!("{:.1}%", usage_ratio * 100.0),
-                                "Stream approaching message capacity limit"
-                            );
+                        // Check message count capacity
+                        if config.max_messages > 0 {
+                            let usage_ratio = state.messages as f64 / config.max_messages as f64;
+                            if usage_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                                warn!(
+                                    stream = %stream_name,
+                                    messages = state.messages,
+                                    max_messages = config.max_messages,
+                                    usage_percent = format!("{:.1}%", usage_ratio * 100.0),
+                                    "Stream approaching message capacity limit"
+                                );
+                            }
+                        }
+
+                        // Check byte capacity if configured
+                        if config.max_bytes > 0 {
+                            let bytes_ratio = state.bytes as f64 / config.max_bytes as f64;
+                            if bytes_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                                warn!(
+                                    stream = %stream_name,
+                                    bytes = state.bytes,
+                                    max_bytes = config.max_bytes,
+                                    usage_percent = format!("{:.1}%", bytes_ratio * 100.0),
+                                    "Stream approaching byte capacity limit"
+                                );
+                            }
                         }
                     }
-
-                    // Check byte capacity if configured
-                    if config.max_bytes > 0 {
-                        let bytes_ratio = state.bytes as f64 / config.max_bytes as f64;
-                        if bytes_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
-                            warn!(
-                                stream = %stream_name,
-                                bytes = state.bytes,
-                                max_bytes = config.max_bytes,
-                                usage_percent = format!("{:.1}%", bytes_ratio * 100.0),
-                                "Stream approaching byte capacity limit"
-                            );
-                        }
+                    Err(error) => {
+                        debug!(
+                            stream = %stream_name,
+                            error = %error,
+                            "Failed to inspect stream capacity"
+                        );
                     }
                 }
             }
@@ -1593,6 +1633,25 @@ mod tests {
         .expect_err("strict mode must reject events without schema bindings");
 
         assert!(err.to_string().contains("Strict validation enabled"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_inserted_ids_accepts_present_repository_ids() -> TestResult<()> {
+        let ids = vec![Uuid::now_v7()];
+        let accepted = JetStreamConsumer::require_inserted_ids(Some(ids.clone()), 1)?;
+        assert_eq!(accepted, ids);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_inserted_ids_rejects_missing_repository_ids() -> TestResult<()> {
+        let err = JetStreamConsumer::require_inserted_ids(None, 2)
+            .expect_err("missing inserted_ids must surface as an invalid repository contract");
+        assert!(
+            err.to_string().contains("Event repository omitted inserted_ids"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 }
