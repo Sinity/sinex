@@ -3,7 +3,11 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sinex_db::repositories::schema_management::{SchemaManagementRepository, SchemaSyncResult};
+use sinex_primitives::events::schema_registry::generate_all_schemas;
+use sqlx::postgres::PgPoolOptions;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -435,16 +439,19 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
 
 /// Apply declarative database schema to an explicit database URL.
 ///
-/// Uses `block_in_place` since this is called from sync command contexts
-/// but needs to call async `apply_schema_for_url`.
+/// Runs on the current multithreaded runtime when available, otherwise falls back
+/// to a dedicated current-thread runtime so tests and sync contexts behave the same.
 pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("Applying declarative database schema...");
     }
 
-    let handle = tokio::runtime::Handle::current();
-    tokio::task::block_in_place(|| handle.block_on(sinex_db::apply_schema_for_url(database_url)))
-        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    let database_url = database_url.to_string();
+    run_async_from_sync(async move {
+        sinex_db::apply_schema_for_url(&database_url)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    })
         .context("Failed to apply declarative schema")?;
 
     if verbose {
@@ -454,9 +461,90 @@ pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Resul
     Ok(())
 }
 
+/// Synchronize discovered event payload schemas into the database.
+///
+/// Uses the same in-process schema registry inventory that ingestd uses at startup.
+pub fn sync_event_payload_schemas_for_database_url(
+    database_url: &str,
+    verbose: bool,
+) -> Result<SchemaSyncResult> {
+    if verbose {
+        println!("Synchronizing event payload schemas...");
+    }
+
+    let database_url = database_url.to_string();
+    let result = run_async_from_sync(async move {
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&database_url)
+                .await
+                .wrap_err("Failed to connect for event payload schema synchronization")?;
+
+            let repo = SchemaManagementRepository::new(&pool);
+            let result = repo
+                .sync_discovered_schemas(generate_all_schemas())
+                .await
+                .wrap_err("Failed to synchronize discovered event payload schemas")?;
+            pool.close().await;
+            Ok::<_, color_eyre::Report>(result)
+        })?;
+
+    if verbose {
+        println!(
+            "Schema synchronization complete (discovered={}, created={}, updated={}, unchanged={})",
+            result.discovered, result.created, result.updated, result.unchanged
+        );
+    }
+
+    Ok(result)
+}
+
 /// Apply declarative database schema using the current stack configuration.
 pub fn pg_apply_schema(config: &StackConfig, verbose: bool) -> Result<()> {
     apply_schema_for_database_url(&config.database_url(), verbose)
+}
+
+fn run_async_from_sync<F, T>(fut: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| handle.block_on(fut))
+        }
+        Ok(_) => run_async_on_dedicated_thread(fut),
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .wrap_err("failed to build runtime for stack operation")?
+            .block_on(fut),
+    }
+}
+
+fn run_async_on_dedicated_thread<F, T>(fut: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .wrap_err("failed to build dedicated runtime for stack operation")?
+            .block_on(fut)
+    })
+    .join()
+    .map_err(|payload| {
+        let message = if let Some(message) = payload.downcast_ref::<String>() {
+            message.clone()
+        } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+            (*message).to_string()
+        } else {
+            "non-string panic payload".to_string()
+        };
+        color_eyre::eyre::eyre!("stack operation thread panicked: {message}")
+    })?
 }
 
 #[must_use]
@@ -530,9 +618,12 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::StackConfig;
-    use super::{probe_annex_available, require_successful_command};
-    use std::path::Path;
+    use super::{
+        probe_annex_available, require_successful_command, sync_event_payload_schemas_for_database_url,
+    };
+    use crate::sandbox::prelude::*;
     use std::os::unix::process::ExitStatusExt;
+    use std::path::Path;
 
     #[test]
     fn nats_port_matches_flake_hash_for_sinex_checkout() {
@@ -576,5 +667,13 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("permission denied"));
         assert!(message.contains("git init for annex repository"));
+    }
+
+    #[sinex_test]
+    async fn sync_event_payload_schemas_uses_in_process_registry(ctx: TestContext) -> TestResult<()> {
+        let result = sync_event_payload_schemas_for_database_url(ctx.database_url(), false)?;
+        assert!(result.discovered > 0);
+        assert_eq!(result.discovered, result.created + result.updated + result.unchanged);
+        Ok(())
     }
 }
