@@ -15,7 +15,7 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
     serde_json::to_value(response).wrap_err("failed to serialize system.health response")
 }
 
-fn system_health_response(report: GatewayHealthReport) -> SystemHealthResponse {
+pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealthResponse {
     let GatewayHealthReport {
         status,
         db_ok,

@@ -5,6 +5,7 @@ use crate::{
     config::GatewayConfig,
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
+    handlers::system::system_health_response,
     rate_limit::TokenRateLimiter,
     service_container::ServiceContainer,
 };
@@ -768,44 +769,14 @@ pub async fn dispatch_rpc_method(
 /// should read `status`, `healthy`, and `degradation_reasons` rather than
 /// treating HTTP 200 as full readiness.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
-    let report = state.services.health_report().await;
-    let crate::service_container::GatewayHealthReport {
-        status: overall_status,
-        db_ok,
-        nats,
-        replay,
-        healthy,
-        serving,
-        degradation_reasons,
-    } = report;
-
-    let status = if serving {
+    let response = system_health_response(state.services.health_report().await);
+    let status = if response.serving {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
-    (
-        status,
-        axum::Json(serde_json::json!({
-            "status": overall_status,
-            "healthy": healthy,
-            "serving": serving,
-            "degradation_reasons": degradation_reasons,
-            "db": { "ok": db_ok },
-            "nats": {
-                "connected": nats.connected,
-                "latency_ms": nats.latency_ms,
-                "detail": nats.detail,
-            },
-            "replay_control": {
-                "enabled": replay.enabled,
-                "connected": replay.connected,
-                "last_error": replay.last_error,
-            },
-        })),
-    )
-        .into_response()
+    (status, axum::Json(response)).into_response()
 }
 
 /// Main RPC handler using dispatch table

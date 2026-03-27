@@ -15,7 +15,7 @@ use sinex_node_sdk::preflight::configuration::{
 use sinex_node_sdk::preflight::services::inspect_systemd_service;
 use sinex_primitives::{
     DeploymentDatabaseRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
-    environment::SinexEnvironment, nats::NatsConnectionConfig,
+    environment::SinexEnvironment, nats::NatsConnectionConfig, rpc::system::SystemHealthResponse,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -2431,28 +2431,66 @@ fn interpret_gateway_ready_response(
         }
     };
 
-    let serving = body.get("serving").and_then(JsonValue::as_bool);
-    let healthy = body.get("healthy").and_then(JsonValue::as_bool);
+    let response: SystemHealthResponse = match serde_json::from_value(body) {
+        Ok(response) => response,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "gateway-ready",
+                format!(
+                    "{ready_url} returned HTTP {status} with a non-conforming health body: {error}; body={}",
+                    summarize_gateway_probe_body(trimmed)
+                ),
+            );
+        }
+    };
 
-    if status.is_success() && serving == Some(true) {
+    if status.is_success() && response.serving {
         DeploymentReadinessItem::pass(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (healthy={})",
-                healthy.unwrap_or(false)
+                "{ready_url} returned HTTP {status} (status={}, healthy={}, reasons={})",
+                response.status,
+                response.healthy,
+                summarize_gateway_degradation_reasons(&response)
             ),
         )
     } else {
         DeploymentReadinessItem::fail(
             "gateway-ready",
             format!(
-                "{ready_url} returned HTTP {status} (serving={:?}, healthy={:?}, body={})",
-                serving,
-                healthy,
-                summarize_gateway_probe_body(trimmed)
+                "{ready_url} returned HTTP {status} (status={}, serving={}, healthy={}, reasons={}, components={})",
+                response.status,
+                response.serving,
+                response.healthy,
+                summarize_gateway_degradation_reasons(&response),
+                summarize_gateway_components(&response)
             ),
         )
     }
+}
+
+fn summarize_gateway_degradation_reasons(response: &SystemHealthResponse) -> String {
+    if response.degradation_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        response.degradation_reasons.join("; ")
+    }
+}
+
+fn summarize_gateway_components(response: &SystemHealthResponse) -> String {
+    let replay = &response.components.replay_control;
+    format!(
+        "database={} connected={}, nats={} connected={} latency_ms={:?}, replay_control={} enabled={} connected={} last_error={}",
+        response.components.database.status,
+        response.components.database.connected,
+        response.components.nats.status,
+        response.components.nats.connected,
+        response.components.nats.latency_ms,
+        replay.status,
+        replay.enabled,
+        replay.connected,
+        replay.last_error.as_deref().unwrap_or("none"),
+    )
 }
 
 fn summarize_gateway_probe_body(body_text: &str) -> String {
@@ -2879,11 +2917,41 @@ mod tests {
         let item = interpret_gateway_ready_response(
             "https://127.0.0.1:9999/ready",
             reqwest::StatusCode::OK,
-            r#"{"serving":true,"healthy":false}"#,
+            r#"{
+                "status":"degraded",
+                "healthy":false,
+                "serving":true,
+                "degradation_reasons":["NATS unavailable"],
+                "components":{
+                    "database":{"status":"healthy","connected":true},
+                    "nats":{"status":"unhealthy","connected":false,"latency_ms":42.0,"detail":"timed out"},
+                    "replay_control":{"status":"healthy","enabled":true,"connected":true}
+                }
+            }"#,
         );
 
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("healthy=false"));
+        assert!(item.description.contains("status=degraded"));
+        assert!(item.description.contains("NATS unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_gateway_ready_response_rejects_non_conforming_health_body()
+    -> ::xtask::sandbox::TestResult<()> {
+        let item = interpret_gateway_ready_response(
+            "https://127.0.0.1:9999/ready",
+            reqwest::StatusCode::OK,
+            r#"{"serving":true,"healthy":false}"#,
+        );
+
+        assert_eq!(item.status, "fail");
+        assert!(
+            item.description.contains("non-conforming health body"),
+            "unexpected message: {}",
+            item.description
+        );
         Ok(())
     }
 
