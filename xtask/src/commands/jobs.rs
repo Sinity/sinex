@@ -476,13 +476,19 @@ async fn execute_wait(
     }
     .with_duration(ctx.elapsed());
 
+    let progress = load_invocation_progress(ctx, job.invocation_id);
+    if let Some(issue) = &progress.issue {
+        result = result.with_warning(issue.clone());
+    }
+
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "id": job.id,
             "invocation_id": job.invocation_id,
             "status": status_to_str(job.job_status),
             "exit_code": job.exit_code,
-            "progress": job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref().map(progress_to_json),
+            "progress": progress.progress.as_ref().map(progress_to_json),
+            "progress_issue": progress.issue,
         }));
     }
 

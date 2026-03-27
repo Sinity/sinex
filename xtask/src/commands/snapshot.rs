@@ -315,25 +315,42 @@ fn build_context_block(ctx: &CommandContext) -> String {
     let mut lines: Vec<String> = vec!["[xtask-context]".to_string()];
 
     // Recent check/test invocations
-    lines.push(format!("recent_runs: {}", format_recent_runs(ctx)));
+    push_context_field(&mut lines, "recent_runs", format_recent_runs(ctx));
 
     // Active diagnostics
-    lines.push(format!(
-        "active_diagnostics: {}",
-        format_active_diagnostics(ctx)
-    ));
+    push_context_field(
+        &mut lines,
+        "active_diagnostics",
+        format_active_diagnostics(ctx),
+    );
 
     // Coordinator state
-    lines.push(format!("coordinator_state: {}", format_coordinator_state()));
+    push_context_field(&mut lines, "coordinator_state", format_coordinator_state());
 
     // Active background jobs
-    lines.push(format!("active_jobs: {}", format_active_jobs()));
+    push_context_field(&mut lines, "active_jobs", format_active_jobs());
 
     lines.join("\n")
 }
 
-fn format_recent_runs(ctx: &CommandContext) -> String {
-    ctx.with_history_db(|db| {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotContextField {
+    value: String,
+    issue: Option<String>,
+}
+
+fn push_context_field(lines: &mut Vec<String>, name: &str, field: SnapshotContextField) {
+    lines.push(format!("{name}: {}", field.value));
+    if let Some(issue) = field.issue {
+        lines.push(format!(
+            "{name}_issue: {}",
+            serde_json::Value::String(issue).to_string()
+        ));
+    }
+}
+
+fn format_recent_runs(ctx: &CommandContext) -> SnapshotContextField {
+    match ctx.try_with_history_db(|db| {
         // get_recent(limit, command_filter)
         let invocations = db.get_recent(5, Some("check"))?;
 
@@ -348,12 +365,30 @@ fn format_recent_runs(ctx: &CommandContext) -> String {
             })
             .collect();
         Ok(format!("[{}]", items.join(", ")))
-    })
-    .unwrap_or_else(|| "[]".to_string())
+    }) {
+        Some(Ok(value)) => SnapshotContextField {
+            value,
+            issue: None,
+        },
+        Some(Err(error)) => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "failed to read recent runs from history DB at {}: {error:#}",
+                ctx.history_db_path().display()
+            )),
+        },
+        None => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "history DB unavailable while reading recent runs at {}",
+                ctx.history_db_path().display()
+            )),
+        },
+    }
 }
 
-fn format_active_diagnostics(ctx: &CommandContext) -> String {
-    ctx.with_history_db(|db| {
+fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
+    match ctx.try_with_history_db(|db| {
         // get_current_diagnostics(level, file_pattern, package, command, fixable_only)
         let diags = db.get_current_diagnostics(Some("error"), None, None, None, false)?;
 
@@ -371,49 +406,98 @@ fn format_active_diagnostics(ctx: &CommandContext) -> String {
             })
             .collect();
         Ok(format!("[{}]", items.join(", ")))
-    })
-    .unwrap_or_else(|| "[]".to_string())
+    }) {
+        Some(Ok(value)) => SnapshotContextField {
+            value,
+            issue: None,
+        },
+        Some(Err(error)) => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "failed to read active diagnostics from history DB at {}: {error:#}",
+                ctx.history_db_path().display()
+            )),
+        },
+        None => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "history DB unavailable while reading active diagnostics at {}",
+                ctx.history_db_path().display()
+            )),
+        },
+    }
 }
 
-fn format_coordinator_state() -> String {
+fn format_coordinator_state() -> SnapshotContextField {
     use crate::coordinator::JobCoordinator;
 
     let coord = match JobCoordinator::new() {
         Ok(c) => c,
-        Err(_) => return "{}".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "{}".to_string(),
+                issue: Some(format!("failed to open coordinator state: {error:#}")),
+            };
+        }
     };
 
     let mut parts: Vec<String> = vec![];
+    let mut issues = Vec::new();
     for cmd in &["check", "test", "build"] {
-        if let Ok(Some(state)) = coord.state(cmd) {
-            parts.push(format!(
-                "{cmd}: {{job_id:{}, scope:\"{}\", fingerprint:\"{}\"}}",
-                state.job_id,
-                state.scope_key,
-                &state.tree_fingerprint[..state.tree_fingerprint.len().min(12)]
-            ));
+        match coord.state(cmd) {
+            Ok(Some(state)) => {
+                parts.push(format!(
+                    "{cmd}: {{job_id:{}, scope:\"{}\", fingerprint:\"{}\"}}",
+                    state.job_id,
+                    state.scope_key,
+                    &state.tree_fingerprint[..state.tree_fingerprint.len().min(12)]
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => issues.push(format!(
+                "failed to read coordinator state for {cmd}: {error:#}"
+            )),
         }
     }
-    if parts.is_empty() {
-        "{}".to_string()
-    } else {
-        format!("{{{}}}", parts.join(", "))
+    SnapshotContextField {
+        value: if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{{}}}", parts.join(", "))
+        },
+        issue: (!issues.is_empty()).then(|| issues.join("; ")),
     }
 }
 
-fn format_active_jobs() -> String {
+fn format_active_jobs() -> SnapshotContextField {
     use crate::config::config;
     use crate::jobs::JobManager;
 
     let jobs_dir = config().jobs_dir();
-    let mgr = match JobManager::new(jobs_dir) {
+    let mgr = match JobManager::new(jobs_dir.clone()) {
         Ok(m) => m,
-        Err(_) => return "[]".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some(format!(
+                    "failed to open jobs state at {}: {error:#}",
+                    jobs_dir.display()
+                )),
+            };
+        }
     };
 
     let active = match mgr.list_active() {
         Ok(jobs) => jobs,
-        Err(_) => return "[]".to_string(),
+        Err(error) => {
+            return SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some(format!(
+                    "failed to read active jobs from {}: {error:#}",
+                    jobs_dir.display()
+                )),
+            };
+        }
     };
 
     let items: Vec<String> = active
@@ -427,7 +511,10 @@ fn format_active_jobs() -> String {
             )
         })
         .collect();
-    format!("[{}]", items.join(", "))
+    SnapshotContextField {
+        value: format!("[{}]", items.join(", ")),
+        issue: None,
+    }
 }
 
 /// Append the context block as an XML comment to the repomix output file.
@@ -641,6 +728,8 @@ fn read_snapshot_output(output_path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandContext;
+    use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
     use ::xtask::sandbox::EnvGuard;
     use std::fs;
@@ -770,6 +859,44 @@ printf '%s\n' '{"packages":[{"name":"sinex-db","manifest_path":"/realm/project/s
         let error = read_snapshot_output(&missing).expect_err("missing snapshot should error");
         assert!(error.to_string().contains("failed to read snapshot output"));
         assert!(error.to_string().contains("missing.xml"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_push_context_field_includes_issue_line() -> ::xtask::sandbox::TestResult<()> {
+        let mut lines = vec!["[xtask-context]".to_string()];
+        push_context_field(
+            &mut lines,
+            "recent_runs",
+            SnapshotContextField {
+                value: "[]".to_string(),
+                issue: Some("history unavailable".to_string()),
+            },
+        );
+
+        assert_eq!(lines[1], "recent_runs: []");
+        assert_eq!(lines[2], "recent_runs_issue: \"history unavailable\"");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_context_block_reports_unavailable_history_db()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let blocked_parent = temp.path().join("not-a-dir");
+        fs::write(&blocked_parent, "blocked")?;
+        let missing_db = blocked_parent.join("history.db");
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "snapshot",
+            missing_db,
+        );
+
+        let block = build_context_block(&ctx);
+        assert!(block.contains("recent_runs_issue:"));
+        assert!(block.contains("active_diagnostics_issue:"));
         Ok(())
     }
 }
