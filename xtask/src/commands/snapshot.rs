@@ -97,7 +97,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // U1: Include files from most recent build_diagnostics invocation
         if self.diagnostics {
-            let diag_files = collect_diagnostic_files(ctx);
+            let diag_files = collect_diagnostic_files(ctx)?;
             if ctx.is_human() && !diag_files.is_empty() {
                 println!(
                     "  Diagnostics: including {} files from recent check run",
@@ -256,8 +256,8 @@ impl XtaskCommand for SnapshotCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Return distinct file paths from the most recent build_diagnostics invocation.
-fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
-    ctx.with_history_db(|db| {
+fn collect_diagnostic_files(ctx: &CommandContext) -> Result<Vec<String>> {
+    match ctx.try_with_history_db(|db| {
         // Get current (package-scoped) diagnostics filtered to check command.
         let diags = db.get_current_diagnostics(None, None, None, Some("check"), false)?;
         let mut paths: Vec<String> = diags
@@ -268,8 +268,13 @@ fn collect_diagnostic_files(ctx: &CommandContext) -> Vec<String> {
         paths.sort();
         paths.dedup();
         Ok(paths)
-    })
-    .unwrap_or_default()
+    }) {
+        Some(result) => result,
+        None => Err(color_eyre::eyre::eyre!(
+            "history DB unavailable while collecting diagnostic snapshot includes from {}",
+            ctx.history_db_path().display()
+        )),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -765,6 +770,26 @@ exit 128
         let error = collect_changed_files().expect_err("git failure should surface");
         assert!(error.to_string().contains("git diff --name-only HEAD"));
         assert!(error.to_string().contains("synthetic git failure"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_diagnostic_files_reports_unavailable_history_db()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let blocked_parent = temp.path().join("not-a-dir");
+        fs::write(&blocked_parent, "blocked")?;
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "snapshot",
+            blocked_parent.join("history.db"),
+        );
+
+        let error =
+            collect_diagnostic_files(&ctx).expect_err("history DB failure should surface");
+        assert!(error.to_string().contains("history DB unavailable"));
         Ok(())
     }
 
