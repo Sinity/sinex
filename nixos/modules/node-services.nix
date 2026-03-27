@@ -48,14 +48,25 @@ let
     fi
     mkdir -p "${tlsDir}"
     chmod 750 "${tlsDir}"
-    ${pkgs.openssl}/bin/openssl req -x509 -newkey ed25519 \
-      -keyout "$key" -out "$cert" \
-      -days 3650 -nodes \
-      -subj "/CN=sinex-gateway/O=sinex" \
-      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
-    # Files must be readable by the gateway service user, not only by root.
-    chown ${serviceUser}:${serviceUser} "$key" "$cert"
-    chmod 640 "$key" "$cert"
+    "${sinexPackage}/bin/xtask" --format human infra tls-init-gateway \
+      --output-dir "${tlsDir}" \
+      --san localhost \
+      --san 127.0.0.1 \
+      --ca-name "Sinex Gateway CA" \
+      --validity-days 3650
+    # Gateway needs the server cert, server key, and trust anchor at runtime.
+    chown root:${serviceUser} "$key" "$cert" "$ca"
+    chmod 640 "$key" "$cert" "$ca"
+    # Keep client and CA private keys root-only; they are operator artifacts, not service inputs.
+    if [[ -f "${tlsDir}/client.pem" ]]; then
+      chmod 644 "${tlsDir}/client.pem"
+    fi
+    if [[ -f "${tlsDir}/client-key.pem" ]]; then
+      chmod 600 "${tlsDir}/client-key.pem"
+    fi
+    if [[ -f "${tlsDir}/ca-key.pem" ]]; then
+      chmod 600 "${tlsDir}/ca-key.pem"
+    fi
     echo "Sinex gateway TLS credentials generated at ${tlsDir}"
   '';
 
