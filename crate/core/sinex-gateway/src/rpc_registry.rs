@@ -485,14 +485,16 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Box::pin(async move { handle_events_ingest(services, params).await })
         })
         // PKM methods (Write)
-        .register("pkm.create_note", Role::Write, |params, services, _auth| {
-            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params).await })
+        .register("pkm.create_note", Role::Write, |params, services, auth| {
+            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
         })
         .register(
             "pkm.create_entities_from_list",
             Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move { handle_create_entities(services.pkm.as_ref(), params).await })
+            |params, services, auth| {
+                Box::pin(async move {
+                    handle_create_entities(services.pkm.as_ref(), params, auth).await
+                })
             },
         )
         .register(
