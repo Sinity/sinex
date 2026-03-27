@@ -17,7 +17,8 @@
 //! historical gap-filling, and continuous real-time processing.
 //!
 //! ### Gen2 Patterns
-//! The SDK provides high-level traits like [`AutomatonNode`] and [`IngestorNode`] that automate:
+//! The SDK provides high-level traits like [`TransducerNode`], [`WindowedNode`],
+//! [`ScopeReconcilerNode`], and [`IngestorNode`] that automate:
 //! - **State Persistence**: Automatic checkpointing to NATS KV and local backup files.
 //! - **Hot Reload**: Fast state restoration from local files during development rebuilds.
 //! - **Graceful Lifecycle**: Cooperative shutdown patterns via [`WatcherHandle`] and `CancellationToken`.
@@ -65,9 +66,6 @@ pub mod diagnostics;
 pub mod dlq_retry;
 
 #[cfg(feature = "messaging")]
-#[allow(deprecated)] // Module defines + uses the deprecated AutomatonNode trait
-pub mod automaton_node;
-#[cfg(feature = "messaging")]
 pub mod derived_node;
 #[cfg(feature = "messaging")]
 pub mod error_helpers;
@@ -90,6 +88,7 @@ pub mod jetstream_consumer;
 pub mod nats_publisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub mod node_cli;
+pub mod processing;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
@@ -139,13 +138,6 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
-
-// AutomatonNode + AutomatonNodeAdapter are superseded by the derived_node traits
-// (TransducerNode, WindowedNode, ScopeReconcilerNode). The module remains for
-// shared infrastructure (PersistedState, ErrorAction, NodeAdapterConfig) used by
-// DerivedNodeAdapter internals.
-#[cfg(feature = "messaging")]
-pub use automaton_node::{ErrorAction, NodeAdapterConfig, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use derived_node::{
     DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,
@@ -172,6 +164,7 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
+pub use processing::{ErrorAction, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
