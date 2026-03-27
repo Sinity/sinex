@@ -2329,8 +2329,13 @@ impl IngestorNode for TerminalNode {
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut guard = self.watch_handles.lock().await;
-        for handle in guard.drain(..) {
-            handle.abort();
+        let handles: Vec<_> = guard.drain(..).collect();
+        drop(guard);
+
+        for handle in handles {
+            if let Err(error) = handle.await {
+                warn!(error = %error, "Terminal watcher task ended with join error during shutdown");
+            }
         }
         info!("Terminal watcher shutdown complete");
         Ok(())
@@ -3596,6 +3601,24 @@ mod tests {
             "commands within size limit must still be captured, got: {commands:?}"
         );
         fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_waits_for_watcher_handles() -> TestResult<()> {
+        let mut node = TerminalNode::default();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                let _ = done_tx.send(());
+            }));
+        }
+
+        node.shutdown(&TerminalCheckpoint::default()).await?;
+        done_rx.await?;
         Ok(())
     }
 }
