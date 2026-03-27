@@ -1,6 +1,7 @@
 //! Template database management — creation, schema apply, fingerprinting.
 
 use crate::sandbox::prelude::*;
+use color_eyre::eyre::{WrapErr, eyre};
 use parking_lot::Mutex;
 use sinex_db::DbPool;
 use sqlx::Connection;
@@ -84,27 +85,51 @@ ON CONFLICT (id) DO NOTHING";
 /// Used by:
 /// - Sandbox: to determine if template database needs rebuilding
 /// - Preflight: to detect pending schema apply work
-fn schema_fingerprint_sources() -> Option<Vec<PathBuf>> {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let schema_src_dir = crate_dir.join("../crate/lib/sinex-schema/src");
-    let schema_tables_dir = schema_src_dir.join("schema").canonicalize().ok()?;
+fn schema_source_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crate/lib/sinex-schema/src")
+}
+
+fn schema_fingerprint_sources() -> TestResult<Vec<PathBuf>> {
+    schema_fingerprint_sources_in(&schema_source_root())
+}
+
+fn schema_fingerprint_sources_in(schema_src_dir: &std::path::Path) -> TestResult<Vec<PathBuf>> {
+    let schema_tables_dir = schema_src_dir
+        .join("schema")
+        .canonicalize()
+        .wrap_err_with(|| {
+            format!(
+                "failed to resolve schema source directory '{}'",
+                schema_src_dir.join("schema").display()
+            )
+        })?;
     let apply_file = schema_src_dir.join("apply.rs");
     let converge_file = schema_src_dir.join("converge.rs");
     let registry_file = schema_src_dir.join("schema_registry.rs");
 
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&schema_tables_dir)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .collect();
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&schema_tables_dir).wrap_err_with(|| {
+        format!(
+            "failed to enumerate schema sources in '{}'",
+            schema_tables_dir.display()
+        )
+    })? {
+        let entry = entry.wrap_err_with(|| {
+            format!(
+                "failed to read schema source entry from '{}'",
+                schema_tables_dir.display()
+            )
+        })?;
+        entries.push(entry.path());
+    }
     entries.push(apply_file);
     entries.push(converge_file);
     entries.push(registry_file);
     entries.sort();
-    Some(entries)
+    Ok(entries)
 }
 
-#[must_use]
-pub fn schema_fingerprint() -> Option<String> {
+pub fn schema_fingerprint() -> TestResult<String> {
     let entries = schema_fingerprint_sources()?;
 
     let mut hasher = Sha256::new();
@@ -115,33 +140,34 @@ pub fn schema_fingerprint() -> Option<String> {
     for path in entries {
         if path.is_file() {
             // Hash filename first
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                hasher.update(name.as_bytes());
-                hasher.update(b":"); // Separator between name and content
-            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| eyre!("schema fingerprint source is not valid UTF-8: {}", path.display()))?;
+            hasher.update(name.as_bytes());
+            hasher.update(b":"); // Separator between name and content
             // Then hash content
-            if let Ok(bytes) = std::fs::read(&path) {
-                hasher.update(bytes);
-                hasher.update(b"|"); // Separator between files
-            }
+            let bytes = std::fs::read(&path)
+                .wrap_err_with(|| format!("failed to read schema fingerprint source '{}'", path.display()))?;
+            hasher.update(bytes);
+            hasher.update(b"|"); // Separator between files
         }
     }
 
-    Some(format!("{:x}", hasher.finalize()))
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(test)]
 mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
-    use color_eyre::eyre::eyre;
-    use super::schema_fingerprint_sources;
+    use super::{schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in};
+    use std::fs;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn schema_fingerprint_includes_convergence_inputs() -> TestResult<()> {
-        let sources = schema_fingerprint_sources()
-            .ok_or_else(|| eyre!("schema fingerprint sources unavailable"))?;
+        let sources = schema_fingerprint_sources()?;
         let file_names = sources
             .iter()
             .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
@@ -151,6 +177,27 @@ mod tests {
         assert!(file_names.iter().any(|name| name == "apply.rs"));
         assert!(file_names.iter().any(|name| name == "converge.rs"));
         assert!(file_names.iter().any(|name| name == "schema_registry.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn schema_fingerprint_sources_report_unreadable_schema_root() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let schema_root = temp.path().join("schema-root");
+        fs::create_dir_all(&schema_root)?;
+        fs::write(schema_root.join("schema"), "not-a-directory")?;
+
+        let error = schema_fingerprint_sources_in(&schema_root)
+            .expect_err("non-directory schema root should fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to enumerate schema sources"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn schema_fingerprint_is_computable_for_workspace_sources() -> TestResult<()> {
+        let fingerprint = schema_fingerprint()?;
+        assert!(!fingerprint.is_empty());
         Ok(())
     }
 }
@@ -193,12 +240,7 @@ pub(super) async fn ensure_template_database(
     eprintln!("🔧 Checking template database {template_name} ...");
     let template_start = std::time::Instant::now();
 
-    let desired_fingerprint = schema_fingerprint();
-    if desired_fingerprint.is_none() {
-        eprintln!(
-            "⚠️  Unable to compute schema fingerprint; template caching disabled for this run"
-        );
-    }
+    let desired_fingerprint = Some(schema_fingerprint()?);
 
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
     let lock_key = advisory_lock_key(template_name);

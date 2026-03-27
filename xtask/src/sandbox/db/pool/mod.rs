@@ -517,7 +517,7 @@ impl DatabasePool {
             .await?;
             let expected_extensions = template_guard.info.extensions.clone();
             let _ = template_guard.release().await;
-            let expected_fingerprint = schema_fingerprint();
+            let expected_fingerprint = Some(schema_fingerprint()?);
 
             let mut slots = Vec::with_capacity(config.size);
             for i in 0..config.size {
@@ -560,7 +560,7 @@ impl DatabasePool {
         )
         .await?;
         let template = template_guard.info.clone();
-        let expected_fingerprint = schema_fingerprint();
+        let expected_fingerprint = Some(schema_fingerprint()?);
 
         let result: Result<Self> = async {
             // Create admin connection
@@ -718,7 +718,7 @@ impl DatabasePool {
                                         "  Recreated pool database from template: {name}"
                                     );
                                     let meta = PoolMeta {
-                                        fingerprint: schema_fingerprint(),
+                                        fingerprint: Some(schema_fingerprint()?),
                                         extensions: template_ext_versions.clone(),
                                         dirty: false,
                                         updated_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -735,7 +735,7 @@ impl DatabasePool {
                             }
                         } else {
                             let meta = PoolMeta {
-                                fingerprint: schema_fingerprint(),
+                                fingerprint: Some(schema_fingerprint()?),
                                 extensions: template_ext_versions.clone(),
                                 dirty: false,
                                 updated_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -754,7 +754,7 @@ impl DatabasePool {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Created new pool database: {name}");
                                 let meta = PoolMeta {
-                                    fingerprint: schema_fingerprint(),
+                                    fingerprint: Some(schema_fingerprint()?),
                                     extensions: template_ext_versions.clone(),
                                     dirty: false,
                                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),

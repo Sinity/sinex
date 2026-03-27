@@ -383,7 +383,7 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
         super::reset::ensure_pool_db_invariants(&db_url).await?;
 
         let meta = PoolMeta {
-            fingerprint: schema_fingerprint(),
+            fingerprint: Some(schema_fingerprint()?),
             extensions: template_extensions.clone(),
             dirty: false,
             updated_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -465,7 +465,7 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
         let db_url = url_with_db_name(&base_url, db_name)?;
         super::reset::ensure_pool_db_invariants(&db_url).await?;
         let meta = PoolMeta {
-            fingerprint: schema_fingerprint(),
+            fingerprint: Some(schema_fingerprint()?),
             extensions: template_extensions.clone(),
             dirty: false,
             updated_at_rfc3339: Timestamp::now().format_rfc3339(),
