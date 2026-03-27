@@ -114,6 +114,49 @@ async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> T
 }
 
 #[sinex_test]
+async fn coordination_list_instances_without_leader_marks_all_non_leader(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-no-leader")?;
+    let now = temporal::now().unix_timestamp();
+
+    kv_client
+        .register_instance(&InstanceMetadata {
+            instance_id: "instance-a".to_string(),
+            hostname: "host-a".to_string(),
+            version: "1.0.0-test".to_string(),
+            started_at: now - 30,
+            last_heartbeat: now,
+        })
+        .await?;
+    kv_client
+        .register_instance(&InstanceMetadata {
+            instance_id: "instance-b".to_string(),
+            hostname: "host-b".to_string(),
+            version: "1.0.0-test".to_string(),
+            started_at: now - 30,
+            last_heartbeat: now,
+        })
+        .await?;
+
+    let listed = handle_coordination_list_instances(&kv_client, json!({})).await?;
+    let instances = listed["instances"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("instances should serialize as an array"))?;
+
+    assert_eq!(instances.len(), 2);
+    assert!(
+        instances
+            .iter()
+            .all(|instance| instance["is_leader"].as_bool() == Some(false)),
+        "instances must not be marked as leader when no coordination leader exists"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn coordination_get_leader_rejects_missing_leader_metadata(
     ctx: TestContext,
 ) -> TestResult<()> {
