@@ -53,7 +53,7 @@ async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
     });
 
     let result = handle_nodes_drain(&harness.client, &harness.env, params, &admin_auth()).await?;
-    assert_eq!(result["status"], "drain_requested");
+    assert_eq!(result["status"], "pending");
     assert_eq!(result["node_id"], "test-node-123");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "drain");
@@ -77,7 +77,7 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
     });
 
     let result = handle_nodes_resume(&harness.client, &harness.env, params, &admin_auth()).await?;
-    assert_eq!(result["status"], "resume_requested");
+    assert_eq!(result["status"], "pending");
     assert_eq!(result["node_id"], "test-node-456");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "resume");
@@ -115,7 +115,7 @@ async fn nodes_set_horizon_validates_timestamp(ctx: TestContext) -> TestResult<(
     let result =
         handle_nodes_set_horizon(&harness.client, &harness.env, valid_params, &admin_auth())
             .await?;
-    assert_eq!(result["status"], "horizon_update_requested");
+    assert_eq!(result["status"], "pending");
     assert_eq!(result["node_id"], "test-node-789");
     assert_eq!(result["horizon"], "2024-01-15T10:00:00Z");
     let payload = expect_single_control_message(&mut sub, &subject).await?;

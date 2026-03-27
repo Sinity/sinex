@@ -5,11 +5,12 @@ use color_eyre::eyre::WrapErr;
 use sinex_gateway::{
     auth::Role,
     config::GatewayConfig,
-    handlers::handle_store_blob,
+    handlers::{handle_retrieve_blob, handle_store_blob},
     rpc_server::RpcAuthContext,
     service_container::ServiceContainer,
 };
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::rpc::content::{RetrieveBlobResponse, StoreBlobResponse};
 use sinex_primitives::temporal;
 use tempfile::TempDir;
 use which::which;
@@ -163,6 +164,37 @@ async fn content_store_blob_uses_authenticated_actor_for_operations_log(
 
     assert_eq!(row.0, auth.actor_id());
     assert_eq!(row.1.as_deref(), Some("import://browser-export"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn content_blob_rpc_uses_typed_request_and_response_contracts(
+    ctx: TestContext,
+) -> TestResult<()> {
+    require_git_annex()?;
+    let (_ctx, _annex_dir, services) =
+        blob_test_services(ctx, "gateway-blob-contracts", 5 * 1024 * 1024).await?;
+    let auth = write_auth();
+
+    let store_params = serde_json::json!({
+        "filename": "contract.txt",
+        "content_type": "text/plain",
+        "content": BASE64_STANDARD.encode(b"hello typed contract")
+    });
+
+    let stored: StoreBlobResponse =
+        serde_json::from_value(handle_store_blob(&services, store_params, &auth).await?)?;
+    assert!(!stored.key.is_empty(), "store response must include blob key");
+    assert_eq!(stored.size, 20);
+    assert!(!stored.hash.is_empty(), "store response must include content hash");
+
+    let retrieved: RetrieveBlobResponse = serde_json::from_value(
+        handle_retrieve_blob(&services, serde_json::json!({ "key": stored.key })).await?,
+    )?;
+    assert_eq!(retrieved.content, BASE64_STANDARD.encode(b"hello typed contract"));
+    assert_eq!(retrieved.content_type.as_deref(), Some("text/plain"));
+    assert_eq!(retrieved.size, 20);
 
     Ok(())
 }

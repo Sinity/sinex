@@ -146,14 +146,21 @@ impl MockGatewayClient {
             })
             .unwrap_or(SystemHealthResponse {
                 status: HealthStatus::Healthy,
+                healthy: true,
+                serving: true,
+                degradation_reasons: Vec::new(),
                 components: ComponentsHealth {
                     database: ComponentHealth {
                         status: HealthStatus::Healthy,
                         connected: true,
+                        latency_ms: None,
+                        detail: None,
                     },
                     nats: ComponentHealth {
                         status: HealthStatus::Healthy,
                         connected: true,
+                        latency_ms: None,
+                        detail: None,
                     },
                     replay_control: ReplayControlHealth {
                         status: HealthStatus::Healthy,

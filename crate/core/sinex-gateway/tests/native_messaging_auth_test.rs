@@ -46,6 +46,15 @@ impl HarnessTransport {
     }
 }
 
+fn response_error_message(response: &NativeResponse) -> Result<String> {
+    let response_value = serde_json::to_value(response)?;
+    Ok(response_value
+        .get("error")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string())
+}
+
 impl NativeMessagingTransport for HarnessTransport {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>> {
         let mut state = self.state.lock().await;
@@ -269,5 +278,88 @@ async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) ->
         .and_then(|value| value.as_str())
         .unwrap_or("unknown");
     assert_eq!(response_type, "response");
+    Ok(())
+}
+
+#[sinex_test]
+async fn native_messaging_surfaces_invalid_capabilities_config(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
+    env.set(
+        "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+        "chrome-extension://trusted-sinex",
+    );
+    env.set(
+        "SINEX_NATIVE_MESSAGING_CAPABILITIES",
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":"system.health","rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+    );
+    let db_url = ctx.database_url().to_string();
+    let services = ServiceContainer::from_database_url(db_url).await?;
+
+    let config = NativeMessagingConfig::from_env();
+
+    let request: NativeMessage = serde_json::from_value(json!({
+        "type": "rpc",
+        "method": "system.health",
+        "params": {},
+        "id": "capabilities-invalid",
+        "extension_id": "chrome-extension://trusted-sinex",
+    }))?;
+
+    let transport = HarnessTransport::new(vec![request]);
+    let probe = transport.clone();
+
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
+
+    let responses = probe.responses().await;
+    assert!(!responses.is_empty());
+    let error = response_error_message(&responses[0])?;
+    assert!(error.contains("SINEX_NATIVE_MESSAGING_CAPABILITIES"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn native_messaging_surfaces_invalid_extension_role_config(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());
+    env.set(
+        "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+        "chrome-extension://trusted-sinex",
+    );
+    set_default_capabilities(&mut env);
+    env.set(
+        "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES",
+        r#"{"chrome-extension://trusted-sinex":"superuser"}"#,
+    );
+    let db_url = ctx.database_url().to_string();
+    let services = ServiceContainer::from_database_url(db_url).await?;
+
+    let config = NativeMessagingConfig::from_env();
+
+    let request: NativeMessage = serde_json::from_value(json!({
+        "type": "rpc",
+        "method": "system.health",
+        "params": {},
+        "id": "roles-invalid",
+        "extension_id": "chrome-extension://trusted-sinex",
+    }))?;
+
+    let transport = HarnessTransport::new(vec![request]);
+    let probe = transport.clone();
+
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
+
+    let responses = probe.responses().await;
+    assert!(!responses.is_empty());
+    let error = response_error_message(&responses[0])?;
+    assert!(error.contains("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES"));
+
     Ok(())
 }

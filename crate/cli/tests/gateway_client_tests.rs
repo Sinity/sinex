@@ -49,14 +49,21 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
 
     let custom_health = SystemHealthResponse {
         status: HealthStatus::Degraded,
+        healthy: false,
+        serving: false,
+        degradation_reasons: vec!["nats offline".to_string()],
         components: ComponentsHealth {
             database: ComponentHealth {
                 status: HealthStatus::Healthy,
                 connected: true,
+                latency_ms: None,
+                detail: None,
             },
             nats: ComponentHealth {
                 status: HealthStatus::Unhealthy,
                 connected: false,
+                latency_ms: Some(125.0),
+                detail: Some("nats unavailable".to_string()),
             },
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,
@@ -753,14 +760,21 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
             "jsonrpc": "2.0",
             "result": {
                 "status": "healthy",
+                "healthy": true,
+                "serving": true,
+                "degradation_reasons": [],
                 "components": {
                     "database": {
                         "status": "healthy",
-                        "connected": true
+                        "connected": true,
+                        "latency_ms": null,
+                        "detail": null
                     },
                     "nats": {
                         "status": "healthy",
-                        "connected": true
+                        "connected": true,
+                        "latency_ms": 2.5,
+                        "detail": "jetstream responsive"
                     },
                     "replay_control": {
                         "status": "healthy",
@@ -786,7 +800,14 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
     let health = client.health().await.unwrap();
 
     assert_eq!(health.status.to_string(), "healthy");
+    assert!(health.healthy);
+    assert!(health.serving);
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
+    assert_eq!(health.components.nats.latency_ms, Some(2.5));
+    assert_eq!(
+        health.components.nats.detail.as_deref(),
+        Some("jetstream responsive")
+    );
     Ok(())
 }

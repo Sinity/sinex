@@ -7,7 +7,8 @@ use super::rpc_handlers::{
 use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Context, Result};
-use serde_json::{Value, json};
+use serde_json::Value;
+use sinex_primitives::rpc::content::StoreBlobResponse;
 
 pub async fn handle_store_blob(
     services: &ServiceContainer,
@@ -33,22 +34,28 @@ pub async fn handle_store_blob(
         ?
         .unwrap_or(auth.actor_id());
 
-    let annex_key = services
+    let key = services
         .content
         .store_content(&content, filename, content_type, source, auth.actor_id())
         .await?;
+    let metadata = services.content.get_content_metadata(&key).await?;
+    let size = u64::try_from(metadata.size_bytes).map_err(|_| {
+        color_eyre::eyre::eyre!("blob metadata reported negative size: {}", metadata.size_bytes)
+    })?;
 
-    Ok(json!({ "annex_key": annex_key }))
+    Ok(serde_json::to_value(StoreBlobResponse {
+        key,
+        size,
+        hash: metadata.content_hash,
+    })?)
 }
 
 pub async fn handle_retrieve_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let annex_key = params
-        .require_str("annex_key")
-        .wrap_err("Missing annex_key")?;
+    let key = params.require_str("key").wrap_err("Missing key")?;
 
-    let content = services.content.retrieve_content(annex_key).await?;
-    let metadata = services.content.get_content_metadata(annex_key).await?;
+    let content = services.content.retrieve_content(key).await?;
+    let metadata = services.content.get_content_metadata(key).await?;
 
-    Ok(blob_response_payload(&content, &metadata))
+    Ok(serde_json::to_value(blob_response_payload(&content, &metadata)?)?)
 }
