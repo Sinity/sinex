@@ -219,6 +219,36 @@ async fn register_enforces_active_subscription_limit() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn bus_retries_initial_subscribe_failures_until_shutdown(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+    ctx.nats_handle()?.shutdown().await?;
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let bus_task = tokio::spawn({
+        let bus = Arc::clone(&bus);
+        async move {
+            bus.run_with_ready(nats, pool, env, shutdown_rx, None).await;
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        !bus_task.is_finished(),
+        "initial subscribe failure should keep the bus retrying instead of exiting"
+    );
+
+    let _ = shutdown_tx.send(true);
+    tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Tests: Bus data flow (NATS + DB)
 // ─────────────────────────────────────────────────────────────────────

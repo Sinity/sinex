@@ -859,49 +859,46 @@ impl<'a> EventRepository<'a> {
             return self.insert_batch_unnest(events).await;
         }
 
-        // For larger batches, chunk them to avoid overwhelming the database
+        // For larger batches, still chunk the VALUES statement size, but keep the
+        // whole insert inside one transaction so cross-chunk failures roll back
+        // cleanly during replay and backfill.
         let chunk_size = 50; // Optimal chunk size for batch processing
-        let max_concurrent_chunks = 3; // Conservative concurrency to avoid pool exhaustion
-
         let mut results = Vec::with_capacity(events.len());
-
-        // Process chunks with controlled concurrency
         let total_events = events.len();
         let mut processed = 0;
 
-        for chunk_batch in events.chunks(chunk_size * max_concurrent_chunks) {
-            let mut chunk_futures = Vec::new();
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to begin transaction for batch insert of {total_events} events"
+                ),
+            )
+        })?;
 
-            for chunk in chunk_batch.chunks(chunk_size) {
-                let chunk_vec = chunk.to_vec();
-                chunk_futures.push(self.insert_batch_unnest(chunk_vec));
-            }
+        crate::query_helpers::set_repeatable_read(&mut tx).await?;
 
-            // Wait for this batch of chunks to complete
-            let chunk_results = futures::future::join_all(chunk_futures).await;
+        for chunk in events.chunks(chunk_size) {
+            let mut chunk_results = self.insert_batch_unnest_in_tx(&mut tx, chunk.to_vec()).await?;
+            processed += chunk_results.len();
+            results.append(&mut chunk_results);
 
-            // Collect results and propagate any errors immediately
-            for result in chunk_results {
-                match result {
-                    Ok(mut chunk_results) => {
-                        processed += chunk_results.len();
-                        results.append(&mut chunk_results);
-
-                        // Log progress every 1000 events for visibility on large batches
-                        if processed % 1000 == 0 || processed == total_events {
-                            tracing::debug!(
-                                processed = processed,
-                                total = total_events,
-                                progress_pct =
-                                    (processed as f64 / total_events as f64 * 100.0) as u32,
-                                "Batch insert progress"
-                            );
-                        }
-                    }
-                    Err(e) => return Err(e),
-                }
+            if processed % 1000 == 0 || processed == total_events {
+                tracing::debug!(
+                    processed = processed,
+                    total = total_events,
+                    progress_pct = (processed as f64 / total_events as f64 * 100.0) as u32,
+                    "Batch insert progress"
+                );
             }
         }
+
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to commit batch insert of {total_events} events"),
+            )
+        })?;
 
         Ok(results)
     }
@@ -909,6 +906,35 @@ impl<'a> EventRepository<'a> {
     /// Optimized batch insert with transaction batching for better performance
     async fn insert_batch_unnest(
         &self,
+        events: Vec<Event<JsonValue>>,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to begin transaction for batch insert of {} events",
+                    events.len()
+                ),
+            )
+        })?;
+
+        crate::query_helpers::set_repeatable_read(&mut tx).await?;
+
+        let events = self.insert_batch_unnest_in_tx(&mut tx, events).await?;
+
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to commit batch insert of {} events", events.len()),
+            )
+        })?;
+
+        Ok(events)
+    }
+
+    async fn insert_batch_unnest_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
         mut events: Vec<Event<JsonValue>>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         if events.is_empty() {
@@ -918,7 +944,7 @@ impl<'a> EventRepository<'a> {
         // For very small batches, use individual inserts to avoid overhead
         if events.len() == 1 {
             let event = events.remove(0);
-            let inserted = self.insert(event).await?;
+            let inserted = self.insert_with_tx(tx, event).await?;
             return Ok(vec![inserted]);
         }
 
@@ -1028,22 +1054,9 @@ impl<'a> EventRepository<'a> {
             node_models.push(event.node_model.map(|m| m.to_string()));
         }
 
-        // Begin transaction for atomicity
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            db_error(
-                e,
-                &format!(
-                    "Failed to begin transaction for batch insert of {} events",
-                    events.len()
-                ),
-            )
-        })?;
-
-        crate::query_helpers::set_repeatable_read(&mut tx).await?;
-
         // Enforce synthesis cycle detection (parity with insert/insert_stream_batch)
         for (event_id, source_ids) in &synthesis_checks {
-            ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids).await?;
+            ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids).await?;
         }
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
@@ -1088,17 +1101,10 @@ impl<'a> EventRepository<'a> {
             b.push_bind(&node_models[idx]);
         });
 
-        builder.build().execute(&mut *tx).await.map_err(|e| {
+        builder.build().execute(&mut **tx).await.map_err(|e| {
             db_error(
                 e,
                 &format!("Failed to insert batch of {} events", ids.len()),
-            )
-        })?;
-
-        tx.commit().await.map_err(|e| {
-            db_error(
-                e,
-                &format!("Failed to commit batch insert of {} events", events.len()),
             )
         })?;
 
