@@ -43,6 +43,7 @@ use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
 
 use sinex_primitives::{Result as SinexResult, SinexError};
+use tracing::warn;
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -90,6 +91,33 @@ pub struct WatcherHandle<M = ()> {
 }
 
 impl<M> WatcherHandle<M> {
+    fn recover_health_read(&self) -> WatcherHealth {
+        match self.health.read() {
+            Ok(health) => health.clone(),
+            Err(poisoned) => {
+                warn!(
+                    watcher = self.name,
+                    "Watcher health lock was poisoned during read; recovering last known state"
+                );
+                poisoned.into_inner().clone()
+            }
+        }
+    }
+
+    fn with_health_write<R>(&self, update: impl FnOnce(&mut WatcherHealth) -> R) -> R {
+        match self.health.write() {
+            Ok(mut health) => update(&mut health),
+            Err(poisoned) => {
+                warn!(
+                    watcher = self.name,
+                    "Watcher health lock was poisoned during write; recovering mutable state"
+                );
+                let mut health = poisoned.into_inner();
+                update(&mut health)
+            }
+        }
+    }
+
     /// Create a new watcher in the initialized state.
     ///
     /// # Arguments
@@ -165,9 +193,9 @@ impl<M> WatcherHandle<M> {
         match &self.state {
             WatcherState::Initialized => {
                 self.state = WatcherState::Running { task, forwarder };
-                if let Ok(mut health) = self.health.write() {
+                self.with_health_write(|health| {
                     health.active = true;
-                }
+                });
                 Ok(())
             }
             WatcherState::Running { .. } => Err(SinexError::invalid_state(
@@ -196,7 +224,7 @@ impl<M> WatcherHandle<M> {
 
     /// Get current health status snapshot.
     pub fn health(&self) -> WatcherHealth {
-        self.health.read().map(|h| h.clone()).unwrap_or_default()
+        self.recover_health_read()
     }
 
     /// Get a handle to the health tracker for external updates.
@@ -208,17 +236,17 @@ impl<M> WatcherHandle<M> {
 
     /// Record a successful operation in the health tracker.
     pub fn record_success(&self) {
-        if let Ok(mut health) = self.health.write() {
+        self.with_health_write(|health| {
             health.last_success = Some(sinex_primitives::temporal::Timestamp::now());
             health.events_processed = health.events_processed.saturating_add(1);
-        }
+        });
     }
 
     /// Record an error in the health tracker.
     pub fn record_error(&self, error: String) {
-        if let Ok(mut health) = self.health.write() {
+        self.with_health_write(|health| {
             health.last_error = Some(error);
-        }
+        });
     }
 
     /// Get a reference to the material context, if present.
@@ -238,9 +266,9 @@ impl<M> WatcherHandle<M> {
     pub async fn shutdown(mut self) {
         self.abort_tasks_async().await;
         self.state = WatcherState::Stopped;
-        if let Ok(mut health) = self.health.write() {
+        self.with_health_write(|health| {
             health.active = false;
-        }
+        });
         // Material context cleanup should be handled by caller if needed
         // since we can't await in Drop
     }
@@ -277,8 +305,8 @@ impl<M> WatcherHandle<M> {
 impl<M> Drop for WatcherHandle<M> {
     fn drop(&mut self) {
         self.abort_tasks_sync();
-        if let Ok(mut health) = self.health.write() {
+        self.with_health_write(|health| {
             health.active = false;
-        }
+        });
     }
 }
