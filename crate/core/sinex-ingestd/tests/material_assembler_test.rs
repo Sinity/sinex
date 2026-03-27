@@ -58,6 +58,7 @@ async fn start_assembler(
         50,
         Some(MaterialReadySet::default()),
         100,  // max_buffered_slices
+        512 * 1024 * 1024, // max_material_size_bytes
         300,  // slice_timeout_secs (5 min)
         3600, // orphan_threshold_secs (1 hr)
         90,   // disk_threshold_percent

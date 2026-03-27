@@ -161,7 +161,7 @@ pub async fn handle_dlq_requeue(
     let requeued_count = if let Some(ref event_id) = requeue_params.event_id {
         // Requeue specific event
         info!(
-            token_prefix = %auth.token_prefix,
+            actor = %auth.actor_id(),
             event_id = %event_id,
             "DLQ requeue operation initiated"
         );
@@ -173,7 +173,7 @@ pub async fn handle_dlq_requeue(
     } else if requeue_params.all {
         // Requeue all events
         info!(
-            token_prefix = %auth.token_prefix,
+            actor = %auth.actor_id(),
             "DLQ requeue all operation initiated"
         );
         let result = handler
@@ -239,7 +239,7 @@ pub async fn handle_dlq_purge(
     let messages_before = info.state.messages;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         messages_to_purge = messages_before,
         "DLQ purge operation initiated"
     );

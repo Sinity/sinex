@@ -166,12 +166,14 @@ impl RpcRegistry {
 
     /// Register a replay control RPC handler
     ///
-    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`.
+    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`
+    /// and passes through the authenticated actor context.
     pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
                 &'a ReplayControlClient,
                 JsonValue,
+                &'a RpcAuthContext,
             ) -> Pin<
                 Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
             > + Send
@@ -182,13 +184,13 @@ impl RpcRegistry {
         self.methods.insert(
             method,
             RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
+                handler: Arc::new(move |params, services, auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
                         let client = services.replay_control.as_ref().ok_or_else(|| {
                             color_eyre::eyre::eyre!("Replay control bus is not initialized")
                         })?;
-                        f(client, params).await
+                        f(client, params, auth).await
                     })
                 }),
                 required_role: role,
@@ -356,10 +358,10 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_gitops_create_source,
         handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_heartbeat,
-        handle_nodes_list, handle_nodes_list_active, handle_nodes_mark_inactive,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_replay_approve_operation,
+        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
+        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_replay_approve_operation,
         handle_replay_cancel_operation, handle_replay_create_operation,
         handle_replay_execute_operation, handle_replay_list_operations,
         handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
@@ -429,12 +431,12 @@ pub(crate) fn build_registry() -> RpcRegistry {
         .replay_rpc(
             "replay.operation_status",
             Role::ReadOnly,
-            boxed!(handle_replay_operation_status),
+            boxed!(handle_replay_operation_status, 3),
         )
         .replay_rpc(
             "replay.list_operations",
             Role::ReadOnly,
-            boxed!(handle_replay_list_operations),
+            boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
         .pool_rpc(
@@ -483,14 +485,16 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Box::pin(async move { handle_events_ingest(services, params).await })
         })
         // PKM methods (Write)
-        .register("pkm.create_note", Role::Write, |params, services, _auth| {
-            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params).await })
+        .register("pkm.create_note", Role::Write, |params, services, auth| {
+            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
         })
         .register(
             "pkm.create_entities_from_list",
             Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move { handle_create_entities(services.pkm.as_ref(), params).await })
+            |params, services, auth| {
+                Box::pin(async move {
+                    handle_create_entities(services.pkm.as_ref(), params, auth).await
+                })
             },
         )
         .register(
@@ -501,13 +505,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
             },
         )
         // Content methods (Write)
-        .register(
-            "content.store_blob",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move { handle_store_blob(services, params).await })
-            },
-        )
+        .register("content.store_blob", Role::Write, |params, services, auth| {
+            Box::pin(async move { handle_store_blob(services, params, auth).await })
+        })
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,
@@ -523,29 +523,18 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Role::Write,
             boxed!(handle_nodes_set_horizon, 4),
         )
-        // Node registry lifecycle (Write - updates node status)
-        .pool_rpc(
-            "nodes.heartbeat",
-            Role::Write,
-            boxed!(handle_nodes_heartbeat),
-        )
-        .pool_rpc(
-            "nodes.mark_inactive",
-            Role::Write,
-            boxed!(handle_nodes_mark_inactive),
-        )
         // Operations log write (Write)
         .pool_auth_rpc("ops.start", Role::Write, boxed!(handle_ops_start, 3))
         // Replay create/preview (Write - doesn't execute yet)
         .replay_rpc(
             "replay.create_operation",
             Role::Write,
-            boxed!(handle_replay_create_operation),
+            boxed!(handle_replay_create_operation, 3),
         )
         .replay_rpc(
             "replay.preview_operation",
             Role::Write,
-            boxed!(handle_replay_preview_operation),
+            boxed!(handle_replay_preview_operation, 3),
         )
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
@@ -554,17 +543,17 @@ pub(crate) fn build_registry() -> RpcRegistry {
         .replay_rpc(
             "replay.approve_operation",
             Role::Admin,
-            boxed!(handle_replay_approve_operation),
+            boxed!(handle_replay_approve_operation, 3),
         )
         .replay_rpc(
             "replay.execute_operation",
             Role::Admin,
-            boxed!(handle_replay_execute_operation),
+            boxed!(handle_replay_execute_operation, 3),
         )
         .replay_rpc(
             "replay.cancel_operation",
             Role::Admin,
-            boxed!(handle_replay_cancel_operation),
+            boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
         .register("dlq.requeue", Role::Admin, |params, services, auth| {

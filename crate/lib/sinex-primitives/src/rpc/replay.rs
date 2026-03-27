@@ -132,9 +132,6 @@ pub struct ReplayOperation {
 pub struct ReplayCreateRequest {
     /// Scope defining what to replay
     pub scope: ReplayScope,
-    /// Actor creating the operation (optional, defaults to CLI)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<String>,
 }
 
 /// Response: `replay.create_operation`
@@ -168,8 +165,6 @@ pub struct ReplayPreviewResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayApproveRequest {
     pub operation_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approver: Option<String>,
 }
 
 /// Response: `replay.approve_operation`
@@ -186,9 +181,6 @@ pub struct ReplayApproveResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecuteRequest {
     pub operation_id: String,
-    /// Executor identity (role-scoped actor string, e.g. `service:sinexctl`)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor: Option<String>,
     /// When true, compute cascade impact without archiving or dispatching scan.
     /// The operation transitions to Cancelled with a dry-run report in the
     /// checkpoint, proving the advisory lock can be acquired and the cascade
@@ -211,9 +203,6 @@ pub struct ReplayExecuteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelRequest {
     pub operation_id: String,
-    /// Canceller identity (role-scoped actor string, e.g. `operator:ops`)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canceller: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

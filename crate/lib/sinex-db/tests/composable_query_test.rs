@@ -13,14 +13,12 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_db::{DynamicPayload, Id};
+use sinex_db::DynamicPayload;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
     LineageQuery, PathOp, PayloadFilter, SortDirection, TimeSeriesOrder,
 };
-use std::str::FromStr;
-use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 // ============================================================================
@@ -137,21 +135,13 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
         "Should have next_cursor for pagination"
     );
 
-    let cursor_val = next_cursor.unwrap();
-
-    // Query page 2 using next_cursor
-    let cursor_uuid = Uuid::from_str(&cursor_val)
-        .map_err(|e| sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {e}")))?;
     let page2 = ctx
         .pool
         .events()
         .query(EventQuery {
             sources: vec![EventSource::from_static("test-source")],
             limit: 5,
-            cursor: Some(Cursor {
-                after: Some(Id::from_uuid(cursor_uuid)),
-                before: None,
-            }),
+            cursor: next_cursor,
             direction: SortDirection::Desc,
             ..Default::default()
         })
@@ -293,6 +283,210 @@ async fn test_text_search_with_relevance(ctx: TestContext) -> TestResult<()> {
         "Text search should populate relevance_score"
     );
     assert!(events[0].relevance_score.unwrap() > 0.0);
+
+    Ok(())
+}
+
+/// Test: ranked text-search pagination uses the full `(relevance_score, id)` cursor.
+#[sinex_test]
+async fn test_text_search_cursor_preserves_relevance_ordering(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("text-search-cursor-order"))
+        .await?;
+
+    let highly_relevant = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "search-source",
+                "document.indexed",
+                json!({"content": "searchterm searchterm searchterm"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let moderately_relevant = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "search-source",
+                "document.indexed",
+                json!({"content": "searchterm searchterm"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let weakly_relevant = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "search-source",
+                "document.indexed",
+                json!({"content": "searchterm"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let page1 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("search-source")],
+            payload: Some(PayloadFilter::TextSearch {
+                text: "searchterm".to_string(),
+            }),
+            limit: 2,
+            ..Default::default()
+        })
+        .await?;
+
+    let (page1_events, next_cursor) = match page1 {
+        EventQueryResult::Events {
+            events,
+            next_cursor,
+            ..
+        } => (events, next_cursor),
+        _ => panic!("Expected Events result"),
+    };
+
+    assert_eq!(page1_events.len(), 2);
+    assert_eq!(page1_events[0].event.id, highly_relevant.id);
+    assert_eq!(page1_events[1].event.id, moderately_relevant.id);
+
+    let page2 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("search-source")],
+            payload: Some(PayloadFilter::TextSearch {
+                text: "searchterm".to_string(),
+            }),
+            cursor: next_cursor,
+            limit: 2,
+            ..Default::default()
+        })
+        .await?;
+
+    let page2_events = match page2 {
+        EventQueryResult::Events { events, .. } => events,
+        _ => panic!("Expected Events result"),
+    };
+
+    assert_eq!(page2_events.len(), 1);
+    assert_eq!(page2_events[0].event.id, weakly_relevant.id);
+    assert_ne!(page2_events[0].event.id, highly_relevant.id);
+    assert_ne!(page2_events[0].event.id, moderately_relevant.id);
+
+    Ok(())
+}
+
+/// Test: nested text-search filters still populate ranking metadata.
+#[sinex_test]
+async fn test_nested_text_search_populates_relevance_and_snippet(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("nested-text-search"))
+        .await?;
+
+    let _match_event = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "search-source",
+                "document.indexed",
+                json!({"kind": "article", "content": "nested searchterm appears here"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("search-source")],
+            payload: Some(PayloadFilter::And {
+                filters: vec![
+                    PayloadFilter::TextSearch {
+                        text: "searchterm".to_string(),
+                    },
+                    PayloadFilter::Contains {
+                        value: json!({"kind": "article"}),
+                    },
+                ],
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    let events = match result {
+        EventQueryResult::Events { events, .. } => events,
+        _ => panic!("Expected Events result"),
+    };
+
+    assert_eq!(events.len(), 1);
+    assert!(events[0].relevance_score.unwrap_or_default() > 0.0);
+    assert!(
+        events[0]
+            .snippet
+            .as_ref()
+            .is_some_and(|snippet| !snippet.is_empty())
+    );
+
+    Ok(())
+}
+
+/// Test: ranked text-search queries reject UUID-only cursors.
+#[sinex_test]
+async fn test_text_search_cursor_requires_relevance_score(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("text-search-cursor-validation"))
+        .await?;
+
+    let inserted = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "search-source",
+                "document.indexed",
+                json!({"content": "searchterm"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let error = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("search-source")],
+            payload: Some(PayloadFilter::TextSearch {
+                text: "searchterm".to_string(),
+            }),
+            cursor: Some(Cursor::after_id(inserted.id.expect("event id"))),
+            ..Default::default()
+        })
+        .await
+        .expect_err("ranked query should reject UUID-only cursor");
+
+    assert!(
+        error.to_string().contains("relevance_score"),
+        "unexpected error: {error}"
+    );
 
     Ok(())
 }

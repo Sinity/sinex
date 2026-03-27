@@ -53,7 +53,7 @@ async fn build_test_event_bytes(
         event_type: EventType::new(event_type)?,
         payload,
         ts_orig: Some(sinex_primitives::Timestamp::now()),
-        host: HostName::new("test-host"),
+        host: HostName::new("test-host")?,
         node_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
@@ -285,7 +285,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 event_type: EventType::new("load.event").expect("valid event type"),
                 payload: json!({"seq": idx}),
                 ts_orig: Some(sinex_primitives::Timestamp::now()),
-                host: HostName::new("test-host"),
+                host: HostName::new("test-host").expect("valid host"),
                 node_run_id: Some(Uuid::now_v7()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {

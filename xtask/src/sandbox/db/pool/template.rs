@@ -84,12 +84,12 @@ ON CONFLICT (id) DO NOTHING";
 /// Used by:
 /// - Sandbox: to determine if template database needs rebuilding
 /// - Preflight: to detect pending schema apply work
-#[must_use]
-pub fn schema_fingerprint() -> Option<String> {
+fn schema_fingerprint_sources() -> Option<Vec<PathBuf>> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_src_dir = crate_dir.join("../crate/lib/sinex-schema/src");
     let schema_tables_dir = schema_src_dir.join("schema").canonicalize().ok()?;
     let apply_file = schema_src_dir.join("apply.rs");
+    let converge_file = schema_src_dir.join("converge.rs");
     let registry_file = schema_src_dir.join("schema_registry.rs");
 
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&schema_tables_dir)
@@ -97,10 +97,15 @@ pub fn schema_fingerprint() -> Option<String> {
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
     entries.push(apply_file);
+    entries.push(converge_file);
     entries.push(registry_file);
-
-    // Sort entries to ensure consistent ordering
     entries.sort();
+    Some(entries)
+}
+
+#[must_use]
+pub fn schema_fingerprint() -> Option<String> {
+    let entries = schema_fingerprint_sources()?;
 
     let mut hasher = Sha256::new();
     // Hash the seed SQL content directly — fingerprint invalidates automatically when
@@ -123,6 +128,31 @@ pub fn schema_fingerprint() -> Option<String> {
     }
 
     Some(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline test is justified here because it verifies the private
+    // fingerprint source list directly.
+    use color_eyre::eyre::eyre;
+    use super::schema_fingerprint_sources;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn schema_fingerprint_includes_convergence_inputs() -> TestResult<()> {
+        let sources = schema_fingerprint_sources()
+            .ok_or_else(|| eyre!("schema fingerprint sources unavailable"))?;
+        let file_names = sources
+            .iter()
+            .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+            .map(str::to_owned)
+            .collect::<Vec<String>>();
+
+        assert!(file_names.iter().any(|name| name == "apply.rs"));
+        assert!(file_names.iter().any(|name| name == "converge.rs"));
+        assert!(file_names.iter().any(|name| name == "schema_registry.rs"));
+        Ok(())
+    }
 }
 
 // ── Template lifecycle ──────────────────────────────────────────────────────

@@ -50,6 +50,7 @@ async fn start_assembler(
         50,
         Some(MaterialReadySet::default()),
         100,
+        512 * 1024 * 1024,
         300,
         3600,
         90,

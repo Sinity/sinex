@@ -1,28 +1,45 @@
-//! Node status and lifecycle handlers
+//! Node runtime status handlers.
 //!
-//! Provides RPC methods for querying node status, health, and managing
-//! node lifecycle events (heartbeats, status changes).
+//! These surfaces expose live node presence and aggregate health for operators.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::time::Duration;
-use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
 // ─── Request/Response types ─────────────────────────────────────────────
 
-#[derive(Debug, Default, Deserialize)]
-pub struct NodesListActiveRequest {}
+#[derive(Debug, Deserialize)]
+pub struct NodesListActiveRequest {
+    #[serde(default = "default_stale_after_secs")]
+    pub stale_after_secs: u64,
+}
+
+impl Default for NodesListActiveRequest {
+    fn default() -> Self {
+        Self {
+            stale_after_secs: default_stale_after_secs(),
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub struct NodesListActiveResponse {
     pub nodes: Vec<NodeInfo>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeHeartbeatSource {
+    Run,
+    Manifest,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,8 +48,14 @@ pub struct NodeInfo {
     pub node_type: NodeType,
     pub version: String,
     pub description: Option<String>,
+    pub service_name: Option<String>,
+    pub instance_id: Option<String>,
+    pub node_run_id: Option<Uuid>,
+    pub host: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,
+    pub started_at: Option<Timestamp>,
+    pub heartbeat_source: NodeHeartbeatSource,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,59 +81,59 @@ pub struct NodesHealthResponse {
     pub active_count: i64,
     pub inactive_count: i64,
     pub unique_nodes: i64,
+    pub active_run_count: i64,
     pub oldest_heartbeat: Option<Timestamp>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NodesHeartbeatRequest {
-    pub node_name: NodeName,
-    pub version: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NodesHeartbeatResponse {
-    pub updated: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NodesMarkInactiveRequest {
-    pub node_name: NodeName,
-    pub version: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NodesMarkInactiveResponse {
-    pub marked: bool,
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────
 
-/// List all active nodes.
+impl NodeHeartbeatSource {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "run" => Ok(Self::Run),
+            "manifest" => Ok(Self::Manifest),
+            other => Err(SinexError::processing(format!(
+                "Unknown node heartbeat source '{other}'"
+            ))),
+        }
+    }
+}
+
+/// List live node presence.
 ///
-/// Returns nodes where status = 'active' and `last_heartbeat_at` is recent
-/// (within the default 5-minute stale threshold).
+/// Returns active run rows when available and falls back to manifest-only
+/// heartbeats for services that do not yet register runs.
 pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Value> {
-    let _request: NodesListActiveRequest = super::parse_default_on_null(params).map_err(|e| {
+    let request: NodesListActiveRequest = super::parse_default_on_null(params).map_err(|e| {
         SinexError::serialization("Invalid nodes list active request").with_std_error(&e)
     })?;
+    let stale_after = Duration::from_secs(request.stale_after_secs);
 
-    let manifests = pool
+    let live_nodes = pool
         .state()
-        .get_active_nodes()
+        .list_live_node_presence(stale_after)
         .await
         .map_err(|e| SinexError::database("Failed to list active nodes").with_std_error(&e))?;
 
-    let nodes = manifests
+    let nodes = live_nodes
         .into_iter()
-        .map(|m| NodeInfo {
-            node_name: m.node_name,
-            node_type: m.node_type,
-            version: m.version,
-            description: m.description,
-            status: m.status,
-            last_heartbeat_at: m.last_heartbeat_at,
+        .map(|node| {
+            Ok(NodeInfo {
+                node_name: node.node_name,
+                node_type: node.node_type,
+                version: node.version,
+                description: node.description,
+                service_name: node.service_name,
+                instance_id: node.instance_id,
+                node_run_id: node.node_run_id,
+                host: node.host,
+                status: node.status,
+                last_heartbeat_at: node.last_heartbeat_at,
+                started_at: node.started_at,
+                heartbeat_source: NodeHeartbeatSource::parse(&node.heartbeat_source)?,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     let response = NodesListActiveResponse { nodes };
     serde_json::to_value(response).map_err(|e| {
@@ -120,8 +143,7 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
 
 /// Get node health summary.
 ///
-/// Returns counts of active/inactive nodes and the oldest heartbeat timestamp.
-/// The `stale_after_secs` parameter determines what is considered "active" (default: 300 seconds = 5 minutes).
+/// Returns unique-node counts plus the number of concrete active runs.
 pub async fn handle_nodes_health(pool: &PgPool, params: Value) -> Result<Value> {
     let request: NodesHealthRequest = super::parse_default_on_null(params).map_err(|e| {
         SinexError::serialization("Invalid nodes health request").with_std_error(&e)
@@ -138,88 +160,11 @@ pub async fn handle_nodes_health(pool: &PgPool, params: Value) -> Result<Value> 
         active_count: health.active_count,
         inactive_count: health.inactive_count,
         unique_nodes: health.unique_nodes,
+        active_run_count: health.active_run_count,
         oldest_heartbeat: health.oldest_heartbeat,
     };
 
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("Failed to serialize node health response").with_std_error(&e)
-    })
-}
-
-/// Update a node's heartbeat timestamp.
-///
-/// Called by a running node to indicate it is alive and actively executing.
-/// Sets the status to 'active' and updates `last_heartbeat_at` to `NOW()`.
-pub async fn handle_nodes_heartbeat(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: NodesHeartbeatRequest = serde_json::from_value(params).map_err(|e| {
-        SinexError::serialization("Invalid nodes heartbeat request").with_std_error(&e)
-    })?;
-
-    let updated = pool
-        .state()
-        .update_node_heartbeat_for_version(&request.node_name, &request.version)
-        .await
-        .map_err(|e| SinexError::database("Failed to update node heartbeat").with_std_error(&e))?;
-
-    if !updated {
-        warn!(
-            node_name = %request.node_name,
-            version = %request.version,
-            "Rejected node heartbeat because no matching manifest row exists"
-        );
-        return Err(SinexError::not_found(format!(
-            "Node manifest {}@{} is not registered",
-            request.node_name, request.version
-        )));
-    }
-
-    info!(
-        node_name = %request.node_name,
-        version = %request.version,
-        "Updated node heartbeat"
-    );
-
-    let response = NodesHeartbeatResponse { updated };
-    serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize heartbeat response").with_std_error(&e)
-    })
-}
-
-/// Mark a node as inactive.
-///
-/// Called when a node is known to have stopped (graceful shutdown, detected stale, etc).
-/// Sets the status to 'inactive'.
-pub async fn handle_nodes_mark_inactive(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: NodesMarkInactiveRequest = serde_json::from_value(params).map_err(|e| {
-        SinexError::serialization("Invalid nodes mark inactive request").with_std_error(&e)
-    })?;
-
-    let marked = pool
-        .state()
-        .mark_node_inactive_for_version(&request.node_name, &request.version)
-        .await
-        .map_err(|e| SinexError::database("Failed to mark node inactive").with_std_error(&e))?;
-
-    if !marked {
-        warn!(
-            node_name = %request.node_name,
-            version = %request.version,
-            "Rejected node mark_inactive because no matching manifest row exists"
-        );
-        return Err(SinexError::not_found(format!(
-            "Node manifest {}@{} is not registered",
-            request.node_name, request.version
-        )));
-    }
-
-    info!(
-        node_name = %request.node_name,
-        version = %request.version,
-        "Marked node as inactive"
-    );
-
-    let response = NodesMarkInactiveResponse { marked };
-    serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize mark inactive response").with_std_error(&e)
     })
 }

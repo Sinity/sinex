@@ -11,6 +11,7 @@ use sinex_node_sdk::automaton_node::{
 };
 use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::prelude::*;
 use xtask::sandbox::prelude::*;
 
@@ -39,6 +40,10 @@ impl TransducerNode for PassthroughDerivedNode {
 
     fn output_event_type(&self) -> &'static str {
         "test.output"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Command
     }
 
     async fn process(
@@ -74,6 +79,10 @@ impl TransducerNode for DlqDerivedNode {
         "test.output"
     }
 
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
+    }
+
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -105,6 +114,10 @@ impl AutomatonNode for PassthroughAutomaton {
 
     fn output_event_type(&self) -> &'static str {
         "test.output"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Command
     }
 
     async fn process(
@@ -140,6 +153,10 @@ impl AutomatonNode for DlqAutomaton {
         "test.output"
     }
 
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
+    }
+
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -154,10 +171,16 @@ impl AutomatonNode for DlqAutomaton {
     }
 }
 
-fn make_event() -> std::result::Result<Event<JsonValue>, SinexError> {
-    DynamicPayload::new("test.source", "test.input", json!({ "value": "hello" }))
+fn make_event_with_value(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
+    let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
         .from_parents([Id::<Event<JsonValue>>::new()])?
-        .build()
+        .build()?;
+    event.id = Some(event.id.unwrap_or_else(Id::new));
+    Ok(event)
+}
+
+fn make_event() -> std::result::Result<Event<JsonValue>, SinexError> {
+    make_event_with_value("hello")
 }
 
 #[sinex_test]
@@ -214,5 +237,39 @@ async fn automaton_adapter_errors_when_dlq_transport_is_missing() -> TestResult<
         .await
         .expect_err("missing transport must fail");
     assert!(!format!("{err}").is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
+    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
+    let output = adapter
+        .process_one(make_event_with_value(
+            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+        )?)
+        .await?
+        .expect("derived node should emit output");
+
+    let value = output.payload["value"]
+        .as_str()
+        .expect("redacted payload should stay string");
+    assert_eq!(value, "<GITHUB_TOKEN>");
+    Ok(())
+}
+
+#[sinex_test]
+async fn automaton_adapter_redacts_output_payloads() -> TestResult<()> {
+    let mut adapter = AutomatonNodeAdapter::new(PassthroughAutomaton);
+    let output = adapter
+        .process_one(make_event_with_value(
+            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+        )?)
+        .await?
+        .expect("automaton should emit output");
+
+    let value = output.payload["value"]
+        .as_str()
+        .expect("redacted payload should stay string");
+    assert_eq!(value, "<GITHUB_TOKEN>");
     Ok(())
 }

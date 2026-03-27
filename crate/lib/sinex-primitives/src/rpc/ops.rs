@@ -29,7 +29,6 @@ pub struct Operation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsStartRequest {
     pub operation_type: String,
-    pub operator: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Value>,
 }

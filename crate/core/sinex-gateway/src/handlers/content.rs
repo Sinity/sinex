@@ -1,14 +1,19 @@
 //! Content RPC handlers.
 
 use super::rpc_handlers::{
-    DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, DEFAULT_CREATOR_HOST, RpcParams,
-    blob_response_payload, decode_blob_content,
+    DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, RpcParams, blob_response_payload,
+    decode_blob_content,
 };
+use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Context, Result};
 use serde_json::{Value, json};
 
-pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
+pub async fn handle_store_blob(
+    services: &ServiceContainer,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
     let params = RpcParams::new(&params);
     let content_b64 = params.require_str("content").wrap_err("Missing content")?;
 
@@ -26,11 +31,11 @@ pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Re
     let source = params
         .optional_str("source")
         ?
-        .unwrap_or(DEFAULT_CREATOR_HOST);
+        .unwrap_or(auth.actor_id());
 
     let annex_key = services
         .content
-        .store_content(&content, filename, content_type, source)
+        .store_content(&content, filename, content_type, source, auth.actor_id())
         .await?;
 
     Ok(json!({ "annex_key": annex_key }))

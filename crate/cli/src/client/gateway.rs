@@ -32,6 +32,7 @@ use sinex_primitives::rpc::{
     },
     methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
+    ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     replay::{
         ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
         ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
@@ -522,7 +523,6 @@ impl GatewayClient {
                 material_filter,
                 filters,
             },
-            actor: Some("service:sinexctl".to_string()),
         };
 
         let result = self
@@ -567,7 +567,6 @@ impl GatewayClient {
         // First approve
         let approve_req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
-            approver: Some("service:sinexctl".to_string()),
         };
         self.call_rpc(
             methods::REPLAY_APPROVE_OPERATION,
@@ -578,7 +577,6 @@ impl GatewayClient {
         // Then execute
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("service:sinexctl".to_string()),
             dry_run: false,
         };
         let result = self
@@ -655,7 +653,6 @@ impl GatewayClient {
     pub async fn replay_approve(&self, operation_id: &str) -> Result<ReplayOperation> {
         let req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
-            approver: Some("service:sinexctl".to_string()),
         };
         let result = self
             .call_rpc(
@@ -676,7 +673,6 @@ impl GatewayClient {
     ) -> Result<ReplayOperation> {
         let req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("service:sinexctl".to_string()),
             dry_run,
         };
         let result = self
@@ -697,7 +693,6 @@ impl GatewayClient {
     ) -> Result<ReplayOperation> {
         let req = ReplayCancelRequest {
             operation_id: operation_id.to_string(),
-            canceller: Some("service:sinexctl".to_string()),
             reason: reason.map(String::from),
         };
         let result = self
@@ -778,20 +773,14 @@ impl GatewayClient {
     pub async fn ops_start(
         &self,
         operation_type: &str,
-        operator: &str,
         scope: Option<Value>,
-    ) -> Result<String> {
+    ) -> Result<OpsStartResponse> {
         let params = json!({
             "operation_type": operation_type,
-            "operator": operator,
             "scope": scope
         });
         let result = self.call_rpc("ops.start", params).await?;
-        Ok(result
-            .get("operation_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string())
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     /// List operations
@@ -800,20 +789,23 @@ impl GatewayClient {
         operation_type: Option<String>,
         status: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<OpsOperation>> {
         let params = json!({
             "operation_type": operation_type,
             "status": status,
             "limit": limit.unwrap_or(50)
         });
         let result = self.call_rpc("ops.list", params).await?;
-        serde_json::from_value(result).map_err(Into::into)
+        let response: OpsListResponse = serde_json::from_value(result)?;
+        Ok(response.operations)
     }
 
     /// Get operation details
-    pub async fn ops_get(&self, operation_id: &str) -> Result<Value> {
+    pub async fn ops_get(&self, operation_id: &str) -> Result<OpsOperation> {
         let params = json!({ "operation_id": operation_id });
-        self.call_rpc("ops.get", params).await
+        let result = self.call_rpc("ops.get", params).await?;
+        let response: OpsGetResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     /// Cancel an operation

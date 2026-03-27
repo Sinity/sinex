@@ -1,15 +1,17 @@
 //! PKM RPC handlers.
 
-use super::rpc_handlers::{
-    DEFAULT_CREATOR_GATEWAY, DEFAULT_CREATOR_HOST, RpcParams, decode_note_content,
-    validate_entity_link_ids, validate_entity_name,
-};
+use super::rpc_handlers::{RpcParams, decode_note_content, validate_entity_link_ids, validate_entity_name};
+use crate::rpc_server::RpcAuthContext;
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{Value, json};
 use sinex_primitives::{Event, Id, JsonValue, domain::Entity};
 use sinex_services::PkmService;
 
-pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<Value> {
+pub async fn handle_create_note(
+    service: &PkmService,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
     let params = RpcParams::new(&params);
     let event_id = Id::<Event<JsonValue>>::from_uuid(params.require_uuid("event_id")?);
     let content_b64 = params.require_str("content").wrap_err("Missing content")?;
@@ -26,18 +28,17 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         })
         .unwrap_or_default();
 
-    let created_by = params
-        .optional_str("created_by")
-        ?
-        .unwrap_or(DEFAULT_CREATOR_HOST);
-
     let annotation_id = service
-        .create_note(event_id, &content, tags, created_by, None)
+        .create_note(event_id, &content, tags, auth.actor_id(), None)
         .await?;
     Ok(json!({ "annotation_id": annotation_id.to_string() }))
 }
 
-pub async fn handle_create_entities(service: &PkmService, params: Value) -> Result<Value> {
+pub async fn handle_create_entities(
+    service: &PkmService,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
     let params = RpcParams::new(&params);
     let source_material_id = params.require_uuid("source_material_id")?;
 
@@ -63,13 +64,8 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
         .transpose()?
         .unwrap_or_default();
 
-    let created_by = params
-        .optional_str("created_by")
-        ?
-        .unwrap_or(DEFAULT_CREATOR_GATEWAY);
-
     let entity_ids = service
-        .create_entities_from_source_material(source_material_id, entities, created_by)
+        .create_entities_from_source_material(source_material_id, entities, auth.actor_id())
         .await?;
     Ok(
         json!({ "entity_ids": entity_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>() }),

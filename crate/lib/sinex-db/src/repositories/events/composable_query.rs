@@ -11,11 +11,12 @@ use crate::JsonValue;
 use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
-    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
-    LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp, PayloadFilter,
-    QueryResultEvent, SortDirection, SourceStatsEntry, TimeBucketEntry, TimeSeriesOrder,
+    AggregationMode, Cursor, CursorAnchor, EventQuery, EventQueryResult, GroupByField,
+    GroupedCount, LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp,
+    PayloadFilter, QueryResultEvent, SortDirection, SourceStatsEntry, TimeBucketEntry,
+    TimeSeriesOrder,
 };
-use sinex_primitives::{Pagination, SinexError, Timestamp};
+use sinex_primitives::{Id, Pagination, SinexError, Timestamp};
 use sqlx::postgres::types::PgInterval;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use tracing::instrument;
@@ -103,42 +104,34 @@ impl EventRepository<'_> {
 
 impl EventRepository<'_> {
     async fn execute_event_listing(&self, query: EventQuery) -> DbResult<EventQueryResult> {
-        let has_text_search = matches!(&query.payload, Some(PayloadFilter::TextSearch { .. }));
-        let text_for_search = if let Some(PayloadFilter::TextSearch { ref text }) = query.payload {
-            Some(text.clone())
-        } else {
-            None
-        };
+        let text_search_terms = query
+            .payload
+            .as_ref()
+            .map(PayloadFilter::positive_text_search_terms)
+            .unwrap_or_default();
+        let has_text_search = !text_search_terms.is_empty();
 
         let fetch_limit = query.limit + 1; // +1 to detect "has more"
 
-        let mut qb = QueryBuilder::<Postgres>::new(format!("SELECT {}", event_select_columns!()));
+        let mut qb = QueryBuilder::<Postgres>::new(format!(
+            "SELECT * FROM (SELECT {}",
+            event_select_columns!()
+        ));
 
-        // Text search scoring columns
-        if let Some(ref text) = text_for_search {
-            qb.push(
-                ", ts_rank_cd(to_tsvector('simple', payload::text), websearch_to_tsquery('simple', ",
-            );
-            qb.push_bind(text.clone());
-            qb.push("))::float8 AS relevance_score");
-            qb.push(", ts_headline('simple', payload::text, websearch_to_tsquery('simple', ");
-            qb.push_bind(text.clone());
-            qb.push("), 'MaxFragments=2, MinWords=8, MaxWords=24') AS snippet");
+        if has_text_search {
+            push_text_search_projection(&mut qb, &text_search_terms);
         } else {
             qb.push(", NULL::float8 AS relevance_score, NULL::text AS snippet");
         }
 
         qb.push(" FROM core.events WHERE TRUE");
-
-        // Apply all filters
         push_filters(&mut qb, &query);
+        qb.push(") AS listing WHERE TRUE");
 
-        // Cursor pagination
         if let Some(ref cursor) = query.cursor {
-            push_cursor(&mut qb, cursor, query.direction);
+            push_cursor(&mut qb, cursor, query.direction, has_text_search);
         }
 
-        // ORDER BY
         if has_text_search {
             qb.push(" ORDER BY relevance_score DESC, id ");
             qb.push(direction_sql(query.direction));
@@ -160,9 +153,9 @@ impl EventRepository<'_> {
         let has_more = rows.len() as i64 > query.limit;
         let rows: Vec<EventListingRow> = rows.into_iter().take(query.limit as usize).collect();
 
-        // Convert to result events
         let next_cursor = if has_more {
-            rows.last().map(|row| row.record.id.to_string())
+            rows.last()
+                .map(|row| event_listing_cursor(row, has_text_search))
         } else {
             None
         };
@@ -214,6 +207,14 @@ struct EventListingRow {
     record: EventRecord,
     relevance_score: Option<f64>,
     snippet: Option<String>,
+}
+
+fn event_listing_cursor(row: &EventListingRow, has_text_search: bool) -> Cursor {
+    let mut anchor = CursorAnchor::from_id(Id::from_uuid(row.record.id));
+    if has_text_search {
+        anchor = anchor.with_relevance_score(row.relevance_score.unwrap_or(0.0));
+    }
+    Cursor::after_anchor(anchor)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -652,9 +653,24 @@ fn json_to_text(val: &JsonValue) -> String {
 // Cursor & direction helpers
 // ─────────────────────────────────────────────────────────────────────
 
-fn push_cursor(qb: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor, direction: SortDirection) {
+fn push_cursor(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    cursor: &Cursor,
+    direction: SortDirection,
+    has_text_search: bool,
+) {
+    if has_text_search {
+        if let Some(ref after) = cursor.after {
+            push_ranked_cursor_clause(qb, after, direction, true);
+        }
+        if let Some(ref before) = cursor.before {
+            push_ranked_cursor_clause(qb, before, direction, false);
+        }
+        return;
+    }
+
     if let Some(ref after) = cursor.after {
-        let uuid = after.to_uuid();
+        let uuid = after.id.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id < ");
@@ -669,7 +685,7 @@ fn push_cursor(qb: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor, direction: 
         }
     }
     if let Some(ref before) = cursor.before {
-        let uuid = before.to_uuid();
+        let uuid = before.id.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id > ");
@@ -690,6 +706,68 @@ fn direction_sql(dir: SortDirection) -> &'static str {
         SortDirection::Asc => "ASC",
         SortDirection::Desc => "DESC",
     }
+}
+
+fn push_text_search_projection(qb: &mut QueryBuilder<'_, Postgres>, terms: &[String]) {
+    qb.push(", ts_rank_cd(");
+    push_text_search_vector_expr(qb);
+    qb.push(", ");
+    push_text_search_query_expr(qb, terms);
+    qb.push(")::float8 AS relevance_score");
+
+    qb.push(", CASE WHEN ");
+    push_text_search_vector_expr(qb);
+    qb.push(" @@ ");
+    push_text_search_query_expr(qb, terms);
+    qb.push(" THEN ts_headline('simple', payload::text, ");
+    push_text_search_query_expr(qb, terms);
+    qb.push(", 'MaxFragments=2, MinWords=8, MaxWords=24') ELSE NULL END AS snippet");
+}
+
+fn push_text_search_vector_expr(qb: &mut QueryBuilder<'_, Postgres>) {
+    qb.push("to_tsvector('simple', payload::text)");
+}
+
+fn push_text_search_query_expr(qb: &mut QueryBuilder<'_, Postgres>, terms: &[String]) {
+    debug_assert!(!terms.is_empty());
+    qb.push("(");
+    for (index, term) in terms.iter().enumerate() {
+        if index > 0 {
+            qb.push(" || ");
+        }
+        qb.push("websearch_to_tsquery('simple', ");
+        qb.push_bind(term.clone());
+        qb.push(")");
+    }
+    qb.push(")");
+}
+
+fn push_ranked_cursor_clause(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    anchor: &CursorAnchor,
+    direction: SortDirection,
+    is_after: bool,
+) {
+    let uuid = anchor.id.to_uuid();
+    let score = anchor.relevance_score.unwrap_or(0.0);
+    let (score_cmp, id_cmp) = match (is_after, direction) {
+        (true, SortDirection::Desc) => ("<", "<"),
+        (true, SortDirection::Asc) => ("<", ">"),
+        (false, SortDirection::Desc) => (">", ">"),
+        (false, SortDirection::Asc) => (">", "<"),
+    };
+
+    qb.push(" AND (relevance_score ");
+    qb.push(score_cmp);
+    qb.push(" ");
+    qb.push_bind(score);
+    qb.push(" OR (relevance_score = ");
+    qb.push_bind(score);
+    qb.push(" AND id ");
+    qb.push(id_cmp);
+    qb.push(" ");
+    qb.push_bind(uuid);
+    qb.push("::uuid))");
 }
 
 // ─────────────────────────────────────────────────────────────────────

@@ -157,6 +157,23 @@ async fn payload_text_search_filter() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn payload_text_search_filter_is_case_insensitive() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::TextSearch {
+            text: "important".to_string(),
+        }),
+        ..Default::default()
+    };
+    assert!(filter.matches(&test_event(
+        "x",
+        "x",
+        "h",
+        json!({"title": "IMPORTANT document"})
+    )));
+    Ok(())
+}
+
+#[sinex_test]
 async fn payload_has_key_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::HasKey {
@@ -214,6 +231,20 @@ async fn payload_path_like_filter() -> ::xtask::sandbox::TestResult<()> {
     };
     assert!(filter.matches(&test_event("x", "x", "h", json!({"name": "main.rs"}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"name": "main.py"}))));
+    Ok(())
+}
+
+#[sinex_test]
+async fn payload_path_like_filter_matches_sql_case_sensitively() -> ::xtask::sandbox::TestResult<()>
+{
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::Path {
+            path: "name".to_string(),
+            op: PathOp::Like("%.rs".to_string()),
+        }),
+        ..Default::default()
+    };
+    assert!(!filter.matches(&test_event("x", "x", "h", json!({"name": "MAIN.RS"}))));
     Ok(())
 }
 
@@ -380,5 +411,46 @@ async fn validate_accepts_shallow_nesting() -> ::xtask::sandbox::TestResult<()> 
         ..Default::default()
     };
     assert!(filter.validate().is_ok());
+    Ok(())
+}
+
+#[sinex_test]
+async fn validate_rejects_payload_text_search() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::TextSearch {
+            text: "important".to_string(),
+        }),
+        ..Default::default()
+    };
+
+    let error = filter.validate().expect_err("text search should be rejected for SSE filters");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support payload text search"),
+        "unexpected validation error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn validate_rejects_nested_payload_text_search() -> ::xtask::sandbox::TestResult<()> {
+    let filter = SubscriptionFilter {
+        payload: Some(PayloadFilter::And {
+            filters: vec![
+                PayloadFilter::HasKey {
+                    key: "title".to_string(),
+                },
+                PayloadFilter::Not {
+                    filter: Box::new(PayloadFilter::TextSearch {
+                        text: "secret".to_string(),
+                    }),
+                },
+            ],
+        }),
+        ..Default::default()
+    };
+
+    assert!(filter.validate().is_err());
     Ok(())
 }

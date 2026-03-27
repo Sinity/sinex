@@ -8,12 +8,12 @@
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::Seconds;
 use sinex_primitives::domain::NodeName;
 use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
 use sinex_primitives::utils::CoordinationPrimitive;
+use sinex_primitives::{Seconds, Uuid};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -89,6 +89,7 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
     service_name: String,
+    node_name: Option<NodeName>,
     start_time: SystemTime,
     events_processed: CoordinationPrimitive,
     errors_count: CoordinationPrimitive,
@@ -102,6 +103,7 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
+    node_run_id: Option<Uuid>,
     /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
     /// columns for this node, enabling efficient active-node queries.
@@ -129,6 +131,7 @@ impl HeartbeatEmitter {
 
         Self {
             service_name,
+            node_name: None,
             start_time: SystemTime::now(),
             events_processed: CoordinationPrimitive::event_counter(0, "events_processed"),
             errors_count: CoordinationPrimitive::event_counter(0, "errors_count"),
@@ -141,6 +144,7 @@ impl HeartbeatEmitter {
             log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            node_run_id: None,
             #[cfg(feature = "db")]
             db_pool: None,
         }
@@ -149,6 +153,24 @@ impl HeartbeatEmitter {
     /// Configure a custom log sink (primarily for tests)
     pub fn with_log_sink(mut self, sink: Arc<dyn HeartbeatLogSink>) -> Self {
         self.log_sink = sink;
+        self
+    }
+
+    #[must_use]
+    pub fn with_node_name(mut self, node_name: NodeName) -> Self {
+        self.node_name = Some(node_name);
+        self
+    }
+
+    #[must_use]
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_node_run_id(mut self, node_run_id: Uuid) -> Self {
+        self.node_run_id = Some(node_run_id);
         self
     }
 
@@ -166,10 +188,27 @@ impl HeartbeatEmitter {
     /// Construct a heartbeat emitter for a runtime with the provided interval
     #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState, interval_seconds: Seconds) -> Self {
-        Self::new(
+        let emitter = Self::new(
             runtime.service_info().service_name().to_string(),
             interval_seconds,
         )
+        .with_node_name(NodeName::new(runtime.node_name()))
+        .with_version(runtime.version().to_string());
+
+        let emitter = if let Some(node_run_id) = runtime.node_run_id() {
+            emitter.with_node_run_id(node_run_id)
+        } else {
+            emitter
+        };
+
+        #[cfg(feature = "db")]
+        let emitter = if let Some(pool) = runtime.handles().db_pool().cloned() {
+            emitter.with_db_pool(pool)
+        } else {
+            emitter
+        };
+
+        emitter
     }
 
     /// Expose configured service name for tests and diagnostics
@@ -367,28 +406,50 @@ impl HeartbeatEmitter {
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
             use sinex_db::DbPoolExt;
-            match pool
-                .state()
-                .update_node_heartbeat_for_version(
-                    &NodeName::new(&metrics.service_name),
-                    &metrics.version,
-                )
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    warn!(
-                        service = %metrics.service_name,
-                        version = %metrics.version,
-                        "Heartbeat did not persist because the node manifest row is missing"
-                    );
+            if let Some(node_name) = &self.node_name {
+                match pool
+                    .state()
+                    .update_node_heartbeat_for_version(node_name, &metrics.version)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        warn!(
+                            node = %node_name,
+                            service = %metrics.service_name,
+                            version = %metrics.version,
+                            "Heartbeat did not persist because the node manifest row is missing"
+                        );
+                    }
+                    Err(e) => {
+                        debug!(
+                            node = %node_name,
+                            service = %metrics.service_name,
+                            error = %e,
+                            "Failed to persist node manifest heartbeat to database (non-fatal)"
+                        );
+                    }
                 }
-                Err(e) => {
-                    debug!(
-                        service = %metrics.service_name,
-                        error = %e,
-                        "Failed to persist heartbeat to database (non-fatal)"
-                    );
+            }
+
+            if let Some(node_run_id) = self.node_run_id {
+                match pool.state().update_node_run_heartbeat(node_run_id).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        warn!(
+                            service = %metrics.service_name,
+                            node_run_id = %node_run_id,
+                            "Heartbeat did not persist because the node run row is missing"
+                        );
+                    }
+                    Err(e) => {
+                        debug!(
+                            service = %metrics.service_name,
+                            node_run_id = %node_run_id,
+                            error = %e,
+                            "Failed to persist node run heartbeat to database (non-fatal)"
+                        );
+                    }
                 }
             }
         }

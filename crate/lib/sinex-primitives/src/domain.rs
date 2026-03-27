@@ -1519,6 +1519,8 @@ pub enum NodeState {
     Paused,
     /// Node has encountered a fatal error
     Failed,
+    /// Node has stopped after completing its run
+    Stopped,
     /// Node state is unknown
     #[default]
     Unknown,
@@ -1531,6 +1533,7 @@ impl std::fmt::Display for NodeState {
             Self::Draining => write!(f, "draining"),
             Self::Paused => write!(f, "paused"),
             Self::Failed => write!(f, "failed"),
+            Self::Stopped => write!(f, "stopped"),
             Self::Unknown => write!(f, "unknown"),
         }
     }
@@ -1545,6 +1548,7 @@ impl std::str::FromStr for NodeState {
             "draining" => Ok(Self::Draining),
             "paused" => Ok(Self::Paused),
             "failed" => Ok(Self::Failed),
+            "stopped" => Ok(Self::Stopped),
             "unknown" => Ok(Self::Unknown),
             _ => Err(format!("unknown node state: {s}")),
         }

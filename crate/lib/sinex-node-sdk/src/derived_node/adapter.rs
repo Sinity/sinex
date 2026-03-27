@@ -20,14 +20,18 @@ use crate::{NodeResult, SinexError};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{Operation, Provenance};
 use sinex_primitives::non_empty::NonEmptyVec;
+use sinex_primitives::privacy;
+use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
+
+const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 
 /// Shared runtime adapter for all derived node models.
 ///
@@ -121,6 +125,75 @@ impl<N> DerivedNodeAdapter<N>
 where
     N: DerivedNodeImpl,
 {
+    #[cfg(feature = "db")]
+    async fn load_query_events_paginated(
+        &self,
+        pool: &sinex_db::DbPool,
+        mut query: EventQuery,
+        scope_key: &str,
+        query_kind: &'static str,
+    ) -> NodeResult<Vec<QueryResultEvent>> {
+        use sinex_db::DbPoolExt;
+
+        let mut collected = Vec::new();
+        let mut cursor = query.cursor.take();
+        let mut pages = 0usize;
+
+        loop {
+            query.cursor = cursor.clone();
+            query.limit = INVALIDATION_QUERY_PAGE_SIZE;
+
+            let result = pool.events().query(query.clone()).await.map_err(|e| {
+                SinexError::database(format!(
+                    "Failed to load {query_kind} page {} for scope '{scope_key}': {e}",
+                    pages + 1
+                ))
+            })?;
+
+            let (mut page_events, next_cursor) = match result {
+                EventQueryResult::Events {
+                    events,
+                    next_cursor,
+                    ..
+                } => (events, next_cursor),
+                other => {
+                    return Err(SinexError::processing(format!(
+                        "{query_kind} unexpectedly returned non-event result during invalidation: {other:?}"
+                    ))
+                    .with_context("scope_key", scope_key)
+                    .with_context("node", self.node.name()));
+                }
+            };
+
+            if page_events.is_empty() {
+                break;
+            }
+
+            pages += 1;
+            collected.append(&mut page_events);
+
+            cursor = next_cursor;
+
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        if pages > 1 {
+            info!(
+                node = %self.node.name(),
+                scope_key,
+                query_kind,
+                pages,
+                rows = collected.len(),
+                page_size = INVALIDATION_QUERY_PAGE_SIZE,
+                "Loaded invalidation query across multiple pages"
+            );
+        }
+
+        Ok(collected)
+    }
+
     async fn send_to_dlq_or_fail(
         &self,
         event: &Event<JsonValue>,
@@ -350,8 +423,28 @@ where
         fallback_source_id: Id<Event<JsonValue>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
-        let typed_ids: Vec<Id<Event<JsonValue>>> = output
-            .source_event_ids
+        let DerivedOutput {
+            payload,
+            ts_orig,
+            source_event_ids,
+            temporal_policy,
+            semantics_version,
+            scope_key,
+            equivalence_key,
+        } = output;
+
+        let privacy_context = self.node.output_privacy_context();
+        let filtered_payload = privacy::engine().process_json(&payload, privacy_context);
+        if filtered_payload != payload {
+            debug!(
+                node = %self.node.name(),
+                output_event_type = %self.node.output_event_type(),
+                ?privacy_context,
+                "Applied privacy filtering to derived output payload"
+            );
+        }
+
+        let typed_ids: Vec<Id<Event<JsonValue>>> = source_event_ids
             .into_iter()
             .map(Id::from_uuid)
             .collect();
@@ -368,17 +461,17 @@ where
             id: Some(Id::new()),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(self.node.output_event_type())?,
-            payload: output.payload,
-            ts_orig: Some(output.ts_orig),
+            payload: filtered_payload,
+            ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
             node_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
-            temporal_policy: Some(output.temporal_policy),
-            semantics_version: output.semantics_version,
-            scope_key: output.scope_key,
-            equivalence_key: output.equivalence_key,
+            temporal_policy: Some(temporal_policy),
+            semantics_version,
+            scope_key,
+            equivalence_key,
             created_by_operation_id,
             node_model: Some(self.node.node_model()),
         })
@@ -490,16 +583,19 @@ where
                 event_types: vec![EventType::new(output_type)?],
                 scope_key: Some(scope_key.clone()),
                 direction: SortDirection::Asc,
-                limit: 10_000,
+                limit: INVALIDATION_QUERY_PAGE_SIZE,
                 ..EventQuery::default()
             };
 
-            let stale_ids: Vec<Uuid> = match pool.events().query(stale_query).await {
-                Ok(EventQueryResult::Events { events, .. }) => events
-                    .iter()
-                    .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
-                    .collect(),
-                Ok(_) => Vec::new(),
+            let stale_ids: Vec<Uuid> =
+                match self
+                    .load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
+                    .await
+                {
+                    Ok(events) => events
+                        .iter()
+                        .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
+                        .collect(),
                 Err(e) => {
                     warn!(
                         node = %self.node.name(),
@@ -548,20 +644,16 @@ where
                 event_types: vec![EventType::new(self.node.input_event_type())?],
                 scope_key: Some(scope_key.clone()),
                 direction: SortDirection::Asc,
-                limit: 10_000,
+                limit: INVALIDATION_QUERY_PAGE_SIZE,
                 ..EventQuery::default()
             };
 
-            let result = pool.events().query(query).await.map_err(|e| {
-                SinexError::database(format!("Failed to load working set for scope: {e}"))
-            })?;
-
-            let working_set = match result {
-                EventQueryResult::Events { events, .. } => {
-                    events.into_iter().map(|qe| qe.event).collect::<Vec<_>>()
-                }
-                _ => Vec::new(),
-            };
+            let working_set = self
+                .load_query_events_paginated(&pool, query, scope_key, "scope working set")
+                .await?
+                .into_iter()
+                .map(|qe| qe.event)
+                .collect::<Vec<_>>();
 
             // Build context for invalidation processing
             let context = DerivedTriggerContext {
@@ -1037,13 +1129,7 @@ where
 
             match next_cursor {
                 Some(c) => {
-                    let uuid = c
-                        .parse::<Uuid>()
-                        .map_err(|e| SinexError::processing(format!("Invalid cursor UUID: {e}")))?;
-                    cursor = Some(sinex_primitives::Cursor {
-                        after: Some(Id::from_uuid(uuid)),
-                        before: None,
-                    });
+                    cursor = Some(c);
                 }
                 None => break,
             }

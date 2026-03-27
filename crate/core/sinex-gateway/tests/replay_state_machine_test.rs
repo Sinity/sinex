@@ -178,6 +178,49 @@ async fn operations_default_to_planning() -> Result<()> {
 }
 
 #[sinex_test]
+async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "atomic-create-node".to_string(),
+        time_window: None,
+        material_filter: Some(vec![Uuid::now_v7()]),
+        filters: HashMap::from([("event_types".to_string(), serde_json::json!(["file.created"]))]),
+    };
+
+    let created = replay
+        .create_operation(scope.clone(), "test:planner".to_string())
+        .await?;
+    let loaded = replay.load_operation(created.operation_id).await?;
+
+    assert_eq!(loaded.state, ReplayState::Planning);
+    assert_eq!(loaded.scope.node_id, scope.node_id);
+    assert_eq!(loaded.scope.time_window, scope.time_window);
+    assert_eq!(loaded.scope.material_filter, scope.material_filter);
+    assert_eq!(loaded.scope.filters, scope.filters);
+    assert_eq!(loaded.actor, "test:planner");
+    assert_eq!(loaded.checkpoint.processed_events, 0);
+    assert!(loaded.preview_summary.is_none());
+    assert!(loaded.approved_by.is_none());
+    assert!(loaded.executor_node.is_none());
+
+    let persisted = sqlx::query!(
+        r#"
+        SELECT result_status, result_message, preview_summary
+        FROM core.operations_log
+        WHERE id = $1::uuid
+        "#,
+        created.operation_id
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(persisted.result_status, "running");
+    assert_eq!(persisted.result_message.as_deref(), Some("planning"));
+    assert!(persisted.preview_summary.is_some());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Result<()> {
     let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {

@@ -89,7 +89,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             event_type: EventType::new("backlog.event").expect("valid event type"),
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
-            host: HostName::new("test-host"),
+            host: HostName::new("test-host")?,
             node_run_id: Some(Uuid::now_v7()),
             payload_schema_id: None,
             provenance: Provenance::Material {

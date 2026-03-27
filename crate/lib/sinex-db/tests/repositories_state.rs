@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
+use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::{Id, Uuid};
 use std::time::Duration;
 use xtask::sandbox::sinex_test;
@@ -149,12 +149,34 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-async fn log_operation_rejects_unknown_operation_type(ctx: TestContext) -> TestResult<()> {
+async fn log_operation_accepts_custom_audit_operation_type(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let logged = repo
+        .log_operation(Operation {
+            id: None,
+            operation_type: "content.store".to_string(),
+            operator: "tester@localhost".to_string(),
+            scope: Some(json!({ "source": "external" })),
+            result_status: OperationStatus::Running,
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        })
+        .await?;
+
+    assert_eq!(logged.operation_type, "content.store");
+    assert_eq!(logged.operator, "tester@localhost");
+    assert_eq!(logged.scope, Some(json!({ "source": "external" })));
+    Ok(())
+}
+
+#[sinex_test]
+async fn log_operation_rejects_malformed_operation_type(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let err = repo
         .log_operation(Operation {
             id: None,
-            operation_type: "test".to_string(),
+            operation_type: "Bad Operation".to_string(),
             operator: "tester@localhost".to_string(),
             scope: None,
             result_status: OperationStatus::Running,
@@ -163,9 +185,9 @@ async fn log_operation_rejects_unknown_operation_type(ctx: TestContext) -> TestR
             duration_ms: None,
         })
         .await
-        .expect_err("unknown operation type should be rejected before insert");
+        .expect_err("malformed operation type should be rejected before insert");
 
-    assert!(err.to_string().contains("Unsupported operation type"));
+    assert!(err.to_string().contains("must match"));
     Ok(())
 }
 
@@ -276,15 +298,18 @@ async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext
         "heartbeat should only be persisted for the requested version"
     );
 
-    let active_nodes = repo.get_active_nodes().await?;
-    assert_eq!(active_nodes.len(), 1);
-    assert_eq!(active_nodes[0].node_name, node_name);
-    assert_eq!(active_nodes[0].version, "2.0.0");
+    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    assert_eq!(live_nodes.len(), 1);
+    assert_eq!(live_nodes[0].node_name, node_name);
+    assert_eq!(live_nodes[0].version, "2.0.0");
+    assert!(live_nodes[0].node_run_id.is_none());
+    assert_eq!(live_nodes[0].heartbeat_source, "manifest");
 
     let health = repo.get_node_health(Duration::from_secs(120)).await?;
     assert_eq!(health.unique_nodes, 1);
     assert_eq!(health.active_count, 1);
     assert_eq!(health.inactive_count, 0);
+    assert_eq!(health.active_run_count, 0);
 
     Ok(())
 }
@@ -326,9 +351,72 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
         "marking one version inactive must not clear the other version heartbeat"
     );
 
-    let active_nodes = repo.get_active_nodes().await?;
-    assert_eq!(active_nodes.len(), 1);
-    assert_eq!(active_nodes[0].version, "2.0.0");
+    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    assert_eq!(live_nodes.len(), 1);
+    assert_eq!(live_nodes[0].version, "2.0.0");
+    assert_eq!(live_nodes[0].heartbeat_source, "manifest");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("node-run-lifecycle");
+
+    let manifest = repo
+        .register_node(&node_name, NodeType::Ingestor, "1.2.3", Some("node run test"))
+        .await?;
+
+    let config = json!({
+        "history_sources": ["/tmp/history.sqlite"],
+        "nested": { "enabled": true, "batch_size": 64 }
+    });
+
+    let run = repo
+        .start_node_run(
+            manifest.id,
+            "sinex-terminal-ingestor",
+            "host-123-run",
+            "test-host",
+            Some("b3-abc123"),
+            Some(&config),
+        )
+        .await?;
+
+    assert_eq!(run.node_manifest_id, manifest.id);
+    assert_eq!(run.service_name, "sinex-terminal-ingestor");
+    assert_eq!(run.instance_id, "host-123-run");
+    assert_eq!(run.host, "test-host");
+    assert_eq!(run.status, "running");
+    assert!(run.last_heartbeat_at.is_some());
+    assert_eq!(run.effective_config_hash.as_deref(), Some("b3-abc123"));
+    assert_eq!(run.effective_config, Some(config.clone()));
+
+    assert!(repo.update_node_run_heartbeat(run.id).await?);
+    assert!(repo
+        .update_node_run_status(run.id, NodeState::Stopped)
+        .await?);
+
+    let refreshed = sqlx::query!(
+        r#"
+        SELECT
+            status,
+            ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
+            effective_config_hash,
+            effective_config
+        FROM core.node_runs
+        WHERE id = $1::uuid
+        "#,
+        run.id
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(refreshed.status, "stopped");
+    assert!(refreshed.ended_at.is_some());
+    assert_eq!(refreshed.effective_config_hash.as_deref(), Some("b3-abc123"));
+    assert_eq!(refreshed.effective_config, Some(config));
 
     Ok(())
 }

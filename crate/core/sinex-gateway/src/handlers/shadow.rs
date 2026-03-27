@@ -186,7 +186,7 @@ pub async fn handle_shadow_delete(
         })?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         consumer_name = %request.consumer_name,
         "Shadow consumer deleted"
     );

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::Timestamp;
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
 use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -118,6 +119,10 @@ impl TransducerNode for GitActivityDetector {
 
     fn output_event_type(&self) -> &'static str {
         "git.activity.detected"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Command
     }
 
     async fn process(

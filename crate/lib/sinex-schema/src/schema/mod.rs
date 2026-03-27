@@ -89,14 +89,6 @@ const ALL_TABLES: &[TableMeta] = &[
         cleanup_protected: false,
     },
     TableMeta {
-        schema: "core",
-        name: "events",
-        qualified_name: "core.events",
-        is_hypertable: true,
-        has_triggers: true,
-        cleanup_protected: false,
-    },
-    TableMeta {
         schema: "audit",
         name: "archived_events",
         qualified_name: "audit.archived_events",
@@ -262,6 +254,14 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "core.node_runs",
         is_hypertable: false,
         has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
+        name: "events",
+        qualified_name: "core.events",
+        is_hypertable: true,
+        has_triggers: true,
         cleanup_protected: false,
     },
     TableMeta {

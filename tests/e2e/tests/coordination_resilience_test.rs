@@ -197,7 +197,7 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
     // Update heartbeat (re-register)
     let mut updated_meta = metadata.clone();
     updated_meta.hostname = "updated-host".to_string();
-    kv_client.heartbeat(&instance_id, &updated_meta).await?;
+    kv_client.heartbeat(&updated_meta).await?;
 
     let entry = bucket.entry(&key).await?.unwrap();
     let stored_meta: InstanceMetadata = serde_json::from_slice(&entry.value)?;
@@ -311,7 +311,7 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
     sleep(Duration::from_millis(100)).await;
 
     // Heartbeat fresh only (note: 100ms is intentional timing for test, not from Timeouts)
-    kv_client.heartbeat(&fresh_id, &meta_fresh).await?;
+    kv_client.heartbeat(&meta_fresh).await?;
 
     // Verify fresh has new revision, stale is same
     let entry_fresh_2 = bucket

@@ -60,7 +60,7 @@ impl OperationsLog {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "operation_type IN ('replay', 'archive', 'restore', 'purge', 'tombstone')",
+                        "operation_type ~ '^[a-z][a-z0-9_.-]*$'",
                     )),
             )
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())

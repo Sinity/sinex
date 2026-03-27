@@ -159,9 +159,13 @@ mod tests {
 
         let service_info = ServiceInfo::new(
             service_name.to_string(),
+            service_name.to_string(),
             gethostname::gethostname().to_string_lossy().to_string(),
             work_dir.clone().into_std_path_buf(),
             false,
+            format!("test-instance-{}", Uuid::now_v7().simple()),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
         );
 
         let runtime = NodeRuntimeState::new(service_info, handles, HashMap::new(), work_dir);

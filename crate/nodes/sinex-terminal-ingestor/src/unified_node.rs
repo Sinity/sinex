@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, stage_stable_material,
+    SourceState, SqliteHistoryRowOutcome, import_sqlite_history_lenient, stage_stable_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -706,6 +706,14 @@ impl HistoryWatcherContext {
             .await;
     }
 
+    fn sqlite_history_state(sqlite_row_id: i64, recent_hashes: VecDeque<u64>) -> HistoryState {
+        HistoryState {
+            sqlite_row_id: Some(sqlite_row_id),
+            recent_hashes,
+            ..HistoryState::default()
+        }
+    }
+
     async fn scan_history_once_from_state(
         &self,
         state_override: Option<HistoryState>,
@@ -724,56 +732,62 @@ impl HistoryWatcherContext {
                     .await
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
-                let mut processed = 0usize;
-                let mut warnings = Vec::new();
-                match crate::fish_history::read_fish_history(
-                    &self.path,
+                match import_sqlite_history_lenient(
                     sqlite_row_id,
                     historical_end_time,
-                ) {
-                    Ok((entries, last_row_id)) => {
-                        for entry in entries {
-                            if entry.command.trim().is_empty() {
-                                continue;
-                            }
-                            match process_fish_entry(self, &entry, &mut recent_hashes).await {
-                                Ok(()) => {
-                                    processed += 1;
-                                }
-                                Err(error) => {
-                                    let message = format!(
-                                        "failed to process Fish row {}: {}",
-                                        entry.row_id, error
-                                    );
+                    |from_row_id, end_time| {
+                        crate::fish_history::read_fish_history(&self.path, from_row_id, end_time)
+                    },
+                    |entry| {
+                        let row_id = entry.row_id;
+                        let line_number = u64::try_from(row_id).unwrap_or_default();
+                        let prepared = prepare_command_for_capture(
+                            self,
+                            &entry.command,
+                            line_number,
+                            Some(&mut recent_hashes),
+                        );
+                        async move {
+                            let Some(final_command) = prepared
+                                .map_err(|error| {
+                                    let message =
+                                        format!("failed to process Fish row {row_id}: {error}");
                                     self.record_error("process_fish_entry", &message);
-                                    warnings.push(self.strict_warning(message));
-                                }
-                            }
+                                    self.strict_warning(message)
+                                })?
+                            else {
+                                return Ok(SqliteHistoryRowOutcome::Skipped);
+                            };
+
+                            emit_prepared_fish_entry(self, &entry, final_command)
+                                .await
+                                .map(|()| SqliteHistoryRowOutcome::Processed)
+                                .map_err(|error| {
+                                    let message =
+                                        format!("failed to process Fish row {row_id}: {error}");
+                                    self.record_error("process_fish_entry", &message);
+                                    self.strict_warning(message)
+                                })
                         }
-                        if last_row_id > sqlite_row_id {
-                            sqlite_row_id = last_row_id;
-                        }
-                        self.record_poll(poll_started_at, file_size, processed);
+                    },
+                )
+                .await
+                {
+                    Ok(report) => {
+                        sqlite_row_id = sqlite_row_id.max(report.last_row_id);
+                        self.record_poll(poll_started_at, file_size, report.processed_rows);
                         self.success_outcome(
-                            processed,
-                            HistoryState {
-                                sqlite_row_id: Some(sqlite_row_id),
-                                recent_hashes,
-                                ..HistoryState::default()
-                            },
-                            warnings,
+                            report.processed_rows,
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                            report.warnings,
                         )
                     }
                     Err(error) => {
-                        self.record_poll(poll_started_at, file_size, processed);
+                        self.record_poll(poll_started_at, file_size, 0);
                         self.failed_outcome(
                             "read_fish_history",
                             format!("failed to read Fish history from {}: {error}", self.path),
-                            HistoryState {
-                                sqlite_row_id: Some(sqlite_row_id),
-                                recent_hashes,
-                                ..HistoryState::default()
-                            },
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
                         )
                     }
                 }
@@ -784,62 +798,64 @@ impl HistoryWatcherContext {
                     None => self.load_state().await.unwrap_or_default(),
                 };
                 let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                let mut recent_hashes = state.recent_hashes;
+                let recent_hashes = state.recent_hashes;
                 let poll_started_at = Instant::now();
                 let file_size = fs::metadata(&self.path)
                     .await
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
-                let mut processed = 0usize;
-                let mut warnings = Vec::new();
-                match crate::atuin_history::read_atuin_history(
-                    &self.path,
+                match import_sqlite_history_lenient(
                     sqlite_row_id,
                     historical_end_time,
-                ) {
-                    Ok((entries, last_row_id)) => {
-                        for entry in entries {
-                            if entry.command.trim().is_empty() {
-                                continue;
-                            }
-                            match process_atuin_entry(self, &entry, &mut recent_hashes).await {
-                                Ok(()) => {
-                                    processed += 1;
-                                }
-                                Err(error) => {
-                                    let message = format!(
-                                        "failed to process Atuin row {}: {}",
-                                        entry.row_id, error
-                                    );
+                    |from_row_id, end_time| {
+                        crate::atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
+                    },
+                    |entry| {
+                        let row_id = entry.row_id;
+                        let line_number = u64::try_from(row_id).unwrap_or_default();
+                        let prepared =
+                            prepare_command_for_capture(self, &entry.command, line_number, None);
+                        async move {
+                            let Some(final_command) = prepared
+                                .map_err(|error| {
+                                    let message =
+                                        format!("failed to process Atuin row {row_id}: {error}");
                                     self.record_error("process_atuin_entry", &message);
-                                    warnings.push(self.strict_warning(message));
-                                }
-                            }
+                                    self.strict_warning(message)
+                                })?
+                            else {
+                                return Ok(SqliteHistoryRowOutcome::Skipped);
+                            };
+
+                            emit_prepared_atuin_entry(self, &entry, final_command)
+                                .await
+                                .map(|()| SqliteHistoryRowOutcome::Processed)
+                                .map_err(|error| {
+                                    let message =
+                                        format!("failed to process Atuin row {row_id}: {error}");
+                                    self.record_error("process_atuin_entry", &message);
+                                    self.strict_warning(message)
+                                })
                         }
-                        if last_row_id > sqlite_row_id {
-                            sqlite_row_id = last_row_id;
-                        }
-                        self.record_poll(poll_started_at, file_size, processed);
+                    },
+                )
+                .await
+                {
+                    Ok(report) => {
+                        sqlite_row_id = sqlite_row_id.max(report.last_row_id);
+                        self.record_poll(poll_started_at, file_size, report.processed_rows);
                         self.success_outcome(
-                            processed,
-                            HistoryState {
-                                sqlite_row_id: Some(sqlite_row_id),
-                                recent_hashes,
-                                ..HistoryState::default()
-                            },
-                            warnings,
+                            report.processed_rows,
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                            report.warnings,
                         )
                     }
                     Err(error) => {
-                        self.record_poll(poll_started_at, file_size, processed);
+                        self.record_poll(poll_started_at, file_size, 0);
                         self.failed_outcome(
                             "read_atuin_history",
                             format!("failed to read Atuin history from {}: {error}", self.path),
-                            HistoryState {
-                                sqlite_row_id: Some(sqlite_row_id),
-                                recent_hashes,
-                                ..HistoryState::default()
-                            },
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
                         )
                     }
                 }
@@ -1362,46 +1378,67 @@ impl HistoryWatcherContext {
         use crate::fish_history;
 
         let poll_started_at = Instant::now();
-        let mut processed = 0usize;
         let file_size = fs::metadata(&self.path)
             .await
             .map(|metadata| metadata.len())
             .unwrap_or_default();
 
-        match fish_history::read_fish_history(&self.path, *sqlite_row_id, None) {
-            Ok((entries, last_row_id)) => {
-                for entry in entries {
-                    if entry.command.trim().is_empty() {
-                        continue;
-                    }
-
-                    match process_fish_entry(self, &entry, recent_hashes).await {
-                        Ok(()) => {
-                            processed += 1;
-                        }
-                        Err(e) => {
-                            self.record_error("process_fish_entry", &e.to_string());
+        let processed = match import_sqlite_history_lenient(
+            *sqlite_row_id,
+            None,
+            |from_row_id, end_time| fish_history::read_fish_history(&self.path, from_row_id, end_time),
+            |entry| {
+                let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+                let prepared = prepare_command_for_capture(
+                    self,
+                    &entry.command,
+                    line_number,
+                    Some(recent_hashes),
+                );
+                async move {
+                    let Some(final_command) = prepared
+                        .map_err(|error| {
+                            self.record_error("process_fish_entry", &error.to_string());
                             warn!(
                                 "Failed to process Fish history entry from {}: {}",
-                                self.path, e
+                                self.path, error
                             );
-                        }
-                    }
-                }
+                        })?
+                    else {
+                        return Ok(SqliteHistoryRowOutcome::Skipped);
+                    };
 
-                if last_row_id > *sqlite_row_id {
-                    *sqlite_row_id = last_row_id;
+                    emit_prepared_fish_entry(self, &entry, final_command)
+                        .await
+                        .map(|()| SqliteHistoryRowOutcome::Processed)
+                        .map_err(|error| {
+                            self.record_error("process_fish_entry", &error.to_string());
+                            warn!(
+                                "Failed to process Fish history entry from {}: {}",
+                                self.path, error
+                            );
+                        })
+                }
+            },
+        )
+        .await
+        {
+            Ok(report) => {
+                if report.last_row_id > *sqlite_row_id {
+                    *sqlite_row_id = report.last_row_id;
                     if persist_state {
                         self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
                             .await;
                     }
                 }
+                report.processed_rows
             }
-            Err(e) => {
-                self.record_error("read_fish_history", &e.to_string());
-                warn!("Fish history watcher unable to read {}: {}", self.path, e);
+            Err(error) => {
+                self.record_error("read_fish_history", &error.to_string());
+                warn!("Fish history watcher unable to read {}: {}", self.path, error);
+                0
             }
-        }
+        };
 
         self.record_poll(poll_started_at, file_size, processed);
         processed
@@ -1416,46 +1453,65 @@ impl HistoryWatcherContext {
         use crate::atuin_history;
 
         let poll_started_at = Instant::now();
-        let mut processed = 0usize;
         let file_size = fs::metadata(&self.path)
             .await
             .map(|metadata| metadata.len())
             .unwrap_or_default();
 
-        match atuin_history::read_atuin_history(&self.path, *sqlite_row_id, None) {
-            Ok((entries, last_row_id)) => {
-                for entry in entries {
-                    if entry.command.trim().is_empty() {
-                        continue;
-                    }
-
-                    match process_atuin_entry(self, &entry, recent_hashes).await {
-                        Ok(()) => {
-                            processed += 1;
-                        }
-                        Err(e) => {
-                            self.record_error("process_atuin_entry", &e.to_string());
+        let processed = match import_sqlite_history_lenient(
+            *sqlite_row_id,
+            None,
+            |from_row_id, end_time| {
+                atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
+            },
+            |entry| {
+                let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+                let prepared =
+                    prepare_command_for_capture(self, &entry.command, line_number, None);
+                async move {
+                    let Some(final_command) = prepared
+                        .map_err(|error| {
+                            self.record_error("process_atuin_entry", &error.to_string());
                             warn!(
                                 "Failed to process Atuin history entry from {}: {}",
-                                self.path, e
+                                self.path, error
                             );
-                        }
-                    }
-                }
+                        })?
+                    else {
+                        return Ok(SqliteHistoryRowOutcome::Skipped);
+                    };
 
-                if last_row_id > *sqlite_row_id {
-                    *sqlite_row_id = last_row_id;
+                    emit_prepared_atuin_entry(self, &entry, final_command)
+                        .await
+                        .map(|()| SqliteHistoryRowOutcome::Processed)
+                        .map_err(|error| {
+                            self.record_error("process_atuin_entry", &error.to_string());
+                            warn!(
+                                "Failed to process Atuin history entry from {}: {}",
+                                self.path, error
+                            );
+                        })
+                }
+            },
+        )
+        .await
+        {
+            Ok(report) => {
+                if report.last_row_id > *sqlite_row_id {
+                    *sqlite_row_id = report.last_row_id;
                     if persist_state {
                         self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
                             .await;
                     }
                 }
+                report.processed_rows
             }
-            Err(e) => {
-                self.record_error("read_atuin_history", &e.to_string());
-                warn!("Atuin history watcher unable to read {}: {}", self.path, e);
+            Err(error) => {
+                self.record_error("read_atuin_history", &error.to_string());
+                warn!("Atuin history watcher unable to read {}: {}", self.path, error);
+                0
             }
-        }
+        };
 
         self.record_poll(poll_started_at, file_size, processed);
         processed
@@ -1698,17 +1754,12 @@ async fn process_command(
     .await
 }
 
-async fn process_fish_entry(
+async fn emit_prepared_fish_entry(
     ctx: &HistoryWatcherContext,
     entry: &crate::fish_history::FishHistoryEntry,
-    recent_hashes: &mut VecDeque<u64>,
+    final_command: String,
 ) -> NodeResult<()> {
     let line_number = u64::try_from(entry.row_id).unwrap_or_default();
-    let Some(final_command) =
-        prepare_command_for_capture(ctx, &entry.command, line_number, Some(recent_hashes))?
-    else {
-        return Ok(());
-    };
     let material_bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
@@ -1749,6 +1800,7 @@ async fn process_fish_entry(
     .await
 }
 
+#[cfg(test)]
 async fn process_atuin_entry(
     ctx: &HistoryWatcherContext,
     entry: &crate::atuin_history::AtuinHistoryEntry,
@@ -1759,6 +1811,15 @@ async fn process_atuin_entry(
     else {
         return Ok(());
     };
+    emit_prepared_atuin_entry(ctx, entry, final_command).await
+}
+
+async fn emit_prepared_atuin_entry(
+    ctx: &HistoryWatcherContext,
+    entry: &crate::atuin_history::AtuinHistoryEntry,
+    final_command: String,
+) -> NodeResult<()> {
+    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
     let payload = match AtuinCommandExecutedPayload::from_raw_history(
         final_command.clone(),
         RecordedPath::from(entry.cwd.clone()),

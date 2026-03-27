@@ -54,7 +54,13 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"sinex content roundtrip test payload";
     let annex_key = service
-        .store_content(payload, "roundtrip.txt", "text/plain", "test-harness")
+        .store_content(
+            payload,
+            "roundtrip.txt",
+            "text/plain",
+            "test-harness",
+            "test-harness",
+        )
         .await?;
 
     assert!(!annex_key.is_empty(), "annex key should be non-empty");
@@ -82,6 +88,7 @@ async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
             "verify.bin",
             "application/octet-stream",
             "test-harness",
+            "test-harness",
         )
         .await?;
 
@@ -98,7 +105,7 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"metadata test";
     let annex_key = service
-        .store_content(payload, "meta.txt", "text/plain", "test-harness")
+        .store_content(payload, "meta.txt", "text/plain", "test-harness", "test-harness")
         .await?;
 
     let meta = service.get_content_metadata(&annex_key).await?;
@@ -119,10 +126,10 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"deduplicate this content";
     let key_a = service
-        .store_content(payload, "a.txt", "text/plain", "test-harness")
+        .store_content(payload, "a.txt", "text/plain", "test-harness", "test-harness")
         .await?;
     let key_b = service
-        .store_content(payload, "b.txt", "text/plain", "test-harness")
+        .store_content(payload, "b.txt", "text/plain", "test-harness", "test-harness")
         .await?;
 
     assert_eq!(
@@ -144,21 +151,24 @@ async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"log this store operation";
     let _key = service
-        .store_content(payload, "logged.txt", "text/plain", "audit-source")
+        .store_content(
+            payload,
+            "logged.txt",
+            "text/plain",
+            "external-source",
+            "audit-actor",
+        )
         .await?;
 
-    // Verify operation was recorded in core.operations_log
-    let row: (i64,) = sqlx::query_as(
-        "SELECT count(*) FROM core.operations_log WHERE operation_type = 'content.store' AND operator = 'audit-source'"
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT operator, scope->>'source' FROM core.operations_log \
+         WHERE operation_type = 'content.store' ORDER BY id DESC LIMIT 1",
     )
     .fetch_one(ctx.pool())
     .await?;
 
-    assert!(
-        row.0 >= 1,
-        "store should log at least one operation, found {}",
-        row.0
-    );
+    assert_eq!(row.0, "audit-actor");
+    assert_eq!(row.1.as_deref(), Some("external-source"));
 
     Ok(())
 }

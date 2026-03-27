@@ -218,6 +218,11 @@ async fn write_can_create_operation(ctx: TestContext) -> TestResult<()> {
         RoleGateway::has_result(&resp),
         "Write should be able to create operations: {resp}"
     );
+    assert_eq!(
+        resp["result"]["operation"]["actor"].as_str(),
+        Some("operator:token:auth-tes"),
+        "gateway must persist the authenticated replay actor, not caller-supplied params"
+    );
     Ok(())
 }
 
@@ -282,6 +287,11 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
         RoleGateway::has_result(&create_resp),
         "Admin create failed: {create_resp}"
     );
+    assert_eq!(
+        create_resp["result"]["operation"]["actor"].as_str(),
+        Some("admin:token:auth-tes"),
+        "create must derive replay actor from the authenticated admin token"
+    );
 
     let op_id = create_resp["result"]["operation"]["operation_id"]
         .as_str()
@@ -308,6 +318,11 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
     assert!(
         RoleGateway::has_result(&approve_resp),
         "Admin approve failed: {approve_resp}"
+    );
+    assert_eq!(
+        approve_resp["result"]["operation"]["approved_by"].as_str(),
+        Some("admin:token:auth-tes"),
+        "approve must use the authenticated admin actor rather than request params"
     );
 
     // Cancel instead of execute (no fake node to handle scan)

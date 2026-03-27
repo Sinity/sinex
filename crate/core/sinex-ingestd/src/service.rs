@@ -14,6 +14,7 @@ use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
+use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
@@ -351,13 +352,13 @@ impl IngestService {
             }
         }
 
-        // Notify systemd that we're ready
-        if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
-            warn!("Failed to notify systemd ready state: {}", e);
-        }
+        systemd_notify::notify_ready("sinex-ingestd");
+        let watchdog_handle = systemd_notify::spawn_watchdog("sinex-ingestd");
 
         // Monitor critical tasks - exit on first failure or shutdown signal
         let monitor_result = self.monitor_runtime(js_handle, ma_handle).await;
+        systemd_notify::stop_watchdog(watchdog_handle, "sinex-ingestd").await;
+        systemd_notify::notify_stopping("sinex-ingestd");
 
         // Ensure background tasks have a chance to shut down before closing resources.
         self.wait_for_tasks(Duration::from_secs(5)).await;
@@ -542,6 +543,7 @@ impl IngestService {
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
         let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
         let max_buffered_slices = self.config.max_buffered_slices;
+        let max_material_size_bytes = self.config.max_material_size_bytes.as_u64();
         let slice_timeout_secs = self.config.slice_timeout_secs;
         let orphan_threshold_secs = self.config.orphan_threshold_secs;
         let disk_threshold_percent = self.config.disk_threshold_percent;
@@ -580,6 +582,7 @@ impl IngestService {
                 max_concurrent_assemblies,
                 ready_set,
                 max_buffered_slices,
+                max_material_size_bytes,
                 slice_timeout_secs,
                 orphan_threshold_secs,
                 disk_threshold_percent,

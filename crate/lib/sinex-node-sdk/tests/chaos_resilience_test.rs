@@ -12,6 +12,7 @@
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
 use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
 use sinex_primitives::events::Event;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::testing::event_fixture;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -63,6 +64,10 @@ impl TransducerNode for ChaosCounterNode {
 
     fn output_event_type(&self) -> &'static str {
         "counter.result"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
     }
 
     async fn process(
