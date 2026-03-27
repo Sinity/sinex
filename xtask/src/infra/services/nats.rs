@@ -65,10 +65,7 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
 fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Result<Vec<u32>> {
     let output = output.wrap_err("failed to inspect running nats-server processes with pgrep")?;
     match output.status.code() {
-        Some(0) => Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| line.trim().parse().ok())
-            .collect()),
+        Some(0) => parse_nats_pid_lines(&String::from_utf8_lossy(&output.stdout)),
         Some(1) => Ok(Vec::new()),
         _ => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -81,6 +78,21 @@ fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Res
             bail!("pgrep -f nats-server exited unsuccessfully{suffix}");
         }
     }
+}
+
+fn parse_nats_pid_lines(stdout: &str) -> Result<Vec<u32>> {
+    let mut pids = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let pid = trimmed
+            .parse::<u32>()
+            .wrap_err_with(|| format!("pgrep -f nats-server produced invalid PID line {trimmed:?}"))?;
+        pids.push(pid);
+    }
+    Ok(pids)
 }
 
 /// Check if a process has been running longer than the given threshold (in seconds).
@@ -585,6 +597,25 @@ LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=
                 stderr: Vec::new(),
             }))?;
             assert!(pids.is_empty());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_invalid_pid_lines() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"123\nnot-a-pid\n".to_vec(),
+                stderr: Vec::new(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("produced invalid PID line"));
+            assert!(message.contains("not-a-pid"));
         }
         Ok(())
     }
