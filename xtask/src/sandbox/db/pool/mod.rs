@@ -452,42 +452,33 @@ impl DatabasePool {
     async fn new(mut config: PoolConfig, force_eager: bool) -> TestResult<Self> {
         // Issue 65: Make connection budget detection mandatory
         // Fail fast if PostgreSQL can't support the requested pool configuration
-        match detect_connection_budget(&config.admin_url).await {
-            Some(budget) => {
-                let previous = config.size;
-                let per_slot = config.slot_max_connections.max(1);
-                let min_required = config.admin_max_connections + per_slot;
+        let budget = detect_connection_budget(&config.admin_url).await?;
+        let previous = config.size;
+        let per_slot = config.slot_max_connections.max(1);
+        let min_required = config.admin_max_connections + per_slot;
 
-                // Fail if PostgreSQL max_connections can't support even one pool slot
-                if budget < min_required {
-                    return Err(eyre!(format!(
-                        "PostgreSQL max_connections ({budget}) is too low for test pool. \
-                         Minimum required: {min_required} (admin: {}, per slot: {}). \
-                         Increase max_connections in postgresql.conf or reduce pool requirements.",
-                        config.admin_max_connections, per_slot
-                    )));
-                }
+        // Fail if PostgreSQL max_connections can't support even one pool slot
+        if budget < min_required {
+            return Err(eyre!(format!(
+                "PostgreSQL max_connections budget ({budget}) is too low for test pool. \
+                 Minimum required: {min_required} (admin: {}, per slot: {}). \
+                 Increase max_connections in postgresql.conf or reduce pool requirements.",
+                config.admin_max_connections, per_slot
+            )));
+        }
 
-                config.apply_connection_budget(budget);
+        config.apply_connection_budget(budget);
 
-                // Warn if the budget significantly constrains the pool
-                if config.size < previous {
-                    let reduction_pct = ((previous - config.size) * 100) / previous;
-                    eprintln!(
-                        "⚠️  Reducing pool size to {} (from {}) to respect Postgres max_connections budget ({budget})",
-                        config.size, previous
-                    );
-                    if reduction_pct > 50 {
-                        eprintln!(
-                            "   ⚠️  Pool reduced by {reduction_pct}% - consider increasing max_connections for better test parallelism"
-                        );
-                    }
-                }
-            }
-            None => {
+        // Warn if the budget significantly constrains the pool
+        if config.size < previous {
+            let reduction_pct = ((previous - config.size) * 100) / previous;
+            eprintln!(
+                "⚠️  Reducing pool size to {} (from {}) to respect Postgres max_connections budget ({budget})",
+                config.size, previous
+            );
+            if reduction_pct > 50 {
                 eprintln!(
-                    "⚠️  Could not detect PostgreSQL max_connections; using default pool size ({})",
-                    config.size
+                    "   ⚠️  Pool reduced by {reduction_pct}% - consider increasing max_connections for better test parallelism"
                 );
             }
         }

@@ -662,19 +662,17 @@ pub(super) async fn connect_admin_with_retry(admin_url: &str) -> TestResult<PgCo
     )))
 }
 
-pub(super) async fn detect_connection_budget(admin_url: &str) -> Option<u32> {
-    let mut conn = connect_admin_with_retry(admin_url).await.ok()?;
-    let max_connections: i64 =
-        sqlx::query_scalar("SELECT current_setting('max_connections')::bigint")
-            .fetch_one(&mut conn)
-            .await
-            .ok()?;
-
-    let reserved: i64 =
-        sqlx::query_scalar("SELECT current_setting('superuser_reserved_connections')::bigint")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap_or(3);
+fn effective_connection_budget(max_connections: i64, reserved: i64) -> TestResult<u32> {
+    if max_connections <= 0 {
+        return Err(eyre!(format!(
+            "PostgreSQL reported invalid max_connections value ({max_connections})"
+        )));
+    }
+    if reserved < 0 {
+        return Err(eyre!(format!(
+            "PostgreSQL reported invalid superuser_reserved_connections value ({reserved})"
+        )));
+    }
 
     // Leave headroom for template provisioning, cleanup tasks, and ad-hoc diagnostics.
     const SAFETY_MARGIN: i64 = 16;
@@ -683,10 +681,31 @@ pub(super) async fn detect_connection_budget(admin_url: &str) -> Option<u32> {
         .saturating_sub(reserved)
         .saturating_sub(SAFETY_MARGIN);
     if effective <= 0 {
-        return None;
+        return Err(eyre!(format!(
+            "PostgreSQL effective connection budget is non-positive after reserving headroom \
+             (max_connections={max_connections}, superuser_reserved_connections={reserved}, \
+             safety_margin={SAFETY_MARGIN})"
+        )));
     }
 
-    Some(effective as u32)
+    Ok(effective as u32)
+}
+
+async fn read_connection_setting(conn: &mut PgConnection, name: &str) -> TestResult<i64> {
+    sqlx::query_scalar("SELECT current_setting($1)::bigint")
+        .bind(name)
+        .fetch_one(&mut *conn)
+        .await
+        .wrap_err_with(|| format!("failed to read PostgreSQL setting {name}"))
+}
+
+pub(super) async fn detect_connection_budget(admin_url: &str) -> TestResult<u32> {
+    let mut conn = connect_admin_with_retry(admin_url)
+        .await
+        .wrap_err("failed to connect while detecting PostgreSQL connection budget")?;
+    let max_connections = read_connection_setting(&mut conn, "max_connections").await?;
+    let reserved = read_connection_setting(&mut conn, "superuser_reserved_connections").await?;
+    effective_connection_budget(max_connections, reserved)
 }
 
 // ── URL manipulation ────────────────────────────────────────────────────────
@@ -740,6 +759,39 @@ mod tests {
         assert!(RETRYABLE_CONNECTION_SQLSTATES.contains(&"08006"));
         assert!(RETRYABLE_CONNECTION_SQLSTATES.contains(&"57P01"));
         assert!(!RETRYABLE_CONNECTION_SQLSTATES.contains(&"23505"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_effective_connection_budget_reserves_headroom() -> TestResult<()> {
+        assert_eq!(effective_connection_budget(100, 3)?, 81);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_effective_connection_budget_rejects_non_positive_budget() -> TestResult<()> {
+        let err = effective_connection_budget(16, 3).expect_err("budget should be rejected");
+        assert!(
+            err.to_string().contains("non-positive"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_detect_connection_budget_surfaces_connect_failures() -> TestResult<()> {
+        let err = detect_connection_budget("definitely-not-a-postgres-url")
+            .await
+            .expect_err("invalid admin url should fail");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("failed to connect while detecting PostgreSQL connection budget"),
+            "missing budget detection context: {rendered}"
+        );
+        assert!(
+            rendered.contains("Admin connection failed"),
+            "missing admin connection context: {rendered}"
+        );
         Ok(())
     }
 }
