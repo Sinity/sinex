@@ -625,8 +625,22 @@ impl Sandbox {
             return;
         }
         let cfg = crate::config::config();
-        if let Ok(db) = crate::history::HistoryDb::open(&cfg.history_db_path()) {
-            let _ = db.record_test_nats_context(inv_id, &self.test_name, snapshot);
+        match crate::history::HistoryDb::open(&cfg.history_db_path()) {
+            Ok(db) => {
+                if let Err(error) = db.record_test_nats_context(inv_id, &self.test_name, snapshot)
+                {
+                    eprintln!(
+                        "⚠️ failed to record NATS context for test '{}' (invocation {inv_id}): {error:#}",
+                        self.test_name
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "⚠️ failed to open history DB for test '{}' NATS context (invocation {inv_id}): {error:#}",
+                    self.test_name
+                );
+            }
         }
     }
 
