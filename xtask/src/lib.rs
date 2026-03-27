@@ -417,16 +417,37 @@ pub async fn run_cli() -> Result<()> {
     }
     let invocation_id = if command_name != "completions" && command_name != "status" {
         if let Some(bg_id) = claimed_bg_invocation {
-            if let Ok(db) = history_db.as_ref() {
-                let _ =
-                    db.claim_background_invocation(bg_id, command_name, subcommand, profile, None);
+            match history_db.as_ref() {
+                Ok(db) => {
+                    if let Err(error) =
+                        db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
+                    {
+                        eprintln!(
+                            "⚠️  Failed to claim background invocation {bg_id}: {error}"
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!(
+                        "⚠️  Failed to open history DB for background invocation {bg_id}: {error}"
+                    );
+                }
             }
             Some(bg_id)
         } else {
-            history_db.as_ref().ok().and_then(|db| {
-                db.start_invocation(command_name, subcommand, profile, None)
-                    .ok()
-            })
+            match history_db.as_ref() {
+                Ok(db) => match db.start_invocation(command_name, subcommand, profile, None) {
+                    Ok(id) => Some(id),
+                    Err(error) => {
+                        eprintln!("⚠️  Failed to start invocation history row: {error}");
+                        None
+                    }
+                },
+                Err(error) => {
+                    eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
+                    None
+                }
+            }
         }
     } else {
         None
@@ -505,9 +526,7 @@ pub async fn run_cli() -> Result<()> {
     };
 
     // Update history
-    if let Some(id) = invocation_id
-        && let Ok(db) = history_db.as_ref()
-    {
+    if let Some(id) = invocation_id {
         let status = match &result {
             Ok(res)
                 if res.status == crate::output::Status::Failed
@@ -522,8 +541,17 @@ pub async fn run_cli() -> Result<()> {
             Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
             Err(_) => ctx.elapsed().as_secs_f64(),
         };
-        if let Err(e) = db.finish_invocation(id, status, Some(invocation_exit_code), duration) {
-            eprintln!("⚠️  Failed to record invocation result: {e}");
+        match history_db.as_ref() {
+            Ok(db) => {
+                if let Err(error) =
+                    db.finish_invocation(id, status, Some(invocation_exit_code), duration)
+                {
+                    eprintln!("⚠️  Failed to record invocation result: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("⚠️  Failed to open history DB to finish invocation {id}: {error}");
+            }
         }
         ctx.mark_finished();
     }
@@ -536,17 +564,26 @@ pub async fn run_cli() -> Result<()> {
         && let Ok(Some(queued)) = coord.handle_completion(command_name)
     {
         let cfg = config();
-        if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-            match manager.spawn_xtask(command_name, &queued.args, queued.output_format) {
+        match jobs::JobManager::new(cfg.jobs_dir()) {
+            Ok(manager) => match manager.spawn_xtask(command_name, &queued.args, queued.output_format)
+            {
                 Ok(job) => {
                     // Update coordinator state with real job_id + pid.
                     // Critical for FIFO queue: handle_completion may have
                     // left remaining items in the state file with sentinel values.
-                    let _ = coord.update_state(command_name, job.id, job.pid);
+                    if let Err(error) = coord.update_state(command_name, job.id, job.pid) {
+                        eprintln!(
+                            "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                            job.id
+                        );
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Warning: failed to spawn queued {command_name} work: {e}");
+                Err(error) => {
+                    eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
                 }
+            },
+            Err(error) => {
+                eprintln!("Warning: failed to open jobs directory for queued {command_name} work: {error}");
             }
         }
     }
@@ -555,10 +592,13 @@ pub async fn run_cli() -> Result<()> {
     // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can
     // determine success vs failure after the process exits.
     if let Some(job_dir) = bg_job_dir {
-        let _ = std::fs::write(
-            std::path::Path::new(&job_dir).join("exit_code"),
-            format!("{invocation_exit_code}\n"),
-        );
+        let exit_code_path = std::path::Path::new(&job_dir).join("exit_code");
+        if let Err(error) = std::fs::write(&exit_code_path, format!("{invocation_exit_code}\n")) {
+            eprintln!(
+                "⚠️  Failed to write background exit code file {}: {error}",
+                exit_code_path.display()
+            );
+        }
 
         if let Some(job_id) = claimed_bg_job
             && let Ok(db) = history_db.as_ref()
@@ -572,14 +612,16 @@ pub async fn run_cli() -> Result<()> {
             } else {
                 crate::history::JobLifecycleStatus::Failed
             };
-            let _ = db.finish_background_job(
+            if let Err(error) = db.finish_background_job(
                 job_id,
                 job_status,
                 Some(invocation_exit_code),
                 ctx.elapsed().as_secs_f64(),
                 stdout_path.exists().then_some(stdout_path.as_path()),
                 stderr_path.exists().then_some(stderr_path.as_path()),
-            );
+            ) {
+                eprintln!("⚠️  Failed to record background job completion for {job_id}: {error}");
+            }
         }
 
         // W3: Desktop notification when running as a background subprocess.
