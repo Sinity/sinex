@@ -1983,10 +1983,14 @@ impl<T: Node + 'static> NodeRunner<T> {
             None,
         ));
 
+        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
         let consumer_runner = consumer.clone();
+        let consumer_failure_reporter = Arc::clone(&consumer_failure);
         let consumer_handle = tokio::spawn(async move {
             if let Err(err) = consumer_runner.run().await {
                 warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
+                let mut guard = consumer_failure_reporter.lock().await;
+                *guard = Some(err);
             }
         });
         self.consumer_handle = Some(consumer_handle);
@@ -2011,10 +2015,8 @@ impl<T: Node + 'static> NodeRunner<T> {
         const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
         let checkpoint_manager = handles.checkpoint_manager();
-        let mut checkpoint_state = checkpoint_manager.load_checkpoint().await.unwrap_or_else(|e| {
-            warn!(error = %e, "Failed to load checkpoint state for periodic saves; starting fresh");
-            crate::checkpoint::CheckpointState::default()
-        });
+        let mut checkpoint_state =
+            Self::load_bridge_checkpoint_state(&checkpoint_manager).await?;
 
         let mut processed_events = 0u64;
         let mut events_since_checkpoint = 0u64;
@@ -2028,6 +2030,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         loop {
             // Block until at least one event arrives (or channel closes)
             let Some(first) = receiver.recv().await else {
+                if let Some(error) = consumer_failure.lock().await.take() {
+                    return Err(error);
+                }
                 break;
             };
 
@@ -2102,13 +2107,31 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         consumer.stop().await;
 
-        if let Some(handle) = self.consumer_handle.take()
-            && let Err(err) = handle.await
-        {
-            warn!(error = %err, "Failed to join automaton consumer task");
+        if let Some(handle) = self.consumer_handle.take() {
+            match handle.await {
+                Ok(()) => {}
+                Err(err) if err.is_cancelled() => {
+                    debug!(error = ?err, "Automaton consumer task aborted during shutdown");
+                }
+                Err(err) => {
+                    return Err(SinexError::service(format!(
+                        "Failed to join automaton consumer task: {err}"
+                    )));
+                }
+            }
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn load_bridge_checkpoint_state(
+        checkpoint_manager: &CheckpointManager,
+    ) -> NodeResult<crate::checkpoint::CheckpointState> {
+        checkpoint_manager.load_checkpoint().await.map_err(|error| {
+            SinexError::checkpoint("Failed to load checkpoint state for automaton bridge")
+                .with_source(error)
+        })
     }
 
     #[cfg(feature = "db")]
@@ -2275,11 +2298,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             {
                                 Some(event)
                             } else {
-                                warn!(
-                                    "Confirmed event {:?} missing from database; skipping",
-                                    event_id
-                                );
-                                None
+                                return Err(Self::confirmed_event_missing_error(event_id));
                             }
                         }
                         None => match Self::build_event_from_provisional(provisional) {
@@ -2313,6 +2332,12 @@ impl<T: Node + 'static> NodeRunner<T> {
             events,
             last_event_id,
         })
+    }
+
+    #[cfg(feature = "messaging")]
+    fn confirmed_event_missing_error(event_id: &EventId) -> SinexError {
+        SinexError::processing("Confirmed event missing from database")
+            .with_context("event_id", event_id.to_string())
     }
 
     /// Process a batch of events, falling back to per-event processing with DLQ
@@ -2489,8 +2514,52 @@ impl<T: Node + 'static> NodeRunner<T> {
 mod tests {
     // Inline because these cover private control-plane encoding helpers.
     use super::*;
+    use crate::checkpoint::CheckpointManager;
     use serde::ser::Error as _;
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::events::builder::EventId;
     use xtask::sandbox::prelude::*;
+
+    #[derive(Default)]
+    struct RuntimeTestNode;
+
+    impl Node for RuntimeTestNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "runtime-test-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+    }
 
     struct FailingSerialize;
 
@@ -2541,6 +2610,71 @@ mod tests {
         assert!(text.contains("Failed to serialize scan acknowledgement"));
         assert!(text.contains("test-node"));
         assert!(text.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_provisionals_to_events_surfaces_missing_confirmed_event(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let provisional = ProvisionalEvent {
+            event_id: EventId::from(Uuid::now_v7()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({"ok": true}),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
+        };
+
+        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+            &[provisional],
+            &Some(ctx.pool().clone()),
+        )
+        .await
+        {
+            Ok(_) => {
+                return Err(color_eyre::eyre::eyre!(
+                    "missing confirmed events must fail honestly"
+                )
+                .into());
+            }
+            Err(error) => error,
+        };
+
+        let message = format!("{error:#}");
+        assert!(message.contains("Confirmed event missing from database"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv.clone(),
+            "runtime-test-node".to_string(),
+            "runtime-group".to_string(),
+            "runtime-consumer".to_string(),
+        );
+        manager
+            .save_checkpoint(&crate::checkpoint::CheckpointState::default())
+            .await?;
+
+        let mut keys = kv.keys().await?;
+        let key = futures::TryStreamExt::try_next(&mut keys)
+            .await?
+            .expect("checkpoint key should exist");
+        kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+            .await?;
+
+        let error = NodeRunner::<RuntimeTestNode>::load_bridge_checkpoint_state(&manager)
+            .await
+            .expect_err("corrupt bridge checkpoint state must surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("Failed to load checkpoint state for automaton bridge"));
+        assert!(message.contains("Failed to decode checkpoint from KV"));
         Ok(())
     }
 }
