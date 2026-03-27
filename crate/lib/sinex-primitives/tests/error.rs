@@ -1,9 +1,71 @@
 use camino::Utf8Path;
+use sqlx::error::{DatabaseError, ErrorKind};
 use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::TestResult;
 use xtask::sandbox::sinex_test;
+
+#[derive(Debug)]
+enum MockErrorKind {
+    UniqueViolation,
+    ForeignKeyViolation,
+}
+
+#[derive(Debug)]
+struct MockDatabaseError {
+    message: &'static str,
+    code: Option<&'static str>,
+    constraint: Option<&'static str>,
+    table: Option<&'static str>,
+    kind: MockErrorKind,
+}
+
+impl std::fmt::Display for MockDatabaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for MockDatabaseError {}
+
+impl DatabaseError for MockDatabaseError {
+    fn message(&self) -> &str {
+        self.message
+    }
+
+    fn code(&self) -> Option<Cow<'_, str>> {
+        self.code.map(Cow::Borrowed)
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn constraint(&self) -> Option<&str> {
+        self.constraint
+    }
+
+    fn table(&self) -> Option<&str> {
+        self.table
+    }
+
+    fn kind(&self) -> ErrorKind {
+        match self.kind {
+            MockErrorKind::UniqueViolation => ErrorKind::UniqueViolation,
+            MockErrorKind::ForeignKeyViolation => ErrorKind::ForeignKeyViolation,
+        }
+    }
+}
 
 #[sinex_test]
 async fn error_display_matches_variants() -> TestResult<()> {
@@ -106,6 +168,66 @@ async fn error_from_common_types() -> TestResult<()> {
     let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
     let sinex_err: SinexError = json_err.into();
     assert!(matches!(sinex_err, SinexError::Serialization(_)));
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlx_row_not_found_maps_to_not_found() -> TestResult<()> {
+    let error: SinexError = sqlx::Error::RowNotFound.into();
+    assert!(matches!(error, SinexError::NotFound(_)));
+    assert!(error.sources()[0].contains("no rows returned"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlx_pool_timeout_maps_to_timeout() -> TestResult<()> {
+    let error: SinexError = sqlx::Error::PoolTimedOut.into();
+    assert!(matches!(error, SinexError::Timeout(_)));
+    assert_eq!(
+        error.context_map().get("timeout_reason"),
+        Some(&"pool_exhausted".to_string())
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlx_unique_violation_maps_to_already_exists_with_context() -> TestResult<()> {
+    let error: SinexError = sqlx::Error::Database(Box::new(MockDatabaseError {
+        message: "duplicate key value violates unique constraint",
+        code: Some("23505"),
+        constraint: Some("core_events_pkey"),
+        table: Some("events"),
+        kind: MockErrorKind::UniqueViolation,
+    }))
+    .into();
+
+    assert!(matches!(error, SinexError::AlreadyExists(_)));
+    assert_eq!(error.context_map().get("sqlstate"), Some(&"23505".to_string()));
+    assert_eq!(
+        error.context_map().get("constraint"),
+        Some(&"core_events_pkey".to_string())
+    );
+    assert_eq!(error.context_map().get("table"), Some(&"events".to_string()));
+    assert_eq!(
+        error.context_map().get("database_error_kind"),
+        Some(&"UniqueViolation".to_string())
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlx_foreign_key_violation_maps_to_validation() -> TestResult<()> {
+    let error: SinexError = sqlx::Error::Database(Box::new(MockDatabaseError {
+        message: "insert or update on table violates foreign key constraint",
+        code: Some("23503"),
+        constraint: Some("core_events_source_material_id_fkey"),
+        table: Some("events"),
+        kind: MockErrorKind::ForeignKeyViolation,
+    }))
+    .into();
+
+    assert!(matches!(error, SinexError::Validation(_)));
+    assert_eq!(error.context_map().get("sqlstate"), Some(&"23503".to_string()));
     Ok(())
 }
 

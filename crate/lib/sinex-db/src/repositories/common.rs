@@ -11,37 +11,7 @@ pub use sinex_primitives::error::Result as DbResult;
 /// Preserves constraint violation details for debugging and analysis.
 #[must_use]
 pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
-    match e {
-        sqlx::Error::RowNotFound => {
-            SinexError::not_found("Record not found").with_operation(operation)
-        }
-        sqlx::Error::Database(db_err) => {
-            let mut error = if db_err.is_unique_violation() {
-                SinexError::database("Unique constraint violation")
-                    .with_context("constraint_type", "unique")
-            } else if db_err.is_foreign_key_violation() {
-                SinexError::database("Foreign key constraint violation")
-                    .with_context("constraint_type", "foreign_key")
-            } else {
-                SinexError::database("Database error")
-                    .with_context(
-                        "error_code",
-                        db_err
-                            .code()
-                            .map_or_else(|| "unknown".to_string(), |c| c.to_string()),
-                    )
-                    .with_source(db_err.to_string())
-            };
-            error = error.with_operation(operation);
-            error
-        }
-        sqlx::Error::PoolTimedOut => SinexError::timeout("Database connection pool timeout")
-            .with_operation(operation)
-            .with_context("timeout_reason", "pool_exhausted"),
-        _ => SinexError::database("Database error")
-            .with_source(e.to_string())
-            .with_operation(operation),
-    }
+    crate::db_error(e, operation)
 }
 
 /// Set statement timeout for long-running queries
