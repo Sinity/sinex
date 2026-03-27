@@ -261,7 +261,8 @@ impl HistoryDb {
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
         db.is_synthetic = db.check_synthetic()?;
-        db.cleanup_stale_invocations();
+        db.cleanup_stale_invocations()
+            .context("failed to clean up stale invocations")?;
         Ok(db)
     }
 
@@ -929,25 +930,9 @@ impl HistoryDb {
     /// (preventing poisoned stats) while generous enough to avoid cancelling
     /// legitimate long-running operations. The `CommandContext` Drop guard
     /// handles most cases immediately; this is the safety net for SIGKILL.
-    fn cleanup_stale_invocations(&self) {
+    fn cleanup_stale_invocations(&self) -> Result<()> {
         // First collect PIDs of stale background jobs before updating them
-        let stale_pids: Vec<i64> = self
-            .conn
-            .prepare(
-                r"
-                SELECT pid FROM invocations
-                WHERE status = 'running'
-                  AND is_background = 1
-                  AND pid IS NOT NULL
-                  AND pid > 0
-                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
-                ",
-            )
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| row.get::<_, i64>(0))
-                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-            })
-            .unwrap_or_default();
+        let stale_pids = self.stale_background_invocation_pids()?;
 
         let cleaned = self.conn.execute(
             r"
@@ -959,11 +944,13 @@ impl HistoryDb {
               AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
             ",
             [],
-        );
-        if let Ok(count) = cleaned
-            && count > 0
+        )
+        .context("failed to mark stale invocations as cancelled")?;
+        if cleaned > 0
         {
-            eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes");
+            eprintln!(
+                "ℹ️  Cleaned up {cleaned} stale 'running' invocation(s) older than 10 minutes"
+            );
         }
 
         // Kill stale background processes to reclaim CPU/memory.
@@ -995,13 +982,37 @@ impl HistoryDb {
         }
 
         // Also mark orphaned background_jobs rows (separate table, Phase 3).
-        let _ = self.conn.execute(
+        self.conn
+            .execute(
             r"UPDATE background_jobs
               SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               WHERE job_status = 'running'
                 AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
             [],
-        );
+        )
+            .context("failed to mark stale background jobs as orphaned")?;
+        Ok(())
+    }
+
+    fn stale_background_invocation_pids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT pid FROM invocations
+                WHERE status = 'running'
+                  AND is_background = 1
+                  AND pid IS NOT NULL
+                  AND pid > 0
+                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+                ",
+            )
+            .context("failed to prepare stale background invocation pid query")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .context("failed to execute stale background invocation pid query")?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to collect stale background invocation pids")
     }
 
     /// Finish a background job and archive its log content in `background_job_logs`.
@@ -3569,6 +3580,89 @@ mod tests {
         let stats = db.get_stats("test", 7)?;
         assert_eq!(stats.total, 1);
         assert_eq!(stats.successes, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-stale-pids.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                exit_code INTEGER,
+                status TEXT NOT NULL,
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                live_stage TEXT,
+                is_background INTEGER NOT NULL DEFAULT 0
+            );
+            ",
+        )?;
+        drop(db);
+
+        let error = match HistoryDb::open(&db_path) {
+            Ok(_) => panic!("stale pid query failures should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to clean up stale invocations"));
+        assert!(message.contains("failed to prepare stale background invocation pid query"));
+        assert!(message.contains("no such column: pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_surfaces_stale_invocation_update_failures()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-stale-update.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                exit_code INTEGER,
+                status TEXT NOT NULL,
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                live_stage TEXT,
+                is_background INTEGER NOT NULL DEFAULT 0,
+                pid INTEGER
+            );
+            ",
+        )?;
+        drop(db);
+
+        let error = match HistoryDb::open(&db_path) {
+            Ok(_) => panic!("stale update failures should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to clean up stale invocations"));
+        assert!(message.contains("failed to mark stale invocations as cancelled"));
+        assert!(message.contains("no such column: finished_at"));
         Ok(())
     }
 

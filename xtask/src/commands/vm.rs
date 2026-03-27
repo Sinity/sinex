@@ -217,6 +217,19 @@ struct VmTestResult {
     timed_out: bool,
 }
 
+fn append_stream_task_output(
+    combined_output: &mut String,
+    stream_name: &str,
+    output: std::result::Result<String, tokio::task::JoinError>,
+) {
+    match output {
+        Ok(output) => combined_output.push_str(&output),
+        Err(error) => combined_output.push_str(&format!(
+            "Failed to collect VM {stream_name} output: {error}\n"
+        )),
+    }
+}
+
 /// Run a single NixOS VM test via `nix build`.
 ///
 /// Tries `.#sinex-vm-{name}` first, falls back to `.#checks.x86_64-linux.sinex-vm-{name}`.
@@ -294,8 +307,8 @@ async fn run_single_vm_test(
         let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
 
         let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
-        combined_output.push_str(&stdout_out.unwrap_or_default());
-        combined_output.push_str(&stderr_out.unwrap_or_default());
+        append_stream_task_output(&mut combined_output, "stdout", stdout_out);
+        append_stream_task_output(&mut combined_output, "stderr", stderr_out);
 
         match wait_result {
             Ok(Ok(status)) => {
@@ -932,6 +945,23 @@ mod tests {
                 "tests/e2e/nixos-vm/test-scenarios/b-test.nix",
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_append_stream_task_output_surfaces_join_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut combined_output = String::new();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            String::from("unreachable")
+        });
+        handle.abort();
+
+        append_stream_task_output(&mut combined_output, "stdout", handle.await);
+
+        assert!(combined_output.contains("Failed to collect VM stdout output"));
+        assert!(combined_output.contains("cancelled"));
         Ok(())
     }
 }
