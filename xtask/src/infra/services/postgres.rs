@@ -389,24 +389,9 @@ impl PostgresManager {
     }
 
     pub fn install_extensions(&self, db: &str, superuser: &str) -> Result<()> {
-        // Common extensions
-        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
-            // Check availability first to avoid error spam if not installed in system
-            let check = self.psql(
-                superuser,
-                db,
-                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{ext}'"),
-            )?;
-            if !check.is_empty() {
-                let _ = self.psql(
-                    superuser,
-                    db,
-                    &format!("CREATE EXTENSION IF NOT EXISTS \"{ext}\" CASCADE"),
-                );
-            }
-        }
-
-        Ok(())
+        Self::install_extensions_with(superuser, db, |user, target_db, sql| {
+            self.psql(user, target_db, sql)
+        })
     }
 
     fn pg_command(&self, binary: &str) -> Command {
@@ -429,6 +414,29 @@ impl PostgresManager {
         } else {
             Ok(PostmasterPidState::Stale(pid))
         }
+    }
+
+    fn install_extensions_with<F>(superuser: &str, db: &str, mut psql: F) -> Result<()>
+    where
+        F: FnMut(&str, &str, &str) -> Result<String>,
+    {
+        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
+            let check = psql(
+                superuser,
+                db,
+                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{ext}'"),
+            )?;
+            if !check.is_empty() {
+                psql(
+                    superuser,
+                    db,
+                    &format!("CREATE EXTENSION IF NOT EXISTS \"{ext}\" CASCADE"),
+                )
+                .wrap_err_with(|| format!("failed to install postgres extension {ext}"))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -472,6 +480,41 @@ mod tests {
 
         let error = manager.force_cleanup(false).unwrap_err();
         assert!(format!("{error:#}").contains("failed to remove postgres socket"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_install_extensions_reports_create_failures() -> TestResult<()> {
+        let error = PostgresManager::install_extensions_with("postgres", "sinex", |_, _, sql| {
+            if sql.contains("SELECT 1 FROM pg_available_extensions") {
+                Ok("1".to_string())
+            } else {
+                Err(color_eyre::eyre::eyre!("create extension failed"))
+            }
+        })
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to install postgres extension timescaledb"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_install_extensions_skips_unavailable_extensions() -> TestResult<()> {
+        let mut statements = Vec::new();
+
+        PostgresManager::install_extensions_with("postgres", "sinex", |_, _, sql| {
+            statements.push(sql.to_string());
+            if sql.contains("timescaledb") || sql.contains("pg_trgm") {
+                Ok("1".to_string())
+            } else {
+                Ok(String::new())
+            }
+        })?;
+
+        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"timescaledb\" CASCADE"));
+        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" CASCADE"));
+        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"vector\" CASCADE"));
+        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE"));
         Ok(())
     }
 }
