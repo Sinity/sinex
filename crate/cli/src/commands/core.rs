@@ -36,9 +36,15 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
 
     let mut output = String::new();
     output.push_str(&format!(
-        "System Health: {} {}\n",
-        status_icon, health.status
+        "System Health: {} {} (healthy: {}, serving: {})\n",
+        status_icon, health.status, health.healthy, health.serving
     ));
+    if !health.degradation_reasons.is_empty() {
+        output.push_str("Degradation Reasons:\n");
+        for reason in &health.degradation_reasons {
+            output.push_str(&format!("  - {reason}\n"));
+        }
+    }
     output.push('\n');
     output.push_str("Components:\n");
     output.push_str(&format!(
@@ -49,6 +55,12 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
         "  NATS: {} (connected: {})\n",
         health.components.nats.status, health.components.nats.connected
     ));
+    if let Some(latency_ms) = health.components.nats.latency_ms {
+        output.push_str(&format!("    Latency: {latency_ms:.2} ms\n"));
+    }
+    if let Some(ref detail) = health.components.nats.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
     output.push_str(&format!(
         "  Replay Control: {} (enabled: {}, connected: {})\n",
         health.components.replay_control.status,

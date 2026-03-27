@@ -16,6 +16,10 @@ pub struct SystemHealthRequest {}
 pub struct ComponentHealth {
     pub status: HealthStatus,
     pub connected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Replay control component health
@@ -41,5 +45,9 @@ pub struct ComponentsHealth {
 pub struct SystemHealthResponse {
     /// Overall system health status
     pub status: HealthStatus,
+    pub healthy: bool,
+    pub serving: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradation_reasons: Vec<String>,
     pub components: ComponentsHealth,
 }
