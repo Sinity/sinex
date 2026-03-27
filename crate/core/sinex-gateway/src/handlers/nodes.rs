@@ -8,7 +8,7 @@
 
 use serde_json::{Value, json};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{SinexError, environment::SinexEnvironment};
+use sinex_primitives::{SinexError, domain::OperationStatus, environment::SinexEnvironment};
 
 // Re-export shared types for use by other modules
 pub use sinex_primitives::rpc::nodes::{
@@ -32,9 +32,10 @@ pub async fn handle_nodes_list(
     // Try to get the KV bucket - if it doesn't exist, return empty list
     let Ok(kv) = js.get_key_value(&kv_bucket_name).await else {
         // Bucket doesn't exist yet, return empty node list
-        return Ok(json!({
-            "nodes": [],
-        }));
+        return serde_json::to_value(NodesListResponse { nodes: Vec::new() }).map_err(|e| {
+            SinexError::serialization("failed to serialize node list response")
+                .with_std_error(&e)
+        });
     };
 
     // Get all keys in the bucket (each key is a node ID)
@@ -59,9 +60,9 @@ pub async fn handle_nodes_list(
         }
     }
 
-    Ok(json!({
-        "nodes": nodes,
-    }))
+    serde_json::to_value(NodesListResponse { nodes }).map_err(|e| {
+        SinexError::serialization("failed to serialize node list response").with_std_error(&e)
+    })
 }
 
 /// Handle POST /nodes/{id}/drain - pause node processing
@@ -118,10 +119,13 @@ pub async fn handle_nodes_drain(
                 .with_std_error(&e)
         })?;
 
-    Ok(json!({
-        "status": "drain_requested",
-        "node_id": drain_params.node_id,
-    }))
+    serde_json::to_value(NodeDrainResponse {
+        status: OperationStatus::Pending,
+        node_id: drain_params.node_id,
+    })
+    .map_err(|e| {
+        SinexError::serialization("failed to serialize drain response").with_std_error(&e)
+    })
 }
 
 /// Handle POST /nodes/{id}/resume - resume node processing
@@ -176,10 +180,13 @@ pub async fn handle_nodes_resume(
                 .with_std_error(&e)
         })?;
 
-    Ok(json!({
-        "status": "resume_requested",
-        "node_id": resume_params.node_id,
-    }))
+    serde_json::to_value(NodeResumeResponse {
+        status: OperationStatus::Pending,
+        node_id: resume_params.node_id,
+    })
+    .map_err(|e| {
+        SinexError::serialization("failed to serialize resume response").with_std_error(&e)
+    })
 }
 
 /// Handle POST /nodes/{id}/set-horizon - set processing horizon
@@ -236,9 +243,13 @@ pub async fn handle_nodes_set_horizon(
                 .with_std_error(&e)
         })?;
 
-    Ok(json!({
-        "status": "horizon_update_requested",
-        "node_id": horizon_params.node_id,
-        "horizon": horizon_params.horizon,
-    }))
+    serde_json::to_value(NodeSetHorizonResponse {
+        status: OperationStatus::Pending,
+        node_id: horizon_params.node_id,
+        horizon: horizon_params.horizon,
+    })
+    .map_err(|e| {
+        SinexError::serialization("failed to serialize set-horizon response")
+            .with_std_error(&e)
+    })
 }
