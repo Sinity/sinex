@@ -686,6 +686,8 @@ pub struct DeploymentReadinessItem {
     /// `"pass"`, `"fail"`, or `"skip"`
     pub status: String,
     pub description: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub blocking: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -713,6 +715,7 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "pass".into(),
             description: description.into(),
+            blocking: true,
         }
     }
 
@@ -721,6 +724,7 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "fail".into(),
             description: description.into(),
+            blocking: true,
         }
     }
 
@@ -729,8 +733,30 @@ impl DeploymentReadinessItem {
             name: name.into(),
             status: "skip".into(),
             description: description.into(),
+            blocking: false,
         }
     }
+
+    fn skip_blocking(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "skip".into(),
+            description: description.into(),
+            blocking: true,
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn deployment_readiness_overall(items: &[DeploymentReadinessItem]) -> bool {
+    let failed = items.iter().any(|item| item.status == "fail");
+    let blocking_skipped = items
+        .iter()
+        .any(|item| item.status == "skip" && item.blocking);
+    !failed && !blocking_skipped
 }
 
 fn normalize_gateway_base_url(url: &str) -> String {
@@ -1303,7 +1329,7 @@ fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
     }
 
     let Some(current_uid) = current_process_uid() else {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::skip_blocking(
             "realm-accessible",
             format!(
                 "Could not determine the current principal; rerun as {} or root to validate /realm access honestly",
@@ -1313,7 +1339,7 @@ fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
     };
 
     if current_uid != target.uid && current_uid != 0 {
-        return DeploymentReadinessItem::skip(
+        return DeploymentReadinessItem::skip_blocking(
             "realm-accessible",
             format!(
                 "Current principal uid {} differs from target uid {}; rerun as {} or root to validate /realm access",
@@ -2330,7 +2356,11 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     items.push(check_nats_streams(cfg.nats_url.as_deref(), descriptor.as_ref()).await);
     items.push(check_gateway_ready(cfg.gateway_url.as_deref(), descriptor.as_ref()).await);
 
-    let overall_pass = items.iter().all(|i| i.status != "fail");
+    let failed = items.iter().any(|item| item.status == "fail");
+    let blocking_skipped = items
+        .iter()
+        .any(|item| item.status == "skip" && item.blocking);
+    let overall_pass = deployment_readiness_overall(&items);
 
     if ctx.is_human() {
         println!("\n{}", style("Deployment Readiness:").bold());
@@ -2338,6 +2368,7 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
             let (icon, styled_status) = match item.status.as_str() {
                 "pass" => (style("✓").green(), style("PASS").green()),
                 "fail" => (style("✗").red(), style("FAIL").red()),
+                "skip" if item.blocking => (style("!").yellow(), style("SKIP*").yellow()),
                 _ => (style("–").dim(), style("SKIP").dim()),
             };
             println!(
@@ -2351,7 +2382,12 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
         if overall_pass {
             println!(
                 "{}",
-                style("✓ Deployment readiness: all checks passed or skipped").green()
+                style("✓ Deployment readiness: all blocking checks passed").green()
+            );
+        } else if blocking_skipped && !failed {
+            println!(
+                "{}",
+                style("! Deployment readiness: required checks were skipped").yellow()
             );
         } else {
             println!(
@@ -2593,6 +2629,42 @@ mod tests {
         assert_eq!(json["overall"], false);
         assert_eq!(json["items"][0]["name"], "gateway-ready");
         assert_eq!(json["items"][1]["status"], "fail");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_deployment_readiness_overall_rejects_blocking_skips()
+    -> ::xtask::sandbox::TestResult<()> {
+        let items = vec![
+            DeploymentReadinessItem::pass("descriptor", "loaded"),
+            DeploymentReadinessItem::skip_blocking(
+                "realm-accessible",
+                "rerun as the deployment target",
+            ),
+        ];
+
+        assert!(
+            !deployment_readiness_overall(&items),
+            "blocking skips must keep deployment readiness false"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_realm_accessible_marks_principal_mismatch_as_blocking_skip()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("UID", "1000");
+        let target = TargetIdentity {
+            user: "probe-user".to_string(),
+            uid: 4242,
+            home: PathBuf::from("/tmp/probe-home"),
+        };
+
+        let item = check_realm_accessible(&target);
+        assert_eq!(item.status, "skip");
+        assert!(item.blocking);
+        assert!(item.description.contains("rerun as probe-user or root"));
         Ok(())
     }
 
