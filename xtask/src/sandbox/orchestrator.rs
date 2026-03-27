@@ -48,7 +48,6 @@ impl Default for TestIngestdConfig {
 pub struct TestIngestdHandle {
     child: tokio::process::Child,
     pub stream_name: String,
-    stderr_reader: Option<tokio::task::JoinHandle<String>>,
 }
 
 impl TestIngestdHandle {
@@ -67,9 +66,6 @@ impl TestIngestdHandle {
                 eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
             }
             Err(error) => eprintln!("📋 ingestd log unavailable: {error:#}"),
-        }
-        if let Some(reader) = self.stderr_reader.take() {
-            let _ = reader.await;
         }
         Ok(())
     }
@@ -372,7 +368,7 @@ pub async fn start_test_ingestd_with_config(
 
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
-    let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
+    let debug_log = ingestd_debug_log_path_for_test_process();
     let mut cmd = Command::new("bash");
     #[cfg(target_os = "linux")]
     unsafe {
@@ -385,7 +381,7 @@ pub async fn start_test_ingestd_with_config(
         "exec {} --pool-size {} >{} 2>&1",
         binary_path.display(),
         config.database_pool_size,
-        debug_log,
+        debug_log.display(),
     ));
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
@@ -427,12 +423,9 @@ pub async fn start_test_ingestd_with_config(
     // routed to the DLQ instead of being persisted.
     cmd.env("SINEX_VALIDATE_SCHEMAS", "false");
     cmd.env("SINEX_SKIP_SCHEMA_SYNC", "true");
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.stdin(Stdio::null()).kill_on_drop(true);
 
     let child = cmd.spawn()?;
-    let stderr_reader = None;
 
     // Compute the stream name using the same logic as ingestd:
     // environment-prefixed base name, with optional namespace suffix.
@@ -472,7 +465,6 @@ pub async fn start_test_ingestd_with_config(
     Ok(TestIngestdHandle {
         child,
         stream_name,
-        stderr_reader,
     })
 }
 
