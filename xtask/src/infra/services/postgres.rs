@@ -270,6 +270,18 @@ impl PostgresManager {
         }
     }
 
+    #[must_use]
+    pub fn read_pid(&self) -> Option<u32> {
+        match read_postmaster_pid(&self.config.data_dir.join("postmaster.pid")) {
+            Ok(Some(pid)) => Some(pid as u32),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to read postgres pid file");
+                None
+            }
+        }
+    }
+
     /// Check if PostgreSQL is accepting connections via pg_isready.
     pub fn is_accepting_connections(&self) -> bool {
         self.pg_command("pg_isready")
@@ -480,6 +492,26 @@ mod tests {
 
         let error = manager.force_cleanup(false).unwrap_err();
         assert!(format!("{error:#}").contains("failed to remove postgres socket"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_pid_returns_parsed_postmaster_pid() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "4321\n")?;
+
+        assert_eq!(manager.read_pid(), Some(4321));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_pid_returns_none_for_missing_postmaster_pid() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+
+        assert_eq!(manager.read_pid(), None);
         Ok(())
     }
 

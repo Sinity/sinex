@@ -219,14 +219,7 @@ impl StackStatus {
 
         let postgres = ServiceStatus {
             running: pg_mgr.is_running(),
-            pid: if pg_mgr.is_running() {
-                // Read actual PID from postmaster.pid (first line is the postmaster PID)
-                std::fs::read_to_string(config.pg_data().join("postmaster.pid"))
-                    .ok()
-                    .and_then(|c| c.lines().next().and_then(|l| l.trim().parse::<u32>().ok()))
-            } else {
-                None
-            },
+            pid: pg_mgr.read_pid(),
             port: config.postgres.port,
         };
 
