@@ -191,8 +191,8 @@ impl TetherClient {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            bail!("RPC request failed with status {status}: {body}");
+            let body = format_http_failure_body(status, response.text().await);
+            bail!("{body}");
         }
 
         let rpc_response: JsonRpcResponse = response
@@ -275,6 +275,21 @@ impl TetherClient {
         .await?;
 
         Ok(())
+    }
+}
+
+fn format_http_failure_body<E: std::fmt::Display>(
+    status: reqwest::StatusCode,
+    body: std::result::Result<String, E>,
+) -> String {
+    match body {
+        Ok(body) if !body.trim().is_empty() => {
+            format!("RPC request failed with status {status}: {body}")
+        }
+        Ok(_) => format!("RPC request failed with status {status}"),
+        Err(error) => format!(
+            "RPC request failed with status {status}: <failed to read error body: {error}>"
+        ),
     }
 }
 
@@ -541,6 +556,33 @@ impl Drop for TetherSession {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_format_http_failure_body_includes_non_empty_body(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let message = format_http_failure_body(
+            reqwest::StatusCode::BAD_REQUEST,
+            Ok::<String, &str>("bad request details".to_string()),
+        );
+        assert_eq!(
+            message,
+            "RPC request failed with status 400 Bad Request: bad request details"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_http_failure_body_surfaces_body_read_failures(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let message = format_http_failure_body(
+            reqwest::StatusCode::BAD_GATEWAY,
+            Err("boom"),
+        );
+        assert!(message.contains("RPC request failed with status 502 Bad Gateway"));
+        assert!(message.contains("failed to read error body"));
+        assert!(message.contains("boom"));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_consumer_name_format() -> ::xtask::sandbox::TestResult<()> {
