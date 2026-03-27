@@ -3142,6 +3142,21 @@ pub struct StageTiming {
 ///   0: id, 1: invocation_id, 2: command, 3: args_json, 4: started_at,
 ///   5: pid, 6: stdout_path, 7: stderr_path, 8: job_status, 9: exit_code
 fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
+    fn invalid_background_job_field(
+        column_index: usize,
+        field_name: &'static str,
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> rusqlite::Error {
+        rusqlite::Error::FromSqlConversionFailure(
+            column_index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid background job {field_name}: {error}"),
+            )),
+        )
+    }
+
     let args_json: Option<String> = row.get(3)?;
     let started_at_str: String = row.get(4)?;
     let pid: Option<u32> = row.get(5)?;
@@ -3150,19 +3165,26 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
         id: row.get(0)?,
         invocation_id: row.get(1)?,
         command: row.get(2)?,
-        args: args_json
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default(),
+        args: match args_json {
+            Some(args_json) => serde_json::from_str(&args_json)
+                .map_err(|error| invalid_background_job_field(3, "args_json", error))?,
+            None => Vec::new(),
+        },
         started_at: OffsetDateTime::parse(
             &started_at_str,
             &time::format_description::well_known::Rfc3339,
         )
-        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+        .map_err(|error| invalid_background_job_field(4, "started_at", error))?,
         pid: pid.unwrap_or(0),
         stdout_path: row.get(6)?,
         stderr_path: row.get(7)?,
-        job_status: JobLifecycleStatus::try_from_str(&job_status_str)
-            .unwrap_or(JobLifecycleStatus::Orphaned),
+        job_status: JobLifecycleStatus::try_from_str(&job_status_str).map_err(|error| {
+            invalid_background_job_field(
+                8,
+                "job_status",
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
+            )
+        })?,
         exit_code: row.get(9)?,
     })
 }
@@ -3711,6 +3733,69 @@ mod tests {
         // Non-existent id returns None
         let nonexistent = db.get_background_job_by_id(99999)?;
         assert!(nonexistent.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_args_json() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-args.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET args_json = ?1 WHERE id = ?2",
+            params!["{not valid json", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid args json should surface");
+        assert!(format!("{error:#}").contains("invalid background job args_json"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET started_at = ?1 WHERE id = ?2",
+            params!["definitely-not-rfc3339", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid started_at should surface");
+        assert!(format!("{error:#}").contains("invalid background job started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_status() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-status.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET job_status = ?1 WHERE id = ?2",
+            params!["mystery", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid job_status should surface");
+        assert!(format!("{error:#}").contains("invalid background job job_status"));
         Ok(())
     }
 
