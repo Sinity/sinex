@@ -69,12 +69,15 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
             continue;
         }
 
-        let folder_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        let Ok(material_id) = Uuid::from_str(folder_name) else {
-            continue; // Skip non-UUID folders
+        let Some(material_id) = (match parse_material_state_folder(&path) {
+            Ok(material_id) => material_id,
+            Err(error) => {
+                warn!(path = ?path, error = %error, "Skipping assembler state folder");
+                continue;
+            }
+        }) else {
+            warn!(path = ?path, "Skipping assembler state folder with non-UUID name");
+            continue;
         };
 
         if let Some(state) = restore_state_params(assembler, material_id, &path).await? {
@@ -84,6 +87,24 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
     }
 
     Ok(())
+}
+
+fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Option<Uuid>> {
+    let folder_name = path.file_name().ok_or_else(|| {
+        SinexError::invalid_state(format!(
+            "Assembler state folder {} is missing a file name",
+            path.display()
+        ))
+    })?;
+
+    let folder_name = folder_name.to_str().ok_or_else(|| {
+        SinexError::invalid_state(format!(
+            "Assembler state folder {:?} is not valid UTF-8",
+            path
+        ))
+    })?;
+
+    Ok(Uuid::from_str(folder_name).ok())
 }
 
 async fn restore_state_params(
@@ -898,6 +919,8 @@ mod tests {
     use camino::Utf8PathBuf;
     use serde_json::json;
     use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use std::sync::Arc;
     use xtask::sandbox::prelude::*;
 
@@ -1068,6 +1091,41 @@ mod tests {
         assert_eq!(buffered.keys().copied().collect::<Vec<_>>(), vec![8]);
         assert!(!stale_path.exists());
         assert!(future_path.exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_material_state_folder_accepts_uuid_name() -> TestResult<()> {
+        let material_id = Uuid::now_v7();
+        let path = std::path::Path::new("/tmp").join(material_id.to_string());
+
+        let parsed = parse_material_state_folder(&path)?;
+
+        assert_eq!(parsed, Some(material_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_material_state_folder_skips_non_uuid_name() -> TestResult<()> {
+        let path = std::path::Path::new("/tmp").join("notes");
+
+        let parsed = parse_material_state_folder(&path)?;
+
+        assert!(parsed.is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn parse_material_state_folder_rejects_non_utf8_name() -> TestResult<()> {
+        let path = std::path::PathBuf::from("/tmp").join(std::ffi::OsString::from_vec(vec![
+            0x66, 0x6f, 0x80,
+        ]));
+
+        let err = parse_material_state_folder(&path)
+            .expect_err("non-UTF-8 material state folders must surface explicit errors");
+
+        assert!(err.to_string().contains("not valid UTF-8"));
         Ok(())
     }
 }
