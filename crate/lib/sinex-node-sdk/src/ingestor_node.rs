@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::checkpoint::{CheckpointManager, CheckpointState};
+use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
     ScanReport, TimeHorizon,
@@ -190,13 +190,21 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         // 1. Try file (hot reload)
         if self.shutdown_config.restore_state_on_startup {
             let path = self.shutdown_config.checkpoint_path(self.ingestor.name());
-            if let Some(ckpt) = CheckpointState::load_from_file(&path).await
-                && let Some(data) = ckpt.data
-                && let Ok(s) = serde_json::from_value(data)
-            {
-                self.state = s;
-                let _ = CheckpointState::delete_file(&path).await;
-                return Ok(());
+            if let Some(ckpt) = CheckpointState::load_from_file(&path).await? {
+                if let Some(data) = ckpt.data {
+                    self.state = decode_checkpoint_data(
+                        data,
+                        "hot reload ingestor state",
+                        self.ingestor.name(),
+                    )?;
+                    CheckpointState::delete_file(&path).await.map_err(|error| {
+                        SinexError::io("Failed to delete restored checkpoint file")
+                            .with_context("node", self.ingestor.name())
+                            .with_context("path", path.display().to_string())
+                            .with_std_error(&error)
+                    })?;
+                    return Ok(());
+                }
             }
         }
 
@@ -204,10 +212,12 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         if let Some(cm) = &self.checkpoint_manager {
             let ckpt = cm.load_checkpoint().await?;
             if let Some(data) = ckpt.data {
-                if let Ok(s) = serde_json::from_value(data) {
-                    self.state = s;
-                    self.state.revision = ckpt.revision;
-                }
+                self.state = decode_checkpoint_data(
+                    data,
+                    "ingestor checkpoint state",
+                    self.ingestor.name(),
+                )?;
+                self.state.revision = ckpt.revision;
             } else {
                 self.state = IngestorState::default();
             }

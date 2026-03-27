@@ -1,5 +1,6 @@
 #![cfg(feature = "messaging")]
 
+use futures::TryStreamExt;
 use serde_json::json;
 use sinex_node_sdk::{CheckpointManager, CheckpointState, SinexError};
 use xtask::sandbox::prelude::*;
@@ -66,5 +67,65 @@ async fn checkpoint_keys_accept_invalid_chars(
     assert_eq!(loaded.data, state.data);
     assert_eq!(loaded.version, 7);
     assert_eq!(loaded.checkpoint, state.checkpoint);
+    Ok(())
+}
+
+#[sinex_test]
+async fn load_checkpoint_surfaces_corrupt_kv_state(
+    ctx: TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx.with_nats().shared().await?;
+    let kv = ctx.checkpoint_kv().await?;
+    let manager = CheckpointManager::new(
+        kv.clone(),
+        "corrupt-node".to_string(),
+        "corrupt-group".to_string(),
+        "corrupt-consumer".to_string(),
+    );
+    manager.save_checkpoint(&CheckpointState::default()).await?;
+
+    let mut keys = kv.keys().await?;
+    let key = keys.try_next().await?.expect("checkpoint key should exist");
+    kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+        .await?;
+
+    let error = manager
+        .load_checkpoint()
+        .await
+        .expect_err("corrupt checkpoint KV should surface");
+    let message = format!("{error:#}");
+    assert!(matches!(error, SinexError::Serialization(_)));
+    assert!(message.contains("Failed to decode checkpoint from KV"));
+    assert!(message.contains(&key));
+    Ok(())
+}
+
+#[sinex_test]
+async fn checkpoint_stats_surface_corrupt_kv_state(
+    ctx: TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx.with_nats().shared().await?;
+    let kv = ctx.checkpoint_kv().await?;
+    let manager = CheckpointManager::new(
+        kv.clone(),
+        "corrupt-stats-node".to_string(),
+        "corrupt-stats-group".to_string(),
+        "corrupt-stats-consumer".to_string(),
+    );
+    manager.save_checkpoint(&CheckpointState::default()).await?;
+
+    let mut keys = kv.keys().await?;
+    let key = keys.try_next().await?.expect("checkpoint key should exist");
+    kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+        .await?;
+
+    let error = manager
+        .get_checkpoint_stats()
+        .await
+        .expect_err("corrupt checkpoint stats should surface");
+    let message = format!("{error:#}");
+    assert!(matches!(error, SinexError::Serialization(_)));
+    assert!(message.contains("Failed to decode checkpoint from KV"));
+    assert!(message.contains(&key));
     Ok(())
 }
