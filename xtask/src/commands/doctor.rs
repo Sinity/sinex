@@ -229,17 +229,19 @@ impl XtaskCommand for DoctorCommand {
             let pg_probe = probe_postgres();
             let nats_probe = probe_nats();
 
-            if !pg_probe.ready() || !nats_probe.ready() {
-                let stack_config = crate::infra::stack::StackConfig::for_current_checkout().ok();
-                if let Some(cfg) = stack_config {
-                    let verbose = ctx.is_human();
-                    if !pg_probe.ready() {
-                        let _ = crate::infra::stack::pg_start(&cfg, verbose);
-                    }
-                    if !nats_probe.ready() {
-                        let _ = crate::infra::stack::nats_start(&cfg, verbose);
-                    }
+            let remediation_warnings = remediate_stack_services(
+                pg_probe.ready(),
+                nats_probe.ready(),
+                crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+                ctx.is_human(),
+                crate::infra::stack::pg_start,
+                crate::infra::stack::nats_start,
+            );
+            if !remediation_warnings.is_empty() {
+                if result.status == Status::Success {
+                    result.status = Status::Partial;
                 }
+                result.warnings.extend(remediation_warnings);
             }
         }
 
@@ -677,6 +679,46 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         assessment,
         warnings,
     })
+}
+
+fn remediate_stack_services<T, PgStart, NatsStart>(
+    pg_ready: bool,
+    nats_ready: bool,
+    stack_config: std::result::Result<T, String>,
+    verbose: bool,
+    mut pg_start: PgStart,
+    mut nats_start: NatsStart,
+) -> Vec<String>
+where
+    PgStart: FnMut(&T, bool) -> Result<()>,
+    NatsStart: FnMut(&T, bool) -> Result<()>,
+{
+    if pg_ready && nats_ready {
+        return Vec::new();
+    }
+
+    let cfg = match stack_config {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return vec![format!(
+                "Doctor --fix could not load stack config for infra remediation: {error}"
+            )];
+        }
+    };
+
+    let mut warnings = Vec::new();
+    if !pg_ready && let Err(error) = pg_start(&cfg, verbose) {
+        warnings.push(format!(
+            "Doctor --fix failed to start Postgres during infra remediation: {error}"
+        ));
+    }
+    if !nats_ready && let Err(error) = nats_start(&cfg, verbose) {
+        warnings.push(format!(
+            "Doctor --fix failed to start NATS during infra remediation: {error}"
+        ));
+    }
+
+    warnings
 }
 
 /// Result of a single deployment readiness check.
@@ -2691,6 +2733,41 @@ mod tests {
 
         assert_eq!(item.status, "pass");
         assert!(item.description.contains("healthy=false"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remediate_stack_services_reports_missing_stack_config()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = remediate_stack_services(
+            false,
+            true,
+            Err("missing stack config".to_string()),
+            false,
+            |_: &&str, _| Ok(()),
+            |_: &&str, _| Ok(()),
+        );
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("missing stack config"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remediate_stack_services_reports_start_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = remediate_stack_services(
+            false,
+            false,
+            Ok("stack"),
+            false,
+            |_: &&str, _| Err(color_eyre::eyre::eyre!("pg failed")),
+            |_: &&str, _| Err(color_eyre::eyre::eyre!("nats failed")),
+        );
+
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().any(|warning| warning.contains("pg failed")));
+        assert!(warnings.iter().any(|warning| warning.contains("nats failed")));
         Ok(())
     }
 
