@@ -31,7 +31,7 @@ sinexctl dlq list --token "$SINEX_RPC_TOKEN"
 - `lifecycle`: archive/restore/tombstone workflows
 - `gitops`: schema source management
 - `status`, `recent`, `errors`, `watch`, `tui`: operator shortcuts
-- `db`: direct PostgreSQL diagnostics (bypasses gateway)
+- `demo`: deterministic dev data seeding
 - `config`, `completions`: local CLI management
 
 ## Connection and Auth
@@ -50,17 +50,6 @@ Environment variables (directly supported by CLI flags/token loader):
 
 - `SINEX_RPC_URL`
 - `SINEX_RPC_TOKEN`
-
-## Direct DB Commands
-
-`sinexctl db ...` uses `DATABASE_URL` and does not go through the gateway.
-
-```bash
-export DATABASE_URL='postgresql:///sinex_dev?host=/run/postgresql'
-sinexctl db health
-sinexctl db query --limit 20
-sinexctl db stats
-```
 
 ## Completions
 
