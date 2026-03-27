@@ -53,6 +53,8 @@ pub(crate) struct DoctorReport {
     pub environment: Option<serde_json::Value>,
     pub tls: Option<TlsCheck>,
     pub postgres_extensions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postgres_extensions_error: Option<String>,
     pub overall: bool,
 }
 
@@ -153,6 +155,88 @@ fn detect_tls_check() -> Option<TlsCheck> {
         key_matches,
         error,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresExtensionsProbe {
+    extensions: Option<Vec<String>>,
+    error: Option<String>,
+}
+
+fn summarize_command_probe_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn probe_postgres_extensions<T, RunPsql>(
+    pg_ready: bool,
+    stack_config: std::result::Result<T, String>,
+    mut run_psql: RunPsql,
+) -> PostgresExtensionsProbe
+where
+    RunPsql: FnMut(&T) -> std::io::Result<std::process::Output>,
+{
+    if !pg_ready {
+        return PostgresExtensionsProbe {
+            extensions: None,
+            error: None,
+        };
+    }
+
+    let cfg = match stack_config {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return PostgresExtensionsProbe {
+                extensions: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor could not load stack config to probe extensions: {error}"
+                )),
+            };
+        }
+    };
+
+    let output = match run_psql(&cfg) {
+        Ok(output) => output,
+        Err(error) => {
+            return PostgresExtensionsProbe {
+                extensions: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor failed to run extension probe via psql: {error}"
+                )),
+            };
+        }
+    };
+
+    if !output.status.success() {
+        return PostgresExtensionsProbe {
+            extensions: None,
+            error: Some(format!(
+                "Postgres is reachable, but doctor failed to probe extensions: {}",
+                summarize_command_probe_output(&output)
+            )),
+        };
+    }
+
+    let extensions = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect();
+
+    PostgresExtensionsProbe {
+        extensions: Some(extensions),
+        error: None,
+    }
 }
 
 impl XtaskCommand for DoctorCommand {
@@ -329,24 +413,19 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     let missing = ToolManager::check_required_tools(&tools_to_check);
 
     // Check Postgres extensions
-    let mut pg_extensions = None;
-    if pg_probe.ready() {
-        let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
-        if let Some(cfg) = config {
-            let output = std::process::Command::new("psql")
+    let postgres_extensions_probe = probe_postgres_extensions(
+        pg_probe.ready(),
+        crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+        |cfg| {
+            std::process::Command::new("psql")
                 .env("PGHOST", cfg.run_dir())
                 .env("PGPORT", cfg.postgres.port.to_string())
                 .args(["-tAc", "SELECT extname FROM pg_extension"])
-                .output();
-
-            if let Ok(o) = output {
-                let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .map(ToString::to_string)
-                    .collect();
-                pg_extensions = Some(exts);
-            }
-        }
+                .output()
+        },
+    );
+    if postgres_extensions_probe.error.is_some() {
+        all_ok = false;
     }
 
     // Check TLS certificates from env vars or .sinex/tls/
@@ -381,7 +460,8 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         tools: tool_checks,
         environment,
         tls: tls_check,
-        postgres_extensions: pg_extensions,
+        postgres_extensions: postgres_extensions_probe.extensions,
+        postgres_extensions_error: postgres_extensions_probe.error,
         overall: all_ok,
     };
 
@@ -470,6 +550,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         if let Some(exts) = &report.postgres_extensions {
             println!("\n{}", style("Postgres Extensions:").bold());
             println!("  {}", exts.join(", "));
+        } else if let Some(error) = &report.postgres_extensions_error {
+            println!("\n{}", style("Postgres Extensions:").bold());
+            println!("  {} {error}", style("✗").red());
         }
 
         // Pipeline smoke tests
@@ -2500,6 +2583,7 @@ mod tests {
     use ::xtask::sandbox::EnvGuard;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
 
     fn write_executable_script(
         path: &std::path::Path,
@@ -2581,6 +2665,7 @@ mod tests {
                 error: None,
             }),
             postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
+            postgres_extensions_error: None,
             overall: false,
         };
 
@@ -2612,6 +2697,72 @@ mod tests {
         // Extensions (agents use: .data.postgres_extensions[])
         assert!(json["postgres_extensions"].is_array());
         assert_eq!(json["postgres_extensions"][0], "pgvector");
+        assert!(json.get("postgres_extensions_error").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_postgres_extensions_reports_stack_config_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = probe_postgres_extensions(false, Ok("stack"), |_: &&str| {
+            panic!("probe should not run when Postgres is not ready")
+        });
+        assert_eq!(
+            probe,
+            PostgresExtensionsProbe {
+                extensions: None,
+                error: None,
+            }
+        );
+
+        let probe = probe_postgres_extensions(
+            true,
+            Err("missing stack config".to_string()),
+            |_: &&str| {
+                panic!("probe should not run when stack config resolution already failed")
+            },
+        );
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("missing stack config"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_postgres_extensions_reports_psql_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = probe_postgres_extensions(true, Ok("stack"), |_: &&str| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "psql missing",
+            ))
+        });
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("psql missing"))
+        );
+
+        let probe = probe_postgres_extensions(true, Ok("stack"), |_: &&str| {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            })
+        });
+        assert!(probe.extensions.is_none());
+        assert!(
+            probe
+                .error
+                .as_deref()
+                .is_some_and(|value| value.contains("permission denied"))
+        );
         Ok(())
     }
 
