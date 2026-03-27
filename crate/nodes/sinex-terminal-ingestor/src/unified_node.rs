@@ -538,21 +538,31 @@ impl HistoryWatcherContext {
         let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
-        if let Some(state) = self.load_state().await {
-            offset_bytes = state.offset_bytes;
-            line_number = state.line_number;
-            recent_hashes = state.recent_hashes;
-            #[cfg(unix)]
-            {
-                last_inode = state.inode;
+        match self.load_state().await {
+            Ok(Some(state)) => {
+                offset_bytes = state.offset_bytes;
+                line_number = state.line_number;
+                recent_hashes = state.recent_hashes;
+                #[cfg(unix)]
+                {
+                    last_inode = state.inode;
+                }
+                debug!(
+                    path = %self.path,
+                    offset = offset_bytes,
+                    line_number,
+                    dedup_hashes = recent_hashes.len(),
+                    "Restored terminal watcher state"
+                );
             }
-            debug!(
-                path = %self.path,
-                offset = offset_bytes,
-                line_number,
-                dedup_hashes = recent_hashes.len(),
-                "Restored terminal watcher state"
-            );
+            Ok(None) => {}
+            Err(error) => {
+                let message =
+                    format!("failed to restore terminal watcher state for {}: {error}", self.path);
+                self.record_error("load_history_state", &message);
+                warn!("{message}");
+                return;
+            }
         }
 
         loop {
@@ -602,15 +612,27 @@ impl HistoryWatcherContext {
         let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
-        if let Some(state) = self.load_state().await {
-            sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-            recent_hashes = state.recent_hashes;
-            debug!(
-                path = %self.path,
-                sqlite_row_id,
-                dedup_hashes = recent_hashes.len(),
-                "Restored Fish history watcher state"
-            );
+        match self.load_state().await {
+            Ok(Some(state)) => {
+                sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                recent_hashes = state.recent_hashes;
+                debug!(
+                    path = %self.path,
+                    sqlite_row_id,
+                    dedup_hashes = recent_hashes.len(),
+                    "Restored Fish history watcher state"
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let message = format!(
+                    "failed to restore Fish history watcher state for {}: {error}",
+                    self.path
+                );
+                self.record_error("load_history_state", &message);
+                warn!("{message}");
+                return;
+            }
         }
 
         loop {
@@ -640,15 +662,27 @@ impl HistoryWatcherContext {
         let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
-        if let Some(state) = self.load_state().await {
-            sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-            recent_hashes = state.recent_hashes;
-            debug!(
-                path = %self.path,
-                sqlite_row_id,
-                dedup_hashes = recent_hashes.len(),
-                "Restored Atuin history watcher state"
-            );
+        match self.load_state().await {
+            Ok(Some(state)) => {
+                sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                recent_hashes = state.recent_hashes;
+                debug!(
+                    path = %self.path,
+                    sqlite_row_id,
+                    dedup_hashes = recent_hashes.len(),
+                    "Restored Atuin history watcher state"
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let message = format!(
+                    "failed to restore Atuin history watcher state for {}: {error}",
+                    self.path
+                );
+                self.record_error("load_history_state", &message);
+                warn!("{message}");
+                return;
+            }
         }
 
         loop {
@@ -673,21 +707,32 @@ impl HistoryWatcherContext {
         }
     }
 
-    async fn load_state(&self) -> Option<HistoryState> {
-        let path = self.state_path.as_ref()?;
+    async fn load_state(&self) -> NodeResult<Option<HistoryState>> {
+        let Some(path) = self.state_path.as_ref() else {
+            return Ok(None);
+        };
         match fs::read(path).await {
             Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
-                Ok(state) => Some(state),
-                Err(e) => {
-                    warn!("Failed to decode history watcher state {:?}: {}", path, e);
-                    None
-                }
+                Ok(state) => Ok(Some(state)),
+                Err(error) => Err(
+                    SinexError::io("failed to decode history watcher state")
+                        .with_context("path", path.display().to_string())
+                        .with_std_error(&error),
+                ),
             },
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => {
-                warn!("Failed to load history watcher state {:?}: {}", path, err);
-                None
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(
+                SinexError::io("failed to load history watcher state")
+                    .with_context("path", path.display().to_string())
+                    .with_std_error(&error),
+            ),
+        }
+    }
+
+    async fn resolve_state(&self, state_override: Option<HistoryState>) -> NodeResult<HistoryState> {
+        match state_override {
+            Some(state) => Ok(state),
+            None => Ok(self.load_state().await?.unwrap_or_default()),
         }
     }
 
@@ -721,9 +766,15 @@ impl HistoryWatcherContext {
     ) -> HistoryScanOutcome {
         match &self.source_mode {
             HistorySourceMode::FishSqlite => {
-                let state = match state_override {
-                    Some(state) => state,
-                    None => self.load_state().await.unwrap_or_default(),
+                let state = match self.resolve_state(state_override).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!("failed to restore Fish history watcher state: {error}"),
+                            HistoryState::default(),
+                        );
+                    }
                 };
                 let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
                 let mut recent_hashes = state.recent_hashes;
@@ -793,9 +844,15 @@ impl HistoryWatcherContext {
                 }
             }
             HistorySourceMode::AtuinSqlite => {
-                let state = match state_override {
-                    Some(state) => state,
-                    None => self.load_state().await.unwrap_or_default(),
+                let state = match self.resolve_state(state_override).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!("failed to restore Atuin history watcher state: {error}"),
+                            HistoryState::default(),
+                        );
+                    }
                 };
                 let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
                 let recent_hashes = state.recent_hashes;
@@ -861,9 +918,15 @@ impl HistoryWatcherContext {
                 }
             }
             HistorySourceMode::Text => {
-                let state = match state_override {
-                    Some(state) => state,
-                    None => self.load_state().await.unwrap_or_default(),
+                let state = match self.resolve_state(state_override).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!("failed to restore terminal history watcher state: {error}"),
+                            HistoryState::default(),
+                        );
+                    }
                 };
                 let mut offset_bytes = state.offset_bytes;
                 let mut line_number = state.line_number;
@@ -2171,7 +2234,7 @@ impl IngestorNode for TerminalNode {
             let checkpoint_key = ctx.checkpoint_key();
             let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
                 Ok(Some(state)) => Some(state),
-                Ok(None) => ctx.load_state().await,
+                Ok(None) => None,
                 Err(error) => {
                     warnings.push(ctx.strict_warning(format!(
                         "ignoring unreadable checkpoint state and falling back to local state: {error}"
@@ -2181,7 +2244,7 @@ impl IngestorNode for TerminalNode {
                         error = %error,
                         "Ignoring unreadable terminal checkpoint state and falling back to local state"
                     );
-                    ctx.load_state().await
+                    None
                 }
             };
             let outcome = ctx
@@ -3259,6 +3322,53 @@ mod tests {
             _temp_dir: temp_dir,
             _ingest_handle: ingest_handle,
         })
+    }
+
+    #[sinex_test]
+    async fn load_state_surfaces_corrupt_state_files(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let fix = make_watcher(&ctx, "corrupt-state-load", 4096).await?;
+        let state_path = fix
+            .ctx
+            .state_path
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should have a state path"))?;
+        tokio::fs::write(&state_path, "{ definitely not valid json").await?;
+
+        let error = fix
+            .ctx
+            .load_state()
+            .await
+            .expect_err("corrupt state file should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to decode history watcher state"));
+        assert!(message.contains(state_path.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_history_once_from_state_fails_on_corrupt_local_state(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let fix = make_watcher(&ctx, "corrupt-state-scan", 4096).await?;
+        tokio::fs::write(&fix.history_path, "echo hello\n").await?;
+        let state_path = fix
+            .ctx
+            .state_path
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should have a state path"))?;
+        tokio::fs::write(&state_path, "{ definitely not valid json").await?;
+
+        let outcome = fix.ctx.scan_history_once_from_state(None, None).await;
+        assert_eq!(outcome.processed, 0);
+        let failure = outcome
+            .failure
+            .ok_or_else(|| color_eyre::eyre::eyre!("corrupt state should fail the scan"))?;
+        assert!(failure.contains("failed to restore terminal history watcher state"));
+        assert!(failure.contains("failed to decode history watcher state"));
+        assert!(fix.commands.lock().await.is_empty());
+        Ok(())
     }
 
     /// Invariant: commands containing null bytes (\0) are rejected — they indicate
