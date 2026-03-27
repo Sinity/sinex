@@ -646,6 +646,24 @@ struct FailedDispatchedScanOutcome {
 }
 
 impl<T: Node + 'static> NodeRunner<T> {
+    fn log_shutdown_join_result(task_name: &str, result: Result<(), tokio::task::JoinError>) {
+        match result {
+            Ok(()) => {
+                debug!(task = task_name, "Task finished before shutdown cleanup");
+            }
+            Err(join_error) if join_error.is_cancelled() => {
+                debug!(task = task_name, "Task aborted during shutdown cleanup");
+            }
+            Err(join_error) => {
+                warn!(
+                    task = task_name,
+                    error = %join_error,
+                    "Task exited unexpectedly during shutdown cleanup"
+                );
+            }
+        }
+    }
+
     fn build_instance_id(host: &str) -> String {
         format!("{host}-{}-{}", std::process::id(), Uuid::now_v7().simple())
     }
@@ -2444,15 +2462,14 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn abort_task(handle: &mut Option<tokio::task::JoinHandle<()>>, name: &str) {
         if let Some(h) = handle.take() {
             h.abort();
-            let _ = h.await;
-            debug!("Aborted {name}");
+            Self::log_shutdown_join_result(name, h.await);
         }
     }
 
     async fn shutdown_leader_state(&mut self) {
         if let Some(state) = self.leader_state.take() {
             state.heartbeat_handle.abort();
-            let _ = state.heartbeat_handle.await;
+            Self::log_shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await);
             if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
                 warn!(error = %err, "Failed to release leadership on shutdown");
             }

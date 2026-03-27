@@ -40,10 +40,10 @@
 //! ```
 
 use std::sync::{Arc, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 
 use sinex_primitives::{Result as SinexResult, SinexError};
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -91,6 +91,29 @@ pub struct WatcherHandle<M = ()> {
 }
 
 impl<M> WatcherHandle<M> {
+    fn log_shutdown_join_result(
+        watcher_name: &'static str,
+        task_name: &str,
+        result: Result<(), JoinError>,
+    ) {
+        match result {
+            Ok(()) => {
+                debug!(watcher = watcher_name, task = task_name, "Watcher task finished before shutdown");
+            }
+            Err(join_error) if join_error.is_cancelled() => {
+                debug!(watcher = watcher_name, task = task_name, "Watcher task aborted during shutdown");
+            }
+            Err(join_error) => {
+                warn!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    error = %join_error,
+                    "Watcher task exited unexpectedly during shutdown"
+                );
+            }
+        }
+    }
+
     fn recover_health_read(&self) -> WatcherHealth {
         match self.health.read() {
             Ok(health) => health.clone(),
@@ -275,13 +298,14 @@ impl<M> WatcherHandle<M> {
 
     /// Abort any running tasks and wait for them to finish.
     async fn abort_tasks_async(&mut self) {
+        let watcher_name = self.name;
         match &mut self.state {
             WatcherState::Running { task, forwarder } => {
                 task.abort();
-                let _ = task.await;
+                Self::log_shutdown_join_result(watcher_name, "watcher task", task.await);
                 if let Some(fwd) = forwarder.take() {
                     fwd.abort();
-                    let _ = fwd.await;
+                    Self::log_shutdown_join_result(watcher_name, "watcher forwarder", fwd.await);
                 }
             }
             WatcherState::Initialized | WatcherState::Stopped => {}
