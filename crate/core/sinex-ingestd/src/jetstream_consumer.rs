@@ -1374,6 +1374,18 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn missing_schema_binding_is_accepted_leniently() -> TestResult<()> {
+        let accepted = JetStreamConsumer::resolve_validation_result(
+            ValidationResult::NoSchema,
+            false,
+            &sinex_primitives::domain::EventSource::from_static("test"),
+            &sinex_primitives::domain::EventType::from_static("schema.missing"),
+        )?;
+        assert!(accepted.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn strict_mode_still_rejects_missing_schema_bindings() -> TestResult<()> {
         let err = JetStreamConsumer::resolve_validation_result(
             ValidationResult::NoSchema,
