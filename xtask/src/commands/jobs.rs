@@ -252,9 +252,8 @@ async fn execute_status(
                 }
             } else if job.is_terminal() {
                 // File gone (archived to DB) — read remainder from DB
-                if let Ok(stdout) = job.read_stdout()
-                    && stdout.len() as u64 > last_pos
-                {
+                let stdout = job.read_stdout()?;
+                if stdout.len() as u64 > last_pos {
                     print!("{}", &stdout[last_pos as usize..]);
                 }
                 break;
@@ -272,6 +271,11 @@ async fn execute_status(
                             && n > 0
                         {
                             print!("{buf}");
+                        }
+                    } else {
+                        let stdout = job.read_stdout()?;
+                        if stdout.len() as u64 > last_pos {
+                            print!("{}", &stdout[last_pos as usize..]);
                         }
                     }
                     break;
