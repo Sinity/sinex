@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::workspace_root;
@@ -325,11 +325,28 @@ impl XtaskCommand for ExerciseCommand {
 
         for (i, ex) in exercises.iter().enumerate() {
             let ex_dir = output_dir.join(&ex.id);
-            let _ = fs::create_dir_all(&ex_dir);
 
             if ctx.is_human() {
                 print!("  [{}/{}] {} ...", i + 1, exercises.len(), ex.id);
-                let _ = std::io::stdout().flush();
+                if let Err(error) = std::io::stdout().flush() {
+                    eprintln!("⚠ failed to flush exercise progress output: {error}");
+                }
+            }
+
+            if let Err(error) = create_exercise_dir(&ex_dir) {
+                let message = format!("{error:#}");
+                if ctx.is_human() {
+                    println!(" \x1b[31m✗\x1b[0m");
+                    println!("      {message}");
+                }
+                outcomes.push(ExerciseOutcome {
+                    id: ex.id.clone(),
+                    passed: false,
+                    duration: Duration::ZERO,
+                    steps: vec![],
+                    error: Some(message),
+                });
+                continue;
             }
 
             let outcome = match &ex.kind {
@@ -496,7 +513,7 @@ impl XtaskCommand for ExerciseCommand {
 
         result = result
             .with_message(format!("{passed}/{} exercises passed", outcomes.len()))
-            .with_data(serde_json::to_value(&report).unwrap_or_default())
+            .with_data(serde_json::to_value(&report).wrap_err("serialize exercise report")?)
             .with_duration(ctx.elapsed());
 
         if failed > 0 {
@@ -538,6 +555,11 @@ impl XtaskCommand for ExerciseCommand {
             track_in_history: true,
         }
     }
+}
+
+fn create_exercise_dir(path: &std::path::Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .wrap_err_with(|| format!("create exercise output directory {}", path.display()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -615,6 +637,21 @@ impl Drop for SeedGuard {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use ::xtask::sandbox::EnvGuard;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    fn write_executable_script(
+        path: &std::path::Path,
+        body: &str,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        fs::write(path, body)?;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+        Ok(())
+    }
 
     // ── Tier enum ─────────────────────────────────────────────────────────────
 
@@ -1198,6 +1235,80 @@ mod tests {
         assert_eq!(report.results[0].tier, "T2");
         assert_eq!(report.results[0].steps.len(), 1);
         assert_eq!(report.results[0].steps[0].label, "step1");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_save_output_reports_missing_directory() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let missing = dir.path().join("missing");
+        let output = StepOutput {
+            stdout: "stdout".to_string(),
+            stderr: "stderr".to_string(),
+            exit_code: 0,
+            duration: Duration::ZERO,
+        };
+
+        let error = save_output(&missing, "step", &output).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("step.stdout.log"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_create_exercise_dir_creates_missing_path() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("exercise").join("nested");
+
+        create_exercise_dir(&path)?;
+
+        assert!(path.is_dir());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_create_exercise_dir_reports_parent_creation_failure()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let blocking = dir.path().join("file-parent");
+        fs::write(&blocking, "blocker")?;
+        let path = blocking.join("exercise");
+
+        let error = create_exercise_dir(&path).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("create exercise output directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_git_state_guard_fails_when_stash_fails() -> ::xtask::sandbox::TestResult<()> {
+        let bin_dir = tempdir()?;
+        write_executable_script(
+            &bin_dir.path().join("git"),
+            r#"#!/bin/sh
+if [ "$1" = "status" ]; then
+  printf ' M file.txt\n'
+  exit 0
+fi
+if [ "$1" = "stash" ]; then
+  echo "stash failed" >&2
+  exit 1
+fi
+echo "unexpected git invocation: $*" >&2
+exit 2
+"#,
+        )?;
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        let mut env = EnvGuard::new();
+        env.set("PATH", format!("{}:{original_path}", bin_dir.path().display()));
+
+        let error = match runner::GitStateGuard::new() {
+            Ok(_) => panic!("git state guard should fail when stash fails"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("stash failed"));
         Ok(())
     }
 }

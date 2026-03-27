@@ -2,7 +2,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,40 @@ pub struct PostgresConfig {
 
 pub struct PostgresManager {
     config: PostgresConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostmasterPidState {
+    Missing,
+    Running(i32),
+    Stale(i32),
+}
+
+fn remove_service_file(path: &Path, label: &str) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .wrap_err_with(|| format!("failed to remove {label} {}", path.display())),
+    }
+}
+
+fn read_postmaster_pid(path: &Path) -> Result<Option<i32>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed to read postmaster pid file {}", path.display()))?;
+    let Some(first_line) = content.lines().next().map(str::trim).filter(|line| !line.is_empty())
+    else {
+        bail!("postmaster pid file {} is empty", path.display());
+    };
+
+    let pid = first_line
+        .parse::<i32>()
+        .wrap_err_with(|| format!("failed to parse postmaster pid from {}", path.display()))?;
+    Ok(Some(pid))
 }
 
 impl PostgresManager {
@@ -99,19 +133,25 @@ impl PostgresManager {
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
-        if self.is_running() {
-            // PID exists — but verify it's actually accepting connections
-            if self.is_accepting_connections() {
-                if verbose {
-                    println!("PostgreSQL already running");
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing => {}
+            PostmasterPidState::Running(_) => {
+                if self.accepting_connections_probe()? {
+                    if verbose {
+                        println!("PostgreSQL already running");
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+
+                eprintln!(
+                    "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
+                );
+                self.force_cleanup(verbose)?;
             }
-            // PID alive but not accepting connections — stale/zombie Postgres
-            eprintln!(
-                "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
-            );
-            self.force_cleanup(verbose);
+            PostmasterPidState::Stale(pid) => {
+                eprintln!("⚠️  Stale PostgreSQL pid file detected for dead PID {pid}. Recovering...");
+                self.force_cleanup(verbose)?;
+            }
         }
 
         if verbose {
@@ -148,22 +188,7 @@ impl PostgresManager {
 
         // Wait for readiness
         for _ in 0..60 {
-            let check = self
-                .pg_command("pg_isready")
-                .args([
-                    "-h",
-                    self.config
-                        .run_dir
-                        .to_str()
-                        .expect("run dir must be valid UTF-8"),
-                ])
-                .arg("-p")
-                .arg(self.config.port.to_string())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-
-            if check.is_ok_and(|s| s.success()) {
+            if self.accepting_connections_probe()? {
                 if verbose {
                     println!("PostgreSQL started");
                 }
@@ -176,11 +201,21 @@ impl PostgresManager {
     }
 
     pub fn stop(&self, verbose: bool) -> Result<()> {
-        if !self.is_running() {
-            if verbose {
-                println!("PostgreSQL not running");
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing => {
+                if verbose {
+                    println!("PostgreSQL not running");
+                }
+                return Ok(());
             }
-            return Ok(());
+            PostmasterPidState::Stale(pid) => {
+                if verbose {
+                    println!("Cleaning up stale PostgreSQL state for dead PID {pid}");
+                }
+                self.force_cleanup(verbose)?;
+                return Ok(());
+            }
+            PostmasterPidState::Running(_) => {}
         }
 
         if verbose {
@@ -210,19 +245,32 @@ impl PostgresManager {
 
     #[must_use]
     pub fn is_running(&self) -> bool {
-        let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file)
-            && let Some(first_line) = content.lines().next()
-            && let Ok(pid) = first_line.parse::<i32>()
-        {
-            return unsafe { libc::kill(pid, 0) == 0 };
+        match self.postmaster_pid_state() {
+            Ok(PostmasterPidState::Running(_)) => true,
+            Ok(PostmasterPidState::Missing | PostmasterPidState::Stale(_)) => false,
+            Err(error) => {
+                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to inspect postgres pid file");
+                false
+            }
         }
-        false
+    }
+
+    #[must_use]
+    pub fn read_pid(&self) -> Option<u32> {
+        match read_postmaster_pid(&self.config.data_dir.join("postmaster.pid")) {
+            Ok(Some(pid)) => Some(pid as u32),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to read postgres pid file");
+                None
+            }
+        }
     }
 
     /// Check if PostgreSQL is accepting connections via pg_isready.
-    pub fn is_accepting_connections(&self) -> bool {
-        self.pg_command("pg_isready")
+    pub fn accepting_connections_probe(&self) -> Result<bool> {
+        pg_isready_probe(
+            self.pg_command("pg_isready")
             .args([
                 "-h",
                 self.config
@@ -233,17 +281,16 @@ impl PostgresManager {
             .arg("-p")
             .arg(self.config.port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+            .stderr(Stdio::piped())
+            .output(),
+        )
     }
 
     /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
-    fn force_cleanup(&self, verbose: bool) {
+    fn force_cleanup(&self, verbose: bool) -> Result<()> {
         let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file)
-            && let Some(first_line) = content.lines().next()
-            && let Ok(pid) = first_line.parse::<i32>()
+        if let Some(pid) = read_postmaster_pid(&pid_file)?
+            && unsafe { libc::kill(pid, 0) == 0 }
         {
             if verbose {
                 eprintln!("  Sending SIGKILL to stale PID {pid}");
@@ -254,7 +301,7 @@ impl PostgresManager {
         }
 
         // Clean up stale files so pg_ctl start succeeds
-        let _ = fs::remove_file(&pid_file);
+        remove_service_file(&pid_file, "postgres pid file")?;
         let socket = self
             .config
             .run_dir
@@ -263,12 +310,14 @@ impl PostgresManager {
             .config
             .run_dir
             .join(format!(".s.PGSQL.{}.lock", self.config.port));
-        let _ = fs::remove_file(&socket);
-        let _ = fs::remove_file(&lock);
+        remove_service_file(&socket, "postgres socket")?;
+        remove_service_file(&lock, "postgres socket lock")?;
 
         if verbose {
             eprintln!("  Cleaned up stale PID file and sockets");
         }
+
+        Ok(())
     }
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
@@ -338,24 +387,9 @@ impl PostgresManager {
     }
 
     pub fn install_extensions(&self, db: &str, superuser: &str) -> Result<()> {
-        // Common extensions
-        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
-            // Check availability first to avoid error spam if not installed in system
-            let check = self.psql(
-                superuser,
-                db,
-                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{ext}'"),
-            )?;
-            if !check.is_empty() {
-                let _ = self.psql(
-                    superuser,
-                    db,
-                    &format!("CREATE EXTENSION IF NOT EXISTS \"{ext}\" CASCADE"),
-                );
-            }
-        }
-
-        Ok(())
+        Self::install_extensions_with(superuser, db, |user, target_db, sql| {
+            self.psql(user, target_db, sql)
+        })
     }
 
     fn pg_command(&self, binary: &str) -> Command {
@@ -365,5 +399,202 @@ impl PostgresManager {
         } else {
             Command::new(binary)
         }
+    }
+
+    fn postmaster_pid_state(&self) -> Result<PostmasterPidState> {
+        let pid_file = self.config.data_dir.join("postmaster.pid");
+        let Some(pid) = read_postmaster_pid(&pid_file)? else {
+            return Ok(PostmasterPidState::Missing);
+        };
+
+        if unsafe { libc::kill(pid, 0) == 0 } {
+            Ok(PostmasterPidState::Running(pid))
+        } else {
+            Ok(PostmasterPidState::Stale(pid))
+        }
+    }
+
+    fn install_extensions_with<F>(superuser: &str, db: &str, mut psql: F) -> Result<()>
+    where
+        F: FnMut(&str, &str, &str) -> Result<String>,
+    {
+        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
+            let check = psql(
+                superuser,
+                db,
+                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{ext}'"),
+            )?;
+            if !check.is_empty() {
+                psql(
+                    superuser,
+                    db,
+                    &format!("CREATE EXTENSION IF NOT EXISTS \"{ext}\" CASCADE"),
+                )
+                .wrap_err_with(|| format!("failed to install postgres extension {ext}"))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn pg_isready_probe(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    let output = output.wrap_err("failed to run pg_isready")?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) | Some(2) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            bail!("pg_isready exited unexpectedly{suffix}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
+        PostgresManager::new(PostgresConfig {
+            port: 55432,
+            data_dir: root.path().join("data"),
+            run_dir: root.path().join("run"),
+            logs_dir: root.path().join("logs"),
+            database: "sinex".to_string(),
+            superuser: "postgres".to_string(),
+            app_user: "sinex".to_string(),
+        })
+    }
+
+    #[sinex_test]
+    async fn test_postmaster_pid_state_reports_malformed_pid_file() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "not-a-pid\n")?;
+
+        let error = manager.postmaster_pid_state().unwrap_err();
+        assert!(format!("{error:#}").contains("failed to parse postmaster pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_force_cleanup_reports_socket_cleanup_failure() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::create_dir_all(&manager.config.run_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "999999\n")?;
+        fs::create_dir(manager.config.run_dir.join(format!(".s.PGSQL.{}", manager.config.port)))?;
+
+        let error = manager.force_cleanup(false).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to remove postgres socket"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_pid_returns_parsed_postmaster_pid() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(manager.config.data_dir.join("postmaster.pid"), "4321\n")?;
+
+        assert_eq!(manager.read_pid(), Some(4321));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_pid_returns_none_for_missing_postmaster_pid() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+
+        assert_eq!(manager.read_pid(), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_install_extensions_reports_create_failures() -> TestResult<()> {
+        let error = PostgresManager::install_extensions_with("postgres", "sinex", |_, _, sql| {
+            if sql.contains("SELECT 1 FROM pg_available_extensions") {
+                Ok("1".to_string())
+            } else {
+                Err(color_eyre::eyre::eyre!("create extension failed"))
+            }
+        })
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to install postgres extension timescaledb"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_install_extensions_skips_unavailable_extensions() -> TestResult<()> {
+        let mut statements = Vec::new();
+
+        PostgresManager::install_extensions_with("postgres", "sinex", |_, _, sql| {
+            statements.push(sql.to_string());
+            if sql.contains("timescaledb") || sql.contains("pg_trgm") {
+                Ok("1".to_string())
+            } else {
+                Ok(String::new())
+            }
+        })?;
+
+        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"timescaledb\" CASCADE"));
+        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" CASCADE"));
+        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"vector\" CASCADE"));
+        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_reports_spawn_failures() -> TestResult<()> {
+        let error = pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to run pg_isready"));
+        assert!(message.contains("pg_isready exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_treats_exit_two_as_not_accepting() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let accepting = pg_isready_probe(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(512),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }))?;
+            assert!(!accepting);
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pg_isready_probe_reports_unexpected_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = pg_isready_probe(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(768),
+                stdout: Vec::new(),
+                stderr: b"invalid option".to_vec(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("pg_isready exited unexpectedly"));
+            assert!(message.contains("invalid option"));
+        }
+        Ok(())
     }
 }

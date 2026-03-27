@@ -16,7 +16,7 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -568,23 +568,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("vm validate");
 
     let workspace_root = config::workspace_root();
-    let scenarios_dir = workspace_root.join("tests/e2e/nixos-vm/test-scenarios");
-
-    // Discover all .nix files in the scenarios directory dynamically, plus
-    // the preflight deployment test which lives one level up.
-    let mut test_files: Vec<std::path::PathBuf> = Vec::new();
-    test_files.push(workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix"));
-    if let Ok(entries) = std::fs::read_dir(&scenarios_dir) {
-        let mut discovered: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path().extension().and_then(|s| s.to_str()) == Some("nix")
-            })
-            .map(|e| e.path())
-            .collect();
-        discovered.sort();
-        test_files.extend(discovered);
-    }
+    let test_files = discover_vm_test_files(&workspace_root)?;
 
     let dummy_pkg = r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
 
@@ -654,8 +638,6 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
         }
     }
 
-    drop(scenarios_dir); // suppress unused warning
-
     if ctx.is_human() {
         println!();
         println!("  {} valid, {} missing, {} failed", valid, missing, failed);
@@ -670,6 +652,30 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
 
     Ok(CommandResult::success()
         .with_message(format!("validated {valid} files ({missing} missing)")))
+}
+
+fn discover_vm_test_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
+    let scenarios_dir = workspace_root.join("tests/e2e/nixos-vm/test-scenarios");
+    let mut test_files = vec![workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix")];
+
+    let mut discovered = Vec::new();
+    for entry in std::fs::read_dir(&scenarios_dir)
+        .wrap_err_with(|| format!("failed to read VM scenarios directory {}", scenarios_dir.display()))?
+    {
+        let entry = entry.wrap_err_with(|| {
+            format!(
+                "failed to enumerate an entry in VM scenarios directory {}",
+                scenarios_dir.display()
+            )
+        })?;
+        if entry.path().extension().and_then(|s| s.to_str()) == Some("nix") {
+            discovered.push(entry.path());
+        }
+    }
+
+    discovered.sort();
+    test_files.extend(discovered);
+    Ok(test_files)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -879,5 +885,53 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Command
             }
             CommandResult::success().with_message("VM snapshot info (manual step required)")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_discover_vm_test_files_reports_scenarios_dir_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let scenarios_dir = temp.path().join("tests/e2e/nixos-vm/test-scenarios");
+        std::fs::create_dir_all(scenarios_dir.parent().unwrap())?;
+        std::fs::write(&scenarios_dir, "not a directory")?;
+
+        let error = discover_vm_test_files(temp.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read VM scenarios directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_discover_vm_test_files_includes_preflight_and_sorted_scenarios()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let vm_root = temp.path().join("tests/e2e/nixos-vm");
+        let scenarios_dir = vm_root.join("test-scenarios");
+        std::fs::create_dir_all(&scenarios_dir)?;
+        std::fs::write(vm_root.join("preflight_deployment_test.nix"), "")?;
+        std::fs::write(scenarios_dir.join("b-test.nix"), "")?;
+        std::fs::write(scenarios_dir.join("a-test.nix"), "")?;
+        std::fs::write(scenarios_dir.join("notes.txt"), "")?;
+
+        let files = discover_vm_test_files(temp.path())?;
+        let labels: Vec<_> = files
+            .iter()
+            .map(|path| path.strip_prefix(temp.path()).unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec![
+                "tests/e2e/nixos-vm/preflight_deployment_test.nix",
+                "tests/e2e/nixos-vm/test-scenarios/a-test.nix",
+                "tests/e2e/nixos-vm/test-scenarios/b-test.nix",
+            ]
+        );
+        Ok(())
     }
 }

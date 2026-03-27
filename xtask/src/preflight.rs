@@ -20,6 +20,7 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -88,6 +89,41 @@ fn cache_path() -> std::path::PathBuf {
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 
+fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).wrap_err_with(|| {
+            format!(
+                "failed to create preflight state directory {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, contents)
+        .wrap_err_with(|| format!("failed to write temp state file {}", tmp.display()))?;
+
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        if let Err(cleanup_error) = std::fs::remove_file(&tmp)
+            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %tmp.display(),
+                error = %cleanup_error,
+                "failed to clean up temp preflight state file after rename failure"
+            );
+        }
+        return Err(error).wrap_err_with(|| {
+            format!(
+                "failed to atomically replace preflight state file {}",
+                path.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
 /// Preflight result cache — persisted as JSON after a successful preflight run.
 ///
 /// All four fields must match for the cache to be considered valid:
@@ -108,11 +144,9 @@ struct PreflightCache {
 }
 
 impl PreflightCache {
-    /// Load the cache from disk. Returns `None` if absent or malformed.
-    fn load() -> Option<Self> {
-        let path = cache_path();
-        let contents = std::fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&contents).ok()
+    /// Load the cache from disk. Returns `None` if absent.
+    fn load() -> Result<Option<Self>> {
+        load_preflight_cache_from(&cache_path())
     }
 
     /// Write this cache entry to disk atomically (R1 fix). Non-fatal on failure (best-effort).
@@ -121,9 +155,6 @@ impl PreflightCache {
     /// processes — `fs::write` is not atomic; rename within the same filesystem is.
     fn save(&self) {
         let path = cache_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let json = match serde_json::to_string_pretty(self) {
             Ok(j) => j,
             Err(e) => {
@@ -131,34 +162,28 @@ impl PreflightCache {
                 return;
             }
         };
-        // Write to a sibling temp file then rename for atomic visibility.
-        let tmp = path.with_extension("tmp");
-        if let Err(e) = std::fs::write(&tmp, &json) {
-            tracing::debug!(
-                "preflight cache: failed to write tmp {}: {e}",
-                tmp.display()
+        if let Err(error) = write_state_file_atomically(&path, &json) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "preflight cache: failed to persist cache entry"
             );
-            return;
-        }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            tracing::debug!("preflight cache: failed to rename tmp→cache: {e}");
-            let _ = std::fs::remove_file(&tmp);
         }
     }
 
     /// Build a fresh cache entry using the current state.
-    fn current() -> Self {
+    fn current() -> Result<Self> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        Self {
+        Ok(Self {
             timestamp_secs: now,
-            schema_hash: hash_schema_sources(),
-            contracts_hash: hash_contracts_dir(),
-            git_head: read_git_head(),
-        }
+            schema_hash: hash_schema_sources()?,
+            contracts_hash: hash_contracts_dir()?,
+            git_head: read_git_head()?,
+        })
     }
 
     /// Check whether this cache entry is still valid.
@@ -168,7 +193,7 @@ impl PreflightCache {
     /// - Declarative schema hash matches current files
     /// - Contracts hash matches current files
     /// - Git HEAD hasn't changed
-    fn is_valid(&self, ttl_secs: u64) -> bool {
+    fn is_valid(&self, ttl_secs: u64) -> Result<bool> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -177,42 +202,57 @@ impl PreflightCache {
         let age = now.saturating_sub(self.timestamp_secs);
         if age >= ttl_secs {
             tracing::debug!("preflight cache: expired (age={age}s, ttl={ttl_secs}s)");
-            return false;
+            return Ok(false);
         }
 
-        let schema_hash = hash_schema_sources();
+        let schema_hash = hash_schema_sources()?;
         if self.schema_hash != schema_hash {
             tracing::debug!(
                 "preflight cache: schema hash mismatch (cached={}, current={})",
                 self.schema_hash,
                 schema_hash
             );
-            return false;
+            return Ok(false);
         }
 
-        let contracts_hash = hash_contracts_dir();
+        let contracts_hash = hash_contracts_dir()?;
         if self.contracts_hash != contracts_hash {
             tracing::debug!(
                 "preflight cache: contracts hash mismatch (cached={}, current={})",
                 self.contracts_hash,
                 contracts_hash
             );
-            return false;
+            return Ok(false);
         }
 
-        let git_head = read_git_head();
+        let git_head = read_git_head()?;
         if self.git_head != git_head {
             tracing::debug!(
                 "preflight cache: git HEAD changed (cached={}, current={})",
                 self.git_head,
                 git_head
             );
-            return false;
+            return Ok(false);
         }
 
         tracing::debug!("preflight cache: hit (age={age}s)");
-        true
+        Ok(true)
     }
+}
+
+fn load_preflight_cache_from(path: &Path) -> Result<Option<PreflightCache>> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .wrap_err_with(|| format!("failed to read preflight cache {}", path.display()));
+        }
+    };
+
+    serde_json::from_str(&contents)
+        .wrap_err_with(|| format!("failed to parse preflight cache {}", path.display()))
+        .map(Some)
 }
 
 /// Read the current git HEAD commit SHA without spawning a subprocess.
@@ -221,41 +261,53 @@ impl PreflightCache {
 /// resolves it to the commit SHA by reading the corresponding packed or loose ref.
 /// Falls back to the symref string itself if the commit file doesn't exist yet
 /// (e.g., initial empty repo).
-fn read_git_head() -> String {
-    let workspace_root = crate::config::workspace_root();
-    let head_path = workspace_root.join(".git/HEAD");
+fn read_git_head() -> Result<String> {
+    read_git_head_for_root(&crate::config::workspace_root())
+}
 
-    let head_contents = match std::fs::read_to_string(&head_path) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => return String::from("unknown"),
-    };
+fn read_git_head_for_root(workspace_root: &Path) -> Result<String> {
+    let git_dir = workspace_root.join(".git");
+    let head_path = git_dir.join("HEAD");
+
+    let head_contents = std::fs::read_to_string(&head_path)
+        .wrap_err_with(|| format!("failed to read git HEAD at {}", head_path.display()))?
+        .trim()
+        .to_string();
 
     // Symbolic ref: "ref: refs/heads/main"
     if let Some(refname) = head_contents.strip_prefix("ref: ") {
-        let ref_path = workspace_root.join(".git").join(refname);
+        let ref_path = git_dir.join(refname);
         // Try loose ref first
         if let Ok(sha) = std::fs::read_to_string(&ref_path) {
-            return sha.trim().to_string();
+            return Ok(sha.trim().to_string());
         }
         // Try packed-refs
-        let packed_refs = workspace_root.join(".git/packed-refs");
-        if let Ok(contents) = std::fs::read_to_string(&packed_refs) {
-            for line in contents.lines() {
-                if line.starts_with('#') {
-                    continue;
+        let packed_refs = git_dir.join("packed-refs");
+        match std::fs::read_to_string(&packed_refs) {
+            Ok(contents) => {
+                for line in contents.lines() {
+                    if line.starts_with('#') {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                    if parts.len() == 2 && parts[1] == refname {
+                        return Ok(parts[0].to_string());
+                    }
                 }
-                let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                if parts.len() == 2 && parts[1] == refname {
-                    return parts[0].to_string();
-                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).wrap_err_with(|| {
+                    format!("failed to read packed refs at {}", packed_refs.display())
+                });
             }
         }
         // Ref exists but no commit yet (empty branch)
-        return head_contents;
+        return Ok(head_contents);
     }
 
     // Detached HEAD: the content is the commit SHA directly
-    head_contents
+    Ok(head_contents)
 }
 
 /// Compute a blake3 hash of declarative schema sources.
@@ -263,48 +315,27 @@ fn read_git_head() -> String {
 /// Hashes file contents in `sinex-schema/src/schema/**` plus `apply.rs`,
 /// sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if no files were found.
-fn hash_schema_sources() -> String {
-    use std::collections::BTreeMap;
-
+fn hash_schema_sources() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_dir = crate_dir.join("../crate/lib/sinex-schema/src/schema");
     let apply_file = crate_dir.join("../crate/lib/sinex-schema/src/apply.rs");
     let registry_file = crate_dir.join("../crate/lib/sinex-schema/src/schema_registry.rs");
 
-    let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&schema_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path())
-            {
-                file_contents.insert(format!("schema/{name}"), contents);
-            }
-        }
-    }
+    let mut file_contents = collect_rust_sources_from_dir(&schema_dir, "schema")
+        .wrap_err("failed to collect declarative schema sources")?;
 
     for (name, path) in [
         ("apply.rs", apply_file.as_path()),
         ("schema_registry.rs", registry_file.as_path()),
     ] {
-        if let Ok(contents) = std::fs::read(path) {
-            file_contents.insert(name.to_string(), contents);
-        }
+        file_contents.insert(
+            name.to_string(),
+            std::fs::read(path)
+                .wrap_err_with(|| format!("failed to read schema source {}", path.display()))?,
+        );
     }
 
-    if file_contents.is_empty() {
-        return "empty".to_string();
-    }
-
-    let mut hasher = blake3::Hasher::new();
-    for (name, contents) in &file_contents {
-        hasher.update(name.as_bytes());
-        hasher.update(b"\0");
-        hasher.update(contents);
-        hasher.update(b"\0");
-    }
-    hasher.finalize().to_hex()[..16].to_string()
+    Ok(hash_named_sources(&file_contents))
 }
 
 /// Compute a blake3 hash of the event payload contracts directory contents.
@@ -312,31 +343,62 @@ fn hash_schema_sources() -> String {
 /// Hashes file *contents* sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
 /// contains no `.rs` files.
-fn hash_contracts_dir() -> String {
-    use std::collections::BTreeMap;
-
+fn hash_contracts_dir() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
+    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/events/payloads");
+    hash_contracts_dir_from(&payloads_dir)
+}
 
-    let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path())
-            {
-                file_contents.insert(name, contents);
-            }
-        }
+fn hash_contracts_dir_from(payloads_dir: &Path) -> Result<String> {
+    if !payloads_dir.exists() {
+        return Ok("empty".to_string());
     }
 
+    let file_contents = collect_rust_sources_from_dir(payloads_dir, "")
+        .wrap_err("failed to collect event payload contracts")?;
+    if file_contents.is_empty() {
+        return Ok("empty".to_string());
+    }
+
+    Ok(hash_named_sources(&file_contents))
+}
+
+fn collect_rust_sources_from_dir(
+    dir: &Path,
+    prefix: &str,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    let mut file_contents = std::collections::BTreeMap::new();
+    let entries =
+        std::fs::read_dir(dir).wrap_err_with(|| format!("failed to read {}", dir.display()))?;
+
+    for entry in entries {
+        let entry = entry.wrap_err_with(|| format!("failed to enumerate {}", dir.display()))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".rs") {
+            continue;
+        }
+
+        let path = entry.path();
+        let contents = std::fs::read(&path)
+            .wrap_err_with(|| format!("failed to read source file {}", path.display()))?;
+        let key = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        file_contents.insert(key, contents);
+    }
+
+    Ok(file_contents)
+}
+
+fn hash_named_sources(file_contents: &std::collections::BTreeMap<String, Vec<u8>>) -> String {
     if file_contents.is_empty() {
         return "empty".to_string();
     }
 
     let mut hasher = blake3::Hasher::new();
-    for (name, contents) in &file_contents {
+    for (name, contents) in file_contents {
         hasher.update(name.as_bytes());
         hasher.update(b"\0");
         hasher.update(contents);
@@ -363,13 +425,20 @@ pub fn invalidate_cache() {
 /// Check whether declarative schema sources changed since last apply.
 #[must_use]
 pub fn schema_changed_since_last_apply() -> bool {
+    schema_changed_since_last_apply_result().unwrap_or_else(|error| {
+        tracing::warn!(error = %error, "failed to inspect schema apply state; treating schema as changed");
+        true
+    })
+}
+
+fn schema_changed_since_last_apply_result() -> Result<bool> {
     let state_dir = state_dir();
     let hash_file = state_dir.join("schema-apply-hash.txt");
 
-    let current_hash = hash_schema_sources();
-    let cached_hash = std::fs::read_to_string(&hash_file).ok();
+    let current_hash = hash_schema_sources()?;
+    let cached_hash = read_optional_state_file(&hash_file, "schema apply hash")?;
 
-    cached_hash.as_deref() != Some(&current_hash)
+    Ok(cached_hash.as_deref() != Some(&current_hash))
 }
 
 /// Record that declarative schema apply completed for current source state.
@@ -377,13 +446,20 @@ pub fn schema_changed_since_last_apply() -> bool {
 /// Uses atomic rename (R2 fix) so concurrent readers never see a partial write.
 pub fn record_schema_applied() {
     let state_dir = state_dir();
-    if std::fs::create_dir_all(&state_dir).is_err() {
-        return;
-    }
     let hash_file = state_dir.join("schema-apply-hash.txt");
-    let tmp = hash_file.with_extension("tmp");
-    if std::fs::write(&tmp, hash_schema_sources()).is_ok() {
-        let _ = std::fs::rename(&tmp, &hash_file);
+    let current_hash = match hash_schema_sources() {
+        Ok(hash) => hash,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to compute schema hash after apply");
+            return;
+        }
+    };
+    if let Err(error) = write_state_file_atomically(&hash_file, &current_hash) {
+        tracing::warn!(
+            path = %hash_file.display(),
+            error = %error,
+            "failed to record declarative schema apply state"
+        );
     }
 }
 
@@ -402,11 +478,13 @@ pub fn has_pending_schema_apply() -> Result<bool> {
     let config: crate::infra::stack::StackConfig =
         match crate::infra::stack::StackConfig::for_current_checkout() {
             Ok(c) => c,
-            Err(_) => return Ok(false),
+            Err(error) => {
+                return Err(error).wrap_err("failed to load stack config for schema readiness");
+            }
         };
 
     // Strategy 1: hash changed since last apply
-    if schema_changed_since_last_apply() {
+    if schema_changed_since_last_apply_result()? {
         return Ok(true);
     }
 
@@ -431,18 +509,35 @@ pub fn has_pending_schema_apply() -> Result<bool> {
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            let pending_flag: i32 = String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .parse()
-                .unwrap_or(0);
-            Ok(pending_flag != 0)
+        Ok(out) if out.status.success() => parse_schema_apply_probe_output(&out),
+        Ok(out) => {
+            tracing::warn!(
+                error = %summarize_command_output(&out),
+                "schema readiness probe failed; treating schema as pending"
+            );
+            Ok(true)
         }
-        _ => {
-            // Query failed: let preflight continue and attempt auto-apply.
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to run schema readiness probe; treating schema as pending"
+            );
             Ok(true)
         }
     }
+}
+
+fn parse_schema_apply_probe_output(output: &std::process::Output) -> Result<bool> {
+    let pending_flag = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i32>()
+        .wrap_err_with(|| {
+            format!(
+                "schema readiness probe returned invalid output: {}",
+                summarize_command_output(output)
+            )
+        })?;
+    Ok(pending_flag != 0)
 }
 
 /// Infrastructure status for preflight checks.
@@ -462,7 +557,16 @@ impl InfraStatus {
             postgres: is_postgres_ready(),
             nats: is_nats_ready(),
             tls: tls_certs_exist(),
-            schema_apply_pending: has_pending_schema_apply().unwrap_or(false),
+            schema_apply_pending: match has_pending_schema_apply() {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "failed to capture schema readiness; treating schema apply as pending"
+                    );
+                    true
+                }
+            },
         }
     }
 
@@ -727,22 +831,84 @@ fn run_schema_apply_inner(verbose: bool) -> Result<bool> {
 
 /// Check if contracts directory has changed since last deploy.
 fn contracts_changed_since_last_deploy() -> bool {
+    contracts_changed_since_last_deploy_result().unwrap_or_else(|error| {
+        tracing::warn!(error = %error, "failed to inspect contracts deployment state; treating contracts as changed");
+        true
+    })
+}
+
+fn contracts_changed_since_last_deploy_result() -> Result<bool> {
     let state_dir = state_dir();
     let hash_file = state_dir.join("contracts-hash.txt");
 
-    let current_hash = hash_contracts_dir();
-    let cached_hash = std::fs::read_to_string(&hash_file).ok();
+    let current_hash = hash_contracts_dir()?;
+    let cached_hash = read_optional_state_file(&hash_file, "contracts hash")?;
 
-    cached_hash.as_deref() != Some(&current_hash)
+    Ok(cached_hash.as_deref() != Some(&current_hash))
 }
 
 /// Record that contracts were deployed with current directory state.
 fn record_contracts_deployed() {
     let state_dir = state_dir();
-    if std::fs::create_dir_all(&state_dir).is_ok() {
-        let hash_file = state_dir.join("contracts-hash.txt");
-        let _ = std::fs::write(hash_file, hash_contracts_dir());
+    let hash_file = state_dir.join("contracts-hash.txt");
+    let current_hash = match hash_contracts_dir() {
+        Ok(hash) => hash,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to compute contracts hash after deployment");
+            return;
+        }
+    };
+    if let Err(error) = write_state_file_atomically(&hash_file, &current_hash) {
+        tracing::warn!(
+            path = %hash_file.display(),
+            error = %error,
+            "failed to record deployed contracts state"
+        );
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ContractsDeployOutcome {
+    Unchanged,
+    SkippedDatabaseNotReady,
+    SkippedProbeFailed(String),
+    Deployed,
+    Failed(String),
+}
+
+impl ContractsDeployOutcome {
+    fn stage_success(&self) -> bool {
+        matches!(self, Self::Unchanged | Self::Deployed)
+    }
+
+    fn cache_converged(&self) -> bool {
+        matches!(self, Self::Unchanged | Self::Deployed)
+    }
+}
+
+fn summarize_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn check_contract_tables_ready(output: std::io::Result<std::process::Output>) -> Result<bool> {
+    let output = output.wrap_err("failed to run contracts readiness probe via psql")?;
+    if !output.status.success() {
+        bail!(
+            "contracts readiness probe failed: {}",
+            summarize_command_output(&output)
+        );
+    }
+    Ok(!output.stdout.is_empty())
 }
 
 /// Auto-deploy contracts if schemas have changed.
@@ -750,33 +916,46 @@ fn record_contracts_deployed() {
 /// Only deploys if:
 /// 1. Database is ready (contracts check-ready passes)
 /// 2. Schema files have changed since last deploy
-fn auto_deploy_contracts(verbose: bool) -> bool {
+fn auto_deploy_contracts(verbose: bool) -> ContractsDeployOutcome {
     // Skip if no changes detected
     if !contracts_changed_since_last_deploy() {
-        return false;
+        return ContractsDeployOutcome::Unchanged;
     }
 
-    let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
-        return false;
+    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
+        Ok(config) => config,
+        Err(error) => {
+            let message =
+                format!("failed to load stack config before contracts deployment: {error}");
+            eprintln!("⚠️  {message}");
+            return ContractsDeployOutcome::SkippedProbeFailed(message);
+        }
     };
 
     // Check if database is ready for contracts (tables exist)
-    let check_output = std::process::Command::new("psql")
-        .env("PGHOST", config.run_dir())
-        .env("PGPORT", config.postgres.port.to_string())
-        .env("PGUSER", &config.postgres.user)
-        .env("PGDATABASE", &config.postgres.database)
-        .args([
-            "-tAc",
-            "SELECT 1 FROM pg_tables WHERE schemaname='sinex_schemas' AND tablename='event_payload_schemas'",
-        ])
-        .output();
-
-    let tables_exist = check_output.is_ok_and(|out| out.status.success() && !out.stdout.is_empty());
+    let tables_exist = match check_contract_tables_ready(
+        std::process::Command::new("psql")
+            .env("PGHOST", config.run_dir())
+            .env("PGPORT", config.postgres.port.to_string())
+            .env("PGUSER", &config.postgres.user)
+            .env("PGDATABASE", &config.postgres.database)
+            .args([
+                "-tAc",
+                "SELECT 1 FROM pg_tables WHERE schemaname='sinex_schemas' AND tablename='event_payload_schemas'",
+            ])
+            .output(),
+    ) {
+        Ok(ready) => ready,
+        Err(error) => {
+            let message = format!("{error:#}");
+            eprintln!("⚠️  {message}");
+            return ContractsDeployOutcome::SkippedProbeFailed(message);
+        }
+    };
 
     if !tables_exist {
         // Database not ready for contracts yet
-        return false;
+        return ContractsDeployOutcome::SkippedDatabaseNotReady;
     }
 
     eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
@@ -784,42 +963,55 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Deploying contracts", 5);
 
-    let result = std::process::Command::new("xtask")
-        .args([
-            "contracts",
-            "deploy",
-            "--database-url",
-            &config.database_url(),
-        ])
-        .stdout(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
-        // Always show stderr so errors are visible
-        .stderr(std::process::Stdio::inherit())
-        .status();
-
     let elapsed = start.elapsed();
-    match result {
-        Ok(exit) if exit.success() => {
+    match crate::infra::stack::sync_event_payload_schemas_for_database_url(
+        &config.database_url(),
+        verbose,
+    ) {
+        Ok(sync_result) => {
             eprintln!("✓ Contracts deployed ({:.1}s)", elapsed.as_secs_f64());
+            if !verbose {
+                eprintln!(
+                    "  discovered={}, created={}, updated={}, unchanged={}",
+                    sync_result.discovered,
+                    sync_result.created,
+                    sync_result.updated,
+                    sync_result.unchanged
+                );
+            }
             record_contracts_deployed();
-            true
+            ContractsDeployOutcome::Deployed
         }
-        Ok(_) => {
+        Err(error) => {
             // Non-fatal: contracts deploy failure shouldn't block tests.
             // Don't record hash — will retry next invocation so transient failures self-heal.
-            eprintln!(
-                "⚠️  Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
-                elapsed.as_secs_f64()
+            let message = format!(
+                "Contracts deploy failed ({:.1}s, non-fatal, will retry next run): {error:#}",
+                elapsed.as_secs_f64(),
             );
-            false
+            eprintln!("⚠️  {message}");
+            ContractsDeployOutcome::Failed(message)
         }
-        Err(e) => {
-            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal, will retry next run)");
-            false
-        }
+    }
+}
+
+fn pending_cache_blockers(schema_pending: bool, contracts_pending: bool) -> Vec<&'static str> {
+    let mut blockers = Vec::new();
+    if schema_pending {
+        blockers.push("schema apply still pending");
+    }
+    if contracts_pending {
+        blockers.push("contracts deployment still pending");
+    }
+    blockers
+}
+
+fn read_optional_state_file(path: &Path, label: &str) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .wrap_err_with(|| format!("failed to read {label} file {}", path.display())),
     }
 }
 
@@ -887,18 +1079,33 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
 
-    if let Some(cache) = PreflightCache::load()
-        && cache.is_valid(ttl_secs)
-    {
-        tracing::debug!("preflight cache: skipping preflight (cache valid)");
-        return Ok(());
+    match PreflightCache::load() {
+        Ok(Some(cache)) => {
+            if cache.is_valid(ttl_secs).unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "failed to validate preflight cache; continuing with full preflight"
+                );
+                false
+            }) {
+                tracing::debug!("preflight cache: skipping preflight (cache valid)");
+                return Ok(());
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to load preflight cache; continuing with full preflight"
+            );
+        }
     }
 
     // 0. Check required tools are available
     check_required_tools()?;
 
     let is_interactive = ctx.is_human();
-    let status = InfraStatus::capture();
+    let mut status = InfraStatus::capture();
 
     // 1. Auto-start stack if not running
     // Note: infra start also applies schema, so we only need to check schema apply
@@ -910,9 +1117,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         started.wrap_err(
             "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start",
         )?;
-        // Stack start applies schema — write cache and return.
-        PreflightCache::current().save();
-        return Ok(());
+        status = InfraStatus::capture();
     }
 
     // 2. Auto-generate TLS certs if missing
@@ -929,15 +1134,46 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         let result = auto_apply_schema(is_interactive);
         ctx.finish_stage(stage, result.as_ref().is_ok_and(|&ok| ok));
         result?;
+        status.schema_apply_pending = false;
     }
 
     // 4. Auto-deploy contracts if payload schemas changed
     let stage = ctx.start_stage("contracts-deploy");
-    let deployed = auto_deploy_contracts(is_interactive);
-    ctx.finish_stage(stage, deployed);
+    let contracts_outcome = auto_deploy_contracts(is_interactive);
+    ctx.finish_stage(stage, contracts_outcome.stage_success());
 
-    // Write the preflight result cache so the next invocation can skip this work.
-    PreflightCache::current().save();
+    let blockers = pending_cache_blockers(
+        status.schema_apply_pending || schema_changed_since_last_apply(),
+        !contracts_outcome.cache_converged() && contracts_changed_since_last_deploy(),
+    );
+    if blockers.is_empty() {
+        // Write the preflight result cache so the next invocation can skip this work.
+        match PreflightCache::current() {
+            Ok(cache) => cache.save(),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "failed to capture current preflight state; skipping cache save"
+                );
+                if is_interactive {
+                    eprintln!(
+                        "⚠️  Failed to capture current preflight state ({error:#}); skipping cache save"
+                    );
+                }
+            }
+        }
+    } else {
+        tracing::warn!(
+            blockers = ?blockers,
+            "preflight completed without converged state; skipping cache save so setup retries next run"
+        );
+        if is_interactive {
+            eprintln!(
+                "⚠️  Preflight is not converged yet ({}); skipping cache save so setup retries next run",
+                blockers.join(", ")
+            );
+        }
+    }
 
     Ok(())
 }
@@ -946,6 +1182,8 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
+    use tempfile::tempdir;
 
     #[sinex_test]
     async fn test_infra_status_capture() -> TestResult<()> {
@@ -954,6 +1192,136 @@ mod tests {
         // The actual values depend on the environment
         let _ = status.all_ready();
         let _ = status.stack_running();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_creates_parent_dirs() -> TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("nested").join("state.json");
+
+        write_state_file_atomically(&path, "{\"ok\":true}")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "{\"ok\":true}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_replaces_existing_contents() -> TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, "old")?;
+
+        write_state_file_atomically(&path, "new")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "new");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_reports_parent_creation_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let blocking_path = dir.path().join("not-a-dir");
+        std::fs::write(&blocking_path, "blocker")?;
+        let path = blocking_path.join("state.json");
+
+        let error = write_state_file_atomically(&path, "value").unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to create preflight state directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_contract_tables_ready_reports_probe_failures() -> TestResult<()> {
+        let error = check_contract_tables_ready(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "psql missing",
+        )))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("psql missing"));
+
+        let error = check_contract_tables_ready(Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"permission denied".to_vec(),
+        }))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("permission denied"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_returns_empty_for_missing_directory() -> TestResult<()> {
+        let dir = tempdir()?;
+        let missing = dir.path().join("missing-payloads");
+        assert_eq!(hash_contracts_dir_from(&missing)?, "empty");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_hashes_rust_sources_only() -> TestResult<()> {
+        let dir = tempdir()?;
+        std::fs::write(dir.path().join("alpha.rs"), "pub struct Alpha;")?;
+        std::fs::write(dir.path().join("beta.txt"), "ignored")?;
+
+        let hash = hash_contracts_dir_from(dir.path())?;
+        std::fs::write(dir.path().join("beta.txt"), "ignored differently")?;
+        let hash_after_non_rust_change = hash_contracts_dir_from(dir.path())?;
+
+        assert_ne!(hash, "empty");
+        assert_eq!(hash, hash_after_non_rust_change);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_pending_cache_blockers_reports_unconverged_setup() -> TestResult<()> {
+        assert_eq!(pending_cache_blockers(false, false), Vec::<&'static str>::new());
+        assert_eq!(
+            pending_cache_blockers(true, false),
+            vec!["schema apply still pending"]
+        );
+        assert_eq!(
+            pending_cache_blockers(false, true),
+            vec!["contracts deployment still pending"]
+        );
+        assert_eq!(
+            pending_cache_blockers(true, true),
+            vec![
+                "schema apply still pending",
+                "contracts deployment still pending"
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_preflight_cache_from_reports_malformed_json() -> TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("preflight-cache.json");
+        std::fs::write(&path, "{not json")?;
+
+        let error = load_preflight_cache_from(&path).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to parse preflight cache"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_schema_apply_probe_output_reports_invalid_output() -> TestResult<()> {
+        let error = parse_schema_apply_probe_output(&std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"wat".to_vec(),
+            stderr: Vec::new(),
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("schema readiness probe returned invalid output"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_optional_state_file_reports_non_not_found_errors() -> TestResult<()> {
+        let dir = tempdir()?;
+        let error = read_optional_state_file(dir.path(), "state file").unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read state file file"));
         Ok(())
     }
 }

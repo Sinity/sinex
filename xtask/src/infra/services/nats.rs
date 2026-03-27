@@ -1,6 +1,6 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Kill stale nats-server processes that may be orphaned.
@@ -11,15 +11,7 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
     let mut killed = 0;
 
     // Find all nats-server processes
-    let output = Command::new("pgrep").args(["-f", "nats-server"]).output();
-
-    let pids: Vec<u32> = match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| line.trim().parse().ok())
-            .collect(),
-        _ => return Ok(0), // No nats-server processes found
-    };
+    let pids = parse_nats_pgrep_output(Command::new("pgrep").args(["-f", "nats-server"]).output())?;
 
     if pids.is_empty() {
         return Ok(0);
@@ -68,6 +60,27 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
     }
 
     Ok(killed)
+}
+
+fn parse_nats_pgrep_output(output: std::io::Result<std::process::Output>) -> Result<Vec<u32>> {
+    let output = output.wrap_err("failed to inspect running nats-server processes with pgrep")?;
+    match output.status.code() {
+        Some(0) => Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()),
+        Some(1) => Ok(Vec::new()),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            bail!("pgrep -f nats-server exited unsuccessfully{suffix}");
+        }
+    }
 }
 
 /// Check if a process has been running longer than the given threshold (in seconds).
@@ -170,6 +183,22 @@ pub struct NatsManager {
     config: NatsConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NatsPidState {
+    Missing,
+    Running(u32),
+    Stale(u32),
+}
+
+fn remove_service_file(path: &Path, label: &str) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .wrap_err_with(|| format!("failed to remove {label} {}", path.display())),
+    }
+}
+
 impl NatsManager {
     #[must_use]
     pub fn new(config: NatsConfig) -> Self {
@@ -212,35 +241,37 @@ jetstream {{
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
-        if let Some(pid) = self.read_pid()
-            && self.is_running_pid(pid)
-        {
-            if let Some(actual_port) = self.listener_port_for_pid(pid) {
-                if actual_port == self.config.port {
-                    if verbose {
-                        println!("NATS already running");
+        match self.pid_state()? {
+            NatsPidState::Missing => {}
+            NatsPidState::Stale(pid) => {
+                if verbose {
+                    println!("Removing stale NATS pid file for dead or foreign PID {pid}");
+                }
+                self.remove_pid_file_if_present("stale NATS pid file")?;
+            }
+            NatsPidState::Running(pid) => {
+                if let Some(actual_port) = self.listener_port_for_pid(pid)? {
+                    if actual_port == self.config.port {
+                        if verbose {
+                            println!("NATS already running");
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
 
-                if verbose {
-                    println!(
-                        "Restarting NATS on port {} to converge on {}",
-                        actual_port, self.config.port
-                    );
+                    if verbose {
+                        println!(
+                            "Restarting NATS on port {} to converge on {}",
+                            actual_port, self.config.port
+                        );
+                    }
+                    self.stop(verbose)?;
+                } else {
+                    if verbose {
+                        println!("Restarting NATS because its listener port could not be verified");
+                    }
+                    self.stop(verbose)?;
                 }
-                self.stop(verbose)?;
-            } else {
-                if verbose {
-                    println!("Restarting NATS because its listener port could not be verified");
-                }
-                self.stop(verbose)?;
             }
-        } else if self.is_running() {
-            if verbose {
-                println!("NATS already running");
-            }
-            return Ok(());
         }
 
         // Clean up any stale nats-server processes that might be blocking our port
@@ -293,35 +324,39 @@ jetstream {{
     }
 
     pub fn stop(&self, verbose: bool) -> Result<()> {
-        if !self.is_running() {
-            if verbose {
-                println!("NATS not running");
+        let pid = match self.pid_state()? {
+            NatsPidState::Missing => {
+                if verbose {
+                    println!("NATS not running");
+                }
+                return Ok(());
             }
-            // Cleanup pid file if it exists but process doesn't
-            if self.config.pid_file.exists() {
-                let _ = fs::remove_file(&self.config.pid_file);
+            NatsPidState::Stale(pid) => {
+                if verbose {
+                    println!("Cleaning up stale NATS pid file for dead or foreign PID {pid}");
+                }
+                self.remove_pid_file_if_present("stale NATS pid file")?;
+                return Ok(());
             }
-            return Ok(());
-        }
+            NatsPidState::Running(pid) => pid,
+        };
 
         if verbose {
             println!("Stopping NATS...");
         }
 
-        if let Some(pid) = self.read_pid() {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        // Wait for exit
+        for _ in 0..40 {
+            if !self.is_running_pid(pid) {
+                break;
             }
-            // Wait for exit
-            for _ in 0..40 {
-                if !self.is_running_pid(pid) {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(250));
-            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
         }
 
-        let _ = fs::remove_file(&self.config.pid_file);
+        self.remove_pid_file_if_present("NATS pid file")?;
 
         if verbose {
             println!("NATS stopped");
@@ -332,18 +367,25 @@ jetstream {{
 
     #[must_use]
     pub fn is_running(&self) -> bool {
-        if let Some(pid) = self.read_pid() {
-            self.is_running_pid(pid)
-        } else {
-            false
+        match self.pid_state() {
+            Ok(NatsPidState::Running(_)) => true,
+            Ok(NatsPidState::Missing | NatsPidState::Stale(_)) => false,
+            Err(error) => {
+                tracing::warn!(path = %self.config.pid_file.display(), error = %error, "failed to inspect nats pid file");
+                false
+            }
         }
     }
 
     #[must_use]
     pub fn read_pid(&self) -> Option<u32> {
-        fs::read_to_string(&self.config.pid_file)
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
+        match self.read_pid_result() {
+            Ok(pid) => pid,
+            Err(error) => {
+                tracing::warn!(path = %self.config.pid_file.display(), error = %error, "failed to read nats pid file");
+                None
+            }
+        }
     }
 
     fn is_running_pid(&self, pid: u32) -> bool {
@@ -354,31 +396,23 @@ jetstream {{
         // (e.g. after a machine restart). /proc/<pid>/cmdline is NUL-separated args.
         #[cfg(target_os = "linux")]
         {
-            if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
-                && !cmdline.contains("nats-server")
-            {
-                // Stale PID file: a different process now holds this PID
-                let _ = std::fs::remove_file(&self.config.pid_file);
-                return false;
+            match std::fs::read_to_string(format!("/proc/{pid}/cmdline")) {
+                Ok(cmdline) => {
+                    if !cmdline.contains("nats-server") {
+                        return false;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+                Err(error) => {
+                    tracing::warn!(pid, error = %error, "failed to read nats process command line");
+                }
             }
         }
         true
     }
 
-    fn listener_port_for_pid(&self, pid: u32) -> Option<u16> {
-        let output = Command::new("ss").args(["-ltnp"]).output().ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let pid_marker = format!("pid={pid}");
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| line.contains("LISTEN"))
-            .filter(|line| line.contains("nats-server"))
-            .find(|line| line.contains(&pid_marker))
-            .and_then(|line| line.split_whitespace().nth(3))
-            .and_then(parse_listener_port)
+    fn listener_port_for_pid(&self, pid: u32) -> Result<Option<u16>> {
+        listener_port_for_pid_probe(pid, Command::new("ss").args(["-ltnp"]).output())
     }
 
     fn nats_command(&self) -> Command {
@@ -388,22 +422,210 @@ jetstream {{
             Command::new("nats-server")
         }
     }
+
+    fn read_pid_result(&self) -> Result<Option<u32>> {
+        if !self.config.pid_file.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(&self.config.pid_file).wrap_err_with(|| {
+            format!("failed to read NATS pid file {}", self.config.pid_file.display())
+        })?;
+        let pid_str = content.trim();
+        if pid_str.is_empty() {
+            bail!("NATS pid file {} is empty", self.config.pid_file.display());
+        }
+
+        let pid = pid_str.parse::<u32>().wrap_err_with(|| {
+            format!("failed to parse NATS pid from {}", self.config.pid_file.display())
+        })?;
+        Ok(Some(pid))
+    }
+
+    fn pid_state(&self) -> Result<NatsPidState> {
+        let Some(pid) = self.read_pid_result()? else {
+            return Ok(NatsPidState::Missing);
+        };
+
+        if self.is_running_pid(pid) {
+            Ok(NatsPidState::Running(pid))
+        } else {
+            Ok(NatsPidState::Stale(pid))
+        }
+    }
+
+    fn remove_pid_file_if_present(&self, label: &str) -> Result<()> {
+        remove_service_file(&self.config.pid_file, label)
+    }
+}
+
+fn listener_port_for_pid_probe(
+    pid: u32,
+    output: std::io::Result<std::process::Output>,
+) -> Result<Option<u16>> {
+    let output = output.wrap_err("failed to inspect NATS listeners with ss")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        let suffix = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(" ({detail})")
+        };
+        bail!("ss -ltnp exited unsuccessfully while inspecting NATS listeners{suffix}");
+    }
+
+    let pid_marker = format!("pid={pid}");
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("LISTEN"))
+        .filter(|line| line.contains("nats-server"))
+        .find(|line| line.contains(&pid_marker))
+        .and_then(|line| line.split_whitespace().nth(3))
+        .and_then(parse_listener_port))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_listener_port;
+    use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn parses_ipv4_and_wildcard_listener_ports() {
+    fn test_manager(root: &tempfile::TempDir) -> NatsManager {
+        NatsManager::new(NatsConfig {
+            port: 4222,
+            config_file: root.path().join("nats.conf"),
+            data_dir: root.path().join("data"),
+            pid_file: root.path().join("run/nats.pid"),
+            log_file: root.path().join("run/nats.log"),
+        })
+    }
+
+    #[sinex_test]
+    async fn parses_ipv4_and_wildcard_listener_ports() -> TestResult<()> {
         assert_eq!(parse_listener_port("*:4321"), Some(4321));
         assert_eq!(parse_listener_port("127.0.0.1:4250"), Some(4250));
         assert_eq!(parse_listener_port("[::]:4222"), Some(4222));
+        Ok(())
     }
 
-    #[test]
-    fn rejects_non_numeric_listener_ports() {
+    #[sinex_test]
+    async fn rejects_non_numeric_listener_ports() -> TestResult<()> {
         assert_eq!(parse_listener_port("*"), None);
         assert_eq!(parse_listener_port("localhost:http"), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_reports_ss_spawn_failures() -> TestResult<()> {
+        let error =
+            listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to inspect NATS listeners with ss"));
+        assert!(message.contains("ss exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_reports_ss_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = listener_port_for_pid_probe(
+                123,
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(256),
+                    stdout: Vec::new(),
+                    stderr: b"permission denied".to_vec(),
+                }),
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("ss -ltnp exited unsuccessfully"));
+            assert!(message.contains("permission denied"));
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_extracts_matching_port() -> TestResult<()> {
+        let port = listener_port_for_pid_probe(
+            123,
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: br#"State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=123,fd=7))
+"#
+                .to_vec(),
+                stderr: Vec::new(),
+            }),
+        )?;
+        assert_eq!(port, Some(4222));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_spawn_failures() -> TestResult<()> {
+        let error = parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to inspect running nats-server processes with pgrep"));
+        assert!(message.contains("pgrep exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_treats_exit_one_as_no_matches() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let pids = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }))?;
+            assert!(pids.is_empty());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_nats_pgrep_output_reports_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = parse_nats_pgrep_output(Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(512),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            }))
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("pgrep -f nats-server exited unsuccessfully"));
+            assert!(message.contains("permission denied"));
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_pid_result_reports_malformed_pid_file() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(manager.config.pid_file.parent().unwrap())?;
+        fs::write(&manager.config.pid_file, "not-a-pid\n")?;
+
+        let error = manager.read_pid_result().unwrap_err();
+        assert!(format!("{error:#}").contains("failed to parse NATS pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remove_service_file_reports_remove_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+
+        let error = remove_service_file(temp.path(), "test pid file").unwrap_err();
+        assert!(format!("{error:#}").contains("failed to remove test pid file"));
+        Ok(())
     }
 }

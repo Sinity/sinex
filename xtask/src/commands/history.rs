@@ -9,7 +9,8 @@ use color_eyre::eyre::WrapErr;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
-    DiagnosticQuery, HistoryDb, InvocationStatus, InvocationTimelineEntry, LifecycleStatus,
+    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationStatus, InvocationTimelineEntry,
+    LifecycleStatus,
 };
 
 /// History command variants
@@ -594,6 +595,8 @@ fn execute_list(
     with_tests: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    let mut warnings = Vec::new();
+
     // Parse --since into an RFC3339 cutoff timestamp
     let since_ts: Option<String> = since.and_then(|s| {
         parse_duration_secs(s).map(|secs| {
@@ -632,35 +635,30 @@ fn execute_list(
                 if enriched {
                     let mut parts = Vec::new();
                     if with_diagnostics {
-                        let counts = db
-                            .get_diagnostic_counts_for_invocation(inv.id)
-                            .unwrap_or_default();
-                        if counts.errors > 0 || counts.warnings > 0 {
-                            parts.push(format!("diag:{}E{}W", counts.errors, counts.warnings));
-                        } else {
-                            parts.push("diag:ok".to_string());
+                        let probe = diagnostic_summary_probe_from_result(
+                            inv.id,
+                            db.get_diagnostic_counts_for_invocation(inv.id),
+                        );
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     if with_stages {
-                        let timings = db
-                            .get_stage_timings_for_invocation(inv.id)
-                            .unwrap_or_default();
-                        if timings.is_empty() {
-                            parts.push("stages:-".to_string());
-                        } else {
-                            let total: f64 = timings.iter().map(|t| t.duration_secs).sum();
-                            parts.push(format!("stages:{:.1}s", total));
+                        let probe =
+                            stage_summary_probe_from_result(inv.id, db.get_stage_timings_for_invocation(inv.id));
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     if with_tests {
-                        let (passed, failed, _) = db
-                            .get_test_counts_for_invocation(inv.id)
-                            .unwrap_or((0, 0, 0));
-                        if passed > 0 || failed > 0 {
-                            parts.push(format!("tests:{}p{}f", passed, failed));
-                        } else {
-                            parts.push("tests:-".to_string());
+                        let probe =
+                            test_summary_probe_from_result(inv.id, db.get_test_counts_for_invocation(inv.id));
+                        if let Some(issue) = probe.issue {
+                            warnings.push(issue);
                         }
+                        parts.push(probe.fragment);
                     }
                     println!(
                         "{:<6} {:<12} {:<10} {:>8}  {}  {}",
@@ -690,9 +688,13 @@ fn execute_list(
         println!("{json}");
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("Found {} history entries", invocations.len()))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+    for warning in warnings {
+        result = result.with_warning(warning);
+    }
+    Ok(result)
 }
 
 fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<CommandResult> {
@@ -1701,6 +1703,7 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                 .with_duration(ctx.elapsed()))
         }
         Some(analysis) => {
+            let infra_probe = infra_timing_probe_from_result(db.get_infra_timing_summary());
             if ctx.is_human() {
                 println!("{}", style("━━━ Test Suite Analysis ━━━").bold());
                 println!(
@@ -1769,7 +1772,7 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                 }
 
                 // Infrastructure timing (from sandbox slog metadata)
-                if let Ok(Some(infra)) = db.get_infra_timing_summary() {
+                if let Some(infra) = infra_probe.value.as_ref() {
                     println!("\n{}", style("Infrastructure Timing:").cyan().bold());
                     println!(
                         "  Slot acquisition: avg {:.0}ms, max {}ms ({} tests with data)",
@@ -1794,19 +1797,26 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                             top_slots.join(", ")
                         );
                     }
+                } else if let Some(issue) = infra_probe.issue.as_ref() {
+                    println!("\n{}", style("Infrastructure Timing:").cyan().bold());
+                    println!("  {}", style(issue).yellow());
                 }
             } else {
                 let json = serde_json::to_string_pretty(&analysis)?;
                 println!("{json}");
             }
 
-            Ok(CommandResult::success()
+            let mut result = CommandResult::success()
                 .with_message(format!(
                     "Analysis: {} passed, {} failed",
                     analysis.total_passed, analysis.total_failed
                 ))
                 .with_data(serde_json::to_value(&analysis)?)
-                .with_duration(ctx.elapsed()))
+                .with_duration(ctx.elapsed());
+            if let Some(issue) = infra_probe.issue {
+                result = result.with_warning(issue);
+            }
+            Ok(result)
         }
     }
 }
@@ -2085,10 +2095,11 @@ fn execute_diagnostics_delta(
             .map(|inv| inv.id)
             .ok_or_else(|| color_eyre::eyre::eyre!("No recent {cmd} invocation found"))?
     } else {
-        db.get_last("check")?
-            .or_else(|| db.get_last("build").ok().flatten())
-            .map(|inv| inv.id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("No recent check/build invocation found"))?
+        let check_last = db.get_last("check")?.map(|inv| inv.id);
+        resolve_default_diagnostics_delta_target(
+            check_last,
+            db.get_last("build").map(|inv| inv.map(|inv| inv.id)),
+        )?
     };
 
     let from_id: i64 = if let Some(id) = delta_from {
@@ -2178,6 +2189,25 @@ fn execute_diagnostics_delta(
             delta.persistent.len()
         ))
         .with_duration(ctx.elapsed()))
+}
+
+fn resolve_default_diagnostics_delta_target(
+    check_last: Option<i64>,
+    build_last: Result<Option<i64>>,
+) -> Result<i64> {
+    if let Some(id) = check_last {
+        return Ok(id);
+    }
+
+    if let Some(id) = build_last.wrap_err(
+        "failed to read most recent build invocation while resolving diagnostics delta target",
+    )? {
+        return Ok(id);
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "No recent check/build invocation found"
+    ))
 }
 
 /// Group current diagnostics by error code (G1 --by-code).
@@ -2802,16 +2832,7 @@ fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
     }
 
     // Check sqlite3 is available
-    let which = std::process::Command::new("which")
-        .arg("sqlite3")
-        .output()
-        .ok()
-        .filter(|o| o.status.success());
-    if which.is_none() {
-        return Err(color_eyre::eyre::eyre!(
-            "sqlite3 not found on PATH. Install it with: nix profile install nixpkgs#sqlite"
-        ));
-    }
+    ensure_sqlite3_available(std::process::Command::new("which").arg("sqlite3").output())?;
 
     if ctx.is_human() {
         println!("Opening history database: {}", db_path.display());
@@ -2829,6 +2850,27 @@ fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
             status.code().unwrap_or(-1)
         ))
         .with_duration(ctx.elapsed()))
+}
+
+fn ensure_sqlite3_available(probe: std::io::Result<std::process::Output>) -> Result<()> {
+    match probe {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            Err(color_eyre::eyre::eyre!(
+                "sqlite3 is not available on PATH{suffix}. Provide it via the devshell or system configuration"
+            ))
+        }
+        Err(error) => Err(color_eyre::eyre::eyre!(
+            "failed to probe sqlite3 availability: {error}"
+        )),
+    }
 }
 
 /// I2: Dump annotated schema CREATE TABLE statements.
@@ -3340,6 +3382,7 @@ fn execute_exercise_history(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let rows = db.get_exercise_runs(limit)?;
+    let mut warnings = Vec::new();
 
     if ctx.is_json() {
         let mut json_runs = Vec::with_capacity(rows.len());
@@ -3358,9 +3401,14 @@ fn execute_exercise_history(
                 "git_commit": row.git_commit,
             });
             if verbose {
-                let results = db
-                    .get_exercise_results_for_run(row.run_id)
-                    .unwrap_or_default()
+                let results_probe =
+                    exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                if let Some(issue) = &results_probe.issue {
+                    warnings.push(issue.clone());
+                    run["results_issue"] = serde_json::Value::String(issue.clone());
+                }
+                let results = results_probe
+                    .results
                     .into_iter()
                     .map(|r| {
                         serde_json::json!({
@@ -3420,20 +3468,146 @@ fn execute_exercise_history(
             for row in &rows {
                 if row.failed > 0 {
                     println!("\nFailed exercises in run {}:", row.recorded_at);
-                    if let Ok(results) = db.get_exercise_results_for_run(row.run_id) {
-                        for r in results.into_iter().filter(|r| !r.passed) {
-                            let err_str = r.error.as_deref().unwrap_or("(no error)");
-                            println!("  {} {}: {err_str}", style("✗").red(), r.exercise_id);
-                        }
+                    let results_probe =
+                        exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                    if let Some(issue) = &results_probe.issue {
+                        warnings.push(issue.clone());
+                        println!("  {}", style(issue).yellow());
+                        continue;
+                    }
+                    for r in results_probe.results.into_iter().filter(|r| !r.passed) {
+                        let err_str = r.error.as_deref().unwrap_or("(no error)");
+                        println!("  {} {}: {err_str}", style("✗").red(), r.exercise_id);
                     }
                 }
             }
         }
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("{} exercise run(s) shown", rows.len()))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+    for warning in warnings {
+        result = result.with_warning(warning);
+    }
+    Ok(result)
+}
+
+struct OptionalProbe<T> {
+    value: Option<T>,
+    issue: Option<String>,
+}
+
+struct HistoryListEnrichmentProbe {
+    fragment: String,
+    issue: Option<String>,
+}
+
+fn diagnostic_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<crate::history::DiagnosticCounts>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok(counts) if counts.errors > 0 || counts.warnings > 0 => HistoryListEnrichmentProbe {
+            fragment: format!("diag:{}E{}W", counts.errors, counts.warnings),
+            issue: None,
+        },
+        Ok(_) => HistoryListEnrichmentProbe {
+            fragment: "diag:ok".to_string(),
+            issue: None,
+        },
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "diag:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read diagnostic summary for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
+fn stage_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<Vec<crate::history::StageTiming>>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok(timings) if timings.is_empty() => HistoryListEnrichmentProbe {
+            fragment: "stages:-".to_string(),
+            issue: None,
+        },
+        Ok(timings) => {
+            let total: f64 = timings.iter().map(|t| t.duration_secs).sum();
+            HistoryListEnrichmentProbe {
+                fragment: format!("stages:{total:.1}s"),
+                issue: None,
+            }
+        }
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "stages:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read stage timings for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
+fn test_summary_probe_from_result(
+    invocation_id: i64,
+    result: Result<(i64, i64, i64)>,
+) -> HistoryListEnrichmentProbe {
+    match result {
+        Ok((passed, failed, _)) if passed > 0 || failed > 0 => HistoryListEnrichmentProbe {
+            fragment: format!("tests:{}p{}f", passed, failed),
+            issue: None,
+        },
+        Ok(_) => HistoryListEnrichmentProbe {
+            fragment: "tests:-".to_string(),
+            issue: None,
+        },
+        Err(error) => HistoryListEnrichmentProbe {
+            fragment: "tests:ERR".to_string(),
+            issue: Some(format!(
+                "failed to read test counts for invocation {invocation_id}: {error:#}"
+            )),
+        },
+    }
+}
+
+fn infra_timing_probe_from_result<T>(result: Result<Option<T>>) -> OptionalProbe<T> {
+    match result {
+        Ok(value) => OptionalProbe {
+            value,
+            issue: None,
+        },
+        Err(error) => OptionalProbe {
+            value: None,
+            issue: Some(format!(
+                "failed to read infrastructure timing summary: {error:#}"
+            )),
+        },
+    }
+}
+
+struct ExerciseResultsProbe {
+    results: Vec<ExerciseResultRow>,
+    issue: Option<String>,
+}
+
+fn exercise_results_probe_from_result(
+    run_id: i64,
+    result: Result<Vec<ExerciseResultRow>>,
+) -> ExerciseResultsProbe {
+    match result {
+        Ok(results) => ExerciseResultsProbe {
+            results,
+            issue: None,
+        },
+        Err(error) => ExerciseResultsProbe {
+            results: Vec::new(),
+            issue: Some(format!(
+                "failed to read exercise results for run {run_id}: {error:#}"
+            )),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -3443,6 +3617,7 @@ mod tests {
     use crate::history::HistoryDb;
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
+    use color_eyre::eyre::eyre;
     use std::collections::HashSet;
     use tempfile::tempdir;
 
@@ -3453,6 +3628,93 @@ mod tests {
             None,
             "history",
         )
+    }
+
+    #[sinex_test]
+    async fn test_infra_timing_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = infra_timing_probe_from_result::<()>(Err(eyre!("infra exploded")));
+        assert!(probe.value.is_none());
+        assert!(probe.issue.unwrap_or_default().contains("infra exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_exercise_results_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = exercise_results_probe_from_result(42, Err(eyre!("results exploded")));
+        assert!(probe.results.is_empty());
+        assert!(probe.issue.unwrap_or_default().contains("results exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_diagnostic_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = diagnostic_summary_probe_from_result(7, Err(eyre!("diag exploded")));
+        assert_eq!(probe.fragment, "diag:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("diag exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stage_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = stage_summary_probe_from_result(7, Err(eyre!("stages exploded")));
+        assert_eq!(probe.fragment, "stages:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("stages exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_summary_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = test_summary_probe_from_result(7, Err(eyre!("tests exploded")));
+        assert_eq!(probe.fragment, "tests:ERR");
+        assert!(probe.issue.unwrap_or_default().contains("tests exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_default_diagnostics_delta_target_reports_build_lookup_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = resolve_default_diagnostics_delta_target(None, Err(eyre!("build exploded")))
+            .expect_err("build lookup failure should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("build exploded"));
+        assert!(message.contains("diagnostics delta target"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_sqlite3_available_reports_probe_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = ensure_sqlite3_available(Err(std::io::Error::other("probe exploded")))
+            .expect_err("probe failure should surface");
+        assert!(error.to_string().contains("failed to probe sqlite3 availability"));
+        assert!(error.to_string().contains("probe exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_sqlite3_available_reports_missing_sqlite3_honestly()
+    -> ::xtask::sandbox::TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let output = std::process::Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: Vec::new(),
+                stderr: b"which: no sqlite3 in PATH".to_vec(),
+            };
+            let error =
+                ensure_sqlite3_available(Ok(output)).expect_err("missing sqlite3 should fail");
+            let message = error.to_string();
+            assert!(message.contains("sqlite3 is not available on PATH"));
+            assert!(message.contains("which: no sqlite3 in PATH"));
+        }
+        Ok(())
     }
 
     fn sample_diagnostic(

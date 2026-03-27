@@ -60,14 +60,20 @@ pub fn probe_postgres() -> PostgresProbe {
 
     let manager = PostgresManager::new(config.to_shared_pg());
     let running = manager.is_running();
-    let accepting_connections = manager.is_accepting_connections();
+    let (accepting_connections, accepting_issue) = match manager.accepting_connections_probe() {
+        Ok(accepting_connections) => (accepting_connections, None),
+        Err(error) => (
+            false,
+            Some(format!("failed to verify PostgreSQL readiness with pg_isready: {error:#}")),
+        ),
+    };
     let latency_ms = start.elapsed().as_millis() as u64;
-    let message = match (running, accepting_connections) {
+    let message = accepting_issue.or_else(|| match (running, accepting_connections) {
         (true, true) => None,
         (true, false) => Some("postmaster is running but not accepting connections".to_string()),
         (false, true) => Some("Postgres socket responds but no managed postmaster is tracked".to_string()),
         (false, false) => Some("Postgres is not running for this checkout".to_string()),
-    };
+    });
 
     PostgresProbe {
         running,

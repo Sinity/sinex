@@ -9,6 +9,7 @@
 
 use clap::Args;
 use color_eyre::eyre::{Result, WrapErr, eyre};
+use std::path::Path;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::services::postgres::PostgresManager;
@@ -131,13 +132,7 @@ impl XtaskCommand for ResetCommand {
         // ── History DB ───────────────────────────────────────────────────────
         if all || self.history {
             let path = cfg.history_db_path();
-            if path.exists() {
-                std::fs::remove_file(&path)
-                    .with_context(|| format!("remove {}", path.display()))?;
-                if verbose {
-                    println!("  removed {}", path.display());
-                }
-            }
+            let _ = remove_file_if_present(&path, verbose)?;
             if self.seed {
                 // Reseed with synthetic data after wipe.
                 // Exception: reset deletes then recreates the DB — ctx.with_history_db()
@@ -245,7 +240,7 @@ fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
     // Invalidate preflight cache so schema reapplies on next run
     crate::preflight::invalidate_cache();
     let state_dir = preflight_state_dir();
-    let _ = std::fs::remove_file(state_dir.join("schema-apply-hash.txt"));
+    let _ = remove_file_if_present(&state_dir.join("schema-apply-hash.txt"), verbose)?;
 
     if verbose {
         println!("Database reset complete");
@@ -302,13 +297,7 @@ fn reset_preflight_dir(verbose: bool) -> Result<()> {
 fn reset_contracts_hash(verbose: bool) -> Result<()> {
     let state_dir = preflight_state_dir();
     for name in &["contracts-hash.txt", "preflight-cache.json"] {
-        let path = state_dir.join(name);
-        if path.exists() {
-            std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-            if verbose {
-                println!("  removed {}", path.display());
-            }
-        }
+        let _ = remove_file_if_present(&state_dir.join(name), verbose)?;
     }
     Ok(())
 }
@@ -316,13 +305,7 @@ fn reset_contracts_hash(verbose: bool) -> Result<()> {
 fn reset_schema_hash(verbose: bool) -> Result<()> {
     let state_dir = preflight_state_dir();
     for name in &["schema-apply-hash.txt", "preflight-cache.json"] {
-        let path = state_dir.join(name);
-        if path.exists() {
-            std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-            if verbose {
-                println!("  removed {}", path.display());
-            }
-        }
+        let _ = remove_file_if_present(&state_dir.join(name), verbose)?;
     }
     Ok(())
 }
@@ -372,4 +355,38 @@ fn reset_tls(verbose: bool) -> Result<()> {
 fn preflight_state_dir() -> std::path::PathBuf {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     crate_dir.join("../.sinex/preflight")
+}
+
+fn remove_file_if_present(path: &Path, verbose: bool) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    std::fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+    if verbose {
+        println!("  removed {}", path.display());
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_remove_file_if_present_reports_remove_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let error = remove_file_if_present(temp.path(), false).unwrap_err();
+        assert!(format!("{error:#}").contains("remove "));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remove_file_if_present_returns_false_for_missing_path() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let removed = remove_file_if_present(&temp.path().join("missing.txt"), false)?;
+        assert!(!removed);
+        Ok(())
+    }
 }

@@ -140,10 +140,7 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
             .data_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
-        socket_dir: args
-            .socket_dir
-            .clone()
-            .unwrap_or_else(|| env::current_dir().unwrap_or_default()),
+        socket_dir: resolve_socket_dir(args.socket_dir.clone(), env::current_dir())?,
         keep_data: args.keep_data,
         app_user: args.app_user.clone(),
         superuser: args.superuser.clone(),
@@ -522,7 +519,8 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             println!("Comparing {file} against {base}...");
         }
 
-        let success = check_schema_contract_guard(&old_contents.stdout, &new_contents);
+        let success = check_schema_contract_guard(&old_contents.stdout, &new_contents)
+            .with_context(|| format!("failed to compare schema contract for {file}"))?;
 
         if success {
             if ctx.is_human() {
@@ -551,15 +549,13 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
         .with_duration(ctx.elapsed()))
 }
 
-fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> bool {
-    let Ok(old): std::result::Result<serde_json::Value, _> = serde_json::from_str(old_json_str)
-    else {
-        return true;
-    };
-    let Ok(new): std::result::Result<serde_json::Value, _> = serde_json::from_str(new_json_str)
-    else {
-        return false;
-    };
+fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result<bool> {
+    use color_eyre::eyre::Context;
+
+    let old: serde_json::Value = serde_json::from_str(old_json_str)
+        .context("failed to parse base schema JSON for contract guard")?;
+    let new: serde_json::Value = serde_json::from_str(new_json_str)
+        .context("failed to parse candidate schema JSON for contract guard")?;
 
     let old_required: Vec<&str> = old
         .get("required")
@@ -575,11 +571,21 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> bool {
     for req in &new_required {
         if !old_required.contains(req) {
             eprintln!("  Breaking: new required field '{req}' not in old schema");
-            return false;
+            return Ok(false);
         }
     }
 
-    true
+    Ok(true)
+}
+
+fn resolve_socket_dir(
+    socket_dir: Option<PathBuf>,
+    current_dir: std::io::Result<PathBuf>,
+) -> Result<PathBuf> {
+    match socket_dir {
+        Some(path) => Ok(path),
+        None => current_dir.wrap_err("failed to determine current directory for ephemeral Postgres socket dir"),
+    }
 }
 
 fn resolve_default_base_branch() -> Result<String> {
@@ -626,4 +632,50 @@ fn default_checkout_database_url() -> String {
         |_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(),
         |cfg| cfg.database_url(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_reports_invalid_base_schema()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = check_schema_contract_guard("not json", r#"{"type":"object"}"#)
+            .expect_err("invalid base schema should surface");
+        assert!(error.to_string().contains("base schema JSON"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_reports_invalid_candidate_schema()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = check_schema_contract_guard(r#"{"type":"object"}"#, "not json")
+            .expect_err("invalid candidate schema should surface");
+        assert!(error.to_string().contains("candidate schema JSON"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_rejects_new_required_fields()
+    -> ::xtask::sandbox::TestResult<()> {
+        let success = check_schema_contract_guard(
+            r#"{"type":"object","required":["a"]}"#,
+            r#"{"type":"object","required":["a","b"]}"#,
+        )?;
+        assert!(!success, "new required fields should fail the contract guard");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_socket_dir_reports_current_dir_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = resolve_socket_dir(None, Err(std::io::Error::other("cwd exploded")))
+            .expect_err("current_dir failure should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("cwd exploded"));
+        assert!(message.contains("socket dir"));
+        Ok(())
+    }
 }

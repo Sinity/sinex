@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
@@ -388,19 +388,45 @@ impl JobCoordinator {
         scope_key: &str,
     ) -> Option<CoordinationResult> {
         let cfg = config();
-        let db = crate::history::HistoryDb::open(&cfg.history_db_path()).ok();
+        let history_db_path = cfg.history_db_path();
+        let db = match crate::history::HistoryDb::open(&history_db_path) {
+            Ok(db) => db,
+            Err(error) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    path = %history_db_path.display(),
+                    error = %error,
+                    command,
+                    "coordinator freshness check disabled because history DB could not be opened"
+                );
+                return None;
+            }
+        };
 
-        if let Some(db) = db
-            && let Ok(Some(last)) = db.get_last_completed_with_fingerprint(command)
-            && last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
-            && last.scope_key.as_deref() == Some(scope_key)
-            && last.status == InvocationStatus::Success
-        {
-            return Some(CoordinationResult::Fresh {
-                job_id: last.id,
-                status: "success".to_string(),
-                duration_secs: last.duration_secs.unwrap_or(0.0),
-            });
+        match db.get_last_completed_with_fingerprint(command) {
+            Ok(Some(last))
+                if last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
+                    && last.scope_key.as_deref() == Some(scope_key)
+                    && last.status == InvocationStatus::Success =>
+            {
+                return Some(CoordinationResult::Fresh {
+                    job_id: last.id,
+                    status: "success".to_string(),
+                    duration_secs: last.duration_secs.unwrap_or(0.0),
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    path = %history_db_path.display(),
+                    error = %error,
+                    command,
+                    tree_fingerprint = %tree_fingerprint,
+                    scope_key = %scope_key,
+                    "coordinator freshness check disabled because history lookup failed"
+                );
+            }
         }
 
         None
@@ -519,22 +545,55 @@ fn lock_exclusive_retry(fd: std::os::unix::io::RawFd) -> Result<()> {
 ///
 /// Properties: deterministic (same tree → same hash), fast (~50ms),
 /// captures staged, unstaged, and untracked changes.
-fn tree_fingerprint() -> Result<String> {
+fn summarize_git_error(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!("exit status {}", output.status)
+}
+
+fn git_output(cwd: &Path, args: &[&str], description: &str) -> Result<std::process::Output> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("failed to run git {description}"))?;
+
+    if !output.status.success() {
+        bail!(
+            "git {description} failed: {}",
+            summarize_git_error(&output)
+        );
+    }
+
+    Ok(output)
+}
+
+fn tree_fingerprint_in(cwd: &Path) -> Result<String> {
     // Refresh the git index so status reflects actual filesystem state.
     // Without this, rapid edits within the same second can go undetected
     // because git caches stat data (mtime, size) in the index.
     let _ = std::process::Command::new("git")
         .args(["update-index", "--refresh"])
+        .current_dir(cwd)
         .output();
 
-    let output = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .context("failed to run git status")?;
+    let output = git_output(cwd, &["status", "--porcelain"], "status --porcelain")?;
 
     let mut hasher = Sha256::new();
     hasher.update(&output.stdout);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn tree_fingerprint() -> Result<String> {
+    tree_fingerprint_in(Path::new("."))
 }
 
 /// R1: Map a package name to its source directory path for git diff scoping.
@@ -604,38 +663,44 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
 ///
 /// Falls back to the whole-workspace `tree_fingerprint()` when no explicit
 /// packages are specified (affected-mode and workspace-wide invocations).
-fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
+fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Result<String> {
     let packages = extract_explicit_packages(command, args);
 
     if packages.is_empty() {
         // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
-        return tree_fingerprint();
+        return tree_fingerprint_in(cwd);
     }
 
     // Refresh git index (same as tree_fingerprint)
     let _ = std::process::Command::new("git")
         .args(["update-index", "--refresh"])
+        .current_dir(cwd)
         .output();
 
     let mut hasher = Sha256::new();
     for pkg in &packages {
         let prefix = package_to_path(pkg);
         // Include tracked changes (staged + unstaged)
-        let diff_out = std::process::Command::new("git")
-            .args(["diff", "--name-only", "HEAD", "--", &prefix])
-            .output()
-            .context("failed to run git diff for package scope")?;
+        let diff_out = git_output(
+            cwd,
+            &["diff", "--name-only", "HEAD", "--", &prefix],
+            "diff --name-only HEAD -- <prefix>",
+        )?;
         hasher.update(&diff_out.stdout);
         // Include untracked files in this package's directory
-        if let Ok(untracked) = std::process::Command::new("git")
-            .args(["ls-files", "--others", "--exclude-standard", "--", &prefix])
-            .output()
-        {
-            hasher.update(&untracked.stdout);
-        }
+        let untracked = git_output(
+            cwd,
+            &["ls-files", "--others", "--exclude-standard", "--", &prefix],
+            "ls-files --others --exclude-standard -- <prefix>",
+        )?;
+        hasher.update(&untracked.stdout);
     }
 
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
+    scoped_tree_fingerprint_in(Path::new("."), command, args)
 }
 
 /// Compute scope key: hash of command-specific parameters that define
@@ -1060,6 +1125,46 @@ impl WorkflowGraph {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    fn run_git(args: &[&str], cwd: &Path) -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "git {} failed: stdout={} stderr={}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    struct ScopedEnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                unsafe { std::env::set_var(self.key, previous) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     #[sinex_test]
     async fn test_should_coordinate() -> TestResult<()> {
@@ -1124,6 +1229,19 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+
+        assert!(
+            coordinator.check_fresh("check", "tree-fingerprint", "scope-key").is_none(),
+            "unopenable history DB should disable freshness checks instead of panicking"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_scope_varies_with_packages() -> TestResult<()> {
         let args_p1 = vec!["-p".into(), "sinex-db".into()];
         let args_p2 = vec!["-p".into(), "sinex-gateway".into()];
@@ -1147,6 +1265,42 @@ mod tests {
             scope_key("check", &["-p".into(), "sinex-db".into()])
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let error = tree_fingerprint_in(dir.path()).expect_err("expected non-repo to fail");
+        assert!(error.to_string().contains("git status --porcelain failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let args = vec!["-p".into(), "xtask".into()];
+        let error = scoped_tree_fingerprint_in(dir.path(), "check", &args)
+            .expect_err("expected non-repo to fail");
+        assert!(error.to_string().contains("git diff --name-only HEAD -- <prefix> failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_succeeds_in_initialized_repo() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("xtask/src"))?;
+        std::fs::write(dir.path().join("xtask/src/lib.rs"), "fn main() {}\n")?;
+        run_git(&["add", "xtask/src/lib.rs"], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+
+        let args = vec!["-p".into(), "xtask".into()];
+        let fingerprint = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert!(!fingerprint.is_empty());
         Ok(())
     }
 

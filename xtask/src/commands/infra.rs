@@ -252,15 +252,53 @@ async fn execute_status(
                     "not initialized"
                 }
             );
+            println!(
+                "Data sizes:  pg={} nats={} annex={}",
+                format_bytes(status.data_sizes.postgres_bytes),
+                format_bytes(status.data_sizes.nats_bytes),
+                format_bytes(status.data_sizes.annex_bytes),
+            );
+            for issue in &status.data_size_issues {
+                println!("             {issue}");
+            }
+            if let Some(issue) = &status.snapshot_issue {
+                println!("Snapshots:   unavailable");
+                println!("             {issue}");
+            } else {
+                println!("Snapshots:   {}", status.snapshots.len());
+            }
         }
 
         if !watch {
-            break;
+            let mut result = CommandResult::success().with_data(serde_json::to_value(&status)?);
+            for issue in &status.data_size_issues {
+                result = result.with_warning(issue.clone());
+            }
+            if let Some(issue) = &status.snapshot_issue {
+                result = result.with_warning(issue.clone());
+            }
+            return Ok(result);
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+}
 
-    Ok(CommandResult::success())
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = UNITS[0];
+    for next_unit in &UNITS[1..] {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = next_unit;
+    }
+    if unit == "B" {
+        format!("{bytes}B")
+    } else {
+        format!("{value:.1}{unit}")
+    }
 }
 
 fn execute_logs(

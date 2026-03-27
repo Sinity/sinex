@@ -1,7 +1,7 @@
 //! Documentation generation command
 
 use crate::process::ProcessBuilder;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Context, Result};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -145,12 +145,12 @@ fn execute_build(
     }
 
     let stage = ctx.start_stage("doc_build");
-    let doc_result = ProcessBuilder::cargo()
+    let doc_ok = ProcessBuilder::cargo()
         .args(&args)
         .with_description("cargo doc")
         .inherit_output()
-        .run_success();
-    let doc_ok = doc_result.unwrap_or(false);
+        .run_success()
+        .context("failed to execute cargo doc")?;
     ctx.finish_stage(stage, doc_ok);
 
     if !doc_ok {
@@ -341,26 +341,7 @@ fn execute_agents(
     to_stdout: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    use color_eyre::eyre::Context;
-
-    // Locate workspace root (walk up from cwd looking for Cargo.toml with [workspace])
-    let workspace = {
-        let mut current = std::env::current_dir()?;
-        loop {
-            let toml = current.join("Cargo.toml");
-            if toml.exists() {
-                let content = std::fs::read_to_string(&toml).unwrap_or_default();
-                if content.contains("[workspace]") {
-                    break current;
-                }
-            }
-            if !current.pop() {
-                color_eyre::eyre::bail!(
-                    "Could not find workspace root (Cargo.toml with [workspace])"
-                );
-            }
-        }
-    };
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
 
     let claude_md = workspace.join("CLAUDE.md");
     if !claude_md.exists() {
@@ -421,6 +402,22 @@ fn execute_agents(
         .with_duration(ctx.elapsed()))
 }
 
+fn find_workspace_root(mut current: std::path::PathBuf) -> Result<std::path::PathBuf> {
+    loop {
+        let toml = current.join("Cargo.toml");
+        if toml.exists() {
+            let content = std::fs::read_to_string(&toml)
+                .wrap_err_with(|| format!("Failed to read workspace manifest {}", toml.display()))?;
+            if content.contains("[workspace]") {
+                return Ok(current);
+            }
+        }
+        if !current.pop() {
+            color_eyre::eyre::bail!("Could not find workspace root (Cargo.toml with [workspace])");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,6 +449,29 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "docs");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_find_workspace_root_reports_manifest_read_failures() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manifest = temp.path().join("Cargo.toml");
+        std::fs::create_dir(&manifest)?;
+
+        let error = find_workspace_root(temp.path().to_path_buf()).unwrap_err();
+        assert!(format!("{error:#}").contains("Failed to read workspace manifest"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        std::fs::write(temp.path().join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        let nested = temp.path().join("nested/child");
+        std::fs::create_dir_all(&nested)?;
+
+        let workspace = find_workspace_root(nested)?;
+        assert_eq!(workspace, temp.path());
         Ok(())
     }
 }

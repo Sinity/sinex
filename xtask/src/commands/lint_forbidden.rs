@@ -205,12 +205,20 @@ fn run_rg(pattern: &str) -> Result<Vec<String>> {
         ])
         .output()
         .with_context(|| "failed to invoke ripgrep")?;
-    let code = output.status.code().unwrap_or_default();
-    if code != 0 && code != 1 {
-        bail!("ripgrep failed with status {}", output.status);
-    }
+    ensure_rg_completed(&output, "ripgrep")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.lines().map(str::to_string).collect::<Vec<String>>())
+}
+
+fn ensure_rg_completed(output: &std::process::Output, context: &str) -> Result<()> {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match output.status.code() {
+        Some(0 | 1) => Ok(()),
+        Some(code) if stderr.is_empty() => bail!("{context} failed with exit code {code}"),
+        Some(code) => bail!("{context} failed with exit code {code}: {stderr}"),
+        None if stderr.is_empty() => bail!("{context} terminated by signal"),
+        None => bail!("{context} terminated by signal: {stderr}"),
+    }
 }
 
 /// Filter matches against allowlist and skip function
@@ -362,10 +370,7 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
         .output()
         .with_context(|| "failed to invoke ripgrep for pattern count")?;
 
-    let code = output.status.code().unwrap_or_default();
-    if code != 0 && code != 1 {
-        bail!("ripgrep failed with status {}", output.status);
-    }
+    ensure_rg_completed(&output, "ripgrep pattern count")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut total = 0;
@@ -383,6 +388,7 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
 
     #[sinex_test]
     async fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -421,6 +427,34 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].contains("crate/bar/src/lib.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_rg_completed_reports_signal_termination()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(9),
+            stdout: Vec::new(),
+            stderr: b"killed".to_vec(),
+        };
+
+        let error = ensure_rg_completed(&output, "ripgrep")
+            .expect_err("signal termination should surface");
+        assert!(error.to_string().contains("terminated by signal"));
+        assert!(error.to_string().contains("killed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_rg_completed_allows_no_matches() -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+
+        ensure_rg_completed(&output, "ripgrep")?;
         Ok(())
     }
 }

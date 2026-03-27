@@ -43,6 +43,10 @@ impl LockInfo {
     }
 }
 
+fn remove_lock_file(path: &Path, context: &str) -> Result<()> {
+    fs::remove_file(path).wrap_err_with(|| format!("failed to remove {context} {}", path.display()))
+}
+
 /// Manages per-checkout state directory and cross-checkout locking
 pub struct CheckoutState {
     /// Path to the checkout root (where .sinex lives)
@@ -177,7 +181,7 @@ impl CheckoutState {
         // Check if the locking process is still alive
         if !lock_info.is_alive() {
             // Process is dead, clean up stale lock
-            let _ = fs::remove_file(&lock_file);
+            remove_lock_file(&lock_file, "stale lock file")?;
             return Ok(None);
         }
 
@@ -238,12 +242,14 @@ impl CheckoutState {
             return Ok(());
         }
 
+        let content =
+            fs::read_to_string(&lock_file).context("Failed to read lock file during release")?;
+        let lock_info: LockInfo =
+            serde_json::from_str(&content).context("Failed to parse lock file during release")?;
+
         // Only remove if we own it
-        if let Ok(content) = fs::read_to_string(&lock_file)
-            && let Ok(lock_info) = serde_json::from_str::<LockInfo>(&content)
-            && lock_info.pid == std::process::id()
-        {
-            fs::remove_file(&lock_file)?;
+        if lock_info.pid == std::process::id() {
+            remove_lock_file(&lock_file, "owned lock file")?;
         }
 
         Ok(())
@@ -257,7 +263,13 @@ pub struct LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.lock_file);
+        if let Err(error) = remove_lock_file(&self.lock_file, "lock file during guard drop")
+            && error
+                .downcast_ref::<std::io::Error>()
+                .is_none_or(|io_error| io_error.kind() != std::io::ErrorKind::NotFound)
+        {
+            tracing::warn!(path = %self.lock_file.display(), error = %error, "failed to remove lock file during drop");
+        }
     }
 }
 
@@ -286,6 +298,26 @@ mod tests {
         // This might actually be alive in rare cases, but usually not
         // Just test that is_alive() doesn't crash
         let _ = info.is_alive();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_remove_lock_file_reports_remove_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let error = remove_lock_file(temp.path(), "test lock").unwrap_err();
+        assert!(format!("{error:#}").contains("failed to remove test lock"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_release_lock_reports_malformed_lock_file() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let state = CheckoutState::new(temp.path().to_path_buf())?;
+        fs::create_dir_all(state.state_dir())?;
+        fs::write(state.lock_file(), "not json")?;
+
+        let error = state.release_lock().unwrap_err();
+        assert!(format!("{error:#}").contains("Failed to parse lock file during release"));
         Ok(())
     }
 }

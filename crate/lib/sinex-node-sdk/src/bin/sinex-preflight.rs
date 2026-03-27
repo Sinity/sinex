@@ -414,8 +414,6 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
         ))
     })?;
     let js = async_nats::jetstream::new(nats_client);
-    ensure_coordination_buckets(&js).await?;
-
     let kv_client = CoordinationKvClient::new(js, "sinex-preflight".to_string());
     let instance_id = Uuid::new_v4().to_string();
     let hostname = gethostname::gethostname().to_string_lossy().into_owned();
@@ -433,25 +431,39 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
         .await
         .map_err(|e| SinexError::processing(e.to_string()))?
     {
-        kv_client.register_instance(&metadata).await.map_err(|e| {
-            SinexError::processing(format!(
-                "Failed to register verification metadata in KV: {e}"
-            ))
-        })?;
-        kv_client.heartbeat(&metadata).await.ok(); // heartbeat best-effort
+        let mut errors = Vec::new();
+        let mut registered_instance = false;
 
-        info!(
-            service_name = "sinex-preflight",
-            instance_id = %instance_id,
-            verification_status = %status_str,
-            errors_count = report.errors.len(),
-            warnings_count = report.warnings.len(),
-            verification_result = ?report.overall_status,
-            "System preflight verification completed via KV coordination"
-        );
+        match kv_client.register_instance(&metadata).await {
+            Ok(()) => {
+                registered_instance = true;
 
-        kv_client.release_leadership(&instance_id).await?;
-        kv_client.unregister_instance(&instance_id).await.ok();
+                info!(
+                    service_name = "sinex-preflight",
+                    instance_id = %instance_id,
+                    verification_status = %status_str,
+                    errors_count = report.errors.len(),
+                    warnings_count = report.warnings.len(),
+                    verification_result = ?report.overall_status,
+                    "System preflight verification completed via KV coordination"
+                );
+            }
+            Err(error) => {
+                errors.push(format!(
+                    "Failed to register verification metadata in KV: {error}"
+                ));
+            }
+        }
+
+        if let Err(error) =
+            cleanup_verification_coordination(&kv_client, &instance_id, registered_instance).await
+        {
+            errors.push(error.to_string());
+        }
+
+        if !errors.is_empty() {
+            return Err(SinexError::processing(errors.join("; ")));
+        }
     } else {
         warn!(
             "Another preflight verification is already running - skipping duplicate verification"
@@ -459,6 +471,45 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
     }
 
     Ok(())
+}
+
+async fn cleanup_verification_coordination(
+    kv_client: &CoordinationKvClient,
+    instance_id: &str,
+    registered_instance: bool,
+) -> NodeResult<()> {
+    let release_result = kv_client.release_leadership(instance_id).await;
+    let unregister_result = if registered_instance {
+        Some(kv_client.unregister_instance(instance_id).await)
+    } else {
+        None
+    };
+
+    coordination_cleanup_result(release_result, unregister_result)
+}
+
+fn coordination_cleanup_result(
+    release_result: NodeResult<()>,
+    unregister_result: Option<NodeResult<()>>,
+) -> NodeResult<()> {
+    let mut failures = Vec::new();
+
+    if let Err(error) = release_result {
+        failures.push(format!("release leadership: {error}"));
+    }
+
+    if let Some(Err(error)) = unregister_result {
+        failures.push(format!("unregister instance: {error}"));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(SinexError::processing(format!(
+            "Verification coordination cleanup failed: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 async fn run_schema_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
@@ -617,28 +668,29 @@ async fn generate_verification_report(
     Ok(VerificationStatus::Pass)
 }
 
-async fn ensure_coordination_buckets(js: &async_nats::jetstream::Context) -> NodeResult<()> {
-    const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
+#[cfg(test)]
+mod tests {
+    // Binary-local helper tests stay inline to avoid exporting cleanup internals just for testing.
+    use super::*;
 
-    let env = sinex_primitives::environment::environment();
-    let _ = js
-        .create_key_value(async_nats::jetstream::kv::Config {
-            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),
-            history: 1,
-            ..Default::default()
-        })
-        .await
-        .ok();
+    #[test]
+    fn coordination_cleanup_result_reports_both_failures() {
+        let error = coordination_cleanup_result(
+            Err(SinexError::processing("release failed")),
+            Some(Err(SinexError::processing("unregister failed"))),
+        )
+        .expect_err("cleanup failures should surface");
 
-    let _ = js
-        .create_key_value(async_nats::jetstream::kv::Config {
-            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_leadership")),
-            history: 5,
-            max_age: Duration::from_secs(LEADERSHIP_TTL_SECS.as_secs()),
-            ..Default::default()
-        })
-        .await
-        .ok();
+        let message = error.to_string();
+        assert!(message.contains("release leadership"));
+        assert!(message.contains("release failed"));
+        assert!(message.contains("unregister instance"));
+        assert!(message.contains("unregister failed"));
+    }
 
-    Ok(())
+    #[test]
+    fn coordination_cleanup_result_skips_unregister_when_not_registered() {
+        coordination_cleanup_result(Ok(()), None)
+            .expect("cleanup without a registered instance should succeed");
+    }
 }
