@@ -257,13 +257,6 @@ pub(super) fn spawn_slices_consumer(
                     }
                 };
 
-                let offset = message
-                    .headers
-                    .as_ref()
-                    .and_then(|h| h.get("Offset"))
-                    .and_then(|v| v.as_str().parse::<i64>().ok())
-                    .unwrap_or(0);
-
                 let material_id = message
                     .subject
                     .split('.')
@@ -277,6 +270,39 @@ pub(super) fn spawn_slices_consumer(
                     );
                     let _ = message.ack().await;
                     continue;
+                };
+
+                let offset = match parse_slice_offset(message.subject.as_str(), message.headers.as_ref()) {
+                    Ok(offset) => offset,
+                    Err(error) => {
+                        warn!(
+                            material_id = %material_id,
+                            subject = %message.subject,
+                            error = %error,
+                            "Rejecting malformed slice message"
+                        );
+                        assembler
+                            .route_material_error(
+                                material_id,
+                                "slice_offset_invalid",
+                                json!({
+                                    "error": error,
+                                    "subject": message.subject.as_str(),
+                                }),
+                            )
+                            .await;
+                        assembler
+                            .finalize_failed_material(material_id, "slice_offset_invalid")
+                            .await;
+                        if let Err(ack_err) = message.ack().await {
+                            warn!(
+                                material_id = %material_id,
+                                error = %ack_err,
+                                "Failed to ack malformed slice message"
+                            );
+                        }
+                        continue;
+                    }
                 };
 
                 let result = std::panic::AssertUnwindSafe(async {
@@ -502,5 +528,73 @@ fn describe_panic(panic: &(dyn std::any::Any + Send)) -> String {
         s.clone()
     } else {
         "unknown panic".to_string()
+    }
+}
+
+fn parse_slice_offset(
+    subject: &str,
+    headers: Option<&async_nats::HeaderMap>,
+) -> Result<i64, String> {
+    let Some(raw_offset) = headers.and_then(|headers| headers.get("Offset")) else {
+        return Err("missing Offset header".to_string());
+    };
+    let offset = raw_offset
+        .as_str()
+        .parse::<i64>()
+        .map_err(|error| format!("invalid Offset header '{}': {error}", raw_offset.as_str()))?;
+    if offset < 0 {
+        return Err(format!("negative Offset header '{}' is invalid", raw_offset.as_str()));
+    }
+    if !subject.contains(".source_material.slices.") {
+        return Err(format!("unexpected slice subject '{subject}'"));
+    }
+    Ok(offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_slice_offset;
+    use async_nats::HeaderMap;
+    use xtask::sandbox::sinex_test;
+
+    const SUBJECT: &str = "dev.source_material.slices.test.00000000-0000-7000-8000-000000000001";
+
+    // Inline because these exercise private malformed-slice parsing helpers.
+    #[sinex_test]
+    async fn parse_slice_offset_accepts_valid_header() -> TestResult<()> {
+        let mut headers = HeaderMap::new();
+        headers.insert("Offset", "42");
+        let offset = parse_slice_offset(SUBJECT, Some(&headers))
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        assert_eq!(offset, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_slice_offset_rejects_missing_header() -> TestResult<()> {
+        let error = parse_slice_offset(SUBJECT, None)
+            .expect_err("missing offset header should fail");
+        assert!(error.contains("missing Offset header"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_slice_offset_rejects_non_numeric_header() -> TestResult<()> {
+        let mut headers = HeaderMap::new();
+        headers.insert("Offset", "nope");
+        let error = parse_slice_offset(SUBJECT, Some(&headers))
+            .expect_err("non-numeric offset should fail");
+        assert!(error.contains("invalid Offset header"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_slice_offset_rejects_negative_header() -> TestResult<()> {
+        let mut headers = HeaderMap::new();
+        headers.insert("Offset", "-1");
+        let error = parse_slice_offset(SUBJECT, Some(&headers))
+            .expect_err("negative offset should fail");
+        assert!(error.contains("negative Offset header"));
+        Ok(())
     }
 }
