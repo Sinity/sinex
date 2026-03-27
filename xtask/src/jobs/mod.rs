@@ -43,6 +43,34 @@ pub struct Job {
 }
 
 impl Job {
+    fn read_archived_stream(&self, stream_name: &str) -> Result<String> {
+        let cfg = config();
+        let history_db_path = cfg.history_db_path();
+        let db = HistoryDb::open(&history_db_path).with_context(|| {
+            format!(
+                "failed to open history DB at {} while reading {stream_name} for job {}",
+                history_db_path.display(),
+                self.id
+            )
+        })?;
+        let (stdout, stderr) = db.get_job_logs(self.id).with_context(|| {
+            format!("failed to load archived {stream_name} from history DB for job {}", self.id)
+        })?;
+        let archived = match stream_name {
+            "stdout" => stdout,
+            "stderr" => stderr,
+            _ => bail!("unsupported archived job stream requested: {stream_name}"),
+        };
+
+        archived.ok_or_else(|| {
+            eyre!(
+                "no archived {stream_name} content recorded for terminal job {} ({})",
+                self.id,
+                self.job_status.as_str()
+            )
+        })
+    }
+
     /// Create Job from `HistoryDb` `BackgroundJob`.
     fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
         let stdout_path = bg.stdout_path.map_or_else(
@@ -98,20 +126,15 @@ impl Job {
         if self.stdout_path.exists() {
             return fs::read_to_string(&self.stdout_path).context("failed to read stdout");
         }
-        // Fall back to DB (for completed jobs)
-        let cfg = config();
-        let history_db_path = cfg.history_db_path();
-        let db = HistoryDb::open(&history_db_path).with_context(|| {
-            format!(
-                "failed to open history DB at {} while reading stdout for job {}",
-                history_db_path.display(),
-                self.id
-            )
-        })?;
-        let (stdout, _) = db.get_job_logs(self.id).with_context(|| {
-            format!("failed to load stdout from history DB for job {}", self.id)
-        })?;
-        Ok(stdout.unwrap_or_default())
+        if !self.is_terminal() {
+            bail!(
+                "stdout log file is missing for non-terminal job {} ({}) at {}",
+                self.id,
+                self.job_status.as_str(),
+                self.stdout_path.display()
+            );
+        }
+        self.read_archived_stream("stdout")
     }
 
     /// Read all stderr.
@@ -122,20 +145,15 @@ impl Job {
         if self.stderr_path.exists() {
             return fs::read_to_string(&self.stderr_path).context("failed to read stderr");
         }
-        // Fall back to DB (for completed jobs)
-        let cfg = config();
-        let history_db_path = cfg.history_db_path();
-        let db = HistoryDb::open(&history_db_path).with_context(|| {
-            format!(
-                "failed to open history DB at {} while reading stderr for job {}",
-                history_db_path.display(),
-                self.id
-            )
-        })?;
-        let (_, stderr) = db.get_job_logs(self.id).with_context(|| {
-            format!("failed to load stderr from history DB for job {}", self.id)
-        })?;
-        Ok(stderr.unwrap_or_default())
+        if !self.is_terminal() {
+            bail!(
+                "stderr log file is missing for non-terminal job {} ({}) at {}",
+                self.id,
+                self.job_status.as_str(),
+                self.stderr_path.display()
+            );
+        }
+        self.read_archived_stream("stderr")
     }
 
     /// Check if the job process is still running.
@@ -623,6 +641,7 @@ fn pid_is_expected_process(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::HistoryDb;
     use std::ffi::OsString;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
@@ -726,6 +745,72 @@ mod tests {
             .read_stdout()
             .expect_err("missing archived logs should surface DB access failures");
         assert!(error.to_string().contains("failed to open history DB"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_job_read_stdout_errors_when_running_log_file_is_missing() -> TestResult<()> {
+        let dir = tempdir()?;
+        let job = Job {
+            id: 42,
+            invocation_id: Some(7),
+            command: "check".into(),
+            args: vec![],
+            started_at: OffsetDateTime::now_utc(),
+            pid: 1234,
+            job_status: JobLifecycleStatus::Running,
+            stdout_path: dir.path().join("missing-stdout.log"),
+            stderr_path: dir.path().join("missing-stderr.log"),
+            exit_code: None,
+        };
+
+        let error = job
+            .read_stdout()
+            .expect_err("missing live stdout log should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("stdout log file is missing for non-terminal job 42"));
+        assert!(message.contains("running"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_job_read_stdout_errors_when_terminal_archive_is_missing() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", &db_path);
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("stdout.log");
+        let stderr_path = dir.path().join("stderr.log");
+        let (_invocation_id, job_id) =
+            db.start_background_job("check", &[], 11111, &stdout_path, &stderr_path)?;
+        db.finish_background_job(
+            job_id,
+            JobLifecycleStatus::Completed,
+            Some(0),
+            0.1,
+            None,
+            None,
+        )?;
+
+        let job = Job {
+            id: job_id,
+            invocation_id: Some(1),
+            command: "check".into(),
+            args: vec![],
+            started_at: OffsetDateTime::now_utc(),
+            pid: 0,
+            job_status: JobLifecycleStatus::Completed,
+            stdout_path,
+            stderr_path,
+            exit_code: Some(0),
+        };
+
+        let error = job
+            .read_stdout()
+            .expect_err("missing archived stdout should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("no archived stdout content recorded for terminal job"));
+        assert!(message.contains("completed"));
         Ok(())
     }
 }
