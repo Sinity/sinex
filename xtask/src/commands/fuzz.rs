@@ -2,8 +2,9 @@
 
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
+use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::output::StructuredError;
@@ -40,7 +41,7 @@ impl XtaskCommand for FuzzCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             FuzzSubcommand::Init { package } => execute_init(package, ctx),
-            FuzzSubcommand::List => Ok(execute_list(ctx)),
+            FuzzSubcommand::List => execute_list(ctx),
             FuzzSubcommand::Run {
                 target,
                 max_time,
@@ -157,37 +158,12 @@ fuzz_target!(|data: &[u8]| {
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_list(ctx: &CommandContext) -> CommandResult {
+fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("available fuzz targets");
 
     let mut targets = Vec::new();
-
-    // Search for fuzz directories in crates
-    for entry in walkdir::WalkDir::new("crate")
-        .max_depth(4)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if path.ends_with("fuzz/Cargo.toml")
-            && let Ok(content) = fs::read_to_string(path)
-        {
-            // Extract package name
-            let pkg_name = content
-                .lines()
-                .find(|l| l.starts_with("name = "))
-                .and_then(|l| l.split('"').nth(1))
-                .unwrap_or("unknown");
-
-            // Find [[bin]] entries
-            for line in content.lines() {
-                if line.starts_with("name = \"fuzz_")
-                    && let Some(target) = line.split('"').nth(1)
-                {
-                    targets.push((pkg_name.to_string(), target.to_string()));
-                }
-            }
-        }
+    for manifest in discover_fuzz_manifests()? {
+        targets.extend(parse_fuzz_manifest(&manifest)?);
     }
 
     if targets.is_empty() {
@@ -196,13 +172,13 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
             println!("\nTo add fuzzing to a crate, run:");
             println!("  Add crate/<name>/fuzz with fuzz_targets/*, then rerun xtask test --fuzz");
         }
-        return CommandResult::success()
+        return Ok(CommandResult::success()
             .with_message("No fuzz targets found")
             .with_data(serde_json::json!({
                 "target_count": 0u64,
                 "targets": []
             }))
-            .with_duration(ctx.elapsed());
+            .with_duration(ctx.elapsed()));
     }
 
     if ctx.is_human() {
@@ -232,7 +208,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         result = result.with_detail(format!("{pkg}::{target}"));
     }
 
-    result
+    Ok(result)
 }
 
 fn execute_run(
@@ -387,14 +363,17 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
             .with_duration(ctx.elapsed()));
     }
 
-    let entries: Vec<_> = fs::read_dir(&corpus_dir)?.filter_map(Result::ok).collect();
+    let entries = collect_dir_entry_names(
+        &corpus_dir,
+        fs::read_dir(&corpus_dir)?.map(|entry| entry.map(|entry| entry.file_name())),
+    )?;
 
     if ctx.is_human() {
         println!("Corpus directory: {}", corpus_dir.display());
         println!("Entries: {}", entries.len());
 
         for entry in entries.iter().take(10) {
-            println!("  - {}", entry.file_name().to_string_lossy());
+            println!("  - {entry}");
         }
 
         if entries.len() > 10 {
@@ -409,7 +388,7 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
 
     // Add first 10 entries as details
     for entry in entries.iter().take(10) {
-        result = result.with_detail(entry.file_name().to_string_lossy().to_string());
+        result = result.with_detail(entry.clone());
     }
 
     if entries.len() > 10 {
@@ -419,20 +398,78 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
     Ok(result)
 }
 
+fn discover_fuzz_manifests() -> Result<Vec<PathBuf>> {
+    let mut manifests = Vec::new();
+    let crate_root = crate::config::workspace_root().join("crate");
+    for entry in walkdir::WalkDir::new(&crate_root).max_depth(4) {
+        let entry =
+            entry.wrap_err("failed to walk crate tree while searching for fuzz manifests")?;
+        if entry.path().ends_with("fuzz/Cargo.toml") {
+            manifests.push(entry.into_path());
+        }
+    }
+    Ok(manifests)
+}
+
+fn parse_fuzz_manifest(path: &Path) -> Result<Vec<(String, String)>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read fuzz manifest {}", path.display()))?;
+    let manifest: FuzzManifest = toml::from_str(&content)
+        .with_context(|| format!("failed to parse fuzz manifest {}", path.display()))?;
+
+    Ok(manifest
+        .bin
+        .into_iter()
+        .filter(|bin| bin.name.starts_with("fuzz_"))
+        .map(|bin| (manifest.package.name.clone(), bin.name))
+        .collect())
+}
+
+fn collect_dir_entry_names<I>(dir: &Path, entries: I) -> Result<Vec<String>>
+where
+    I: IntoIterator<Item = std::io::Result<std::ffi::OsString>>,
+{
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read directory entry in {}", dir.display()))?;
+        names.push(entry.to_string_lossy().into_owned());
+    }
+    Ok(names)
+}
+
+#[derive(Debug, Deserialize)]
+struct FuzzManifest {
+    package: FuzzManifestPackage,
+    #[serde(default)]
+    bin: Vec<FuzzManifestBin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FuzzManifestPackage {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FuzzManifestBin {
+    name: String,
+}
+
 /// Find the directory for a given crate name
 fn find_crate_dir(crate_name: &str) -> Result<PathBuf> {
+    let workspace_root = crate::config::workspace_root();
+
     // Try common locations
     let locations = [
-        format!("crate/lib/{crate_name}"),
-        format!("crate/core/{crate_name}"),
-        format!("crate/nodes/{crate_name}"),
-        format!("cli/{crate_name}"),
+        workspace_root.join(format!("crate/lib/{crate_name}")),
+        workspace_root.join(format!("crate/core/{crate_name}")),
+        workspace_root.join(format!("crate/nodes/{crate_name}")),
+        workspace_root.join(format!("cli/{crate_name}")),
     ];
 
     for loc in &locations {
-        let path = PathBuf::from(loc);
-        if path.join("Cargo.toml").exists() {
-            return Ok(path);
+        if loc.join("Cargo.toml").exists() {
+            return Ok(loc.clone());
         }
     }
 
@@ -443,6 +480,7 @@ fn find_crate_dir(crate_name: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::ffi::OsString;
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -518,6 +556,61 @@ mod tests {
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_failure());
         assert_eq!(result.errors[0].code, "INVALID_TARGET_FORMAT");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_manifest_extracts_fuzz_bins() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let manifest = dir.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            r#"[package]
+name = "demo-fuzz"
+
+[[bin]]
+name = "fuzz_input_validation"
+
+[[bin]]
+name = "helper"
+"#,
+        )?;
+
+        let targets = parse_fuzz_manifest(&manifest)?;
+        assert_eq!(
+            targets,
+            vec![(
+                "demo-fuzz".to_string(),
+                "fuzz_input_validation".to_string()
+            )]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_manifest_reports_malformed_toml() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let manifest = dir.path().join("Cargo.toml");
+        fs::write(&manifest, "[package\nname = \"broken\"")?;
+
+        let error = parse_fuzz_manifest(&manifest).expect_err("malformed manifest should surface");
+        assert!(error.to_string().contains("failed to parse fuzz manifest"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_dir_entry_names_reports_entry_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = collect_dir_entry_names(
+            Path::new("/tmp/corpus"),
+            [
+                Ok(OsString::from("seed-1")),
+                Err(std::io::Error::other("entry read failed")),
+            ],
+        )
+        .expect_err("entry failure should surface");
+
+        assert!(error.to_string().contains("failed to read directory entry"));
         Ok(())
     }
 }
