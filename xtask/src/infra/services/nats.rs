@@ -237,7 +237,7 @@ jetstream {{
                 self.remove_pid_file_if_present("stale NATS pid file")?;
             }
             NatsPidState::Running(pid) => {
-                if let Some(actual_port) = self.listener_port_for_pid(pid) {
+                if let Some(actual_port) = self.listener_port_for_pid(pid)? {
                     if actual_port == self.config.port {
                         if verbose {
                             println!("NATS already running");
@@ -398,20 +398,8 @@ jetstream {{
         true
     }
 
-    fn listener_port_for_pid(&self, pid: u32) -> Option<u16> {
-        let output = Command::new("ss").args(["-ltnp"]).output().ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let pid_marker = format!("pid={pid}");
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| line.contains("LISTEN"))
-            .filter(|line| line.contains("nats-server"))
-            .find(|line| line.contains(&pid_marker))
-            .and_then(|line| line.split_whitespace().nth(3))
-            .and_then(parse_listener_port)
+    fn listener_port_for_pid(&self, pid: u32) -> Result<Option<u16>> {
+        listener_port_for_pid_probe(pid, Command::new("ss").args(["-ltnp"]).output())
     }
 
     fn nats_command(&self) -> Command {
@@ -458,6 +446,32 @@ jetstream {{
     }
 }
 
+fn listener_port_for_pid_probe(
+    pid: u32,
+    output: std::io::Result<std::process::Output>,
+) -> Result<Option<u16>> {
+    let output = output.wrap_err("failed to inspect NATS listeners with ss")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        let suffix = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(" ({detail})")
+        };
+        bail!("ss -ltnp exited unsuccessfully while inspecting NATS listeners{suffix}");
+    }
+
+    let pid_marker = format!("pid={pid}");
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("LISTEN"))
+        .filter(|line| line.contains("nats-server"))
+        .find(|line| line.contains(&pid_marker))
+        .and_then(|line| line.split_whitespace().nth(3))
+        .and_then(parse_listener_port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +499,55 @@ mod tests {
     async fn rejects_non_numeric_listener_ports() -> TestResult<()> {
         assert_eq!(parse_listener_port("*"), None);
         assert_eq!(parse_listener_port("localhost:http"), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_reports_ss_spawn_failures() -> TestResult<()> {
+        let error =
+            listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded"))).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to inspect NATS listeners with ss"));
+        assert!(message.contains("ss exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_reports_ss_exit_failures() -> TestResult<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            let error = listener_port_for_pid_probe(
+                123,
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(256),
+                    stdout: Vec::new(),
+                    stderr: b"permission denied".to_vec(),
+                }),
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("ss -ltnp exited unsuccessfully"));
+            assert!(message.contains("permission denied"));
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn listener_port_for_pid_probe_extracts_matching_port() -> TestResult<()> {
+        let port = listener_port_for_pid_probe(
+            123,
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: br#"State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096   127.0.0.1:4222      0.0.0.0:*    users:(("nats-server",pid=123,fd=7))
+"#
+                .to_vec(),
+                stderr: Vec::new(),
+            }),
+        )?;
+        assert_eq!(port, Some(4222));
         Ok(())
     }
 
