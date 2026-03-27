@@ -88,6 +88,41 @@ fn cache_path() -> std::path::PathBuf {
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 
+fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).wrap_err_with(|| {
+            format!(
+                "failed to create preflight state directory {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, contents)
+        .wrap_err_with(|| format!("failed to write temp state file {}", tmp.display()))?;
+
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        if let Err(cleanup_error) = std::fs::remove_file(&tmp)
+            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %tmp.display(),
+                error = %cleanup_error,
+                "failed to clean up temp preflight state file after rename failure"
+            );
+        }
+        return Err(error).wrap_err_with(|| {
+            format!(
+                "failed to atomically replace preflight state file {}",
+                path.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
 /// Preflight result cache — persisted as JSON after a successful preflight run.
 ///
 /// All four fields must match for the cache to be considered valid:
@@ -121,9 +156,6 @@ impl PreflightCache {
     /// processes — `fs::write` is not atomic; rename within the same filesystem is.
     fn save(&self) {
         let path = cache_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let json = match serde_json::to_string_pretty(self) {
             Ok(j) => j,
             Err(e) => {
@@ -131,18 +163,12 @@ impl PreflightCache {
                 return;
             }
         };
-        // Write to a sibling temp file then rename for atomic visibility.
-        let tmp = path.with_extension("tmp");
-        if let Err(e) = std::fs::write(&tmp, &json) {
-            tracing::debug!(
-                "preflight cache: failed to write tmp {}: {e}",
-                tmp.display()
+        if let Err(error) = write_state_file_atomically(&path, &json) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "preflight cache: failed to persist cache entry"
             );
-            return;
-        }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            tracing::debug!("preflight cache: failed to rename tmp→cache: {e}");
-            let _ = std::fs::remove_file(&tmp);
         }
     }
 
@@ -377,13 +403,13 @@ pub fn schema_changed_since_last_apply() -> bool {
 /// Uses atomic rename (R2 fix) so concurrent readers never see a partial write.
 pub fn record_schema_applied() {
     let state_dir = state_dir();
-    if std::fs::create_dir_all(&state_dir).is_err() {
-        return;
-    }
     let hash_file = state_dir.join("schema-apply-hash.txt");
-    let tmp = hash_file.with_extension("tmp");
-    if std::fs::write(&tmp, hash_schema_sources()).is_ok() {
-        let _ = std::fs::rename(&tmp, &hash_file);
+    if let Err(error) = write_state_file_atomically(&hash_file, &hash_schema_sources()) {
+        tracing::warn!(
+            path = %hash_file.display(),
+            error = %error,
+            "failed to record declarative schema apply state"
+        );
     }
 }
 
@@ -739,9 +765,13 @@ fn contracts_changed_since_last_deploy() -> bool {
 /// Record that contracts were deployed with current directory state.
 fn record_contracts_deployed() {
     let state_dir = state_dir();
-    if std::fs::create_dir_all(&state_dir).is_ok() {
-        let hash_file = state_dir.join("contracts-hash.txt");
-        let _ = std::fs::write(hash_file, hash_contracts_dir());
+    let hash_file = state_dir.join("contracts-hash.txt");
+    if let Err(error) = write_state_file_atomically(&hash_file, &hash_contracts_dir()) {
+        tracing::warn!(
+            path = %hash_file.display(),
+            error = %error,
+            "failed to record deployed contracts state"
+        );
     }
 }
 
@@ -946,6 +976,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use tempfile::tempdir;
 
     #[sinex_test]
     async fn test_infra_status_capture() -> TestResult<()> {
@@ -954,6 +985,42 @@ mod tests {
         // The actual values depend on the environment
         let _ = status.all_ready();
         let _ = status.stack_running();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_creates_parent_dirs() -> TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("nested").join("state.json");
+
+        write_state_file_atomically(&path, "{\"ok\":true}")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "{\"ok\":true}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_replaces_existing_contents() -> TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, "old")?;
+
+        write_state_file_atomically(&path, "new")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "new");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_write_state_file_atomically_reports_parent_creation_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let blocking_path = dir.path().join("not-a-dir");
+        std::fs::write(&blocking_path, "blocker")?;
+        let path = blocking_path.join("state.json");
+
+        let error = write_state_file_atomically(&path, "value").unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to create preflight state directory"));
         Ok(())
     }
 }
