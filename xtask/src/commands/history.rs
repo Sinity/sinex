@@ -9,7 +9,8 @@ use color_eyre::eyre::WrapErr;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
-    DiagnosticQuery, HistoryDb, InvocationStatus, InvocationTimelineEntry, LifecycleStatus,
+    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationStatus, InvocationTimelineEntry,
+    LifecycleStatus,
 };
 
 /// History command variants
@@ -1701,6 +1702,7 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                 .with_duration(ctx.elapsed()))
         }
         Some(analysis) => {
+            let infra_probe = infra_timing_probe_from_result(db.get_infra_timing_summary());
             if ctx.is_human() {
                 println!("{}", style("━━━ Test Suite Analysis ━━━").bold());
                 println!(
@@ -1769,7 +1771,7 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                 }
 
                 // Infrastructure timing (from sandbox slog metadata)
-                if let Ok(Some(infra)) = db.get_infra_timing_summary() {
+                if let Some(infra) = infra_probe.value.as_ref() {
                     println!("\n{}", style("Infrastructure Timing:").cyan().bold());
                     println!(
                         "  Slot acquisition: avg {:.0}ms, max {}ms ({} tests with data)",
@@ -1794,19 +1796,26 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                             top_slots.join(", ")
                         );
                     }
+                } else if let Some(issue) = infra_probe.issue.as_ref() {
+                    println!("\n{}", style("Infrastructure Timing:").cyan().bold());
+                    println!("  {}", style(issue).yellow());
                 }
             } else {
                 let json = serde_json::to_string_pretty(&analysis)?;
                 println!("{json}");
             }
 
-            Ok(CommandResult::success()
+            let mut result = CommandResult::success()
                 .with_message(format!(
                     "Analysis: {} passed, {} failed",
                     analysis.total_passed, analysis.total_failed
                 ))
                 .with_data(serde_json::to_value(&analysis)?)
-                .with_duration(ctx.elapsed()))
+                .with_duration(ctx.elapsed());
+            if let Some(issue) = infra_probe.issue {
+                result = result.with_warning(issue);
+            }
+            Ok(result)
         }
     }
 }
@@ -3340,6 +3349,7 @@ fn execute_exercise_history(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let rows = db.get_exercise_runs(limit)?;
+    let mut warnings = Vec::new();
 
     if ctx.is_json() {
         let mut json_runs = Vec::with_capacity(rows.len());
@@ -3358,9 +3368,14 @@ fn execute_exercise_history(
                 "git_commit": row.git_commit,
             });
             if verbose {
-                let results = db
-                    .get_exercise_results_for_run(row.run_id)
-                    .unwrap_or_default()
+                let results_probe =
+                    exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                if let Some(issue) = &results_probe.issue {
+                    warnings.push(issue.clone());
+                    run["results_issue"] = serde_json::Value::String(issue.clone());
+                }
+                let results = results_probe
+                    .results
                     .into_iter()
                     .map(|r| {
                         serde_json::json!({
@@ -3420,20 +3435,72 @@ fn execute_exercise_history(
             for row in &rows {
                 if row.failed > 0 {
                     println!("\nFailed exercises in run {}:", row.recorded_at);
-                    if let Ok(results) = db.get_exercise_results_for_run(row.run_id) {
-                        for r in results.into_iter().filter(|r| !r.passed) {
-                            let err_str = r.error.as_deref().unwrap_or("(no error)");
-                            println!("  {} {}: {err_str}", style("✗").red(), r.exercise_id);
-                        }
+                    let results_probe =
+                        exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                    if let Some(issue) = &results_probe.issue {
+                        warnings.push(issue.clone());
+                        println!("  {}", style(issue).yellow());
+                        continue;
+                    }
+                    for r in results_probe.results.into_iter().filter(|r| !r.passed) {
+                        let err_str = r.error.as_deref().unwrap_or("(no error)");
+                        println!("  {} {}: {err_str}", style("✗").red(), r.exercise_id);
                     }
                 }
             }
         }
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("{} exercise run(s) shown", rows.len()))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+    for warning in warnings {
+        result = result.with_warning(warning);
+    }
+    Ok(result)
+}
+
+struct OptionalProbe<T> {
+    value: Option<T>,
+    issue: Option<String>,
+}
+
+fn infra_timing_probe_from_result<T>(result: Result<Option<T>>) -> OptionalProbe<T> {
+    match result {
+        Ok(value) => OptionalProbe {
+            value,
+            issue: None,
+        },
+        Err(error) => OptionalProbe {
+            value: None,
+            issue: Some(format!(
+                "failed to read infrastructure timing summary: {error:#}"
+            )),
+        },
+    }
+}
+
+struct ExerciseResultsProbe {
+    results: Vec<ExerciseResultRow>,
+    issue: Option<String>,
+}
+
+fn exercise_results_probe_from_result(
+    run_id: i64,
+    result: Result<Vec<ExerciseResultRow>>,
+) -> ExerciseResultsProbe {
+    match result {
+        Ok(results) => ExerciseResultsProbe {
+            results,
+            issue: None,
+        },
+        Err(error) => ExerciseResultsProbe {
+            results: Vec::new(),
+            issue: Some(format!(
+                "failed to read exercise results for run {run_id}: {error:#}"
+            )),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -3443,6 +3510,7 @@ mod tests {
     use crate::history::HistoryDb;
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
+    use color_eyre::eyre::eyre;
     use std::collections::HashSet;
     use tempfile::tempdir;
 
@@ -3453,6 +3521,24 @@ mod tests {
             None,
             "history",
         )
+    }
+
+    #[sinex_test]
+    async fn test_infra_timing_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = infra_timing_probe_from_result::<()>(Err(eyre!("infra exploded")));
+        assert!(probe.value.is_none());
+        assert!(probe.issue.unwrap_or_default().contains("infra exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_exercise_results_probe_from_result_reports_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let probe = exercise_results_probe_from_result(42, Err(eyre!("results exploded")));
+        assert!(probe.results.is_empty());
+        assert!(probe.issue.unwrap_or_default().contains("results exploded"));
+        Ok(())
     }
 
     fn sample_diagnostic(
