@@ -90,6 +90,13 @@ pub struct StreamBatchInsertResult {
     pub inserted_ids: Option<Vec<Uuid>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamBatchInsertStrategy {
+    QueryBuilder,
+    Copy,
+    Synthesis,
+}
+
 /// Event repository for database operations
 pub struct EventRepository<'a> {
     pub(super) pool: &'a PgPool,
@@ -351,6 +358,26 @@ fn validate_cascade_table_name(table_name: &str) -> DbResult<()> {
 }
 
 impl<'a> EventRepository<'a> {
+    fn stream_batch_insert_strategy(batch: &[StreamBatchRow]) -> Option<StreamBatchInsertStrategy> {
+        if batch.is_empty() {
+            return None;
+        }
+
+        let has_synthesis = batch.iter().any(|row| {
+            row.source_event_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.is_empty())
+        });
+
+        if has_synthesis {
+            Some(StreamBatchInsertStrategy::Synthesis)
+        } else if batch.len() >= COPY_BATCH_THRESHOLD {
+            Some(StreamBatchInsertStrategy::Copy)
+        } else {
+            Some(StreamBatchInsertStrategy::QueryBuilder)
+        }
+    }
+
     // === Cascade helpers ===
 
     pub async fn prepare_cascade_session(
@@ -1103,53 +1130,45 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<StreamBatchInsertResult> {
         use crate::query_helpers::set_repeatable_read;
 
-        if batch.is_empty() {
-            return Ok(StreamBatchInsertResult::default());
-        }
-
-        // Check whether any rows carry synthesis provenance (source_event_ids).
-        // Material-only batches (the common case for ingestors) skip cycle
-        // detection entirely for maximum throughput.
-        let has_synthesis = batch.iter().any(|row| {
-            row.source_event_ids
-                .as_ref()
-                .is_some_and(|ids| !ids.is_empty())
-        });
-
-        if has_synthesis {
+        match Self::stream_batch_insert_strategy(batch) {
+            None => Ok(StreamBatchInsertResult::default()),
             // Synthesis batches: wrap in REPEATABLE READ for cycle detection.
             // COPY cannot be mixed with cycle-detection queries in the same
             // transaction easily, so synthesis batches use the VALUES path.
-            let mut tx = self
-                .pool
-                .begin()
-                .await
-                .map_err(|e| db_error(e, "begin stream batch transaction"))?;
-            set_repeatable_read(&mut tx).await?;
+            Some(StreamBatchInsertStrategy::Synthesis) => {
+                let mut tx = self
+                    .pool
+                    .begin()
+                    .await
+                    .map_err(|e| db_error(e, "begin stream batch transaction"))?;
+                set_repeatable_read(&mut tx).await?;
 
-            for row in batch {
-                if let Some(ref source_ids) = row.source_event_ids
-                    && !source_ids.is_empty()
-                {
-                    let event_id: Id<Event<JsonValue>> = Id::from(row.id);
-                    ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
+                for row in batch {
+                    if let Some(ref source_ids) = row.source_event_ids
+                        && !source_ids.is_empty()
+                    {
+                        let event_id: Id<Event<JsonValue>> = Id::from(row.id);
+                        ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
+                    }
                 }
-            }
 
-            let result = Self::execute_batch_insert(&mut *tx, batch).await?;
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "commit stream batch"))?;
-            Ok(result)
-        } else if batch.len() >= COPY_BATCH_THRESHOLD {
+                let result = Self::execute_batch_insert(&mut *tx, batch).await?;
+                tx.commit()
+                    .await
+                    .map_err(|e| db_error(e, "commit stream batch"))?;
+                Ok(result)
+            }
             // Large material-only batch: use COPY for maximum throughput.
             // Avoids the 65 535-parameter limit of parameterised VALUES queries
             // and has significantly lower per-row protocol overhead.
-            Self::execute_batch_insert_copy(self.pool, batch).await
-        } else {
+            Some(StreamBatchInsertStrategy::Copy) => {
+                Self::execute_batch_insert_copy(self.pool, batch).await
+            }
             // Small material-only batch: QueryBuilder is faster (no staging
             // table overhead).
-            Self::execute_batch_insert(self.pool, batch).await
+            Some(StreamBatchInsertStrategy::QueryBuilder) => {
+                Self::execute_batch_insert(self.pool, batch).await
+            }
         }
     }
 
@@ -2449,6 +2468,32 @@ mod tests {
     use serde_json::json;
     use xtask::sandbox::sinex_test;
 
+    fn base_stream_batch_row() -> color_eyre::Result<StreamBatchRow> {
+        Ok(StreamBatchRow {
+            id: Uuid::now_v7(),
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.event")?,
+            ts_orig: Timestamp::now(),
+            host: HostName::from_static("localhost"),
+            payload: json!({"ok": true}),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: None,
+            payload_schema_id: None,
+            node_run_id: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        })
+    }
+
     fn base_record() -> EventRecord {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
@@ -2584,6 +2629,43 @@ mod tests {
         let err = resolved_created_by_operation_id(&event).expect_err("should fail");
         assert!(format!("{err}").contains("operation lineage mismatch"));
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stream_batch_insert_strategy_prefers_query_builder_for_small_material_batches(
+    ) -> color_eyre::Result<()> {
+        let batch = vec![base_stream_batch_row()?];
+        assert_eq!(
+            EventRepository::stream_batch_insert_strategy(&batch),
+            Some(StreamBatchInsertStrategy::QueryBuilder)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches(
+    ) -> color_eyre::Result<()> {
+        let batch = (0..COPY_BATCH_THRESHOLD)
+            .map(|_| base_stream_batch_row())
+            .collect::<color_eyre::Result<Vec<_>>>()?;
+        assert_eq!(
+            EventRepository::stream_batch_insert_strategy(&batch),
+            Some(StreamBatchInsertStrategy::Copy)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches()
+    -> color_eyre::Result<()> {
+        let mut row = base_stream_batch_row()?;
+        row.source_event_ids = Some(vec![EventId::from_uuid(Uuid::now_v7())]);
+        let batch = vec![row];
+        assert_eq!(
+            EventRepository::stream_batch_insert_strategy(&batch),
+            Some(StreamBatchInsertStrategy::Synthesis)
+        );
         Ok(())
     }
 }

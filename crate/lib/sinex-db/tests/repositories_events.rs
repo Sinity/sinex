@@ -1,12 +1,46 @@
 use serde_json::json;
-use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
+use sinex_db::repositories::{
+    COPY_BATCH_THRESHOLD, DbPoolExt, ReplacementKind, ReplacementRecord, StreamBatchRow,
+};
 use sinex_db::{Event, Provenance};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::{DerivedNodeModel, RecordedPath, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{
+    DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SyntheticTemporalPolicy,
+};
+use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use xtask::sandbox::sinex_test;
+
+fn stream_batch_material_row(
+    material_id: Id<SourceMaterial>,
+    anchor_byte: i64,
+) -> color_eyre::Result<StreamBatchRow> {
+    Ok(StreamBatchRow {
+        id: Uuid::now_v7(),
+        source: EventSource::new("test.source")?,
+        event_type: EventType::new("test.batch.material")?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload: json!({ "anchor": anchor_byte }),
+        source_material_id: Some(material_id),
+        anchor_byte: Some(anchor_byte),
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: None,
+        payload_schema_id: None,
+        node_run_id: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
+    })
+}
 
 #[sinex_test]
 async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {
@@ -118,6 +152,91 @@ async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> Test
         "unexpected error message: {message}"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_accepts_large_material_batches(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("stream-batch-large-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    let batch = (0..COPY_BATCH_THRESHOLD)
+        .map(|index| stream_batch_material_row(material_id, index as i64))
+        .collect::<color_eyre::Result<Vec<_>>>()?;
+
+    let result = ctx.pool.events().insert_stream_batch(&batch).await?;
+    assert_eq!(result.inserted_count, COPY_BATCH_THRESHOLD);
+    assert_eq!(
+        result.inserted_ids.as_ref().map(std::vec::Vec::len),
+        Some(COPY_BATCH_THRESHOLD)
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::new("test.source")?,
+            sinex_primitives::Pagination::new(None, None),
+        )
+        .await?;
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event.event_type.as_str() == "test.batch.material")
+            .count(),
+        COPY_BATCH_THRESHOLD
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_rejects_self_referential_synthesis_rows(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let event_id = Uuid::now_v7();
+    let batch = vec![StreamBatchRow {
+        id: event_id,
+        source: EventSource::new("test.source")?,
+        event_type: EventType::new("test.batch.synthesis")?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload: json!({ "self_ref": true }),
+        source_material_id: None,
+        anchor_byte: None,
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: Some(vec![EventId::from_uuid(event_id)]),
+        payload_schema_id: None,
+        node_run_id: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
+    }];
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_stream_batch(&batch)
+        .await
+        .expect_err("self-referential synthesis batch should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in synthesis provenance"),
+        "unexpected error: {error}"
+    );
     Ok(())
 }
 
