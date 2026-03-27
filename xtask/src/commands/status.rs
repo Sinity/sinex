@@ -85,6 +85,7 @@ struct ServiceStatus {
 enum ServiceRunStatus {
     Running,
     Stopped,
+    Unknown,
 }
 
 const CORE_SERVICE_NAMES: [&str; 2] = ["sinex-gateway", "sinex-ingestd"];
@@ -94,23 +95,48 @@ fn probe_service_status(service_name: &str) -> ServiceStatus {
         .arg("-x")
         .arg(service_name)
         .output();
+    probe_service_status_with(service_name, output)
+}
 
+fn probe_service_status_with(
+    service_name: &str,
+    output: std::io::Result<std::process::Output>,
+) -> ServiceStatus {
     let (status, pid, message) = match output {
-        Ok(output) if !output.stdout.is_empty() => {
+        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
             let pid_str = String::from_utf8_lossy(&output.stdout);
-            let pid = pid_str
+            match pid_str
                 .lines()
                 .next()
-                .and_then(|line| line.trim().parse().ok());
-            (ServiceRunStatus::Running, pid, None)
+                .and_then(|line| line.trim().parse().ok())
+            {
+                Some(pid) => (ServiceRunStatus::Running, Some(pid), None),
+                None => (
+                    ServiceRunStatus::Unknown,
+                    None,
+                    Some(format!(
+                        "process probe returned unreadable pid output: {}",
+                        pid_str.trim()
+                    )),
+                ),
+            }
         }
-        Ok(_) => (
+        Ok(output) if output.status.code() == Some(1) => (
             ServiceRunStatus::Stopped,
             None,
             Some("exact process-name probe found no matching process".to_string()),
         ),
+        Ok(output) => (
+            ServiceRunStatus::Unknown,
+            None,
+            Some(format!(
+                "process probe exited with status {}{}",
+                output.status,
+                render_probe_stderr(&output)
+            )),
+        ),
         Err(error) => (
-            ServiceRunStatus::Stopped,
+            ServiceRunStatus::Unknown,
             None,
             Some(format!("failed to run process probe: {error}")),
         ),
@@ -122,6 +148,16 @@ fn probe_service_status(service_name: &str) -> ServiceStatus {
         probe: "process_exact_name",
         pid,
         message,
+    }
+}
+
+fn render_probe_stderr(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" ({detail})")
     }
 }
 
@@ -979,10 +1015,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     let last_check = get_last_command("check");
     let last_test = get_last_command("test");
     let last_build = get_last_command("build");
-    let stopped_services: Vec<&str> = data
+    let unavailable_services: Vec<&str> = data
         .services
         .iter()
-        .filter(|service| matches!(service.status, ServiceRunStatus::Stopped))
+        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
         .map(|service| service.name.as_str())
         .collect();
 
@@ -1028,10 +1064,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     if let Some(message) = &data.git.probe_message {
         warnings.push(message.clone());
     }
-    if !stopped_services.is_empty() {
+    if !unavailable_services.is_empty() {
         warnings.push(format!(
-            "Core services not running: {}",
-            stopped_services.join(", ")
+            "Core services not healthy: {}",
+            unavailable_services.join(", ")
         ));
     }
     if data.history.is_synthetic {
@@ -1338,6 +1374,9 @@ impl<'a> MotdRenderer<'a> {
                         }
                         ServiceRunStatus::Stopped => {
                             style(format!("{short}:down")).red().to_string()
+                        }
+                        ServiceRunStatus::Unknown => {
+                            style(format!("{short}:unknown")).yellow().to_string()
                         }
                     }
                 })
@@ -1888,9 +1927,9 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
     let (pg_probe, nats_probe, runtime_configured, runtime_metrics, services, jobs, history) =
         collect_status_data(ctx);
     let runtime_assessment = runtime_metrics.as_ref().map(RuntimeMetrics::assessment);
-    let stopped_services: Vec<&str> = services
+    let unavailable_services: Vec<&str> = services
         .iter()
-        .filter(|service| matches!(service.status, ServiceRunStatus::Stopped))
+        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
         .map(|service| service.name.as_str())
         .collect();
 
@@ -1955,10 +1994,10 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
     if jobs.active.len() > 5 {
         warnings.push(format!("{} background jobs running.", jobs.active.len()));
     }
-    if !stopped_services.is_empty() {
+    if !unavailable_services.is_empty() {
         warnings.push(format!(
-            "Core services not running: {}",
-            stopped_services.join(", ")
+            "Core services not healthy: {}",
+            unavailable_services.join(", ")
         ));
     }
     if history.is_synthetic {
@@ -2013,11 +2052,12 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
             let status_label = match svc.status {
                 ServiceRunStatus::Running => "running",
                 ServiceRunStatus::Stopped => "stopped",
+                ServiceRunStatus::Unknown => "unknown",
             };
-            let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
-                style(status_label).green()
-            } else {
-                style(status_label).dim()
+            let status_display = match svc.status {
+                ServiceRunStatus::Running => style(status_label).green(),
+                ServiceRunStatus::Stopped => style(status_label).dim(),
+                ServiceRunStatus::Unknown => style(status_label).yellow(),
             };
             let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
             println!("  {:<20} {}{}", svc.name, status_display, pid_str);
@@ -2233,6 +2273,7 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
     use tempfile::tempdir;
 
@@ -2272,6 +2313,51 @@ mod tests {
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
         assert!(metadata.track_in_history);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_service_status_reports_probe_failures_as_unknown()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = probe_service_status_with(
+            "sinex-gateway",
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "pgrep unavailable",
+            )),
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert!(status.pid.is_none());
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("failed to run process probe"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_service_status_reports_unreadable_pid_output_as_unknown()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = probe_service_status_with(
+            "sinex-gateway",
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"not-a-pid\n".to_vec(),
+                stderr: Vec::new(),
+            }),
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert!(status.pid.is_none());
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("unreadable pid output"))
+        );
         Ok(())
     }
 
