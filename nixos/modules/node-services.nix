@@ -35,7 +35,7 @@ let
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
-  postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" ];
+  postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
     set -euo pipefail

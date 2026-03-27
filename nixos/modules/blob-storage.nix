@@ -67,7 +67,7 @@ let
   healthScript = pkgs.writeShellScript "sinex-blob-health" ''
     set -euo pipefail
     repo_size=$(${duBin} -sb "${repoPath}" | cut -f1)
-    warn_at_bytes=${toString (blob.health.warnAtBytes or 0)}
+    warn_at_bytes=${toString (if blob.health.warnAtBytes != null then blob.health.warnAtBytes else 0)}
     warn_at_percent=${toString blob.health.warnAtPercent}
 
     if [ "$warn_at_bytes" -gt 0 ]; then
