@@ -34,6 +34,21 @@ fn format_http_error(status: reqwest::StatusCode, body: Option<&str>) -> String 
     }
 }
 
+fn should_accept_invalid_certs(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let normalized_host = host.trim_start_matches('[').trim_end_matches(']');
+
+    normalized_host.eq_ignore_ascii_case("localhost")
+        || normalized_host == "127.0.0.1"
+        || normalized_host == "::1"
+}
+
 /// A client for the Sinex Gateway JSON-RPC API.
 ///
 /// Handles:
@@ -182,8 +197,7 @@ impl GatewayClientBuilder {
             builder = builder.add_root_certificate(root_cert);
         }
 
-        // In development, we might use self-signed certs
-        if cfg!(debug_assertions) {
+        if should_accept_invalid_certs(&self.base_url) {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
@@ -198,7 +212,7 @@ impl GatewayClientBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::format_http_error;
+    use super::{format_http_error, should_accept_invalid_certs};
 
     #[test]
     fn format_http_error_includes_non_empty_body() {
@@ -210,5 +224,16 @@ mod tests {
     fn format_http_error_ignores_blank_body() {
         let message = format_http_error(reqwest::StatusCode::UNAUTHORIZED, Some("   "));
         assert_eq!(message, "HTTP Error: 401 Unauthorized");
+    }
+
+    #[test]
+    fn invalid_certs_only_allowed_for_loopback_hosts() {
+        assert!(should_accept_invalid_certs("https://localhost:3000"));
+        assert!(should_accept_invalid_certs("https://127.0.0.1:3000"));
+        assert!(should_accept_invalid_certs("https://[::1]:3000"));
+
+        assert!(!should_accept_invalid_certs("https://gateway.internal:3000"));
+        assert!(!should_accept_invalid_certs("https://10.0.0.8:3000"));
+        assert!(!should_accept_invalid_certs("not a url"));
     }
 }
