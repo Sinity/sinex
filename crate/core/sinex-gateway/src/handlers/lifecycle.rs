@@ -176,7 +176,7 @@ pub async fn handle_lifecycle_archive(
     )?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         source = ?request.source,
         before = ?request.before,
         dry_run = request.dry_run,
@@ -354,7 +354,7 @@ pub async fn handle_lifecycle_restore(
     }
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         event_count = request.event_ids.len(),
         dry_run = request.dry_run,
         "Lifecycle restore operation initiated"
@@ -686,7 +686,7 @@ pub async fn handle_tombstone_create(
 
     info!(
         operation_id = %operation_id,
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         source = ?request.source,
         before = ?request.before,
         "Creating tombstone operation"
@@ -953,7 +953,7 @@ pub async fn handle_tombstone_approve(
 
     info!(
         operation_id = %request.operation_id,
-        approved_by = %auth.token_prefix,
+        actor = %auth.actor_id(),
         "Tombstone operation approved, executing..."
     );
 
@@ -1118,7 +1118,7 @@ pub async fn handle_tombstone_cancel(
 
     info!(
         operation_id = %request.operation_id,
-        cancelled_by = %auth.token_prefix,
+        actor = %auth.actor_id(),
         "Tombstone operation cancelled"
     );
 

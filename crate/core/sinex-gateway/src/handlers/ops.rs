@@ -53,7 +53,6 @@ pub async fn handle_ops_start(
         .await?;
 
     info!(
-        token_prefix = %auth.token_prefix,
         actor = %actor,
         operation_id = %record.id,
         operation_type = %request.operation_type,
@@ -79,8 +78,6 @@ pub async fn handle_ops_list(
 ) -> Result<Value> {
     use tracing::debug;
 
-    debug!(token_prefix = %auth.token_prefix, "Operations list requested");
-
     let request: OpsListRequest = super::parse_default_on_null(params)?;
     let limit = if request.limit == default_ops_limit() {
         request.limit
@@ -97,6 +94,14 @@ pub async fn handle_ops_list(
         .state()
         .list_operations(request.operation_type.as_deref(), request.status, limit)
         .await?;
+
+    debug!(
+        actor = %auth.actor_id(),
+        operation_type = ?request.operation_type,
+        status = ?request.status,
+        limit,
+        "Operations list requested"
+    );
 
     let response = OpsListResponse {
         operations: records.into_iter().map(record_to_operation).collect(),
@@ -120,7 +125,7 @@ pub async fn handle_ops_get(
     let request: OpsGetRequest = serde_json::from_value(params)?;
 
     debug!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         operation_id = %request.operation_id,
         "Operation get requested"
     );
@@ -164,8 +169,9 @@ pub async fn handle_ops_cancel(
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
     info!(
-        token_prefix = %auth.token_prefix,
+        actor = %auth.actor_id(),
         operation_id = %operation_id,
+        reason = ?request.reason,
         "Operation cancel initiated"
     );
 
