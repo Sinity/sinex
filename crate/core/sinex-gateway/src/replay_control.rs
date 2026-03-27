@@ -298,6 +298,12 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
+    fn require_operations(response: ReplayControlResponse) -> Result<Vec<ReplayOperation>> {
+        response
+            .operations
+            .ok_or_else(|| eyre!("Replay control response missing operations"))
+    }
+
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
         let payload = serde_json::to_vec(&request)?;
 
@@ -448,7 +454,7 @@ impl ReplayControlClient {
         let response = self
             .send(ReplayControlRequest::List { state, node, limit })
             .await?;
-        Ok(response.operations.unwrap_or_default())
+        Self::require_operations(response)
     }
 }
 
@@ -3482,6 +3488,19 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("cannot perform this replay action")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_list_rejects_missing_operations_payload(_ctx: TestContext) -> Result<()> {
+        let err = ReplayControlClient::require_operations(ReplayControlResponse::success(
+            None, None, None,
+        ))
+        .expect_err("list responses without operations must be rejected");
+        assert!(
+            err.to_string()
+                .contains("Replay control response missing operations")
         );
         Ok(())
     }

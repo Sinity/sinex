@@ -209,6 +209,26 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn serialize_handoff_request_round_trips(_ctx: TestContext) -> TestResult<()> {
+        let request = HandoffRequest {
+            requester_instance_id: "requester-1".to_string(),
+            requester_version: NodeVersion::current()?,
+            target_instance_id: "target-1".to_string(),
+            target_version: NodeVersion::current()?,
+            requested_at: SystemTime::now(),
+            timeout_seconds: Seconds::from_secs(30),
+        };
+
+        let payload = NodeCoordination::serialize_handoff_request(&request)?;
+        let decoded: HandoffRequest = serde_json::from_slice(&payload)?;
+
+        assert_eq!(decoded.requester_instance_id, request.requester_instance_id);
+        assert_eq!(decoded.target_instance_id, request.target_instance_id);
+        assert_eq!(decoded.timeout_seconds, request.timeout_seconds);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn list_instances_filters_stale_metadata(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-filter").await?;
         let coordination =
@@ -785,6 +805,12 @@ pub struct NodeCoordination {
 }
 
 impl NodeCoordination {
+    fn serialize_handoff_request(request: &HandoffRequest) -> Result<Vec<u8>> {
+        serde_json::to_vec(request).map_err(|error| {
+            SinexError::validation(format!("Failed to serialize handoff request: {error}"))
+        })
+    }
+
     fn current_metadata(&self) -> InstanceMetadata {
         instance_metadata_at(
             &self.instance,
@@ -1145,7 +1171,7 @@ impl NodeCoordination {
             "sinex.coordination.{}.handoff_ready",
             self.instance.service_name
         );
-        let payload = serde_json::to_vec(&request).unwrap_or_default();
+        let payload = Self::serialize_handoff_request(&request)?;
 
         self.nats_client
             .publish(subject, payload.into())
@@ -1204,9 +1230,7 @@ impl NodeCoordination {
         };
 
         let subject = format!("sinex.coordination.{}.handoff", self.instance.service_name);
-        let payload = serde_json::to_vec(&request).map_err(|e| {
-            SinexError::validation(format!("Failed to serialize handoff request: {e}"))
-        })?;
+        let payload = Self::serialize_handoff_request(&request)?;
 
         self.nats_client
             .publish(subject, payload.into())
