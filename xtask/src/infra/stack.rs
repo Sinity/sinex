@@ -185,6 +185,8 @@ pub struct StackStatus {
     pub nats: ServiceStatus,
     pub annex: AnnexStatus,
     pub data_sizes: DataSizes,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_size_issues: Vec<String>,
     pub snapshots: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_issue: Option<String>,
@@ -208,6 +210,12 @@ pub struct DataSizes {
     pub postgres_bytes: u64,
     pub nats_bytes: u64,
     pub annex_bytes: u64,
+}
+
+#[derive(Debug)]
+pub struct DirectorySizeProbe {
+    pub bytes: u64,
+    pub issue: Option<String>,
 }
 
 impl StackStatus {
@@ -236,11 +244,18 @@ impl StackStatus {
             path: config.annex_data(),
         };
 
+        let postgres_size = dir_size(&config.pg_data());
+        let nats_size = dir_size(&config.nats_data());
+        let annex_size = dir_size(&config.annex_data());
         let data_sizes = DataSizes {
-            postgres_bytes: dir_size(&config.pg_data()),
-            nats_bytes: dir_size(&config.nats_data()),
-            annex_bytes: dir_size(&config.annex_data()),
+            postgres_bytes: postgres_size.bytes,
+            nats_bytes: nats_size.bytes,
+            annex_bytes: annex_size.bytes,
         };
+        let data_size_issues = [postgres_size.issue, nats_size.issue, annex_size.issue]
+            .into_iter()
+            .flatten()
+            .collect();
 
         let snapshots = list_snapshots(&config.snapshots_dir());
 
@@ -250,6 +265,7 @@ impl StackStatus {
             nats,
             annex,
             data_sizes,
+            data_size_issues,
             snapshots: snapshots.snapshots,
             snapshot_issue: snapshots.issue,
         }
@@ -572,17 +588,52 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[must_use]
-pub fn dir_size(path: &Path) -> u64 {
+pub fn dir_size(path: &Path) -> DirectorySizeProbe {
     if !path.exists() {
-        return 0;
+        return DirectorySizeProbe {
+            bytes: 0,
+            issue: None,
+        };
     }
-    walkdir::WalkDir::new(path)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.metadata().ok())
-        .filter(std::fs::Metadata::is_file)
-        .map(|m| m.len())
-        .sum()
+    if !path.is_dir() {
+        return DirectorySizeProbe {
+            bytes: 0,
+            issue: Some(format!(
+                "expected directory while sizing stack data path {}, found non-directory entry",
+                path.display()
+            )),
+        };
+    }
+
+    let mut bytes = 0;
+    let mut issues = Vec::new();
+    for entry in walkdir::WalkDir::new(path) {
+        match entry {
+            Ok(entry) => match entry.metadata() {
+                Ok(metadata) if metadata.is_file() => {
+                    bytes += metadata.len();
+                }
+                Ok(_) => {}
+                Err(error) => issues.push(format!(
+                    "failed to read metadata while sizing {}: {error}",
+                    entry.path().display()
+                )),
+            },
+            Err(error) => issues.push(format!(
+                "failed to walk stack data path {}: {error}",
+                path.display()
+            )),
+        }
+    }
+
+    DirectorySizeProbe {
+        bytes,
+        issue: if issues.is_empty() {
+            None
+        } else {
+            Some(issues.join("; "))
+        },
+    }
 }
 
 // Re-export list_snapshots if needed by commands (it was used in Status)
@@ -635,7 +686,7 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 mod tests {
     use super::StackConfig;
     use super::{
-        list_snapshots, probe_annex_available, require_successful_command,
+        dir_size, list_snapshots, probe_annex_available, require_successful_command,
         sync_event_payload_schemas_for_database_url,
     };
     use crate::sandbox::prelude::*;
@@ -710,6 +761,22 @@ mod tests {
         let probe = list_snapshots(temp.path());
         assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
         assert!(probe.issue.is_none());
+    }
+
+    #[test]
+    fn dir_size_reports_non_directory_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_path = temp.path().join("postgres");
+        fs::write(&file_path, "blocked").unwrap();
+
+        let probe = dir_size(&file_path);
+        assert_eq!(probe.bytes, 0);
+        assert!(
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("expected directory while sizing stack data path")
+        );
     }
 
     #[sinex_test]
