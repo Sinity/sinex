@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::workspace_root;
@@ -325,11 +325,28 @@ impl XtaskCommand for ExerciseCommand {
 
         for (i, ex) in exercises.iter().enumerate() {
             let ex_dir = output_dir.join(&ex.id);
-            let _ = fs::create_dir_all(&ex_dir);
 
             if ctx.is_human() {
                 print!("  [{}/{}] {} ...", i + 1, exercises.len(), ex.id);
-                let _ = std::io::stdout().flush();
+                if let Err(error) = std::io::stdout().flush() {
+                    eprintln!("⚠ failed to flush exercise progress output: {error}");
+                }
+            }
+
+            if let Err(error) = create_exercise_dir(&ex_dir) {
+                let message = format!("{error:#}");
+                if ctx.is_human() {
+                    println!(" \x1b[31m✗\x1b[0m");
+                    println!("      {message}");
+                }
+                outcomes.push(ExerciseOutcome {
+                    id: ex.id.clone(),
+                    passed: false,
+                    duration: Duration::ZERO,
+                    steps: vec![],
+                    error: Some(message),
+                });
+                continue;
             }
 
             let outcome = match &ex.kind {
@@ -496,7 +513,7 @@ impl XtaskCommand for ExerciseCommand {
 
         result = result
             .with_message(format!("{passed}/{} exercises passed", outcomes.len()))
-            .with_data(serde_json::to_value(&report).unwrap_or_default())
+            .with_data(serde_json::to_value(&report).wrap_err("serialize exercise report")?)
             .with_duration(ctx.elapsed());
 
         if failed > 0 {
@@ -538,6 +555,11 @@ impl XtaskCommand for ExerciseCommand {
             track_in_history: true,
         }
     }
+}
+
+fn create_exercise_dir(path: &std::path::Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .wrap_err_with(|| format!("create exercise output directory {}", path.display()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1230,6 +1252,31 @@ mod tests {
         let error = save_output(&missing, "step", &output).unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("step.stdout.log"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_create_exercise_dir_creates_missing_path() -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("exercise").join("nested");
+
+        create_exercise_dir(&path)?;
+
+        assert!(path.is_dir());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_create_exercise_dir_reports_parent_creation_failure()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let blocking = dir.path().join("file-parent");
+        fs::write(&blocking, "blocker")?;
+        let path = blocking.join("exercise");
+
+        let error = create_exercise_dir(&path).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("create exercise output directory"));
         Ok(())
     }
 
