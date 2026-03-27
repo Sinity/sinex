@@ -92,7 +92,7 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
     }
 }
 
-/// Verify `PostgreSQL` extensions are available and can be loaded
+/// Verify `PostgreSQL` extensions are available and usable without mutating state.
 pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
 {
     let mut messages = Vec::new();
@@ -148,14 +148,17 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 
     details.insert("extensions", json!(extension_status));
 
-    // Test extension loading in a transaction (rollback to avoid side effects)
+    // Exercise installed extension functionality using read-only queries only.
     if !has_failures {
-        match test_extension_loading(&pool, &mut messages).await {
+        match test_installed_extension_functionality(&pool, &mut messages).await {
             Ok(()) => {
-                messages.push("✓ All extensions can be loaded successfully".to_string());
+                messages.push(
+                    "✓ Installed extensions respond correctly in a read-only transaction"
+                        .to_string(),
+                );
             }
             Err(e) => {
-                messages.push(format!("✗ Extension loading test failed: {e}"));
+                messages.push(format!("✗ Extension functionality test failed: {e}"));
                 has_failures = true;
             }
         }
@@ -170,7 +173,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
     Ok((status, json!(details), messages))
 }
 
-/// Verify declarative schema readiness with comprehensive dry-run
+/// Verify declarative schema readiness with comprehensive read-only probing.
 pub async fn verify_schema_readiness() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
@@ -187,10 +190,10 @@ pub async fn verify_schema_readiness() -> NodeResult<(VerificationStatus, Value,
     let schema_info = check_schema_status(&pool, &mut messages).await?;
     details.insert("current_schema", json!(schema_info));
 
-    // Perform dry-run of pending schema apply
-    match perform_schema_dry_run(&pool, &mut messages, &mut details).await {
+    // Probe declarative schema readiness without applying anything.
+    match perform_schema_readiness_probe(&pool, &mut messages, &mut details).await {
         Ok(()) => {
-            messages.push("✓ Schema apply dry-run completed successfully".to_string());
+            messages.push("✓ Schema readiness probe completed successfully".to_string());
 
             // Verify schema readiness
             match verify_schema_integrity(&pool, &mut messages, &mut details).await {
@@ -205,7 +208,7 @@ pub async fn verify_schema_readiness() -> NodeResult<(VerificationStatus, Value,
             }
         }
         Err(e) => {
-            messages.push(format!("✗ Schema apply dry-run failed: {e}"));
+            messages.push(format!("✗ Schema readiness probe failed: {e}"));
             Ok((VerificationStatus::Fail, json!(details), messages))
         }
     }
@@ -255,7 +258,7 @@ async fn verify_single_extension(
 
     // Check if extension is available in the system
     let available_result = sqlx::query!(
-        "SELECT name FROM pg_available_extensions WHERE name = $1",
+        "SELECT name, default_version FROM pg_available_extensions WHERE name = $1",
         extension_name
     )
     .fetch_optional(pool)
@@ -275,7 +278,7 @@ async fn verify_single_extension(
 
     // Check if extension is already installed
     let installed_result = sqlx::query!(
-        "SELECT extname FROM pg_extension WHERE extname = $1",
+        "SELECT extname, extversion FROM pg_extension WHERE extname = $1",
         extension_name
     )
     .fetch_optional(pool)
@@ -284,65 +287,32 @@ async fn verify_single_extension(
 
     let installed = installed_result.is_some();
 
-    // For extensions that aren't installed, test if they CAN be installed
-    let can_install = if installed {
-        true
-    } else {
-        test_extension_installability(pool, extension_name)
-            .await
-            .unwrap_or(false)
-    };
+    let default_version = available_result.and_then(|row| row.default_version);
+    let installed_version = installed_result.map(|row| row.extversion);
 
     Ok(json!({
         "available": available,
         "installed": installed,
-        "can_install": can_install,
+        "default_version": default_version,
+        "installed_version": installed_version,
         "description": description
     }))
 }
 
-async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> NodeResult<bool> {
-    // Test installation in a transaction that we'll rollback
+async fn test_installed_extension_functionality(
+    pool: &PgPool,
+    messages: &mut Vec<String>,
+) -> NodeResult<()> {
+    // Preflight must remain read-only. Use an explicit read-only transaction so any
+    // accidental write fails immediately instead of mutating the runtime database.
     let mut tx = pool.begin().await.map_err(SinexError::from)?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(SinexError::from)?;
 
-    let result = sqlx::query(&format!(
-        "CREATE EXTENSION IF NOT EXISTS \"{extension_name}\""
-    ))
-    .execute(&mut *tx)
-    .await;
-
-    // Always rollback to avoid side effects
-    tx.rollback().await.map_err(SinexError::from)?;
-
-    Ok(result.is_ok())
-}
-
-async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<()> {
-    // Test loading all extensions in a transaction that we'll rollback
-    let mut tx = pool.begin().await.map_err(SinexError::from)?;
-
-    let extensions = vec!["timescaledb", "pg_jsonschema", "vector", "pg_trgm"];
-
-    for extension in extensions {
-        match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{extension}\""))
-            .execute(&mut *tx)
-            .await
-        {
-            Ok(_) => {
-                debug!("Extension {} loaded successfully in test", extension);
-            }
-            Err(e) => {
-                // Rollback and return error
-                let _ = tx.rollback().await;
-                return Err(SinexError::from(e));
-            }
-        }
-    }
-
-    // Test that extensions work by using their functionality
+    // Test that installed extensions work by using their functionality.
     test_extension_functionality(&mut tx, messages).await?;
-
-    // Rollback to clean up
     tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(())
@@ -455,18 +425,18 @@ async fn collect_schema_drift(pool: &PgPool) -> NodeResult<Vec<String>> {
     Ok(drift)
 }
 
-async fn perform_schema_dry_run(
+async fn perform_schema_readiness_probe(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
 ) -> NodeResult<()> {
-    info!("Performing declarative schema apply dry-run");
+    info!("Performing declarative schema readiness probe");
 
-    // Create a separate database connection for the dry-run
+    // Resolve the runtime database URL for consistent diagnostics.
     let _database_url = resolve_database_url()?;
 
-    // For a true dry-run, we'd apply against an ephemeral database.
-    // Here we verify declarative schema source availability and DB prerequisites.
+    // This path is intentionally read-only. It verifies declarative schema source
+    // availability and DB prerequisites without applying anything.
     let schema_sources = discover_schema_sources().await?;
     details.insert("schema_sources", json!(schema_sources));
 

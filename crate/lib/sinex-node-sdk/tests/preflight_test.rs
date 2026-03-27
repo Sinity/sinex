@@ -424,6 +424,18 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> TestResult<()> {
         assert!(extensions.contains_key("pg_jsonschema"));
         assert!(extensions.contains_key("vector"));
         assert!(extensions.contains_key("pg_trgm"));
+        for extension in extensions.values() {
+            let extension = extension
+                .as_object()
+                .expect("extension detail should be an object");
+            assert!(extension.contains_key("available"));
+            assert!(extension.contains_key("installed"));
+            assert!(extension.contains_key("default_version"));
+            assert!(
+                !extension.contains_key("can_install"),
+                "read-only preflight must not guess installability with CREATE EXTENSION probes"
+            );
+        }
 
         Ok(())
     })
