@@ -394,11 +394,14 @@ impl<'ctx> PipelineScope<'ctx> {
 
         match self.ctx.nats_handle() {
             Ok(nats) => match nats.log_tail(LOG_TAIL) {
-                Some(tail) if !tail.is_empty() => {
+                Ok(Some(tail)) if !tail.is_empty() => {
                     eprintln!("--- nats log tail ---\n{tail}");
                 }
-                _ => {
+                Ok(_) => {
                     eprintln!("--- nats log tail unavailable ---");
+                }
+                Err(error) => {
+                    eprintln!("--- nats log tail unreadable: {error:#} ---");
                 }
             },
             Err(error) => {

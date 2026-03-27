@@ -53,6 +53,7 @@ use crate::sandbox::db::{reset_database, verify_clean_state};
 use crate::sandbox::events::{CreatedEventInfo, EventPublisher, cleanup_created_records};
 use crate::sandbox::nats::EphemeralNats;
 use crate::sandbox::nats::NatsSetup;
+use crate::sandbox::nats::create_or_open_kv_store;
 use crate::sandbox::nats::shared_nats_handle;
 use crate::sandbox::prelude::TestResult;
 use crate::sandbox::snapshot_helper::{self, FailureContext};
@@ -431,17 +432,15 @@ impl Sandbox {
         let js = self.ensure_jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
         let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
-        let kv_store = match js
-            .create_key_value(jetstream::kv::Config {
+        let kv_store = create_or_open_kv_store(
+            &js,
+            jetstream::kv::Config {
                 bucket: bucket.clone(),
                 history: 64,
                 ..Default::default()
-            })
-            .await
-        {
-            Ok(store) => Ok(store),
-            Err(_) => js.get_key_value(bucket).await,
-        }?;
+            },
+        )
+        .await?;
         Ok(kv_store)
     }
 
@@ -471,17 +470,15 @@ impl Sandbox {
         let js = self.jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
         let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
-        let kv_store = match js
-            .create_key_value(jetstream::kv::Config {
+        let kv_store = create_or_open_kv_store(
+            &js,
+            jetstream::kv::Config {
                 bucket: bucket.clone(),
                 history: 64,
                 ..Default::default()
-            })
-            .await
-        {
-            Ok(store) => Ok(store),
-            Err(_) => js.get_key_value(bucket).await,
-        }?;
+            },
+        )
+        .await?;
         Ok(kv_store)
     }
 

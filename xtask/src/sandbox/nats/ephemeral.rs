@@ -222,20 +222,22 @@ impl EphemeralNats {
     }
 
     /// Return the tail of the NATS log file, if logging is enabled.
-    #[must_use]
-    pub fn log_tail(&self, max_lines: usize) -> Option<String> {
-        let path = self.log_path.as_ref()?;
-        let contents = std::fs::read_to_string(path).ok()?;
+    pub fn log_tail(&self, max_lines: usize) -> Result<Option<String>> {
+        let Some(path) = self.log_path.as_ref() else {
+            return Ok(None);
+        };
+        let contents = std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read NATS log {}", path.display()))?;
         let mut lines: Vec<&str> = contents.lines().collect();
         if lines.len() > max_lines {
             lines = lines.split_off(lines.len().saturating_sub(max_lines));
         }
-        Some(lines.join("\n"))
+        Ok(Some(lines.join("\n")))
     }
 
     /// Assert the NATS log does not contain any of the provided needles.
     pub fn assert_log_does_not_contain(&self, needles: &[&str], max_lines: usize) -> Result<()> {
-        let Some(tail) = self.log_tail(max_lines) else {
+        let Some(tail) = self.log_tail(max_lines)? else {
             return Ok(());
         };
         for needle in needles {
@@ -756,24 +758,55 @@ pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> 
     const LEADERSHIP_TTL_SECS: u64 = 15;
 
     let env = sinex_primitives::environment::environment();
-    let _ = js
-        .create_key_value(jetstream::kv::Config {
+    super::create_or_open_kv_store(
+        js,
+        jetstream::kv::Config {
             bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),
             history: 1,
             ..Default::default()
-        })
-        .await
-        .ok();
+        },
+    )
+    .await?;
 
-    let _ = js
-        .create_key_value(jetstream::kv::Config {
+    super::create_or_open_kv_store(
+        js,
+        jetstream::kv::Config {
             bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_leadership")),
             history: 5,
             max_age: Duration::from_secs(LEADERSHIP_TTL_SECS),
             ..Default::default()
-        })
-        .await
-        .ok();
+        },
+    )
+    .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_log_tail_surfaces_read_failures() -> Result<()> {
+        let store = TempDir::new()?;
+        let missing = store.path().join("missing.log");
+        let nats = EphemeralNats {
+            process: Arc::new(AsyncMutex::new(None)),
+            url: "127.0.0.1:4222".to_string(),
+            _store: store,
+            log_path: Some(missing.clone()),
+            chaos: None,
+            stream_prefix: None,
+            tls: None,
+            token: None,
+        };
+
+        let err = nats.log_tail(20).expect_err("missing log should surface an error");
+        assert!(
+            err.to_string().contains("failed to read NATS log"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
 }

@@ -8,6 +8,8 @@ pub use jetstream::*;
 pub use pipeline::*;
 pub use setup::*;
 
+use async_nats::jetstream::{Context as JetStreamContext, kv};
+use color_eyre::eyre::eyre;
 use color_eyre::eyre::Result;
 use std::sync::Arc;
 
@@ -19,4 +21,59 @@ pub async fn shared_nats_handle() -> Result<Arc<EphemeralNats>> {
 /// Get a handle to the shared ephemeral NATS instance (secure profile).
 pub async fn shared_secure_nats_handle() -> Result<Arc<EphemeralNats>> {
     shared_ephemeral_nats(SharedNatsProfile::SecureTls).await
+}
+
+pub async fn create_or_open_kv_store(
+    js: &JetStreamContext,
+    config: kv::Config,
+) -> Result<kv::Store> {
+    let bucket = config.bucket.clone();
+    match js.create_key_value(config).await {
+        Ok(store) => Ok(store),
+        Err(create_err) => js.get_key_value(&bucket).await.map_err(|open_err| {
+            eyre!(
+                "failed to create or open JetStream KV bucket {bucket} (create: {create_err}, open: {open_err})"
+            )
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_create_or_open_kv_store_reuses_existing_bucket() -> Result<()> {
+        let nats = EphemeralNats::start().await?;
+        let js = nats.jetstream().await?;
+        let bucket = format!("KV_TEST_REUSE_{}", uuid::Uuid::now_v7().simple());
+
+        let first = create_or_open_kv_store(
+            &js,
+            kv::Config {
+                bucket: bucket.clone(),
+                history: 1,
+                ..Default::default()
+            },
+        )
+        .await?;
+        let second = create_or_open_kv_store(
+            &js,
+            kv::Config {
+                bucket: bucket.clone(),
+                history: 1,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        first.put("probe".to_string(), b"ok".to_vec().into()).await?;
+        assert!(
+            second.entry("probe").await?.is_some(),
+            "second handle should see entries written through the first"
+        );
+        nats.shutdown().await?;
+        Ok(())
+    }
 }
