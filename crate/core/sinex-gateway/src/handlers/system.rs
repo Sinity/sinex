@@ -1,13 +1,23 @@
 //! System RPC handlers.
 
-use crate::service_container::ServiceContainer;
-use color_eyre::eyre::Result;
-use serde_json::{Value, json};
+use crate::service_container::{
+    GatewayHealthReport, GatewayHealthStatus, ServiceContainer,
+};
+use color_eyre::eyre::{Context, Result};
+use serde_json::Value;
+use sinex_primitives::domain::HealthStatus;
+use sinex_primitives::rpc::system::{
+    ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+};
 
 pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
-    let report = services.health_report().await;
-    let crate::service_container::GatewayHealthReport {
-        status: overall_status,
+    let response = system_health_response(services.health_report().await);
+    serde_json::to_value(response).wrap_err("failed to serialize system.health response")
+}
+
+fn system_health_response(report: GatewayHealthReport) -> SystemHealthResponse {
+    let GatewayHealthReport {
+        status,
         db_ok,
         nats,
         replay,
@@ -16,28 +26,105 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
         degradation_reasons,
     } = report;
 
-    Ok(json!({
-        "status": overall_status,
-        "healthy": healthy,
-        "serving": serving,
-        "degradation_reasons": degradation_reasons,
-        "components": {
-            "database": {
-                "status": if db_ok { "healthy" } else { "unhealthy" },
-                "connected": db_ok
+    SystemHealthResponse {
+        status: map_gateway_health_status(status),
+        healthy,
+        serving,
+        degradation_reasons,
+        components: ComponentsHealth {
+            database: ComponentHealth {
+                status: if db_ok {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Unhealthy
+                },
+                connected: db_ok,
+                latency_ms: None,
+                detail: None,
             },
-            "nats": {
-                "status": if nats.connected { "healthy" } else { "unhealthy" },
-                "connected": nats.connected,
-                "latency_ms": nats.latency_ms,
-                "detail": nats.detail
+            nats: system_component_health(
+                nats.connected,
+                nats.latency_ms.map(|value| value as f64),
+                (!nats.detail.trim().is_empty()).then_some(nats.detail),
+            ),
+            replay_control: ReplayControlHealth {
+                status: if replay.connected {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Unhealthy
+                },
+                enabled: replay.enabled,
+                connected: replay.connected,
+                last_error: replay.last_error.map(|error| error.message),
             },
-            "replay_control": {
-                "status": if replay.connected { "healthy" } else { "unhealthy" },
-                "enabled": replay.enabled,
-                "connected": replay.connected,
-                "last_error": replay.last_error
-            }
-        }
-    }))
+        },
+    }
+}
+
+fn system_component_health(
+    connected: bool,
+    latency_ms: Option<f64>,
+    detail: Option<String>,
+) -> ComponentHealth {
+    ComponentHealth {
+        status: if connected {
+            HealthStatus::Healthy
+        } else {
+            HealthStatus::Unhealthy
+        },
+        connected,
+        latency_ms,
+        detail,
+    }
+}
+
+fn map_gateway_health_status(status: GatewayHealthStatus) -> HealthStatus {
+    match status {
+        GatewayHealthStatus::Healthy => HealthStatus::Healthy,
+        GatewayHealthStatus::Degraded => HealthStatus::Degraded,
+        GatewayHealthStatus::Unhealthy => HealthStatus::Unhealthy,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service_container::{NatsHealthProbe, ReplayControlStatus};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn system_health_response_uses_typed_contract() -> TestResult<()> {
+        let response = system_health_response(GatewayHealthReport {
+            status: GatewayHealthStatus::Degraded,
+            db_ok: true,
+            nats: NatsHealthProbe {
+                connected: false,
+                latency_ms: Some(42),
+                detail: "timed out".to_string(),
+            },
+            replay: ReplayControlStatus {
+                enabled: true,
+                connected: false,
+                last_error: None,
+            },
+            healthy: false,
+            serving: true,
+            degradation_reasons: vec!["NATS unavailable".to_string()],
+        });
+
+        assert_eq!(response.status, HealthStatus::Degraded);
+        assert!(response.components.database.connected);
+        assert_eq!(response.components.nats.status, HealthStatus::Unhealthy);
+        assert_eq!(response.components.nats.latency_ms, Some(42.0));
+        assert_eq!(
+            response.components.nats.detail.as_deref(),
+            Some("timed out")
+        );
+        assert!(response.components.replay_control.enabled);
+        assert_eq!(
+            serde_json::to_value(&response)?["degradation_reasons"][0],
+            "NATS unavailable"
+        );
+        Ok(())
+    }
 }
