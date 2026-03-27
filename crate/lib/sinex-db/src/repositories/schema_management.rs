@@ -114,7 +114,7 @@ impl<'a> SchemaManagementRepository<'a> {
         }
 
         let discovered_count = candidates.len();
-        let existing = self.load_active_schema_map().await?;
+        let existing = self.load_schema_map().await?;
 
         let mut created = 0;
         let mut updated = 0;
@@ -123,14 +123,12 @@ impl<'a> SchemaManagementRepository<'a> {
         for candidate in candidates {
             let key = candidate.key();
             if let Some(record) = existing.get(&key) {
-                if record
-                    .content_hash
-                    .as_ref()
-                    .is_some_and(|hash| hash == &candidate.content_hash)
+                if record.content_hash.as_ref().is_some_and(|hash| hash == &candidate.content_hash)
+                    && record.is_active
                 {
                     unchanged += 1;
                 } else {
-                    self.update_existing_schema(record.id, &candidate).await?;
+                    self.register_schema(candidate.schema.clone()).await?;
                     updated += 1;
                 }
             } else {
@@ -798,61 +796,36 @@ impl<'a> SchemaManagementRepository<'a> {
         Ok(())
     }
 
-    async fn load_active_schema_map(
+    async fn load_schema_map(
         &self,
     ) -> DbResult<std::collections::HashMap<(String, String, String), SchemaRecord>> {
         let rows = sqlx::query!(
             r#"
             SELECT 
-                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
-                content_hash
+                content_hash,
+                is_active
             FROM sinex_schemas.event_payload_schemas
-            WHERE is_active = true
             "#
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "load active schemas for sync"))?;
+        .map_err(|e| db_error(e, "load schemas for sync"))?;
 
         let mut map = std::collections::HashMap::with_capacity(rows.len());
         for row in rows {
             map.insert(
                 (row.source, row.event_type, row.schema_version),
                 SchemaRecord {
-                    id: row.id,
                     content_hash: Some(row.content_hash),
+                    is_active: row.is_active,
                 },
             );
         }
 
         Ok(map)
-    }
-
-    async fn update_existing_schema(
-        &self,
-        schema_id: Uuid,
-        candidate: &SchemaCandidate,
-    ) -> DbResult<()> {
-        sqlx::query!(
-            r#"
-            UPDATE sinex_schemas.event_payload_schemas
-            SET schema_content = $1,
-                content_hash = $2,
-                updated_at = NOW()
-            WHERE id = $3::uuid
-            "#,
-            &candidate.schema.schema_content,
-            candidate.content_hash.as_str(),
-            schema_id
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "update schema content"))?;
-
-        Ok(())
     }
 
     async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Uuid> {
@@ -947,6 +920,6 @@ impl SchemaCandidate {
 
 #[derive(Debug, Clone)]
 struct SchemaRecord {
-    id: Uuid,
     content_hash: Option<String>,
+    is_active: bool,
 }

@@ -250,3 +250,44 @@ async fn failed_schema_registration_does_not_clear_active(
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn sync_discovered_schemas_reactivates_inactive_matching_row(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let repo = ctx.pool.schemas();
+    let schema = NewEventSchema {
+        source: EventSource::from_static("sync-source"),
+        event_type: EventType::from_static("sync.event"),
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({
+            "type": "object",
+            "properties": { "value": { "type": "string" } },
+            "required": ["value"]
+        }),
+    };
+
+    let registered = repo.register_schema(schema.clone()).await?;
+    repo.deprecate_schema(registered.id.as_uuid()).await?;
+
+    let sync_result = repo
+        .sync_discovered_schemas([(
+            (
+                schema.source.to_string(),
+                schema.event_type.to_string(),
+                schema.schema_version.clone(),
+            ),
+            schema.schema_content.clone(),
+        )])
+        .await?;
+
+    assert_eq!(sync_result.created, 0);
+    assert_eq!(sync_result.updated, 1);
+
+    let active = repo
+        .get_active_schema(schema.source.as_str(), schema.event_type.as_str())
+        .await?;
+    assert_eq!(active.id, registered.id);
+    assert!(active.is_active);
+    Ok(())
+}
