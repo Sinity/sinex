@@ -3,7 +3,8 @@
 //! Jobs are tracked in the history database (`SQLite`). Log files are stored in the filesystem.
 //! `JobManager` is a thin wrapper - `HistoryDb` is the single source of truth.
 
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{Result, WrapErr, eyre};
+use std::path::Path;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -235,20 +236,13 @@ async fn execute_status(
         .ok_or_else(|| eyre!("job {id} not found"))?;
 
     if follow {
-        // Follow mode: seek-based tailing (O(delta) per poll, not O(n))
-        use std::io::{Read, Seek, SeekFrom};
-
         let mut last_pos = 0u64;
         loop {
             // Read only new content since last position
-            if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
-                let _ = file.seek(SeekFrom::Start(last_pos));
-                let mut buf = String::new();
-                if let Ok(n) = file.read_to_string(&mut buf)
-                    && n > 0
-                {
+            if let Some((buf, new_pos)) = read_stdout_delta_from_file(&job.stdout_path, last_pos)? {
+                if !buf.is_empty() {
                     print!("{buf}");
-                    last_pos += n as u64;
+                    last_pos = new_pos;
                 }
             } else if job.is_terminal() {
                 // File gone (archived to DB) — read remainder from DB
@@ -264,12 +258,10 @@ async fn execute_status(
             match updated {
                 Some(j) if j.is_terminal() => {
                     // One more read to catch final output before file is archived
-                    if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
-                        let _ = file.seek(SeekFrom::Start(last_pos));
-                        let mut buf = String::new();
-                        if let Ok(n) = file.read_to_string(&mut buf)
-                            && n > 0
-                        {
+                    if let Some((buf, _new_pos)) =
+                        read_stdout_delta_from_file(&job.stdout_path, last_pos)?
+                    {
+                        if !buf.is_empty() {
                             print!("{buf}");
                         }
                     } else {
@@ -291,6 +283,8 @@ async fn execute_status(
             .with_message(format!("Job {id} completed"))
             .with_duration(ctx.elapsed()))
     } else {
+        let stdout_tail = job.tail_stdout(5);
+
         if ctx.is_human() {
             println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
@@ -311,16 +305,26 @@ async fn execute_status(
                 println!("  Updated:  {}", &p.updated_at);
             }
             // Show last few lines of output
-            if let Ok(tail) = job.tail_stdout(5)
-                && !tail.is_empty()
-            {
-                println!("\n  Last output:\n{tail}");
+            match &stdout_tail {
+                Ok(tail) if !tail.is_empty() => {
+                    println!("\n  Last output:\n{tail}");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    println!("\n  Last output: <unavailable>");
+                    println!("  Output read failed: {error:#}");
+                }
             }
         }
 
         let mut result = CommandResult::success()
             .with_message(format!("Job {id} status"))
             .with_duration(ctx.elapsed());
+        if let Err(error) = &stdout_tail {
+            result = result.with_warning(format!(
+                "failed to read recent stdout for job {id}: {error:#}"
+            ));
+        }
 
         if !ctx.is_human() {
             // Stage/diagnostic queries target the invocation record, not the job handle.
@@ -357,6 +361,29 @@ async fn execute_status(
 
         Ok(result)
     }
+}
+
+fn read_stdout_delta_from_file(path: &Path, last_pos: u64) -> Result<Option<(String, u64)>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to open job stdout log {}", path.display()));
+        }
+    };
+
+    file.seek(SeekFrom::Start(last_pos))
+        .with_context(|| format!("failed to seek job stdout log {}", path.display()))?;
+
+    let mut buf = String::new();
+    let bytes_read = file
+        .read_to_string(&mut buf)
+        .with_context(|| format!("failed to read job stdout log {}", path.display()))?;
+
+    Ok(Some((buf, last_pos + bytes_read as u64)))
 }
 
 fn execute_output(
@@ -551,6 +578,7 @@ fn progress_to_json(progress: &InvocationProgress) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use tempfile::tempdir;
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -590,6 +618,36 @@ mod tests {
         assert_eq!(status_to_str(JobLifecycleStatus::Failed), "failed");
         assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
         assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_stdout_delta_from_file_reports_io_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let error = read_stdout_delta_from_file(dir.path(), 0).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(dir.path().to_string_lossy().as_ref()));
+        assert!(
+            message.contains("failed to open job stdout log")
+                || message.contains("failed to seek job stdout log")
+                || message.contains("failed to read job stdout log")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_stdout_delta_from_file_reads_new_bytes_only()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("stdout.log");
+        std::fs::write(&path, "first\nsecond\n")?;
+
+        let first = read_stdout_delta_from_file(&path, 0)?;
+        assert_eq!(first, Some(("first\nsecond\n".to_string(), 13)));
+
+        let second = read_stdout_delta_from_file(&path, 13)?;
+        assert_eq!(second, Some((String::new(), 13)));
         Ok(())
     }
 }
