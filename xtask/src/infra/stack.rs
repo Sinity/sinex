@@ -186,6 +186,8 @@ pub struct StackStatus {
     pub annex: AnnexStatus,
     pub data_sizes: DataSizes,
     pub snapshots: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_issue: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -248,7 +250,8 @@ impl StackStatus {
             nats,
             annex,
             data_sizes,
-            snapshots,
+            snapshots: snapshots.snapshots,
+            snapshot_issue: snapshots.issue,
         }
     }
 }
@@ -584,14 +587,22 @@ pub fn dir_size(path: &Path) -> u64 {
 
 // Re-export list_snapshots if needed by commands (it was used in Status)
 // or move it to crate::utils if it's generic enough. It seems specific to stack layout.
+pub struct SnapshotListProbe {
+    pub snapshots: Vec<String>,
+    pub issue: Option<String>,
+}
+
 #[must_use]
-pub fn list_snapshots(dir: &Path) -> Vec<String> {
+pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
     if !dir.exists() {
-        return vec![];
+        return SnapshotListProbe {
+            snapshots: vec![],
+            issue: None,
+        };
     }
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries
+    match fs::read_dir(dir) {
+        Ok(entries) => {
+            let mut snapshots: Vec<String> = entries
                 .filter_map(std::result::Result::ok)
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
@@ -603,18 +614,32 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
                         None
                     }
                 })
-                .collect()
-        })
-        .unwrap_or_default()
+                .collect();
+            snapshots.sort();
+            SnapshotListProbe {
+                snapshots,
+                issue: None,
+            }
+        }
+        Err(error) => SnapshotListProbe {
+            snapshots: Vec::new(),
+            issue: Some(format!(
+                "failed to read snapshots directory {}: {error:#}",
+                dir.display()
+            )),
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::StackConfig;
     use super::{
-        probe_annex_available, require_successful_command, sync_event_payload_schemas_for_database_url,
+        list_snapshots, probe_annex_available, require_successful_command,
+        sync_event_payload_schemas_for_database_url,
     };
     use crate::sandbox::prelude::*;
+    use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
 
@@ -660,6 +685,31 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("permission denied"));
         assert!(message.contains("git init for annex repository"));
+    }
+
+    #[test]
+    fn list_snapshots_reports_directory_read_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let not_a_dir = temp.path().join("snapshots");
+        fs::write(&not_a_dir, "blocked").unwrap();
+
+        let probe = list_snapshots(&not_a_dir);
+        assert!(probe.snapshots.is_empty());
+        assert!(
+            probe.issue.unwrap_or_default().contains("failed to read snapshots directory")
+        );
+    }
+
+    #[test]
+    fn list_snapshots_collects_known_extensions_sorted() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("b.tar.zst"), "").unwrap();
+        fs::write(temp.path().join("a.sql.zst"), "").unwrap();
+        fs::write(temp.path().join("ignore.txt"), "").unwrap();
+
+        let probe = list_snapshots(temp.path());
+        assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
+        assert!(probe.issue.is_none());
     }
 
     #[sinex_test]

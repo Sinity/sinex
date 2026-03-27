@@ -252,15 +252,23 @@ async fn execute_status(
                     "not initialized"
                 }
             );
+            if let Some(issue) = &status.snapshot_issue {
+                println!("Snapshots:   unavailable");
+                println!("             {issue}");
+            } else {
+                println!("Snapshots:   {}", status.snapshots.len());
+            }
         }
 
         if !watch {
-            break;
+            let mut result = CommandResult::success().with_data(serde_json::to_value(&status)?);
+            if let Some(issue) = &status.snapshot_issue {
+                result = result.with_warning(issue.clone());
+            }
+            return Ok(result);
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-
-    Ok(CommandResult::success())
 }
 
 fn execute_logs(
