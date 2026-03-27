@@ -20,10 +20,11 @@ use blake3::Hasher;
 use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::SelfObserver;
+use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_node_sdk::annex::GitAnnex;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
@@ -263,6 +264,21 @@ impl MaterialAssembler {
         self
     }
 
+    fn spawn_observer_emit<F>(&self, metric: &'static str, future: F)
+    where
+        F: Future<Output = Result<(), SelfObservationError>> + Send + 'static,
+    {
+        tokio::spawn(async move {
+            if let Err(error) = future.await {
+                warn!(
+                    metric,
+                    error = %error,
+                    "Failed to emit material assembly telemetry"
+                );
+            }
+        });
+    }
+
     /// Increment the "started" stats counter when a new assembly begins
     pub(super) fn stats_inc_started(&self) {
         self.stats.inc_started();
@@ -276,11 +292,10 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            tokio::spawn(async move {
-                let _ = observer
-                    .emit_counter("sinex_assembly_started_total", 1, None)
-                    .await;
-            });
+            self.spawn_observer_emit(
+                "sinex_assembly_started_total",
+                async move { observer.emit_counter("sinex_assembly_started_total", 1, None).await },
+            );
         }
     }
 
@@ -296,26 +311,42 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            tokio::spawn(async move {
-                let _ = observer
-                    .emit_counter("sinex_assembly_completed_total", 1, None)
-                    .await;
-                let _ = observer
-                    .emit_counter("sinex_assembly_bytes_total", bytes, None)
-                    .await;
-                // Emit histogram for duration
-                let _ = observer
-                    .emit_histogram(
-                        "sinex_assembly_duration_seconds",
-                        1,             // count
-                        duration_secs, // sum
-                        duration_secs, // min
-                        duration_secs, // max
-                        None,
-                        None,
-                    )
-                    .await;
-            });
+            self.spawn_observer_emit(
+                "sinex_assembly_completed_total",
+                async move {
+                    observer
+                        .emit_counter("sinex_assembly_completed_total", 1, None)
+                        .await
+                },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_bytes_total",
+                async move { observer.emit_counter("sinex_assembly_bytes_total", bytes, None).await },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_duration_seconds",
+                async move {
+                    observer
+                        .emit_histogram(
+                            "sinex_assembly_duration_seconds",
+                            1,
+                            duration_secs,
+                            duration_secs,
+                            duration_secs,
+                            None,
+                            None,
+                        )
+                        .await
+                },
+            );
         }
     }
 
@@ -331,11 +362,10 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            tokio::spawn(async move {
-                let _ = observer
-                    .emit_counter("sinex_assembly_failed_total", 1, None)
-                    .await;
-            });
+            self.spawn_observer_emit(
+                "sinex_assembly_failed_total",
+                async move { observer.emit_counter("sinex_assembly_failed_total", 1, None).await },
+            );
         }
     }
 
@@ -350,11 +380,10 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            tokio::spawn(async move {
-                let _ = observer
-                    .emit_counter("sinex_assembly_timed_out_total", 1, None)
-                    .await;
-            });
+            self.spawn_observer_emit(
+                "sinex_assembly_timed_out_total",
+                async move { observer.emit_counter("sinex_assembly_timed_out_total", 1, None).await },
+            );
         }
     }
 
@@ -410,11 +439,14 @@ impl MaterialAssembler {
 
             if let Some(ref observer) = self.observer {
                 let observer = observer.clone();
-                tokio::spawn(async move {
-                    let _ = observer
-                        .emit_counter("sinex_assembly_disk_backpressure_total", 1, None)
-                        .await;
-                });
+                self.spawn_observer_emit(
+                    "sinex_assembly_disk_backpressure_total",
+                    async move {
+                        observer
+                            .emit_counter("sinex_assembly_disk_backpressure_total", 1, None)
+                            .await
+                    },
+                );
             }
 
             return Err(SinexError::service(format!(
@@ -803,10 +835,13 @@ impl MaterialAssembler {
     }
 
     async fn check_orphaned_folder(&self, path: std::path::PathBuf) -> IngestdResult<()> {
-        let folder_name = path
+        let Some(folder_name) = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or_default();
+        else {
+            warn!(path = ?path, "Skipping orphaned assembler folder with non-UTF-8 name");
+            return Ok(());
+        };
 
         let Ok(material_id) = Uuid::from_str(folder_name) else {
             return Ok(()); // Skip non-UUID folders
