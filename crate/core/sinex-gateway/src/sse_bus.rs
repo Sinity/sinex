@@ -15,10 +15,12 @@ use sinex_primitives::{Id, JsonValue, Timestamp};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Batch window: accumulate confirmation IDs for this duration before DB fetch.
 const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
+const SUBSCRIBE_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const SUBSCRIBE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Maximum IDs to accumulate before forcing a fetch (even within the batch window).
 const BATCH_MAX_IDS: usize = 32;
@@ -249,59 +251,101 @@ impl SubscriptionBus {
         ready: Option<Arc<tokio::sync::Notify>>,
     ) {
         let subject = env.nats_subject("events.confirmations.>");
-        let mut sub = match nats_client.subscribe(subject.clone()).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                error!(
-                    ?e,
-                    subject, "Failed to subscribe to confirmations — SSE bus disabled"
-                );
-                return;
-            }
-        };
-
-        info!(subject, "SSE subscription bus started");
-
-        // Signal readiness after NATS subscription is established.
-        if let Some(notify) = ready {
-            notify.notify_one();
-        }
-
         let mut id_buffer: Vec<Id<Event<JsonValue>>> = Vec::with_capacity(BATCH_MAX_IDS);
         let mut batch_timer = tokio::time::interval(BATCH_WINDOW);
         batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut ready = ready;
+        let mut ready_notified = false;
 
-        loop {
-            tokio::select! {
-                biased;
-
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
-                        info!("SSE bus shutting down");
-                        break;
+        'outer: loop {
+            let mut sub = loop {
+                let subscribe_result =
+                    tokio::time::timeout(SUBSCRIBE_ATTEMPT_TIMEOUT, nats_client.subscribe(subject.clone())).await;
+                match subscribe_result {
+                    Ok(Ok(sub)) => {
+                        if ready_notified {
+                            info!(subject, "SSE subscription bus reconnected");
+                        } else {
+                            info!(subject, "SSE subscription bus started");
+                            if let Some(notify) = ready.take() {
+                                notify.notify_one();
+                            }
+                            ready_notified = true;
+                        }
+                        break sub;
+                    }
+                    Ok(Err(error)) => {
+                        warn!(
+                            ?error,
+                            subject,
+                            retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
+                            "Failed to subscribe to confirmations — retrying"
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            subject,
+                            subscribe_timeout_ms = SUBSCRIBE_ATTEMPT_TIMEOUT.as_millis(),
+                            retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
+                            "Timed out subscribing to confirmations — retrying"
+                        );
                     }
                 }
-
-                msg = sub.next() => {
-                    let Some(msg) = msg else {
-                        warn!("NATS subscription closed — SSE bus stopping");
-                        break;
-                    };
-
-                    // Parse confirmation payload: { "event_id": "...", "persisted": true, "ts_ingest": "..." }
-                    if let Some(event_id) = Self::parse_confirmation(&msg.payload) {
-                        id_buffer.push(event_id);
-
-                        // Flush immediately if buffer full
-                        if id_buffer.len() >= BATCH_MAX_IDS {
-                            self.flush_batch(&mut id_buffer, &pool).await;
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            if !id_buffer.is_empty() {
+                                self.flush_batch(&mut id_buffer, &pool).await;
+                            }
+                            info!("SSE bus shutting down");
+                            break 'outer;
                         }
                     }
+                    _ = tokio::time::sleep(SUBSCRIBE_RETRY_DELAY) => {}
                 }
+            };
 
-                _ = batch_timer.tick() => {
-                    if !id_buffer.is_empty() {
-                        self.flush_batch(&mut id_buffer, &pool).await;
+            loop {
+                tokio::select! {
+                    biased;
+
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            if !id_buffer.is_empty() {
+                                self.flush_batch(&mut id_buffer, &pool).await;
+                            }
+                            info!("SSE bus shutting down");
+                            break 'outer;
+                        }
+                    }
+
+                    msg = sub.next() => {
+                        let Some(msg) = msg else {
+                            warn!(
+                                retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
+                                "NATS subscription closed — SSE bus reconnecting"
+                            );
+                            if !id_buffer.is_empty() {
+                                self.flush_batch(&mut id_buffer, &pool).await;
+                            }
+                            continue 'outer;
+                        };
+
+                        // Parse confirmation payload: { "event_id": "...", "persisted": true, "ts_ingest": "..." }
+                        if let Some(event_id) = Self::parse_confirmation(&msg.payload) {
+                            id_buffer.push(event_id);
+
+                            // Flush immediately if buffer full
+                            if id_buffer.len() >= BATCH_MAX_IDS {
+                                self.flush_batch(&mut id_buffer, &pool).await;
+                            }
+                        }
+                    }
+
+                    _ = batch_timer.tick() => {
+                        if !id_buffer.is_empty() {
+                            self.flush_batch(&mut id_buffer, &pool).await;
+                        }
                     }
                 }
             }

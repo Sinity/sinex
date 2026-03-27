@@ -681,8 +681,8 @@ impl HistoryDb {
                     duration: row.get(3)?,
                 })
             })?
-            .filter_map(Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .wrap_err_with(|| format!("failed to read stored test rows for invocation {inv_id}"))?;
 
         // Counts
         let total_passed = rows
@@ -847,8 +847,8 @@ impl HistoryDb {
 
         let rows: Vec<(String, i64, Option<i64>)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .filter_map(Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .wrap_err("failed to read stored infrastructure timing rows")?;
 
         if rows.is_empty() {
             return Ok(None);
@@ -1225,6 +1225,7 @@ impl HistoryDb {
 #[allow(clippy::module_inception)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -1579,6 +1580,32 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_analyze_last_run_surfaces_corrupted_rows() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO test_results (
+                invocation_id,
+                test_name,
+                package,
+                status,
+                duration_secs,
+                attempt
+            ) VALUES (?1, 'test_corrupt', 'pkg-a', 'pass', zeroblob(4), 1)
+            ",
+            rusqlite::params![inv_id],
+        )?;
+
+        let error = db
+            .analyze_last_run()
+            .expect_err("corrupted test rows should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read stored test rows for invocation"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_analyze_last_run_empty() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-empty.db");
@@ -1587,6 +1614,72 @@ mod tests {
         // No invocations at all
         let analysis = db.analyze_last_run()?;
         assert!(analysis.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_infra_timing_summary_surfaces_corrupted_rows() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO test_results (
+                invocation_id,
+                test_name,
+                package,
+                status,
+                duration_secs,
+                attempt,
+                slot_name,
+                slot_wait_ms,
+                cleanup_ms
+            ) VALUES (
+                ?1,
+                'test_corrupt_slot',
+                'pkg-a',
+                'pass',
+                0.1,
+                1,
+                'slot-a',
+                zeroblob(4),
+                10
+            )
+            ",
+            rusqlite::params![inv_id],
+        )?;
+
+        let error = db
+            .get_infra_timing_summary()
+            .expect_err("corrupted infrastructure timing rows should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read stored infrastructure timing rows"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_backfill_test_metadata_surfaces_corrupted_output_rows() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO test_results (
+                invocation_id,
+                test_name,
+                package,
+                status,
+                duration_secs,
+                attempt,
+                output
+            ) VALUES (?1, 'test_corrupt_output', 'pkg-a', 'pass', 0.1, 1, zeroblob(4))
+            ",
+            rusqlite::params![inv_id],
+        )?;
+
+        let error = db
+            .backfill_test_metadata(inv_id, &HashMap::new())
+            .expect_err("corrupted output rows should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read stored sandbox metadata rows for invocation"));
         Ok(())
     }
 

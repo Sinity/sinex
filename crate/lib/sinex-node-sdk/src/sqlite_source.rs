@@ -10,7 +10,12 @@ use std::{error::Error, fmt, future::Future};
 use tracing::warn;
 
 fn open_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
-    Connection::open_with_flags(Path::new(path.as_str()), OpenFlags::SQLITE_OPEN_READ_ONLY)
+    let conn =
+        Connection::open_with_flags(Path::new(path.as_str()), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    // Set a busy timeout so we retry on SQLITE_BUSY (source app holding a write lock)
+    // instead of failing immediately. 5 seconds is generous enough for WAL checkpoints.
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(conn)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,30 +279,25 @@ where
     })
 }
 
-#[must_use]
-fn stable_material_id(source_identifier: &str, stable_key: &str) -> Uuid {
-    let stable_key = format!("{source_identifier}#{stable_key}");
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, stable_key.as_bytes())
-}
-
+/// Stage source material bytes through the normal acquisition pipeline.
+///
+/// Each call creates a fresh source material with a UUIDv7 ID — every observation
+/// is a distinct material, even if the underlying source content is identical.
 #[cfg(feature = "messaging")]
-pub async fn stage_stable_material(
+pub async fn stage_material(
     acquisition: &AcquisitionManager,
     source_identifier: &str,
-    stable_key: &str,
     bytes: &[u8],
     reason: &str,
     metadata: Option<JsonValue>,
 ) -> NodeResult<Uuid> {
-    let material_id = stable_material_id(source_identifier, stable_key);
-    let mut builder = acquisition
-        .build_material(source_identifier)
-        .with_material_id(material_id);
+    let mut builder = acquisition.build_material(source_identifier);
     if let Some(metadata_value) = metadata.clone() {
         builder = builder.with_metadata(metadata_value);
     }
 
     let mut handle = builder.begin().await?;
+    let material_id = handle.material_id;
     acquisition.append_slice(&mut handle, bytes).await?;
 
     if let Some(metadata_value) = metadata {

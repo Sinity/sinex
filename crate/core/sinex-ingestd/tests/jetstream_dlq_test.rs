@@ -360,6 +360,7 @@ async fn start_consumer_with_hooks(
         topology.clone(),
         ack_wait,
         hooks.fail_once.clone(),
+        hooks.persistence_failures_remaining.clone(),
         hooks.processing_delay,
         hooks.delivery_counter.clone(),
         hooks.route_db_errors_to_dlq,
@@ -606,6 +607,54 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
     assert_eq!(
         dlq_info.state.messages, 0,
         "With route_db_errors_to_dlq=false, persistence errors should NAK, not DLQ"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// When persistence keeps failing all the way to the consumer max-deliver limit,
+/// the final delivery should be routed to DLQ instead of silently aging out.
+#[sinex_test]
+async fn test_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+
+    let suffix = format!("persist-terminal-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
+    let (hooks, counters) = TestHooks::builder()
+        .fail_persistence_attempts(10)
+        .count_deliveries()
+        .build();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(100), &hooks).await?;
+
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        format!("persist.{suffix}"),
+        Some(setup.namespace.clone()),
+    );
+
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    publisher
+        .publish("persist.test", json!({"case": "db-error-terminal-dlq"}))
+        .await?;
+
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for terminal DLQ entry"))?
+        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("Persistence error"),
+        "DLQ error should contain 'Persistence error', got: {error_field}"
+    );
+    assert!(
+        counters.delivery_count() >= 10,
+        "expected at least 10 delivery attempts before terminal DLQ routing, saw {}",
+        counters.delivery_count()
     );
 
     setup.handle.abort();

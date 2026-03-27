@@ -1,9 +1,12 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
+const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
+const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
 
 #[derive(Debug, Clone)]
 pub struct PostgresConfig {
@@ -54,6 +57,17 @@ fn read_postmaster_pid(path: &Path) -> Result<Option<i32>> {
     Ok(Some(pid))
 }
 
+fn format_command_output(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!(" stdout: {stdout}"),
+        (true, false) => format!(" stderr: {stderr}"),
+        (false, false) => format!(" stdout: {stdout}; stderr: {stderr}"),
+    }
+}
+
 impl PostgresManager {
     #[must_use]
     pub fn new(config: PostgresConfig) -> Self {
@@ -61,7 +75,11 @@ impl PostgresManager {
     }
 
     pub fn init(&self, verbose: bool) -> Result<()> {
+        fs::create_dir_all(&self.config.run_dir).context("failed to create run dir")?;
+        fs::create_dir_all(&self.config.logs_dir).context("failed to create logs dir")?;
+
         if self.config.data_dir.join("PG_VERSION").exists() {
+            self.ensure_runtime_config()?;
             if verbose {
                 println!("PostgreSQL data directory already initialized");
             }
@@ -73,57 +91,42 @@ impl PostgresManager {
         }
 
         fs::create_dir_all(&self.config.data_dir).context("failed to create data dir")?;
-        fs::create_dir_all(&self.config.run_dir).context("failed to create run dir")?;
-        fs::create_dir_all(&self.config.logs_dir).context("failed to create logs dir")?;
+        let mut initdb = self.pg_command("initdb");
+        initdb.args([
+            "--auth=trust",
+            "--no-locale",
+            "--encoding=UTF8",
+            "-U",
+            "postgres",
+            "-D",
+        ]);
+        initdb.arg(&self.config.data_dir);
 
-        let status = self
-            .pg_command("initdb")
-            .args([
-                "--auth=trust",
-                "--no-locale",
-                "--encoding=UTF8",
-                "-U",
-                "postgres",
-                "-D",
-            ])
-            .arg(&self.config.data_dir)
-            .stdout(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .stderr(if verbose {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
-            .status()
-            .context("Failed to run initdb")?;
-
-        if !status.success() {
-            bail!("initdb failed with status {status}");
+        if verbose {
+            let status = initdb
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .context("Failed to run initdb")?;
+            if !status.success() {
+                bail!("initdb failed with status {status}");
+            }
+        } else {
+            let output = initdb
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .context("Failed to run initdb")?;
+            if !output.status.success() {
+                bail!(
+                    "initdb failed with status {}{}",
+                    output.status,
+                    format_command_output(&output)
+                );
+            }
         }
 
-        let conf_path = self.config.data_dir.join("postgresql.conf");
-        let mut conf = fs::OpenOptions::new()
-            .append(true)
-            .open(conf_path)
-            .context("Failed to open postgresql.conf")?;
-
-        writeln!(conf, "\n# sinex-dev configuration")?;
-        writeln!(
-            conf,
-            "unix_socket_directories = '{}'",
-            self.config.run_dir.display()
-        )?;
-        writeln!(conf, "listen_addresses = ''")?; // TCP disabled, use Unix sockets only
-        writeln!(conf, "port = {}", self.config.port)?;
-        writeln!(conf, "max_connections = 800")?;
-        writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
-        writeln!(conf, "log_destination = 'stderr'")?;
-        writeln!(conf, "logging_collector = on")?;
-        writeln!(conf, "log_directory = '{}'", self.config.logs_dir.display())?;
-        writeln!(conf, "log_filename = 'postgres.log'")?;
+        self.ensure_runtime_config()?;
 
         if verbose {
             println!("PostgreSQL initialized");
@@ -133,6 +136,10 @@ impl PostgresManager {
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
+        fs::create_dir_all(&self.config.run_dir).context("failed to create run dir")?;
+        fs::create_dir_all(&self.config.logs_dir).context("failed to create logs dir")?;
+        self.ensure_runtime_config()?;
+
         match self.postmaster_pid_state()? {
             PostmasterPidState::Missing => {}
             PostmasterPidState::Running(_) => {
@@ -160,30 +167,44 @@ impl PostgresManager {
 
         let log_path = self.config.logs_dir.join("postgres.log");
 
-        let status = self
-            .pg_command("pg_ctl")
-            .args([
-                "-D",
-                self.config
-                    .data_dir
-                    .to_str()
-                    .expect("data dir must be valid UTF-8"),
-                "start",
-                "-w",
-            ])
-            .arg("-l")
-            .arg(&log_path)
-            .arg("-o")
-            .arg(format!(
-                "-k {} -p {}",
-                self.config.run_dir.display(),
-                self.config.port
-            ))
-            .status()
-            .context("Failed to start PostgreSQL")?;
+        let mut pg_ctl = self.pg_command("pg_ctl");
+        pg_ctl.args([
+            "-D",
+            self.config
+                .data_dir
+                .to_str()
+                .expect("data dir must be valid UTF-8"),
+            "start",
+            "-w",
+        ]);
+        pg_ctl.arg("-l").arg(&log_path).arg("-o").arg(format!(
+            "-k {} -p {}",
+            self.config.run_dir.display(),
+            self.config.port
+        ));
 
-        if !status.success() {
-            bail!("pg_ctl start failed with status {status}");
+        if verbose {
+            let status = pg_ctl
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .context("Failed to start PostgreSQL")?;
+            if !status.success() {
+                bail!("pg_ctl start failed with status {status}");
+            }
+        } else {
+            let output = pg_ctl
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .context("Failed to start PostgreSQL")?;
+            if !output.status.success() {
+                bail!(
+                    "pg_ctl start failed with status {}{}",
+                    output.status,
+                    format_command_output(&output)
+                );
+            }
         }
 
         // Wait for readiness
@@ -436,6 +457,70 @@ impl PostgresManager {
 
         Ok(())
     }
+
+    fn render_runtime_config(&self) -> String {
+        format!(
+            "{MANAGED_CONFIG_BEGIN}
+unix_socket_directories = '{}'
+listen_addresses = ''
+port = {}
+max_connections = 800
+max_worker_processes = 24
+shared_preload_libraries = 'timescaledb'
+timescaledb.max_background_workers = 16
+log_destination = 'stderr'
+logging_collector = on
+log_directory = '{}'
+log_filename = 'postgres.log'
+{MANAGED_CONFIG_END}",
+            self.config.run_dir.display(),
+            self.config.port,
+            self.config.logs_dir.display()
+        )
+    }
+
+    fn ensure_runtime_config(&self) -> Result<()> {
+        let conf_path = self.config.data_dir.join("postgresql.conf");
+        let existing = fs::read_to_string(&conf_path)
+            .wrap_err_with(|| format!("failed to read {}", conf_path.display()))?;
+        let managed_block = self.render_runtime_config();
+
+        let updated = if let Some(start) = existing.find(MANAGED_CONFIG_BEGIN) {
+            let end = existing
+                .find(MANAGED_CONFIG_END)
+                .map(|offset| offset + MANAGED_CONFIG_END.len())
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!(
+                        "managed postgres config marker is missing closing delimiter in {}",
+                        conf_path.display()
+                    )
+                })?;
+            format!(
+                "{}{}{}",
+                &existing[..start],
+                managed_block,
+                &existing[end..]
+            )
+        } else if let Some(start) = existing.find(LEGACY_CONFIG_MARKER) {
+            let prefix = existing[..start].trim_end();
+            if prefix.is_empty() {
+                managed_block
+            } else {
+                format!("{prefix}\n\n{managed_block}")
+            }
+        } else {
+            let prefix = existing.trim_end();
+            if prefix.is_empty() {
+                managed_block
+            } else {
+                format!("{prefix}\n\n{managed_block}")
+            }
+        };
+
+        fs::write(&conf_path, format!("{updated}\n"))
+            .wrap_err_with(|| format!("failed to write {}", conf_path.display()))?;
+        Ok(())
+    }
 }
 
 fn pg_isready_probe(output: std::io::Result<std::process::Output>) -> Result<bool> {
@@ -595,6 +680,47 @@ mod tests {
             assert!(message.contains("pg_isready exited unexpectedly"));
             assert!(message.contains("invalid option"));
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_runtime_config_rewrites_legacy_tail_block() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(
+            manager.config.data_dir.join("postgresql.conf"),
+            "shared_buffers = '128MB'\n\n# sinex-dev configuration\nport = 1111\n",
+        )?;
+
+        manager.ensure_runtime_config()?;
+
+        let config = fs::read_to_string(manager.config.data_dir.join("postgresql.conf"))?;
+        assert!(config.contains(MANAGED_CONFIG_BEGIN));
+        assert!(config.contains("max_worker_processes = 24"));
+        assert!(config.contains("timescaledb.max_background_workers = 16"));
+        assert!(!config.contains("port = 1111"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_runtime_config_replaces_existing_managed_block() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+        fs::create_dir_all(&manager.config.data_dir)?;
+        fs::write(
+            manager.config.data_dir.join("postgresql.conf"),
+            format!(
+                "shared_buffers = '128MB'\n\n{MANAGED_CONFIG_BEGIN}\nport = 1111\n{MANAGED_CONFIG_END}\n"
+            ),
+        )?;
+
+        manager.ensure_runtime_config()?;
+
+        let config = fs::read_to_string(manager.config.data_dir.join("postgresql.conf"))?;
+        assert_eq!(config.matches(MANAGED_CONFIG_BEGIN).count(), 1);
+        assert!(config.contains("port = 55432"));
+        assert!(!config.contains("port = 1111"));
         Ok(())
     }
 }

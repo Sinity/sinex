@@ -28,7 +28,7 @@
 //! # Error Handling
 //!
 //! Common error scenarios:
-//! - **Serialization failures**: Corrupt checkpoint data falls back to `Checkpoint::None`
+//! - **Serialization failures**: Corrupt checkpoint data is surfaced as an error with context
 //! - **KV errors**: NATS KV failures are propagated as `SinexError::checkpoint`
 //!
 //! # Performance Considerations
@@ -39,7 +39,7 @@
 
 use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
 use futures::TryStreamExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::temporal::Timestamp;
 use std::convert::TryInto;
 use tracing::{debug, info, warn};
@@ -144,41 +144,47 @@ impl CheckpointState {
 
     /// Load checkpoint state from a local file.
     ///
-    /// Used to restore state after a hot reload. If the file doesn't exist
-    /// or is invalid, returns None (allowing fresh start).
-    pub async fn load_from_file(path: &std::path::Path) -> Option<Self> {
-        let Ok(contents) = tokio::fs::read_to_string(path).await else {
-            debug!(path = %path.display(), "No checkpoint file found or failed to read");
-            return None;
+    /// Used to restore state after a hot reload. Missing files are treated as
+    /// "no checkpoint"; unreadable or invalid files are surfaced as errors.
+    pub async fn load_from_file(path: &std::path::Path) -> NodeResult<Option<Self>> {
+        let contents = match tokio::fs::read_to_string(path).await {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                debug!(path = %path.display(), "No checkpoint file found");
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(
+                    SinexError::io("Failed to read checkpoint file")
+                        .with_context("path", path.display().to_string())
+                        .with_std_error(&error),
+                );
+            }
         };
 
-        let Ok(record) = serde_json::from_str::<FileCheckpointRecord>(&contents) else {
-            warn!(
-                path = %path.display(),
-                "Failed to parse checkpoint file"
-            );
-            return None;
-        };
+        let record = serde_json::from_str::<FileCheckpointRecord>(&contents).map_err(|error| {
+            SinexError::serialization("Failed to parse checkpoint file")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })?;
 
         // Validate magic and version
         if record.magic != FILE_CHECKPOINT_MAGIC {
-            warn!(
-                path = %path.display(),
-                expected = FILE_CHECKPOINT_MAGIC,
-                found = record.magic,
-                "Invalid checkpoint file magic"
+            return Err(
+                SinexError::checkpoint("Invalid checkpoint file magic")
+                    .with_context("path", path.display().to_string())
+                    .with_context("expected", FILE_CHECKPOINT_MAGIC)
+                    .with_context("found", record.magic),
             );
-            return None;
         }
 
         if record.version > FILE_CHECKPOINT_VERSION {
-            warn!(
-                path = %path.display(),
-                file_version = record.version,
-                supported_version = FILE_CHECKPOINT_VERSION,
-                "Checkpoint file version too new"
+            return Err(
+                SinexError::checkpoint("Checkpoint file version too new")
+                    .with_context("path", path.display().to_string())
+                    .with_context("file_version", record.version.to_string())
+                    .with_context("supported_version", FILE_CHECKPOINT_VERSION.to_string()),
             );
-            return None;
         }
 
         info!(
@@ -187,7 +193,7 @@ impl CheckpointState {
             "Loaded checkpoint from file"
         );
 
-        Some(record.state)
+        Ok(Some(record.state))
     }
 
     /// Delete the checkpoint file if it exists.
@@ -346,10 +352,9 @@ impl CheckpointManager {
     /// # Returns
     /// - `Ok(CheckpointState)`: Successfully loaded checkpoint
     /// - `Err(SinexError::checkpoint)`: NATS KV read error
-    /// - `Err(SinexError::Serialization)`: Corrupt checkpoint data (falls back to None)
+    /// - `Err(SinexError::Serialization)`: Corrupt checkpoint data
     ///
     /// # Behavior
-    /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - If no checkpoint exists for this consumer, a default checkpoint is returned
     /// - First-time nodes get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> NodeResult<CheckpointState> {
@@ -410,22 +415,20 @@ impl CheckpointManager {
             return Ok(None);
         }
 
-        match serde_json::from_slice::<CheckpointState>(&entry.value) {
-            Ok(mut state) => {
-                state.revision = entry.revision;
-                Ok(Some(state))
-            }
-            Err(err) => {
-                warn!(
-                    node = %self.node_name,
-                    consumer_group = %self.consumer_group,
-                    consumer_name = %self.consumer_name,
-                    error = %err,
-                    "Failed to decode checkpoint from KV; falling back"
-                );
-                Ok(None)
-            }
-        }
+        let mut state = self.decode_checkpoint_state(key, &entry.value)?;
+        state.revision = entry.revision;
+        Ok(Some(state))
+    }
+
+    fn decode_checkpoint_state(&self, key: &str, value: &[u8]) -> NodeResult<CheckpointState> {
+        serde_json::from_slice::<CheckpointState>(value).map_err(|error| {
+            SinexError::serialization("Failed to decode checkpoint from KV")
+                .with_context("node", self.node_name.clone())
+                .with_context("consumer_group", self.consumer_group.clone())
+                .with_context("consumer_name", self.consumer_name.clone())
+                .with_context("key", key.to_string())
+                .with_std_error(&error)
+        })
     }
 
     /// Save checkpoint to NATS KV only.
@@ -511,8 +514,7 @@ impl CheckpointManager {
             return Ok(Vec::new());
         };
 
-        let state: CheckpointState =
-            serde_json::from_slice(&entry).map_err(SinexError::serialization)?;
+        let state = self.decode_checkpoint_state(&self.kv_key(), &entry)?;
         let timestamp = state.last_activity;
         let history_entry = CheckpointHistoryEntry {
             id: self.kv_key(),
@@ -553,12 +555,9 @@ impl CheckpointManager {
             })?;
 
         let (processed_count, last_update) = match entry {
-            Some(e) => {
-                if let Ok(state) = serde_json::from_slice::<CheckpointState>(&e) {
-                    (state.processed_count, Some(state.last_activity))
-                } else {
-                    (0, None)
-                }
+            Some(entry) => {
+                let state = self.decode_checkpoint_state(&self.kv_key(), &entry)?;
+                (state.processed_count, Some(state.last_activity))
             }
             None => (0, None),
         };
@@ -570,6 +569,18 @@ impl CheckpointManager {
             first_checkpoint: None,
         })
     }
+}
+
+pub(crate) fn decode_checkpoint_data<T: DeserializeOwned>(
+    data: serde_json::Value,
+    state_label: &str,
+    node_name: &str,
+) -> NodeResult<T> {
+    serde_json::from_value::<T>(data).map_err(|error| {
+        SinexError::serialization(format!("Failed to decode {state_label}"))
+            .with_context("node", node_name.to_string())
+            .with_std_error(&error)
+    })
 }
 
 /// Historical checkpoint entry

@@ -213,7 +213,7 @@ impl ScopeReconcilerNode for HealthAggregator {
         scope_key: &str,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         let now = context.ts_orig.unwrap_or_else(Timestamp::now);
         let component = scope_key.to_string();
 
@@ -346,14 +346,12 @@ impl ScopeReconcilerNode for HealthAggregator {
             component_health.last_check_emission = Some(now);
         }
 
-        // Return the highest-priority output
+        let mut outputs = Vec::with_capacity(periodic_reports.len() + usize::from(immediate_alert.is_some()));
         if let Some(alert) = immediate_alert {
-            Ok(Some(alert))
-        } else if let Some(report) = periodic_reports.into_iter().next() {
-            Ok(Some(report))
-        } else {
-            Ok(None)
+            outputs.push(alert);
         }
+        outputs.extend(periodic_reports);
+        Ok(outputs)
     }
 }
 

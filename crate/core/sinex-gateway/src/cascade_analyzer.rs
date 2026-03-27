@@ -208,7 +208,7 @@ impl StreamingCascadeAnalyzer {
         );
 
         // Generate unique session ID for this analysis
-        let session_id = uuid::Uuid::now_v7().to_string();
+        let session_id = uuid::Uuid::now_v7().simple().to_string();
 
         // Wrap the entire transaction in a timeout to prevent indefinite holds
         let timeout_duration = self.config.timeout;
@@ -659,6 +659,13 @@ mod tests {
     async fn session_id_validation_rejects_invalid_chars() -> TestResult<()> {
         assert!(StreamingCascadeAnalyzer::validate_session_id("valid_session_1").is_ok());
         assert!(StreamingCascadeAnalyzer::validate_session_id("invalid-session").is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn generated_session_ids_use_validator_safe_format() -> TestResult<()> {
+        let session_id = Uuid::now_v7().simple().to_string();
+        assert!(StreamingCascadeAnalyzer::validate_session_id(&session_id).is_ok());
         Ok(())
     }
 

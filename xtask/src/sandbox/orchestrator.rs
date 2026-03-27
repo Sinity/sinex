@@ -89,21 +89,38 @@ pub struct CapturedOutput {
 }
 
 impl CapturedOutput {
-    /// Parse stderr as JSON lines, returning only lines that are valid JSON objects.
-    pub fn stderr_json_lines(&self) -> Vec<serde_json::Value> {
-        self.stderr
-            .lines()
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .collect()
+    /// Parse stderr as JSON lines, failing if any non-empty line is invalid.
+    pub fn stderr_json_lines(&self) -> Result<Vec<serde_json::Value>> {
+        parse_json_lines(&self.stderr, "stderr")
     }
 
-    /// Parse stdout as JSON lines, returning only lines that are valid JSON objects.
-    pub fn stdout_json_lines(&self) -> Vec<serde_json::Value> {
-        self.stdout
-            .lines()
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .collect()
+    /// Parse stdout as JSON lines, failing if any non-empty line is invalid.
+    pub fn stdout_json_lines(&self) -> Result<Vec<serde_json::Value>> {
+        parse_json_lines(&self.stdout, "stdout")
     }
+}
+
+fn parse_json_lines(output: &str, stream_name: &str) -> Result<Vec<serde_json::Value>> {
+    output
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            let value = serde_json::from_str::<serde_json::Value>(line).wrap_err_with(|| {
+                format!(
+                    "failed to parse {stream_name} JSON line {}: {line}",
+                    index + 1
+                )
+            })?;
+            if !value.is_object() {
+                bail!(
+                    "{stream_name} JSON line {} is not an object: {line}",
+                    index + 1
+                );
+            }
+            Ok(value)
+        })
+        .collect()
 }
 
 /// Configuration for a test gateway instance
@@ -291,12 +308,21 @@ async fn wait_for_gateway_tcp(addr: &std::net::SocketAddr) -> Result<()> {
 
 /// Find the workspace root by traversing up from current directory
 fn find_workspace_root() -> Result<PathBuf> {
-    let mut current = std::env::current_dir()?;
+    find_workspace_root_from(std::env::current_dir()?)
+}
+
+fn find_workspace_root_from(mut current: PathBuf) -> Result<PathBuf> {
     loop {
-        if current.join("Cargo.toml").exists() {
+        let manifest_path = current.join("Cargo.toml");
+        if manifest_path.exists() {
             // Check if it's a workspace root by reading content roughly
             // This is a heuristic; simpler than parsing TOML but usually sufficient for dev tools
-            let content = std::fs::read_to_string(current.join("Cargo.toml")).unwrap_or_default();
+            let content = std::fs::read_to_string(&manifest_path).wrap_err_with(|| {
+                format!(
+                    "failed to read workspace candidate manifest at {}",
+                    manifest_path.display()
+                )
+            })?;
             if content.contains("[workspace]") {
                 return Ok(current);
             }
@@ -431,4 +457,56 @@ pub async fn start_test_ingestd_with_config(
         stream_name,
         stderr_reader,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sinex_test]
+    async fn captured_output_stdout_json_lines_surfaces_invalid_json() -> TestResult<()> {
+        let output = CapturedOutput {
+            stdout: "{\"ok\":true}\nnot-json\n".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+
+        let error = output
+            .stdout_json_lines()
+            .expect_err("invalid JSON line should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to parse stdout JSON line 2"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn captured_output_stderr_json_lines_rejects_non_object_values() -> TestResult<()> {
+        let output = CapturedOutput {
+            stdout: String::new(),
+            stderr: "[]\n".to_string(),
+            exit_code: 0,
+        };
+
+        let error = output
+            .stderr_json_lines()
+            .expect_err("non-object JSON line should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("stderr JSON line 1 is not an object"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn find_workspace_root_from_surfaces_unreadable_manifest() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let workspace_root = tempdir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root)?;
+        std::fs::create_dir(workspace_root.join("Cargo.toml"))?;
+
+        let error = find_workspace_root_from(workspace_root.clone())
+            .expect_err("directory manifest should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read workspace candidate manifest"));
+        assert!(message.contains(workspace_root.join("Cargo.toml").display().to_string().as_str()));
+        Ok(())
+    }
 }

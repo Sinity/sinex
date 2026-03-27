@@ -377,6 +377,7 @@
                 if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
                   _pg_running=0
                   _nats_running=0
+                  _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
 
                   pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
                   (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
@@ -384,19 +385,25 @@
                   if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
                     echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
                   else
-                    # Detach from direnv and close inherited extra FDs so long-lived
-                    # daemons do not keep direnv's private pipes open.
-                    (
-                      exec </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1
-                      for _fd_path in /proc/$$/fd/*; do
-                        _fd_num="''${_fd_path##*/}"
-                        [ "$_fd_num" -le 2 ] && continue
-                        eval "exec ''${_fd_num}>&-"
-                      done
-                      exec setsid "$_xtask_bin" infra start
-                    ) &
-                    _sinex_infra_starting=1
-                    echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                    if mkdir "$_sinex_infra_start_lock" 2>/dev/null; then
+                      # Detach from direnv and close inherited extra FDs so long-lived
+                      # daemons do not keep direnv's private pipes open.
+                      (
+                        trap 'rmdir "$_sinex_infra_start_lock"' EXIT
+                        exec </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1
+                        for _fd_path in /proc/$$/fd/*; do
+                          _fd_num="''${_fd_path##*/}"
+                          [ "$_fd_num" -le 2 ] && continue
+                          eval "exec ''${_fd_num}>&-"
+                        done
+                        setsid "$_xtask_bin" --json infra start
+                      ) &
+                      _sinex_infra_starting=1
+                      echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                    else
+                      _sinex_infra_starting=1
+                      echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                    fi
                   fi
                 fi
                 # Dev TLS certs are generated lazily by preflight when needed.

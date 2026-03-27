@@ -9,7 +9,7 @@ use super::output::DerivedOutput;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
 use crate::automaton_node::{ErrorAction, PersistedState};
-use crate::checkpoint::{CheckpointManager, CheckpointState};
+use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
@@ -227,7 +227,7 @@ where
     async fn load_state(&mut self) -> NodeResult<()> {
         // Priority 1: file-based checkpoint (hot reload)
         if self.shutdown_config.restore_state_on_startup
-            && let Some(persisted) = self.try_restore_from_file().await
+            && let Some(persisted) = self.try_restore_from_file().await?
         {
             self.persisted_state = persisted;
             return Ok(());
@@ -239,10 +239,12 @@ where
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-        if let Some(persisted) = checkpoint_state
-            .data
-            .and_then(|data| serde_json::from_value::<PersistedState<N::State>>(data).ok())
-        {
+        if let Some(data) = checkpoint_state.data {
+            let persisted: PersistedState<N::State> = decode_checkpoint_data(
+                data,
+                "derived checkpoint state",
+                self.node.name(),
+            )?;
             info!(
                 node = %self.node.name(),
                 events_processed = persisted.events_processed,
@@ -258,28 +260,34 @@ where
         Ok(())
     }
 
-    async fn try_restore_from_file(&self) -> Option<PersistedState<N::State>> {
+    async fn try_restore_from_file(&self) -> NodeResult<Option<PersistedState<N::State>>> {
         let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
-        let file_state = CheckpointState::load_from_file(&checkpoint_path).await?;
-        let data = file_state.data?;
+        let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
+            return Ok(None);
+        };
+        let Some(data) = file_state.data else {
+            return Ok(None);
+        };
 
-        match serde_json::from_value::<PersistedState<N::State>>(data) {
-            Ok(persisted) => {
-                info!(
-                    node = %self.node.name(),
-                    events_processed = persisted.events_processed,
-                    "Restored state from hot reload file"
-                );
-                if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
-                    error!(node = %self.node.name(), error = %e, "Failed to delete hot reload file");
-                }
-                Some(persisted)
-            }
-            Err(e) => {
-                warn!(node = %self.node.name(), error = %e, "Failed to deserialize file checkpoint");
-                None
-            }
-        }
+        let persisted: PersistedState<N::State> = decode_checkpoint_data(
+            data,
+            "derived hot reload state",
+            self.node.name(),
+        )?;
+        info!(
+            node = %self.node.name(),
+            events_processed = persisted.events_processed,
+            "Restored state from hot reload file"
+        );
+        CheckpointState::delete_file(&checkpoint_path)
+            .await
+            .map_err(|error| {
+                SinexError::io("Failed to delete hot reload file after loading state")
+                    .with_context("node", self.node.name())
+                    .with_context("path", checkpoint_path.display().to_string())
+                    .with_std_error(&error)
+            })?;
+        Ok(Some(persisted))
     }
 
     pub async fn save_state_to_file(&self) -> std::io::Result<()> {
@@ -358,7 +366,7 @@ where
     pub async fn process_one(
         &mut self,
         event: Event<JsonValue>,
-    ) -> NodeResult<Option<Event<JsonValue>>> {
+    ) -> NodeResult<Vec<Event<JsonValue>>> {
         let context = DerivedTriggerContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
 
@@ -384,16 +392,11 @@ where
         }
 
         match result {
-            Ok(Some(output)) => {
-                let output_event = self.build_output_event(output, source_event_id, &context)?;
+            Ok(outputs) => {
+                let output_events = self.build_output_events(outputs, source_event_id, &context)?;
                 self.persisted_state.events_processed += 1;
                 self.events_since_checkpoint += 1;
-                Ok(Some(output_event))
-            }
-            Ok(None) => {
-                self.persisted_state.events_processed += 1;
-                self.events_since_checkpoint += 1;
-                Ok(None)
+                Ok(output_events)
             }
             Err(e) => {
                 let action = self.node.handle_error_derived(&e);
@@ -402,18 +405,30 @@ where
                         warn!(node = %self.node.name(), error = %e, "Skipping event");
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
-                        Ok(None)
+                        Ok(Vec::new())
                     }
                     ErrorAction::SendToDLQ => {
                         self.send_to_dlq_or_fail(&event, &e).await?;
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
-                        Ok(None)
+                        Ok(Vec::new())
                     }
                     ErrorAction::Retry => Err(e.into()),
                 }
             }
         }
+    }
+
+    fn build_output_events(
+        &self,
+        outputs: Vec<DerivedOutput<JsonValue>>,
+        fallback_source_id: Id<Event<JsonValue>>,
+        context: &DerivedTriggerContext,
+    ) -> NodeResult<Vec<Event<JsonValue>>> {
+        outputs
+            .into_iter()
+            .map(|output| self.build_output_event(output, fallback_source_id, context))
+            .collect()
     }
 
     /// Build an output `Event<JsonValue>` from a `DerivedOutput<JsonValue>`.
@@ -486,8 +501,7 @@ where
 
         for event in events {
             match self.process_one(event).await {
-                Ok(Some(output_event)) => outputs.push(output_event),
-                Ok(None) => {}
+                Ok(mut output_events) => outputs.append(&mut output_events),
                 Err(e) => {
                     error!(node = %self.node.name(), error = %e, "Error processing event in batch");
                 }
@@ -1107,17 +1121,18 @@ where
                     )
                     .await
                 {
-                    Ok(Some(output)) => {
-                        let output_event =
-                            self.build_output_event(output, ctx.trigger_event_id, &ctx)?;
+                    Ok(outputs) => {
+                        let output_events =
+                            self.build_output_events(outputs, ctx.trigger_event_id, &ctx)?;
                         if let Some(ref sender) = self.event_sender {
-                            sender.send(output_event).await.map_err(|_| {
-                                SinexError::lifecycle("Event channel closed during replay")
-                            })?;
-                            events_emitted += 1;
+                            for output_event in output_events {
+                                sender.send(output_event).await.map_err(|_| {
+                                    SinexError::lifecycle("Event channel closed during replay")
+                                })?;
+                                events_emitted += 1;
+                            }
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => {
                         warn!(node = %self.node.name(), error = %e, "Error in historical replay, skipping");
                     }

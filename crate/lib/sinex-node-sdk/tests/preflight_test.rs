@@ -202,8 +202,62 @@ async fn ensure_preflight_streams(
             ..Default::default()
         })
         .await?;
+    let _ = js
+        .create_key_value(async_nats::jetstream::kv::Config {
+            bucket: expected_checkpoint_bucket.clone(),
+            ..Default::default()
+        })
+        .await?;
 
     Ok(expected_checkpoint_bucket)
+}
+
+async fn ensure_preflight_event_streams_only(
+    js: &jetstream::Context,
+    env: &SinexEnvironment,
+) -> TestResult<()> {
+    let topology = JetStreamTopology::new(
+        env,
+        env.nats_stream_name("SINEX_RAW_EVENTS"),
+        "preflight-test-consumer".to_string(),
+        None,
+    );
+    let _ = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: topology.events_stream.clone(),
+            subjects: vec![env.nats_subject("events.>")],
+            ..Default::default()
+        })
+        .await?;
+    let _ = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: topology.confirmations_stream.clone(),
+            subjects: vec![format!("{}_CONFIRMATIONS", topology.events_stream)],
+            ..Default::default()
+        })
+        .await?;
+    let _ = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            subjects: vec![env.nats_subject("source_material.begin")],
+            ..Default::default()
+        })
+        .await?;
+    let _ = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            subjects: vec![env.nats_subject("source_material.slices.>")],
+            ..Default::default()
+        })
+        .await?;
+    let _ = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_END"),
+            subjects: vec![env.nats_subject("source_material.end")],
+            ..Default::default()
+        })
+        .await?;
+    Ok(())
 }
 
 fn write_valid_atuin_history_db(path: &std::path::Path) -> TestResult<()> {
@@ -1607,6 +1661,46 @@ async fn test_phase7_integration_skips_database_in_edge_mode(ctx: TestContext) -
                     .and_then(|value| value.get("checkpoint_bucket"))
                     .and_then(Value::as_str),
                 Some(expected_checkpoint_bucket.as_str())
+            );
+
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_phase7_integration_warns_when_checkpoint_bucket_missing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_url = ctx
+        .nats_url()
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected test NATS URL"))?;
+    let js: jetstream::Context = ctx.jetstream().await?;
+    let env_name = "edge".to_string();
+    let env = SinexEnvironment::new(&env_name)?;
+    let _environment_guard =
+        sinex_primitives::environment::override_environment_for_tests(&env_name)?;
+    ensure_preflight_event_streams_only(&js, &env).await?;
+
+    with_database_url_absent_and_env_vars(
+        &[
+            ("SINEX_EDGE_MODE", "1".to_string()),
+            ("SINEX_NATS_URL", nats_url),
+            ("SINEX_ENVIRONMENT", env_name),
+        ],
+        || async {
+            let (status, _details, messages) = verification::verify_end_to_end_integration().await?;
+
+            assert_eq!(status, VerificationStatus::Warning);
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains("checkpoint KV bucket")),
+                "expected checkpoint bucket failure in messages, got {messages:#?}"
             );
 
             Ok(())

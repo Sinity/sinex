@@ -937,48 +937,7 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             job_id,
             status,
             duration_secs,
-        } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                job_id = job_id,
-                action = "fresh",
-                cached_status = status,
-                cached_duration_secs = duration_secs,
-                "coordinator: fresh — last check already validated this code state"
-            );
-            if ctx.is_human() {
-                // H5: Include which packages were validated in the fresh message
-                let packages = {
-                    let cfg = config();
-                    crate::history::HistoryDb::open(&cfg.history_db_path())
-                        .ok()
-                        .and_then(|db| db.get_compiled_packages_for_invocation(*job_id).ok())
-                        .unwrap_or_default()
-                };
-                if packages.is_empty() {
-                    println!(
-                        "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
-                    );
-                } else {
-                    let pkg_list = if packages.len() <= 4 {
-                        packages.join(", ")
-                    } else {
-                        format!("{}, …+{}", packages[..3].join(", "), packages.len() - 3)
-                    };
-                    println!(
-                        "✅ Fresh: last check already validated {pkg_list} (job {job_id}, {duration_secs:.1}s)"
-                    );
-                }
-            }
-            CommandResult::success()
-                .with_message(format!("Fresh result from job {job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "fresh",
-                    "job_id": job_id,
-                    "cached_status": status,
-                    "cached_duration_secs": duration_secs,
-                }))
-        }
+        } => coordination_fresh_result(*job_id, status, *duration_secs, ctx, fresh_packages_probe(*job_id)),
         CoordinationResult::Attached { job_id } => {
             tracing::info!(
                 target: "xtask::coordinator",
@@ -1056,6 +1015,99 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
     }
+}
+
+struct FreshPackagesProbe {
+    packages: Vec<String>,
+    issue: Option<String>,
+}
+
+fn fresh_packages_probe(job_id: i64) -> FreshPackagesProbe {
+    let cfg = config();
+    let db_path = cfg.history_db_path();
+    let result = crate::history::HistoryDb::open(&db_path).and_then(|db| {
+        db.get_compiled_packages_for_invocation(job_id)
+            .map_err(Into::into)
+    });
+    fresh_packages_probe_from_result(job_id, &db_path, result)
+}
+
+fn fresh_packages_probe_from_result(
+    job_id: i64,
+    db_path: &std::path::Path,
+    result: color_eyre::eyre::Result<Vec<String>>,
+) -> FreshPackagesProbe {
+    match result {
+        Ok(packages) => FreshPackagesProbe {
+            packages,
+            issue: None,
+        },
+        Err(error) => FreshPackagesProbe {
+            packages: Vec::new(),
+            issue: Some(format!(
+                "failed to load compiled packages for fresh job {job_id} from {}: {error:#}",
+                db_path.display()
+            )),
+        },
+    }
+}
+
+fn coordination_fresh_result(
+    job_id: i64,
+    status: &str,
+    duration_secs: f64,
+    ctx: &CommandContext,
+    packages_probe: FreshPackagesProbe,
+) -> CommandResult {
+    tracing::info!(
+        target: "xtask::coordinator",
+        job_id = job_id,
+        action = "fresh",
+        cached_status = status,
+        cached_duration_secs = duration_secs,
+        "coordinator: fresh — last check already validated this code state"
+    );
+
+    if ctx.is_human() {
+        if packages_probe.packages.is_empty() {
+            println!(
+                "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
+            );
+        } else {
+            let pkg_list = if packages_probe.packages.len() <= 4 {
+                packages_probe.packages.join(", ")
+            } else {
+                format!(
+                    "{}, …+{}",
+                    packages_probe.packages[..3].join(", "),
+                    packages_probe.packages.len() - 3
+                )
+            };
+            println!(
+                "✅ Fresh: last check already validated {pkg_list} (job {job_id}, {duration_secs:.1}s)"
+            );
+        }
+        if let Some(issue) = &packages_probe.issue {
+            println!("   Warning: {issue}");
+        }
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Fresh result from job {job_id}"))
+        .with_data(serde_json::json!({
+            "action": "fresh",
+            "job_id": job_id,
+            "cached_status": status,
+            "cached_duration_secs": duration_secs,
+            "compiled_packages": packages_probe.packages,
+            "compiled_packages_issue": packages_probe.issue,
+        }));
+
+    if let Some(issue) = packages_probe.issue {
+        result = result.with_warning(issue);
+    }
+
+    result
 }
 
 /// Tree fingerprint exposed for callers that need it (e.g., recording in history DB).
@@ -1600,12 +1652,16 @@ mod tests {
     #[sinex_test]
     async fn test_coordination_to_result_fresh() -> TestResult<()> {
         let ctx = json_ctx();
-        let coord = CoordinationResult::Fresh {
-            job_id: 42,
-            status: "success".into(),
-            duration_secs: 3.5,
-        };
-        let result = coordination_to_result(&coord, &ctx);
+        let result = coordination_fresh_result(
+            42,
+            "success",
+            3.5,
+            &ctx,
+            FreshPackagesProbe {
+                packages: vec!["sinex-db".into(), "xtask".into()],
+                issue: None,
+            },
+        );
 
         assert!(result.is_success());
         let data = result.data.as_ref().expect("should have data");
@@ -1613,6 +1669,46 @@ mod tests {
         assert_eq!(data["job_id"], 42);
         assert_eq!(data["cached_status"], "success");
         assert_eq!(data["cached_duration_secs"], 3.5);
+        assert_eq!(data["compiled_packages"], serde_json::json!(["sinex-db", "xtask"]));
+        assert_eq!(data["compiled_packages_issue"], serde_json::Value::Null);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_coordination_fresh_result_surfaces_compiled_package_probe_errors() -> TestResult<()> {
+        let ctx = json_ctx();
+        let result = coordination_fresh_result(
+            42,
+            "success",
+            3.5,
+            &ctx,
+            FreshPackagesProbe {
+                packages: Vec::new(),
+                issue: Some("probe exploded".into()),
+            },
+        );
+
+        assert!(result.is_success());
+        assert_eq!(result.warnings, vec!["probe exploded".to_string()]);
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["compiled_packages"], serde_json::json!([]));
+        assert_eq!(data["compiled_packages_issue"], "probe exploded");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_fresh_packages_probe_from_result_reports_errors() -> TestResult<()> {
+        let db_path = std::path::Path::new("/tmp/test-history.db");
+        let probe = fresh_packages_probe_from_result(
+            7,
+            db_path,
+            Err(color_eyre::eyre::eyre!("history exploded")),
+        );
+        assert!(probe.packages.is_empty());
+        let issue = probe.issue.expect("probe failure should surface");
+        assert!(issue.contains("failed to load compiled packages for fresh job 7"));
+        assert!(issue.contains("/tmp/test-history.db"));
+        assert!(issue.contains("history exploded"));
         Ok(())
     }
 

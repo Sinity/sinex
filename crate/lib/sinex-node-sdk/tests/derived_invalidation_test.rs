@@ -215,8 +215,8 @@ impl ScopeReconcilerNode for TestReconciler {
         _scope_key: &str,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        Ok(Some(DerivedOutput::reconciled(
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+        Ok(vec![DerivedOutput::reconciled(
             ROutput {
                 total: input.value,
                 count: 1,
@@ -224,7 +224,7 @@ impl ScopeReconcilerNode for TestReconciler {
             context.ts_orig.unwrap_or_else(Timestamp::now),
             vec![*context.trigger_event_id.as_uuid()],
             "default".into(),
-        )))
+        )])
     }
 
     /// Custom recompute: sum all values in the working set.
@@ -288,11 +288,11 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
         scope_key: &str,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.total += input.value;
         state.count += 1;
 
-        Ok(Some(DerivedOutput::reconciled(
+        Ok(vec![DerivedOutput::reconciled(
             ROutput {
                 total: state.total,
                 count: state.count,
@@ -300,7 +300,7 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
             context.ts_orig.unwrap_or_else(Timestamp::now),
             vec![*context.trigger_event_id.as_uuid()],
             scope_key.to_string(),
-        )))
+        )])
     }
 }
 
@@ -320,7 +320,10 @@ async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
         )
         .await?;
 
-    let output = result.expect("single-scope live processing should emit");
+    let output = result
+        .into_iter()
+        .next()
+        .expect("single-scope live processing should emit");
     assert_eq!(output.payload["total"], 42);
     assert_eq!(output.payload["count"], 1);
     assert_eq!(output.scope_key.as_deref(), Some("default"));
@@ -359,8 +362,8 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
         scope_key: &str,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        Ok(Some(DerivedOutput::reconciled(
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+        Ok(vec![DerivedOutput::reconciled(
             ROutput {
                 total: input.value,
                 count: 1,
@@ -368,7 +371,7 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
             context.ts_orig.unwrap_or_else(Timestamp::now),
             vec![*context.trigger_event_id.as_uuid()],
             scope_key.to_string(),
-        )))
+        )])
     }
 }
 

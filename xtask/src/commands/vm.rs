@@ -217,6 +217,41 @@ struct VmTestResult {
     timed_out: bool,
 }
 
+async fn collect_vm_stream_output<R>(reader: Option<BufReader<R>>, stream_name: &str) -> Result<String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let Some(reader) = reader else {
+        return Ok(String::new());
+    };
+    let mut lines = reader.lines();
+    let mut out = String::new();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            Ok(None) => return Ok(out),
+            Err(error) => bail!("failed to read VM {stream_name} output: {error}"),
+        }
+    }
+}
+
+fn append_stream_task_output(
+    combined_output: &mut String,
+    stream_name: &str,
+    output: std::result::Result<Result<String>, tokio::task::JoinError>,
+) {
+    match output {
+        Ok(Ok(output)) => combined_output.push_str(&output),
+        Ok(Err(error)) => combined_output.push_str(&format!("{error:#}\n")),
+        Err(error) => combined_output.push_str(&format!(
+            "Failed to collect VM {stream_name} output: {error}\n"
+        )),
+    }
+}
+
 /// Run a single NixOS VM test via `nix build`.
 ///
 /// Tries `.#sinex-vm-{name}` first, falls back to `.#checks.x86_64-linux.sinex-vm-{name}`.
@@ -267,35 +302,15 @@ async fn run_single_vm_test(
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
 
-        let stdout_task = tokio::spawn(async move {
-            let mut out = String::new();
-            if let Some(reader) = stdout {
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    out.push_str(&line);
-                    out.push('\n');
-                }
-            }
-            out
-        });
-        let stderr_task = tokio::spawn(async move {
-            let mut out = String::new();
-            if let Some(reader) = stderr {
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    out.push_str(&line);
-                    out.push('\n');
-                }
-            }
-            out
-        });
+        let stdout_task = tokio::spawn(async move { collect_vm_stream_output(stdout, "stdout").await });
+        let stderr_task = tokio::spawn(async move { collect_vm_stream_output(stderr, "stderr").await });
 
         let timeout_duration = std::time::Duration::from_secs(effective_timeout);
         let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
 
         let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
-        combined_output.push_str(&stdout_out.unwrap_or_default());
-        combined_output.push_str(&stderr_out.unwrap_or_default());
+        append_stream_task_output(&mut combined_output, "stdout", stdout_out);
+        append_stream_task_output(&mut combined_output, "stderr", stderr_out);
 
         match wait_result {
             Ok(Ok(status)) => {
@@ -932,6 +947,69 @@ mod tests {
                 "tests/e2e/nixos-vm/test-scenarios/b-test.nix",
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_append_stream_task_output_surfaces_join_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut combined_output = String::new();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Result::<String>::Ok(String::from("unreachable"))
+        });
+        handle.abort();
+
+        append_stream_task_output(&mut combined_output, "stdout", handle.await);
+
+        assert!(combined_output.contains("Failed to collect VM stdout output"));
+        assert!(combined_output.contains("cancelled"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_vm_stream_output_collects_utf8_lines()
+    -> ::xtask::sandbox::TestResult<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (reader, mut writer) = tokio::io::duplex(64);
+        writer.write_all(b"alpha\nbeta\n").await?;
+        drop(writer);
+
+        let output = collect_vm_stream_output(Some(BufReader::new(reader)), "stdout").await?;
+        assert_eq!(output, "alpha\nbeta\n");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_vm_stream_output_surfaces_invalid_utf8()
+    -> ::xtask::sandbox::TestResult<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (reader, mut writer) = tokio::io::duplex(64);
+        writer.write_all(&[0xff, b'\n']).await?;
+        drop(writer);
+
+        let error = collect_vm_stream_output(Some(BufReader::new(reader)), "stderr")
+            .await
+            .expect_err("invalid utf8 should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read VM stderr output"));
+        assert!(message.contains("valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_append_stream_task_output_surfaces_stream_errors()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut combined_output = String::new();
+        append_stream_task_output(
+            &mut combined_output,
+            "stderr",
+            Ok(Err(color_eyre::eyre::eyre!("stream exploded"))),
+        );
+
+        assert!(combined_output.contains("stream exploded"));
         Ok(())
     }
 }

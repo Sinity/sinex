@@ -28,20 +28,19 @@ fn make_context(ts: Timestamp) -> DerivedTriggerContext {
 }
 
 /// Helper that mirrors the `ScopeReconcilerWrapper` dispatch:
-/// `scope_keys` → reconcile for each key, return first output.
+/// `scope_keys` → reconcile for each key, collect all outputs.
 async fn process(
     aggregator: &mut HealthAggregator,
     state: &mut HealthState,
     input: JsonValue,
     ctx: &DerivedTriggerContext,
-) -> Result<Option<DerivedOutput<JsonValue>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
     let scope_keys = aggregator.scope_keys(&input, ctx);
+    let mut outputs = Vec::new();
     for key in &scope_keys {
-        if let Some(output) = aggregator.reconcile(state, key, input.clone(), ctx).await? {
-            return Ok(Some(output));
-        }
+        outputs.extend(aggregator.reconcile(state, key, input.clone(), ctx).await?);
     }
-    Ok(None)
+    Ok(outputs)
 }
 
 #[sinex_test]
@@ -96,12 +95,15 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     });
 
     let context = make_context(Timestamp::now());
-    let output = process(&mut aggregator, &mut state, input, &context).await?;
+    let outputs = process(&mut aggregator, &mut state, input, &context).await?;
 
     // Should emit an immediate alert
-    assert!(output.is_some(), "alert should be emitted");
+    assert!(!outputs.is_empty(), "alert should be emitted");
 
-    let alert = output.unwrap();
+    let alert = outputs
+        .iter()
+        .find(|output| output.payload.get("alert_type").is_some())
+        .expect("failed transition should emit an alert");
     assert_eq!(
         alert.payload.get("alert_type").and_then(|v| v.as_str()),
         Some("component_status_change"),
@@ -243,8 +245,8 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     });
 
     let context1 = make_context(base_time);
-    let output1 = process(&mut aggregator, &mut state, input1, &context1).await?;
-    assert!(output1.is_some(), "first emission should occur");
+    let outputs1 = process(&mut aggregator, &mut state, input1, &context1).await?;
+    assert!(!outputs1.is_empty(), "first emission should occur");
 
     // Process second event within window (should NOT emit system status)
     let input2 = json!({
@@ -265,10 +267,60 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     });
 
     let context3 = make_context(base_time + Duration::seconds(6));
-    let output3 = process(&mut aggregator, &mut state, input3, &context3).await?;
+    let outputs3 = process(&mut aggregator, &mut state, input3, &context3).await?;
     assert!(
-        output3.is_some(),
+        !outputs3.is_empty(),
         "system status after window should be emitted"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_emits_all_due_reports_for_one_trigger(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 60,
+        enable_system_health_status: true,
+        enable_component_health_reports: true,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config,
+        ..Default::default()
+    };
+
+    let outputs = process(
+        &mut aggregator,
+        &mut state,
+        json!({
+            "component": "service-a",
+            "previous_status": "healthy",
+            "current_status": "healthy",
+        }),
+        &make_context(Timestamp::now()),
+    )
+    .await?;
+
+    assert_eq!(outputs.len(), 2, "first trigger should emit both periodic reports");
+    assert!(
+        outputs.iter().any(|output| {
+            output.payload.get("report_type").and_then(|value| value.as_str())
+                == Some("system_health_status")
+        }),
+        "system-wide report should be present"
+    );
+    assert!(
+        outputs.iter().any(|output| {
+            output.payload.get("report_type").and_then(|value| value.as_str())
+                == Some("component_health_report")
+        }),
+        "component report should be present"
     );
 
     Ok(())
@@ -309,11 +361,17 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
     });
 
     let context = make_context(base_time + Duration::seconds(10));
-    let output = process(&mut aggregator, &mut state, input, &context).await?;
+    let outputs = process(&mut aggregator, &mut state, input, &context).await?;
 
-    assert!(output.is_some(), "system status should be emitted");
+    assert!(!outputs.is_empty(), "system status should be emitted");
 
-    let system_status = output.unwrap();
+    let system_status = outputs
+        .into_iter()
+        .find(|output| {
+            output.payload.get("report_type").and_then(|v| v.as_str())
+                == Some("system_health_status")
+        })
+        .expect("system status output should be present");
     assert_eq!(
         system_status
             .payload
@@ -442,6 +500,17 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
+    let baseline = json!({
+        "component": "service-a",
+        "previous_status": "unknown",
+        "current_status": "healthy",
+    });
+    let baseline_ctx = make_context(Timestamp::now() - Duration::seconds(5));
+    let baseline_keys = aggregator.scope_keys(&baseline, &baseline_ctx);
+    aggregator
+        .reconcile(&mut state, &baseline_keys[0], baseline, &baseline_ctx)
+        .await?;
+
     let input = json!({
         "component": "service-a",
         "previous_status": "healthy",
@@ -450,9 +519,12 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
 
     let ctx = make_context(Timestamp::now());
     let scope_keys = aggregator.scope_keys(&input, &ctx);
-    let output = aggregator
+    let outputs = aggregator
         .reconcile(&mut state, &scope_keys[0], input, &ctx)
-        .await?
+        .await?;
+    let output = outputs
+        .into_iter()
+        .find(|candidate| candidate.payload.get("alert_type").is_some())
         .expect("failed transition should emit alert");
 
     assert_eq!(

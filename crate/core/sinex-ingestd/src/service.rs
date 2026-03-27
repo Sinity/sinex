@@ -51,6 +51,14 @@ async fn shutdown_signal(
     shutdown_notify.notified().await;
 }
 
+fn trigger_shutdown(
+    shutdown_flag: &Arc<AtomicBool>,
+    shutdown_notify: &Arc<tokio::sync::Notify>,
+) {
+    shutdown_flag.store(true, Ordering::SeqCst);
+    shutdown_notify.notify_waiters();
+}
+
 /// Main ingestion service
 pub struct IngestService {
     config: IngestdConfig,
@@ -384,7 +392,7 @@ impl IngestService {
                     None => std::future::pending().await,
                 }
             } => {
-                Self::handle_task_result("JetStream consumer", result, &shutdown_flag)
+                Self::handle_task_result("JetStream consumer", result, &shutdown_flag, &shutdown_notify)
             }
 
             // MaterialAssembler exited
@@ -394,7 +402,7 @@ impl IngestService {
                     None => std::future::pending().await,
                 }
             } => {
-                Self::handle_task_result("MaterialAssembler", result, &shutdown_flag)
+                Self::handle_task_result("MaterialAssembler", result, &shutdown_flag, &shutdown_notify)
             }
 
             // Normal shutdown signal
@@ -409,10 +417,11 @@ impl IngestService {
         name: &str,
         result: Result<IngestdResult<()>, tokio::task::JoinError>,
         shutdown_flag: &Arc<AtomicBool>,
+        shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
         match result {
-            Ok(res) => Self::handle_join_success(name, res, shutdown_flag),
-            Err(e) => Self::handle_join_error(name, e, shutdown_flag),
+            Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
+            Err(e) => Self::handle_join_error(name, e, shutdown_flag, shutdown_notify),
         }
     }
 
@@ -420,6 +429,7 @@ impl IngestService {
         name: &str,
         result: IngestdResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
+        shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Relaxed) => {
@@ -428,12 +438,12 @@ impl IngestService {
             }
             Ok(()) => {
                 error!("{name} exited unexpectedly without error");
-                shutdown_flag.store(true, Ordering::Relaxed);
+                trigger_shutdown(shutdown_flag, shutdown_notify);
                 Err(SinexError::service(format!("{name} exited unexpectedly")))
             }
             Err(e) => {
                 error!(error = %e, "{name} failed");
-                shutdown_flag.store(true, Ordering::Relaxed);
+                trigger_shutdown(shutdown_flag, shutdown_notify);
                 Err(e)
             }
         }
@@ -443,9 +453,10 @@ impl IngestService {
         name: &str,
         err: tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
+        shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
         error!(error = ?err, "{name} panicked");
-        shutdown_flag.store(true, Ordering::Relaxed);
+        trigger_shutdown(shutdown_flag, shutdown_notify);
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
@@ -769,9 +780,7 @@ impl IngestService {
     pub async fn shutdown(&mut self) -> IngestdResult<()> {
         info!("Initiating graceful shutdown");
 
-        self.shutdown_flag.store(true, Ordering::Relaxed);
-        // Wake all tasks that are waiting in shutdown_signal() reactively.
-        self.shutdown_notify.notify_waiters();
+        trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
         // Let background tasks observe the flag and finish before tearing down shared state.
         self.wait_for_tasks(Duration::from_secs(5)).await;
@@ -964,6 +973,52 @@ mod tests {
         service.wait_for_tasks(Duration::from_millis(10)).await;
 
         assert!(cancelled.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn task_failure_notifies_shutdown_waiters() -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+
+        let error = IngestService::handle_join_success(
+            "JetStream consumer",
+            Err(SinexError::service("boom")),
+            &service.shutdown_flag,
+            &service.shutdown_notify,
+        )
+        .expect_err("task failure should bubble up");
+        assert!(error.to_string().contains("boom"));
+
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+        )
+        .await
+        .expect("shutdown waiters should wake immediately");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn unexpected_task_exit_notifies_shutdown_waiters() -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+
+        let error = IngestService::handle_join_success(
+            "MaterialAssembler",
+            Ok(()),
+            &service.shutdown_flag,
+            &service.shutdown_notify,
+        )
+        .expect_err("unexpected exit should bubble up");
+        assert!(error.to_string().contains("exited unexpectedly"));
+
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+        )
+        .await
+        .expect("shutdown waiters should wake immediately");
+
         Ok(())
     }
 }

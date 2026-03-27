@@ -29,6 +29,31 @@ use time::OffsetDateTime;
 
 const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 
+fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
+    match current_dir {
+        Ok(path) => path.display().to_string(),
+        Err(error) => format!("<unavailable: {error}>"),
+    }
+}
+
+fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(|error| match error {
+                rusqlite::Error::SqliteFailure(inner, _) => Some(inner.code),
+                _ => None,
+            })
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ffi::ErrorCode::DatabaseBusy
+                        | rusqlite::ffi::ErrorCode::DatabaseLocked
+                )
+            })
+    })
+}
+
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -254,7 +279,15 @@ impl HistoryDb {
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
         db.is_synthetic = db.check_synthetic()?;
-        db.cleanup_stale_invocations();
+        if let Err(error) = db.cleanup_stale_invocations() {
+            if is_sqlite_lock_error(&error) {
+                eprintln!(
+                    "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"
+                );
+            } else {
+                return Err(error).context("failed to clean up stale invocations");
+            }
+        }
         Ok(db)
     }
 
@@ -585,9 +618,7 @@ impl HistoryDb {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
         let host = crate::config::config().hostname.clone();
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+        let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
         // Transition from synthetic to real: clear the marker on first real write.
@@ -924,25 +955,9 @@ impl HistoryDb {
     /// (preventing poisoned stats) while generous enough to avoid cancelling
     /// legitimate long-running operations. The `CommandContext` Drop guard
     /// handles most cases immediately; this is the safety net for SIGKILL.
-    fn cleanup_stale_invocations(&self) {
+    fn cleanup_stale_invocations(&self) -> Result<()> {
         // First collect PIDs of stale background jobs before updating them
-        let stale_pids: Vec<i64> = self
-            .conn
-            .prepare(
-                r"
-                SELECT pid FROM invocations
-                WHERE status = 'running'
-                  AND is_background = 1
-                  AND pid IS NOT NULL
-                  AND pid > 0
-                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
-                ",
-            )
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| row.get::<_, i64>(0))
-                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-            })
-            .unwrap_or_default();
+        let stale_pids = self.stale_background_invocation_pids()?;
 
         let cleaned = self.conn.execute(
             r"
@@ -954,11 +969,13 @@ impl HistoryDb {
               AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
             ",
             [],
-        );
-        if let Ok(count) = cleaned
-            && count > 0
+        )
+        .context("failed to mark stale invocations as cancelled")?;
+        if cleaned > 0
         {
-            eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes");
+            eprintln!(
+                "ℹ️  Cleaned up {cleaned} stale 'running' invocation(s) older than 10 minutes"
+            );
         }
 
         // Kill stale background processes to reclaim CPU/memory.
@@ -990,13 +1007,37 @@ impl HistoryDb {
         }
 
         // Also mark orphaned background_jobs rows (separate table, Phase 3).
-        let _ = self.conn.execute(
+        self.conn
+            .execute(
             r"UPDATE background_jobs
               SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               WHERE job_status = 'running'
                 AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
             [],
-        );
+        )
+            .context("failed to mark stale background jobs as orphaned")?;
+        Ok(())
+    }
+
+    fn stale_background_invocation_pids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT pid FROM invocations
+                WHERE status = 'running'
+                  AND is_background = 1
+                  AND pid IS NOT NULL
+                  AND pid > 0
+                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+                ",
+            )
+            .context("failed to prepare stale background invocation pid query")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .context("failed to execute stale background invocation pid query")?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to collect stale background invocation pids")
     }
 
     /// Finish a background job and archive its log content in `background_job_logs`.
@@ -1495,8 +1536,12 @@ impl HistoryDb {
 
         let rows: Vec<(i64, String)> = fetch_stmt
             .query_map([invocation_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .wrap_err_with(|| {
+                format!(
+                    "failed to read stored sandbox metadata rows for invocation {invocation_id}"
+                )
+            })?;
 
         for (id, output) in &rows {
             let meta = parse_sandbox_meta(output);
@@ -1603,9 +1648,7 @@ impl HistoryDb {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
         let host = crate::config::config().hostname.clone();
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+        let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
         // Create the durable invocation record.
@@ -3138,6 +3181,21 @@ pub struct StageTiming {
 ///   0: id, 1: invocation_id, 2: command, 3: args_json, 4: started_at,
 ///   5: pid, 6: stdout_path, 7: stderr_path, 8: job_status, 9: exit_code
 fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
+    fn invalid_background_job_field(
+        column_index: usize,
+        field_name: &'static str,
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> rusqlite::Error {
+        rusqlite::Error::FromSqlConversionFailure(
+            column_index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid background job {field_name}: {error}"),
+            )),
+        )
+    }
+
     let args_json: Option<String> = row.get(3)?;
     let started_at_str: String = row.get(4)?;
     let pid: Option<u32> = row.get(5)?;
@@ -3146,19 +3204,26 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
         id: row.get(0)?,
         invocation_id: row.get(1)?,
         command: row.get(2)?,
-        args: args_json
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default(),
+        args: match args_json {
+            Some(args_json) => serde_json::from_str(&args_json)
+                .map_err(|error| invalid_background_job_field(3, "args_json", error))?,
+            None => Vec::new(),
+        },
         started_at: OffsetDateTime::parse(
             &started_at_str,
             &time::format_description::well_known::Rfc3339,
         )
-        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+        .map_err(|error| invalid_background_job_field(4, "started_at", error))?,
         pid: pid.unwrap_or(0),
         stdout_path: row.get(6)?,
         stderr_path: row.get(7)?,
-        job_status: JobLifecycleStatus::try_from_str(&job_status_str)
-            .unwrap_or(JobLifecycleStatus::Orphaned),
+        job_status: JobLifecycleStatus::try_from_str(&job_status_str).map_err(|error| {
+            invalid_background_job_field(
+                8,
+                "job_status",
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
+            )
+        })?,
         exit_code: row.get(9)?,
     })
 }
@@ -3496,6 +3561,22 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
+    async fn test_capture_working_directory_success() -> TestResult<()> {
+        let captured = capture_working_directory(Ok(std::path::PathBuf::from("/tmp/sinex")));
+        assert_eq!(captured, "/tmp/sinex");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_capture_working_directory_surfaces_errors() -> TestResult<()> {
+        let captured =
+            capture_working_directory(Err(std::io::Error::other("cwd lookup exploded")));
+        assert!(captured.contains("<unavailable:"));
+        assert!(captured.contains("cwd lookup exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_history_db_lifecycle() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history.db");
@@ -3524,6 +3605,128 @@ mod tests {
         let stats = db.get_stats("test", 7)?;
         assert_eq!(stats.total, 1);
         assert_eq!(stats.successes, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-stale-pids.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                exit_code INTEGER,
+                status TEXT NOT NULL,
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                live_stage TEXT,
+                is_background INTEGER NOT NULL DEFAULT 0
+            );
+            ",
+        )?;
+        drop(db);
+
+        let error = match HistoryDb::open(&db_path) {
+            Ok(_) => panic!("stale pid query failures should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to clean up stale invocations"));
+        assert!(message.contains("failed to prepare stale background invocation pid query"));
+        assert!(message.contains("no such column: pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_surfaces_stale_invocation_update_failures()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-stale-update.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                exit_code INTEGER,
+                status TEXT NOT NULL,
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                live_stage TEXT,
+                is_background INTEGER NOT NULL DEFAULT 0,
+                pid INTEGER
+            );
+            ",
+        )?;
+        drop(db);
+
+        let error = match HistoryDb::open(&db_path) {
+            Ok(_) => panic!("stale update failures should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to clean up stale invocations"));
+        assert!(message.contains("failed to mark stale invocations as cancelled"));
+        assert!(message.contains("no such column: finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_skips_locked_stale_cleanup() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-locked-stale-cleanup.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2000-01-01T00:00:00Z",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64
+            ],
+        )?;
+        drop(db);
+
+        let lock_conn = Connection::open(&db_path)?;
+        lock_conn.execute_batch("BEGIN EXCLUSIVE TRANSACTION;")?;
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            status, "running",
+            "locked cleanup should be skipped instead of failing open"
+        );
+
+        lock_conn.execute_batch("ROLLBACK;")?;
         Ok(())
     }
 
@@ -3707,6 +3910,69 @@ mod tests {
         // Non-existent id returns None
         let nonexistent = db.get_background_job_by_id(99999)?;
         assert!(nonexistent.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_args_json() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-args.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET args_json = ?1 WHERE id = ?2",
+            params!["{not valid json", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid args json should surface");
+        assert!(format!("{error:#}").contains("invalid background job args_json"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET started_at = ?1 WHERE id = ?2",
+            params!["definitely-not-rfc3339", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid started_at should surface");
+        assert!(format!("{error:#}").contains("invalid background job started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_job_by_id_surfaces_invalid_status() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-invalid-status.db");
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("job_stdout.log");
+        let stderr_path = dir.path().join("job_stderr.log");
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+        db.conn.execute(
+            "UPDATE background_jobs SET job_status = ?1 WHERE id = ?2",
+            params!["mystery", job_id],
+        )?;
+
+        let error = db
+            .get_background_job_by_id(job_id)
+            .expect_err("invalid job_status should surface");
+        assert!(format!("{error:#}").contains("invalid background job job_status"));
         Ok(())
     }
 

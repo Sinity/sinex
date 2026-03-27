@@ -118,7 +118,7 @@ impl EphemeralWorkspace {
     /// reject with `E0308`. The original valid content is preserved above the error.
     pub fn inject_compile_error(&self, crate_name: &str) -> Result<&Self> {
         let lib_rs = self.crate_src_lib(crate_name);
-        let existing = fs::read_to_string(&lib_rs).unwrap_or_default();
+        let existing = read_existing_text_file(&lib_rs, "inject_compile_error")?;
         let mutated = format!(
             "{existing}\n\
              // EphemeralWorkspace: injected compile error\n\
@@ -138,7 +138,7 @@ impl EphemeralWorkspace {
     /// which triggers `clippy::len_zero` (prefer `.is_empty()`).
     pub fn inject_clippy_warning(&self, crate_name: &str) -> Result<&Self> {
         let lib_rs = self.crate_src_lib(crate_name);
-        let existing = fs::read_to_string(&lib_rs).unwrap_or_default();
+        let existing = read_existing_text_file(&lib_rs, "inject_clippy_warning")?;
         let mutated = format!(
             "{existing}\n\
              // EphemeralWorkspace: injected clippy warning (clippy::len_zero)\n\
@@ -159,7 +159,7 @@ impl EphemeralWorkspace {
     /// compact expression style) that `cargo fmt --check` will reject.
     pub fn inject_format_error(&self, crate_name: &str) -> Result<&Self> {
         let lib_rs = self.crate_src_lib(crate_name);
-        let existing = fs::read_to_string(&lib_rs).unwrap_or_default();
+        let existing = read_existing_text_file(&lib_rs, "inject_format_error")?;
         // Deliberately bad formatting: rustfmt would rewrite this
         let mutated = format!(
             "{existing}\n\
@@ -177,7 +177,7 @@ impl EphemeralWorkspace {
     /// `unused-deps` analysis tools. Does NOT trigger a compile error by itself.
     pub fn inject_unused_dep(&self, crate_name: &str, dep: &str, version: &str) -> Result<&Self> {
         let cargo_toml = self.crate_cargo_toml(crate_name);
-        let existing = fs::read_to_string(&cargo_toml).unwrap_or_default();
+        let existing = read_existing_text_file(&cargo_toml, "inject_unused_dep")?;
         let mutated = format!("{existing}\n[dependencies]\n{dep} = \"{version}\"\n");
         fs::write(&cargo_toml, mutated)
             .with_context(|| format!("inject_unused_dep into {}", cargo_toml.display()))?;
@@ -262,5 +262,50 @@ impl EphemeralWorkspace {
             .path()
             .join(crate_name)
             .join("Cargo.toml")
+    }
+}
+
+fn read_existing_text_file(path: &std::path::Path, operation: &str) -> Result<String> {
+    fs::read_to_string(path)
+        .with_context(|| format!("{operation}: read existing {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn inject_compile_error_surfaces_unreadable_lib_rs() -> TestResult<()> {
+        let workspace = EphemeralWorkspace::new()?;
+        let lib_rs = workspace.crate_src_lib(DEFAULT_CRATE);
+        std::fs::remove_file(&lib_rs)?;
+        std::fs::create_dir(&lib_rs)?;
+
+        let error = match workspace.inject_compile_error(DEFAULT_CRATE) {
+            Ok(_) => panic!("directory lib.rs should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("inject_compile_error: read existing"));
+        assert!(message.contains(lib_rs.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn inject_unused_dep_surfaces_unreadable_manifest() -> TestResult<()> {
+        let workspace = EphemeralWorkspace::new()?;
+        let cargo_toml = workspace.crate_cargo_toml(DEFAULT_CRATE);
+        std::fs::remove_file(&cargo_toml)?;
+        std::fs::create_dir(&cargo_toml)?;
+
+        let error = match workspace.inject_unused_dep(DEFAULT_CRATE, "serde_json", "1") {
+            Ok(_) => panic!("directory Cargo.toml should surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("inject_unused_dep: read existing"));
+        assert!(message.contains(cargo_toml.display().to_string().as_str()));
+        Ok(())
     }
 }

@@ -50,6 +50,24 @@ pub enum InfraSubcommand {
         #[arg(long, env = "DATABASE_URL")]
         database_url: Option<String>,
     },
+    /// Generate gateway TLS certificates using rcgen
+    TlsInitGateway {
+        /// Output directory for generated files
+        #[arg(long, default_value = "/var/lib/sinex/tls")]
+        output_dir: PathBuf,
+        /// Subject alternative name to include. Repeat for multiple SANs.
+        #[arg(long = "san", value_name = "SAN")]
+        san: Vec<String>,
+        /// Common name for the generated certificate authority
+        #[arg(long, default_value = "Sinex Gateway CA")]
+        ca_name: String,
+        /// Certificate validity in days
+        #[arg(long, default_value_t = 3650)]
+        validity_days: u32,
+        /// Overwrite an existing certificate set
+        #[arg(long)]
+        force: bool,
+    },
     /// Manage VM integration
     Vm {
         #[command(subcommand)]
@@ -87,6 +105,13 @@ impl XtaskCommand for InfraCommand {
             InfraSubcommand::SchemaApply { database_url } => {
                 execute_schema_apply(database_url.as_deref(), ctx)
             }
+            InfraSubcommand::TlsInitGateway {
+                output_dir,
+                san,
+                ca_name,
+                validity_days,
+                force,
+            } => execute_tls_init_gateway(output_dir, san, ca_name, *validity_days, *force, ctx),
             InfraSubcommand::Vm { cmd } => {
                 let vm_cmd = crate::commands::vm::VmCommand {
                     subcommand: cmd.clone(),
@@ -198,6 +223,40 @@ fn execute_schema_apply(database_url: Option<&str>, ctx: &CommandContext) -> Res
     stack::apply_schema_for_database_url(&database_url, ctx.is_human())?;
 
     Ok(CommandResult::success().with_message("Schema applied"))
+}
+
+fn execute_tls_init_gateway(
+    output_dir: &Path,
+    san: &[String],
+    ca_name: &str,
+    validity_days: u32,
+    force: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ctx.heading("infra tls-init-gateway");
+
+    let san = if san.is_empty() {
+        vec!["localhost".to_string(), "127.0.0.1".to_string()]
+    } else {
+        san.to_vec()
+    };
+
+    let data = crate::tls::generate_dev_certs(&crate::tls::CertConfig {
+        output_dir: output_dir.to_path_buf(),
+        san: san.clone(),
+        ca_name: ca_name.to_string(),
+        validity_days,
+        force,
+    })?;
+
+    let mut result = CommandResult::success()
+        .with_message("Gateway TLS initialized")
+        .with_data(data)
+        .with_detail(format!("Output directory: {}", output_dir.display()));
+    for san_entry in san {
+        result = result.with_detail(format!("SAN: {san_entry}"));
+    }
+    Ok(result)
 }
 
 fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
