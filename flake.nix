@@ -399,7 +399,9 @@
                           [ "$_fd_num" -le 2 ] && continue
                           eval "exec ''${_fd_num}>&-"
                         done
-                        setsid "$_xtask_bin" --json infra start
+                        # This log is for operators inspecting shell-hook startup,
+                        # so keep it human-readable instead of JSON-fragment prone.
+                        setsid "$_xtask_bin" --format human infra start
                       ) &
                       _sinex_infra_starting=1
                       echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2

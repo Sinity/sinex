@@ -52,8 +52,7 @@ let
       --output-dir "${tlsDir}" \
       --san localhost \
       --san 127.0.0.1 \
-      --ca-name "Sinex Gateway CA" \
-      --validity-days 3650
+      --ca-name "Sinex Gateway CA"
     # Gateway needs the server cert, server key, and trust anchor at runtime.
     chown root:${serviceUser} "$key" "$cert" "$ca"
     chmod 640 "$key" "$cert" "$ca"
