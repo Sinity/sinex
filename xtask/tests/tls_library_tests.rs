@@ -428,6 +428,47 @@ async fn test_tls_library_exports_client_cert_api() -> ::xtask::sandbox::TestRes
     Ok(())
 }
 
+#[sinex_test]
+async fn test_generate_client_cert_forms_valid_chain() -> ::xtask::sandbox::TestResult<()> {
+    use xtask::tls::check_tls_config;
+
+    let temp_dir = TempDir::new()?;
+    let output_path = temp_dir.path().to_path_buf();
+
+    let config = CertConfig {
+        output_dir: output_path.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Client Chain Test CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    generate_dev_certs(&config)?;
+
+    generate_client_cert(
+        &output_path,
+        "my-service",
+        &output_path.join("ca.pem"),
+        &output_path.join("ca-key.pem"),
+        30,
+    )?;
+
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(output_path.join("my-service.pem")),
+        key_path: Some(output_path.join("my-service-key.pem")),
+        ca_path: Some(output_path.join("ca.pem")),
+        verify_chain: true,
+        check_nats: false,
+    })?;
+
+    assert!(
+        result.valid,
+        "client cert signed from existing CA should validate: {:?}",
+        result.issues
+    );
+    assert_eq!(result.key_matches, Some(true));
+    Ok(())
+}
+
 // ============================================================================
 // Error Case Tests
 // ============================================================================

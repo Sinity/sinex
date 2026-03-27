@@ -687,7 +687,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
             output_dir: tls_dir.to_path_buf(),
             san: vec!["localhost".to_string(), "127.0.0.1".to_string()],
             ca_name: "Sinex Dev CA".to_string(),
-            validity_days: 365,
+            validity_days: crate::tls::DEFAULT_DEV_CERT_VALIDITY_DAYS,
             force: false,
         };
         crate::tls::generate_dev_certs(&config)?;

@@ -19,6 +19,9 @@ pub struct CertConfig {
     pub force: bool,
 }
 
+/// Shared default validity for development and single-host gateway certificates.
+pub const DEFAULT_DEV_CERT_VALIDITY_DAYS: u32 = 3650;
+
 /// Generate a complete set of development certificates.
 ///
 /// Creates:
@@ -210,30 +213,12 @@ pub fn generate_client_cert(
     let ca_key_pem = fs::read_to_string(ca_key_path)
         .with_context(|| format!("Failed to read CA key: {}", ca_key_path.display()))?;
 
-    // Parse CA key
     let ca_key = KeyPair::from_pem(&ca_key_pem).with_context(|| "Failed to parse CA key")?;
-
-    // Recreate CA certificate from the key (for signing)
-    // We need to self-sign a new CA params with the existing key
-    let mut ca_params = CertificateParams::default();
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-        KeyUsagePurpose::DigitalSignature,
-    ];
-
-    // Extract CN from the existing CA certificate for consistency
-    // We'll use a generic name if we can't parse it
-    let _ca_cert_for_info = &ca_cert_pem;
-    ca_params
-        .distinguished_name
-        .push(DnType::CommonName, "Sinex Dev CA");
-    ca_params
-        .distinguished_name
-        .push(DnType::OrganizationName, "Sinex Development");
-
-    let ca_cert = ca_params.self_signed(&ca_key)?;
+    let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
+        .with_context(|| "Failed to parse CA certificate for signing")?;
+    let ca_cert = ca_params
+        .self_signed(&ca_key)
+        .with_context(|| "Failed to reconstruct signing CA certificate")?;
 
     // Generate client cert
     let (cert_pem, key_pem) =
