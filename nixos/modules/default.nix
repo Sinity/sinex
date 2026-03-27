@@ -9,7 +9,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
-    mkDatabasePasswordUnitConfig
     renderDatabaseUrl
     ;
 
@@ -1805,7 +1804,6 @@ in
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
         systemd.services.sinex-dlq-cleanup = {
           description = "Sinex DLQ cleanup";
-          unitConfig = mkDatabasePasswordUnitConfig (if cfg.database.enable then cfg.database.passwordFile else null);
           serviceConfig = {
             Environment = [
               "DATABASE_URL=${databaseUrl}"

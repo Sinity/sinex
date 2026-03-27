@@ -8,7 +8,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
-    mkDatabasePasswordUnitConfig
     renderDatabaseUrl
     ;
   cfg = config.services.sinex;
@@ -252,7 +251,6 @@ in
         wants = [ "network-online.target" ];
         after = [ "network-online.target" ] ++ localPostgresUnits;
         requires = localPostgresUnits;
-        unitConfig = mkDatabasePasswordUnitConfig cfg.database.passwordFile;
         serviceConfig = {
           ExecStart = mkDatabasePasswordExec {
             name = "schema-apply";
@@ -310,7 +308,6 @@ in
                 passwordFile = cfg.database.passwordFile;
               };
             };
-            unitConfig = mkDatabasePasswordUnitConfig cfg.database.passwordFile;
           };
         };
 
