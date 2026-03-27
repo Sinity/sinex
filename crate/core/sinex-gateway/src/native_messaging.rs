@@ -106,13 +106,32 @@ pub struct NativeMessagingConfig {
     expected_protocol_version: Option<String>,
     /// Per-extension capability restrictions. Key: `extension_id`, Value: capabilities.
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
+    /// Configuration parse error for `SINEX_NATIVE_MESSAGING_CAPABILITIES`.
+    capabilities_config_error: Option<String>,
     /// Shared rate limiter state (wrapped in Arc for Clone)
     rate_limiter: Option<Arc<RateLimiter>>,
     /// Per-extension role mapping. Key: `extension_id`, Value: auth role.
     /// Loaded from `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
     extension_roles: std::collections::HashMap<String, crate::auth::Role>,
+    /// Configuration parse error for `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES`.
+    extension_roles_config_error: Option<String>,
     max_message_size: usize,
     read_timeout: std::time::Duration,
+}
+
+#[derive(Debug)]
+struct ParsedConfigMap<T> {
+    values: std::collections::HashMap<String, T>,
+    error: Option<String>,
+}
+
+impl<T> Default for ParsedConfigMap<T> {
+    fn default() -> Self {
+        Self {
+            values: std::collections::HashMap::new(),
+            error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -182,8 +201,9 @@ impl NativeMessagingConfig {
         let trusted_hosts = trusted_hosts_raw.map(parse_csv_entries).unwrap_or_default();
         let expected_protocol_version =
             expected_protocol_version_raw.and_then(|raw| normalize_optional_string(&raw));
-        let capabilities = parse_capabilities(capabilities_raw.as_deref());
-        let rate_limiter = if capabilities
+        let parsed_capabilities = parse_capabilities(capabilities_raw.as_deref());
+        let rate_limiter = if parsed_capabilities
+            .values
             .values()
             .any(|c| c.rate_limit_per_minute.is_some())
         {
@@ -191,15 +211,17 @@ impl NativeMessagingConfig {
         } else {
             None
         };
-        let extension_roles = parse_extension_roles(extension_roles_raw.as_deref());
+        let parsed_extension_roles = parse_extension_roles(extension_roles_raw.as_deref());
 
         Self {
             trusted_extensions,
             trusted_hosts,
             expected_protocol_version,
-            capabilities,
+            capabilities: parsed_capabilities.values,
+            capabilities_config_error: parsed_capabilities.error,
             rate_limiter,
-            extension_roles,
+            extension_roles: parsed_extension_roles.values,
+            extension_roles_config_error: parsed_extension_roles.error,
             max_message_size,
             read_timeout,
         }
@@ -285,10 +307,16 @@ impl NativeMessagingConfig {
     /// must be in `allowed_methods` and rate limits are enforced.
     /// Capability configuration is mandatory (fail-closed).
     fn enforce_capabilities(&self, message: &NativeMessage) -> Result<()> {
+        if let Some(err) = &self.capabilities_config_error {
+            return Err(eyre!(
+                "Invalid {CAPABILITIES_ENV} configuration: {err}"
+            ));
+        }
+
         // Explicit capability map is required for native messaging.
         if self.capabilities.is_empty() {
             return Err(eyre!(
-                "Native messaging capabilities are not configured; refusing request"
+                "Native messaging capabilities are not configured; set {CAPABILITIES_ENV}"
             ));
         }
 
@@ -445,11 +473,17 @@ impl NativeMessagingConfig {
 
     /// Resolve the auth role for a given extension ID.
     /// Returns the configured role if found, or `ReadOnly` as the default.
-    fn resolve_extension_role(&self, extension_id: Option<&str>) -> crate::auth::Role {
-        extension_id
+    fn resolve_extension_role(&self, extension_id: Option<&str>) -> Result<crate::auth::Role> {
+        if let Some(err) = &self.extension_roles_config_error {
+            return Err(eyre!(
+                "Invalid {EXTENSION_ROLES_ENV} configuration: {err}"
+            ));
+        }
+
+        Ok(extension_id
             .and_then(|id| self.extension_roles.get(id))
             .copied()
-            .unwrap_or(crate::auth::Role::ReadOnly)
+            .unwrap_or(crate::auth::Role::ReadOnly))
     }
 }
 
@@ -464,48 +498,61 @@ fn normalize_optional_string(raw: &str) -> Option<String> {
 
 fn parse_capabilities(
     raw: Option<&str>,
-) -> std::collections::HashMap<String, ExtensionCapabilities> {
-    raw.and_then(|raw| {
-        match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(raw)
-        {
-            Ok(caps) => {
-                info!(
-                    extensions = caps.len(),
-                    "Loaded native messaging capabilities"
-                );
-                Some(caps)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; requests will be denied"
-                );
-                None
+) -> ParsedConfigMap<ExtensionCapabilities> {
+    let Some(raw) = raw else {
+        return ParsedConfigMap::default();
+    };
+
+    match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(raw) {
+        Ok(caps) => {
+            info!(
+                extensions = caps.len(),
+                "Loaded native messaging capabilities"
+            );
+            ParsedConfigMap {
+                values: caps,
+                error: None,
             }
         }
-    })
-    .unwrap_or_default()
+        Err(error) => {
+            warn!(
+                error = %error,
+                "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; requests will be denied with an explicit configuration error"
+            );
+            ParsedConfigMap {
+                values: std::collections::HashMap::new(),
+                error: Some(error.to_string()),
+            }
+        }
+    }
 }
 
 fn parse_extension_roles(
     raw: Option<&str>,
-) -> std::collections::HashMap<String, crate::auth::Role> {
-    raw.and_then(|raw| {
-        match serde_json::from_str::<std::collections::HashMap<String, crate::auth::Role>>(raw) {
-            Ok(roles) => {
-                info!(extensions = roles.len(), "Loaded native messaging extension roles");
-                Some(roles)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; configured extensions fall back to the default ReadOnly role"
-                );
-                None
+) -> ParsedConfigMap<crate::auth::Role> {
+    let Some(raw) = raw else {
+        return ParsedConfigMap::default();
+    };
+
+    match serde_json::from_str::<std::collections::HashMap<String, crate::auth::Role>>(raw) {
+        Ok(roles) => {
+            info!(extensions = roles.len(), "Loaded native messaging extension roles");
+            ParsedConfigMap {
+                values: roles,
+                error: None,
             }
         }
-    })
-    .unwrap_or_default()
+        Err(error) => {
+            warn!(
+                error = %error,
+                "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; requests will be denied with an explicit configuration error"
+            );
+            ParsedConfigMap {
+                values: std::collections::HashMap::new(),
+                error: Some(error.to_string()),
+            }
+        }
+    }
 }
 
 fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
@@ -568,8 +615,10 @@ mod tests {
             trusted_hosts: Vec::new(),
             expected_protocol_version: None,
             capabilities: std::collections::HashMap::new(),
+            capabilities_config_error: None,
             rate_limiter: None,
             extension_roles: std::collections::HashMap::new(),
+            extension_roles_config_error: None,
             max_message_size: 1024 * 1024,
             read_timeout: std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS),
         };
@@ -610,8 +659,10 @@ mod tests {
             trusted_hosts: Vec::new(),
             expected_protocol_version: None,
             capabilities: caps,
+            capabilities_config_error: None,
             rate_limiter: None,
             extension_roles: std::collections::HashMap::new(),
+            extension_roles_config_error: None,
             max_message_size: 1024 * 1024,
             read_timeout: std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS),
         };
@@ -670,31 +721,58 @@ mod tests {
         let config = NativeMessagingConfig::from_env();
 
         assert_eq!(
-            config.resolve_extension_role(Some("ext-read")),
+            config.resolve_extension_role(Some("ext-read"))?,
             crate::auth::Role::ReadOnly
         );
         assert_eq!(
-            config.resolve_extension_role(Some("ext-write")),
+            config.resolve_extension_role(Some("ext-write"))?,
             crate::auth::Role::Write
         );
         assert_eq!(
-            config.resolve_extension_role(Some("ext-admin")),
+            config.resolve_extension_role(Some("ext-admin"))?,
             crate::auth::Role::Admin
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn invalid_extension_role_env_entry_is_not_coerced() -> TestResult<()> {
+    async fn invalid_extension_role_env_entry_surfaces_parse_error() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set(EXTENSION_ROLES_ENV, r#"{"ext-write":"superuser"}"#);
 
         let config = NativeMessagingConfig::from_env();
 
-        assert_eq!(
-            config.resolve_extension_role(Some("ext-write")),
-            crate::auth::Role::ReadOnly
+        let error = config
+            .resolve_extension_role(Some("ext-write"))
+            .expect_err("invalid role config should be surfaced");
+        assert!(error.to_string().contains(EXTENSION_ROLES_ENV));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_capabilities_env_entry_surfaces_parse_error() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(
+            CAPABILITIES_ENV,
+            r#"{"ext-1":{"allowed_methods":"system.health","rate_limit_per_minute":null,"allowed_event_types":null}}"#,
         );
+
+        let config = NativeMessagingConfig::from_env();
+        let message = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("system.health".to_string()),
+            params: Some(serde_json::json!({})),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+
+        let error = config
+            .enforce_capabilities(&message)
+            .expect_err("invalid capabilities config should be surfaced");
+        assert!(error.to_string().contains(CAPABILITIES_ENV));
         Ok(())
     }
 }
@@ -897,7 +975,7 @@ async fn dispatch_method(
     extension_id: Option<&str>,
 ) -> Result<Value> {
     // Resolve per-extension auth role from configuration
-    let role = config.resolve_extension_role(extension_id);
+    let role = config.resolve_extension_role(extension_id)?;
     let auth = match extension_id {
         Some(id) => crate::rpc_server::RpcAuthContext::extension(id, role),
         None => crate::rpc_server::RpcAuthContext::system(),
