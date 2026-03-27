@@ -5,6 +5,7 @@ mod support;
 
 use async_nats::jetstream;
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, error::SinexError};
@@ -80,6 +81,28 @@ async fn publish_raw_event(
     nats_client.flush().await?;
 
     Ok(event_id)
+}
+
+async fn publish_custom_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    event: &serde_json::Value,
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(event)?.into())
+        .await?;
+    Ok(())
 }
 
 /// Helper to publish raw bytes directly (for malformed event testing).
@@ -333,6 +356,25 @@ async fn start_consumer_with_hooks(
     ack_wait: Duration,
     hooks: &TestHooks,
 ) -> TestResult<ConsumerSetup> {
+    start_consumer_with_hooks_and_batch_config(
+        ctx,
+        suffix,
+        ack_wait,
+        hooks,
+        10,
+        Duration::from_millis(200),
+    )
+    .await
+}
+
+async fn start_consumer_with_hooks_and_batch_config(
+    ctx: &TestContext,
+    suffix: &str,
+    ack_wait: Duration,
+    hooks: &TestHooks,
+    max_messages: usize,
+    fetch_timeout: Duration,
+) -> TestResult<ConsumerSetup> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -366,7 +408,7 @@ async fn start_consumer_with_hooks(
         hooks.route_db_errors_to_dlq,
         hooks.confirmation_failures.clone(),
     )
-    .with_batch_fetch_config(10, Duration::from_millis(200));
+    .with_batch_fetch_config(max_messages, fetch_timeout);
     let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
@@ -389,6 +431,10 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
 
     // Publish an event with a source_material_id that does NOT exist in the
     // database. This will cause an FK violation during insert.
@@ -402,6 +448,7 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
         "host": "test-host",
         "source_material_id": bogus_material_id.to_string(),
+        "anchor_byte": 0,
     });
 
     let env = sinex_primitives::environment();
@@ -429,15 +476,220 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         .await
         .map_err(|e| SinexError::network(e.to_string()))?;
 
+    let dlq_error = if dlq_info.state.messages > 0 {
+        let message = tokio::time::timeout(Duration::from_secs(1), dlq_sub.next())
+            .await
+            .ok()
+            .flatten();
+        message
+            .and_then(|msg| serde_json::from_slice::<serde_json::Value>(&msg.payload).ok())
+            .and_then(|entry| entry["error"].as_str().map(str::to_string))
+    } else {
+        None
+    };
     assert_eq!(
         dlq_info.state.messages, 0,
-        "FK violation should NOT route to DLQ; it should NAK for retry"
+        "FK violation should NOT route to DLQ; it should NAK for retry (dlq_error={dlq_error:?})"
     );
 
     // Verify the consumer is still running (not crashed).
     assert!(
         !setup.handle.is_finished(),
         "consumer should keep running after FK violation NAK"
+    );
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = format!("schema-fk-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::none();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    let event_id = Uuid::now_v7();
+    let bogus_schema_id = Uuid::now_v7();
+    let bogus_schema_id_str = bogus_schema_id.to_string();
+    let source = format!("schemafk.{suffix}");
+    let event_type = "schema.fk";
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": { "data": "bogus-schema-fk" },
+        "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+        "payload_schema_id": bogus_schema_id_str.clone(),
+    });
+    publish_custom_event(
+        &setup.nats_client,
+        &setup.namespace,
+        &source,
+        event_type,
+        &event,
+    )
+    .await?;
+    setup.nats_client.flush().await?;
+
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for schema FK DLQ entry"))?
+        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("Persistence error"),
+        "DLQ error should contain 'Persistence error', got: {error_field}"
+    );
+    assert_eq!(
+        entry["original_payload"]["payload_schema_id"].as_str(),
+        Some(bogus_schema_id_str.as_str())
+    );
+    assert!(
+        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        "invalid schema FK event must not persist"
+    );
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = format!("batch-isolate-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks_and_batch_config(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::SHORT),
+        &hooks,
+        10,
+        Duration::from_secs(2),
+    )
+    .await?;
+
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    let source = format!("batch.isolate.{suffix}");
+    let event_type = "batch.isolate";
+    let bad_index = 7;
+    let bogus_schema_id = Uuid::now_v7();
+    let mut good_event_ids = Vec::new();
+    let mut bad_event_id = None;
+
+    for index in 0..10u32 {
+        let event_id = Uuid::now_v7();
+        let mut event = json!({
+            "id": event_id.to_string(),
+            "source": source,
+            "event_type": event_type,
+            "payload": { "index": index },
+            "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": index,
+        });
+        if index == bad_index {
+            event["payload_schema_id"] = json!(bogus_schema_id.to_string());
+            bad_event_id = Some(event_id);
+        } else {
+            good_event_ids.push(event_id);
+        }
+        publish_custom_event(
+            &setup.nats_client,
+            &setup.namespace,
+            &source,
+            event_type,
+            &event,
+        )
+        .await?;
+    }
+    setup.nats_client.flush().await?;
+
+    let expected_good = good_event_ids.len() as i64;
+    let readiness = WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let js = setup.js.clone();
+            let dlq_stream = setup.topology.dlq_stream.clone();
+            let source = source.clone();
+            async move {
+                let event_source: sinex_primitives::EventSource = source.as_str().into();
+                let source_count = pool.events().count_by_source(&event_source).await?;
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let dlq_messages = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .messages as i64;
+                Ok::<bool, SinexError>(source_count >= expected_good && dlq_messages >= 1)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await;
+    if let Err(error) = readiness {
+        let event_source: sinex_primitives::EventSource = source.as_str().into();
+        let source_count = ctx.pool.events().count_by_source(&event_source).await?;
+        let mut stream = setup
+            .js
+            .get_stream(&setup.topology.dlq_stream)
+            .await
+            .map_err(|e| SinexError::network(e.to_string()))?;
+        let dlq_messages = stream
+            .info()
+            .await
+            .map_err(|e| SinexError::network(e.to_string()))?
+            .state
+            .messages;
+        return Err(color_eyre::eyre::eyre!(
+            "mixed-batch isolation never converged: source_count={source_count}, dlq_messages={dlq_messages}, consumer_finished={}, wait_error={error:#}",
+            setup.handle.is_finished(),
+        ));
+    }
+
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for isolated batch DLQ entry"))?
+        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    assert_eq!(
+        entry["original_payload"]["payload"]["index"].as_u64(),
+        Some(bad_index as u64)
+    );
+
+    for event_id in good_event_ids {
+        assert!(
+            ctx.pool.events().get_by_id(event_id.into()).await?.is_some(),
+            "good event {event_id} should persist despite a poisoned sibling row"
+        );
+    }
+
+    let bad_event_id = bad_event_id.expect("bad event id must be set");
+    assert!(
+        ctx.pool.events().get_by_id(bad_event_id.into()).await?.is_none(),
+        "isolated bad event must not persist"
     );
 
     setup.handle.abort();
