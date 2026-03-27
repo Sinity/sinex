@@ -116,6 +116,31 @@ let
   inferredNatsTls =
     natsTlsCfg.requireTls
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
+  collectReadablePaths = paths: filter (path: path != null) paths;
+  databaseSecretAssertPaths = collectReadablePaths [
+    (if cfg.database.enable then cfg.database.passwordFile else null)
+  ];
+  natsSecretAssertPaths = collectReadablePaths [
+    effectiveNatsCaCertFile
+    effectiveNatsClientCertFile
+    effectiveNatsClientKeyFile
+    effectiveNatsTokenFile
+    effectiveNatsCredsFile
+    effectiveNatsNkeySeedFile
+  ];
+  gatewaySecretAssertPaths = collectReadablePaths (
+    [
+      gatewayAdminTokenFile
+      cfg.core.gateway.tlsCertFile
+      cfg.core.gateway.tlsKeyFile
+    ]
+    ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ]
+  );
+  readableUnitAssertions = paths:
+    let
+      readablePaths = collectReadablePaths paths;
+    in
+    optionalAttrs (readablePaths != []) { AssertPathIsReadable = readablePaths; };
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
   renderBindReadOnlyPaths = mounts:
@@ -288,7 +313,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
-        unitConfig = restartRateLimits;
+        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
@@ -328,14 +353,11 @@ let
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
-        unitConfig = restartRateLimits // optionalAttrs (coreCfg.gateway.enable && !tlsAutoGenEnabled) {
-          AssertPathIsReadable =
-            [
-              cfg.core.gateway.tlsCertFile
-              cfg.core.gateway.tlsKeyFile
-            ]
-            ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ];
-        };
+        unitConfig =
+          restartRateLimits
+          // readableUnitAssertions (
+            databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
+          );
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -730,7 +752,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
-        unitConfig = restartRateLimits;
+        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
@@ -769,7 +791,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits;
+      unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
           name = params.binary;
