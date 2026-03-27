@@ -71,6 +71,8 @@ pub(crate) struct ToolCheck {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,28 +387,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     ];
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
-        let check_result = ToolManager::check_tool(tool);
-        let info = check_result.unwrap_or_else(|_| {
+        let tool_check = build_tool_check(tool, ToolManager::check_tool(tool));
+        if !tool_check.available {
             all_ok = false;
-            ToolInfo::unavailable(tool)
-        });
-        let available = info.is_available;
-        let version = if info.is_available {
-            Some(info.version)
-        } else {
-            None
-        };
-        let path = if info.is_available {
-            Some(info.path.display().to_string())
-        } else {
-            None
-        };
-        tool_checks.push(ToolCheck {
-            name: tool.to_string(),
-            available,
-            version,
-            path,
-        });
+        }
+        tool_checks.push(tool_check);
     }
 
     // Batch validation summary for missing tools
@@ -485,8 +470,8 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         // Tools
         println!("\n{}", style("Required Tools:").bold());
         for tool in &report.tools {
-            let version_str = tool.version.as_deref().unwrap_or("");
-            print_check(&tool.name, tool.available, Some(version_str));
+            let detail = tool_check_detail(tool);
+            print_check(&tool.name, tool.available, detail.as_deref());
         }
 
         // Installation guidance for missing tools
@@ -610,6 +595,34 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     };
     let detail_str = detail.map(|d| format!(" ({d})")).unwrap_or_default();
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
+}
+
+fn tool_check_detail(tool: &ToolCheck) -> Option<String> {
+    match (tool.version.as_deref(), tool.message.as_deref()) {
+        (Some(version), Some(message)) => Some(format!("{version}; {message}")),
+        (Some(version), None) => Some(version.to_string()),
+        (None, Some(message)) => Some(message.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn build_tool_check(name: &str, result: Result<ToolInfo>) -> ToolCheck {
+    match result {
+        Ok(info) => ToolCheck {
+            name: name.to_string(),
+            available: info.probe_issue.is_none(),
+            version: Some(info.version),
+            path: Some(info.path.display().to_string()),
+            message: info.probe_issue,
+        },
+        Err(error) => ToolCheck {
+            name: name.to_string(),
+            available: false,
+            version: None,
+            path: None,
+            message: Some(error.to_string()),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2697,12 +2710,14 @@ mod tests {
                     available: true,
                     version: Some("1.95.0-nightly".into()),
                     path: Some("/nix/store/.../rustc".into()),
+                    message: None,
                 },
                 ToolCheck {
                     name: "ast-grep".into(),
                     available: false,
                     version: None,
                     path: None,
+                    message: Some("Tool 'ast-grep' not found in PATH".into()),
                 },
             ],
             environment: Some(serde_json::json!({
@@ -2736,10 +2751,12 @@ mod tests {
         assert_eq!(json["tools"][0]["name"], "rustc");
         assert_eq!(json["tools"][0]["available"], true);
         assert!(json["tools"][0]["version"].is_string());
+        assert!(json["tools"][0]["message"].is_null());
         assert_eq!(json["tools"][1]["available"], false);
         // Unavailable tool should have null version and no path
         assert!(json["tools"][1]["version"].is_null());
         assert!(json["tools"][1].get("path").is_none() || json["tools"][1]["path"].is_null());
+        assert!(json["tools"][1]["message"].is_string());
 
         // Overall (agents use: .data.overall)
         assert_eq!(json["overall"], false);
@@ -2752,6 +2769,42 @@ mod tests {
         assert!(json["postgres_extensions"].is_array());
         assert_eq!(json["postgres_extensions"][0], "pgvector");
         assert!(json.get("postgres_extensions_error").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_tool_check_surfaces_probe_errors() -> ::xtask::sandbox::TestResult<()> {
+        let check = build_tool_check(
+            "ast-grep",
+            Err(color_eyre::eyre::eyre!("Tool 'ast-grep' not found in PATH")),
+        );
+        assert!(!check.available);
+        assert!(check.version.is_none());
+        assert!(check.path.is_none());
+        assert!(
+            check
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("not found in PATH"))
+        );
+
+        let check = build_tool_check(
+            "rustc",
+            Ok(ToolInfo {
+                path: PathBuf::from("/nix/store/.../rustc"),
+                version: "unknown".to_string(),
+                probe_issue: Some("Failed to run 'rustc --version'".to_string()),
+            }),
+        );
+        assert!(!check.available);
+        assert_eq!(check.version.as_deref(), Some("unknown"));
+        assert_eq!(check.path.as_deref(), Some("/nix/store/.../rustc"));
+        assert!(
+            check
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("rustc --version"))
+        );
         Ok(())
     }
 
