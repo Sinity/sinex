@@ -176,7 +176,7 @@ pub use self_observation::{
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
-pub use sqlite_source::stage_stable_material;
+pub use sqlite_source::stage_material;
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
     SqliteTableCheckError,

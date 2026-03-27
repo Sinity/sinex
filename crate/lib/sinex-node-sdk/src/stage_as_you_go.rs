@@ -364,21 +364,10 @@ impl StageAsYouGoContext {
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> NodeResult<Uuid> {
-        // Compute anchor_byte first so we can derive a deterministic event ID.
         let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
 
         if event.id.is_none() {
-            // Derive a deterministic UUIDv5 from (source_material_id, anchor_byte).
-            //
-            // This means re-ingesting the same source material at the same offset
-            // always produces the same event ID, so `ON CONFLICT (id) DO NOTHING`
-            // in the persistence layer handles deduplication automatically — no
-            // separate existence check is needed.
-            let anchor_bytes = anchor_byte.to_le_bytes();
-            event.id = Some(Id::from_uuid(Uuid::new_v5(
-                &source_material_id,
-                &anchor_bytes,
-            )));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
         }
 
         // Attach source material provenance to the event
@@ -850,9 +839,9 @@ impl StageAsYouGoNode for LogFileStageNode {
                 },
             );
 
-            // Convert to JsonValue event for emission
+            // Convert to JsonValue event for emission — leave event.id as None so
+            // emit_event_with_provenance assigns an ID downstream.
             let mut event = typed_event.to_json_event()?;
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
             // Use the material's started_at as fallback ts_orig — this value is
             // persisted in the temporal ledger by ingestd, making it reproducible
             // on replay (unlike an ephemeral Timestamp::now()).

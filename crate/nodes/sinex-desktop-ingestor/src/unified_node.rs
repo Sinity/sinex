@@ -28,7 +28,7 @@ use sinex_node_sdk::{
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
-    stage_stable_material,
+    stage_material,
     SqliteHistoryImportError, SqliteHistoryRowOutcome,
     watcher_handle::WatcherHandle,
 };
@@ -322,11 +322,9 @@ impl DesktopNode {
                 SinexError::serialization("failed to serialize ActivityWatch source material")
                     .with_std_error(&error)
             })?;
-        let stable_key = entry.row_id.to_string();
-        let material_id = stage_stable_material(
+        let material_id = stage_material(
             acquisition,
             db_path.as_str(),
-            &stable_key,
             &material_bytes,
             MATERIAL_REASON_ACTIVITYWATCH_HISTORY,
             Some(material_metadata),
