@@ -181,6 +181,12 @@ pub struct HistoryDb {
     pub is_synthetic: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaleCleanupOutcome {
+    Ran,
+    SkippedLockHeld,
+}
+
 impl HistoryDb {
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
@@ -279,7 +285,7 @@ impl HistoryDb {
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
         db.is_synthetic = db.check_synthetic()?;
-        if let Err(error) = db.cleanup_stale_invocations() {
+        if let Err(error) = db.cleanup_stale_invocations_on_open(path) {
             if is_sqlite_lock_error(&error) {
                 eprintln!(
                     "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"
@@ -289,6 +295,37 @@ impl HistoryDb {
             }
         }
         Ok(db)
+    }
+
+    fn cleanup_stale_invocations_on_open(&self, path: &Path) -> Result<StaleCleanupOutcome> {
+        let lock_path = path.with_extension("cleanup.lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path);
+
+        let lock_file = match lock_file {
+            Ok(file) => file,
+            Err(error) => {
+                eprintln!(
+                    "⚠️  Could not open history cleanup lock ({}): {error}; proceeding without lock",
+                    lock_path.display()
+                );
+                self.cleanup_stale_invocations()?;
+                return Ok(StaleCleanupOutcome::Ran);
+            }
+        };
+
+        use std::os::fd::AsRawFd;
+        let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_result != 0 {
+            return Ok(StaleCleanupOutcome::SkippedLockHeld);
+        }
+
+        self.cleanup_stale_invocations()?;
+        drop(lock_file);
+        Ok(StaleCleanupOutcome::Ran)
     }
 
     fn schema_version(&self) -> Result<i32> {
@@ -3727,6 +3764,56 @@ mod tests {
         );
 
         lock_conn.execute_batch("ROLLBACK;")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_skips_cleanup_when_cleanup_lock_is_held() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-open-cleanup-lock-held.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2000-01-01T00:00:00Z",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64
+            ],
+        )?;
+        drop(db);
+
+        let lock_path = db_path.with_extension("cleanup.lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        use std::os::fd::AsRawFd;
+        let lock_result =
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(lock_result, 0, "cleanup lock should be acquired for test");
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            status, "running",
+            "cleanup lock should make stale cleanup skip instead of mutating rows"
+        );
+
+        let unlock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
+        assert_eq!(unlock_result, 0, "cleanup lock should release cleanly");
         Ok(())
     }
 
