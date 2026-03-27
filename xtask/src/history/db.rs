@@ -1495,8 +1495,12 @@ impl HistoryDb {
 
         let rows: Vec<(i64, String)> = fetch_stmt
             .query_map([invocation_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .wrap_err_with(|| {
+                format!(
+                    "failed to read stored sandbox metadata rows for invocation {invocation_id}"
+                )
+            })?;
 
         for (id, output) in &rows {
             let meta = parse_sandbox_meta(output);
