@@ -29,6 +29,13 @@ use time::OffsetDateTime;
 
 const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 
+fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
+    match current_dir {
+        Ok(path) => path.display().to_string(),
+        Err(error) => format!("<unavailable: {error}>"),
+    }
+}
+
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -585,9 +592,7 @@ impl HistoryDb {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
         let host = crate::config::config().hostname.clone();
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+        let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
         // Transition from synthetic to real: clear the marker on first real write.
@@ -1607,9 +1612,7 @@ impl HistoryDb {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
         let host = crate::config::config().hostname.clone();
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+        let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
         // Create the durable invocation record.
@@ -3520,6 +3523,22 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_capture_working_directory_success() -> TestResult<()> {
+        let captured = capture_working_directory(Ok(std::path::PathBuf::from("/tmp/sinex")));
+        assert_eq!(captured, "/tmp/sinex");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_capture_working_directory_surfaces_errors() -> TestResult<()> {
+        let captured =
+            capture_working_directory(Err(std::io::Error::other("cwd lookup exploded")));
+        assert!(captured.contains("<unavailable:"));
+        assert!(captured.contains("cwd lookup exploded"));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_history_db_lifecycle() -> TestResult<()> {
