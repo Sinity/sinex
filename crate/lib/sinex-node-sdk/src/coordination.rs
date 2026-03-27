@@ -229,6 +229,18 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn decode_handoff_request_reports_malformed_payload(_ctx: TestContext) -> TestResult<()> {
+        let err = NodeCoordination::decode_handoff_request(b"{not-json", "handoff request")
+            .expect_err("malformed handoff payload should be rejected");
+        assert!(
+            err.to_string()
+                .contains("Failed to decode handoff request"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn list_instances_filters_stale_metadata(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-filter").await?;
         let coordination =
@@ -811,6 +823,12 @@ impl NodeCoordination {
         })
     }
 
+    fn decode_handoff_request(payload: &[u8], context: &'static str) -> Result<HandoffRequest> {
+        serde_json::from_slice(payload).map_err(|error| {
+            SinexError::validation(format!("Failed to decode {context}: {error}"))
+        })
+    }
+
     fn current_metadata(&self) -> InstanceMetadata {
         instance_metadata_at(
             &self.instance,
@@ -1039,15 +1057,25 @@ impl NodeCoordination {
             match nats_clone.subscribe(subject.clone()).await {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
-                        if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload)
-                            && req.target_instance_id == instance_id_clone
-                            && handoff_sender_clone.send(req).await.is_err()
-                        {
-                            let _ = handoff_drops_clone.add(1);
-                            warn!(
-                                handoff_drops = handoff_drops_clone.get(),
-                                "Handoff channel backpressure: dropped handoff request"
-                            );
+                        match Self::decode_handoff_request(&msg.payload, "handoff request") {
+                            Ok(req) => {
+                                if req.target_instance_id == instance_id_clone
+                                    && handoff_sender_clone.send(req).await.is_err()
+                                {
+                                    let _ = handoff_drops_clone.add(1);
+                                    warn!(
+                                        handoff_drops = handoff_drops_clone.get(),
+                                        "Handoff channel backpressure: dropped handoff request"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                warn!(
+                                    service = %service_name_health,
+                                    error = %error,
+                                    "Ignoring malformed handoff request"
+                                );
+                            }
                         }
                     }
                     // Normal completion
@@ -1298,7 +1326,10 @@ impl NodeCoordination {
 
             match tokio::time::timeout(remaining, sub.next()).await {
                 Ok(Some(message)) => {
-                    let ready = match serde_json::from_slice::<HandoffRequest>(&message.payload) {
+                    let ready = match Self::decode_handoff_request(
+                        &message.payload,
+                        "handoff_ready payload",
+                    ) {
                         Ok(ready) => ready,
                         Err(error) => {
                             warn!(
