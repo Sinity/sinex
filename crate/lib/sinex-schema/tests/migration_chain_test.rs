@@ -1,5 +1,6 @@
 //! Declarative schema invariants and operation-id safety gate tests.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use xtask::sandbox::prelude::*;
@@ -282,6 +283,230 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
     assert_eq!(rows[1].component.as_deref(), Some("ingestd"));
     assert_eq!(rows[1].status.as_deref(), Some("failed"));
     assert_eq!(rows[1].reason.as_deref(), Some("lost database"));
+
+    Ok(())
+}
+
+async fn relation_columns(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    relation: &str,
+) -> TestResult<Vec<String>> {
+    let columns = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT a.attname
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1
+          AND c.relname = $2
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        ORDER BY a.attnum
+        "#,
+    )
+    .bind(schema)
+    .bind(relation)
+    .fetch_all(pool)
+    .await?;
+    Ok(columns)
+}
+
+#[sinex_test]
+async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) -> TestResult<()> {
+    let pool = &ctx.pool;
+
+    let expected_contracts = [
+        (
+            "current_health",
+            &["source", "event_type", "component", "status", "reason", "last_update"][..],
+        ),
+        (
+            "current_device_state",
+            &["unit_name", "unit_type", "state", "sub_state", "last_update"][..],
+        ),
+        (
+            "gateway_stats_1h",
+            &[
+                "bucket",
+                "source",
+                "stat_events",
+                "avg_total_requests",
+                "total_rate_limited",
+                "avg_latency_ms",
+                "max_p99_latency_ms",
+            ][..],
+        ),
+        (
+            "stream_stats_1h",
+            &[
+                "bucket",
+                "stream_name",
+                "avg_fill_pct",
+                "max_fill_pct",
+                "avg_messages",
+                "max_messages",
+                "sample_count",
+            ][..],
+        ),
+        (
+            "assembly_stats_1h",
+            &[
+                "bucket",
+                "max_active_assemblies",
+                "total_completed",
+                "total_failed",
+                "total_timed_out",
+                "avg_duration_ms",
+                "sample_count",
+            ][..],
+        ),
+        (
+            "node_stats_1h",
+            &[
+                "bucket",
+                "node_type",
+                "total_events_processed",
+                "total_events_dropped",
+                "avg_latency_ms",
+                "max_queue_depth",
+                "total_errors",
+                "sample_count",
+            ][..],
+        ),
+        (
+            "metric_counters_1h",
+            &[
+                "bucket",
+                "component",
+                "metric_name",
+                "total_value",
+                "max_value",
+                "sample_count",
+            ][..],
+        ),
+        (
+            "current_window_focus",
+            &[
+                "bucket",
+                "workspace",
+                "window_class",
+                "window_title",
+                "window_id",
+                "last_focus_time",
+                "focus_event_count",
+            ][..],
+        ),
+        (
+            "command_frequency_hourly",
+            &[
+                "bucket",
+                "command",
+                "shell",
+                "total_executions",
+                "successful_executions",
+                "failed_executions",
+                "avg_duration_ms",
+            ][..],
+        ),
+        (
+            "file_activity_summary",
+            &[
+                "bucket",
+                "directory",
+                "event_type",
+                "total_events",
+                "unique_files",
+            ][..],
+        ),
+        (
+            "current_system_state",
+            &[
+                "bucket",
+                "avg_cpu_percent",
+                "max_cpu_percent",
+                "avg_memory_percent",
+                "max_memory_percent",
+                "avg_disk_percent",
+                "current_active_units",
+                "sample_count",
+            ][..],
+        ),
+        (
+            "ingestd_batch_stats_1h",
+            &[
+                "bucket",
+                "avg_batch_size",
+                "max_batch_size",
+                "avg_latency_ms",
+                "max_latency_ms",
+                "total_deferred",
+                "total_failed",
+                "synthesis_batches",
+                "batch_count",
+                "validation_valid",
+                "validation_skipped",
+                "validation_no_schema",
+                "validation_schema_not_found",
+                "validation_invalid",
+                "avg_validation_coverage_pct",
+            ][..],
+        ),
+        (
+            "recent_activity_summary",
+            &["activity_type", "context", "detail", "timestamp"][..],
+        ),
+    ];
+
+    for (relation, expected_columns) in expected_contracts {
+        let actual_columns = relation_columns(pool, "sinex_telemetry", relation).await?;
+        let expected_columns = expected_columns
+            .iter()
+            .map(|column| (*column).to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_columns, expected_columns,
+            "sinex_telemetry.{relation} column contract drifted"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let actual = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT view_name
+        FROM timescaledb_information.continuous_aggregates
+        WHERE view_schema = 'sinex_telemetry'
+        ORDER BY view_name
+        "#,
+    )
+    .fetch_all(&ctx.pool)
+    .await?
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+
+    let expected = BTreeSet::from([
+        "assembly_stats_1h".to_string(),
+        "command_frequency_hourly".to_string(),
+        "current_system_state".to_string(),
+        "current_window_focus".to_string(),
+        "file_activity_summary".to_string(),
+        "gateway_stats_1h".to_string(),
+        "ingestd_batch_stats_1h".to_string(),
+        "metric_counters_1h".to_string(),
+        "node_stats_1h".to_string(),
+        "stream_stats_1h".to_string(),
+    ]);
+
+    assert_eq!(
+        actual, expected,
+        "telemetry continuous aggregate registry drifted"
+    );
 
     Ok(())
 }
