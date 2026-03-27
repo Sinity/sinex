@@ -60,7 +60,7 @@ pub struct StateRepository<'a> {
 
 const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
-const VALID_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
+const MANAGED_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
 
 fn node_heartbeat_stale_after() -> Duration {
     std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
@@ -190,13 +190,35 @@ impl StateRepository<'_> {
         Ok(())
     }
 
-    fn validate_operation_type(operation_type: &str) -> DbResult<()> {
-        if VALID_OPERATION_TYPES.contains(&operation_type) {
+    fn validate_managed_operation_type(operation_type: &str) -> DbResult<()> {
+        if MANAGED_OPERATION_TYPES.contains(&operation_type) {
             Ok(())
         } else {
             Err(SinexError::validation(format!(
                 "Unsupported operation type '{operation_type}'. Allowed types: {}",
-                VALID_OPERATION_TYPES.join(", ")
+                MANAGED_OPERATION_TYPES.join(", ")
+            )))
+        }
+    }
+
+    fn validate_audit_operation_type(operation_type: &str) -> DbResult<()> {
+        if operation_type.is_empty() {
+            return Err(SinexError::validation("Operation type cannot be empty"));
+        }
+
+        let is_valid = operation_type
+            .chars()
+            .enumerate()
+            .all(|(index, ch)| match index {
+                0 => ch.is_ascii_lowercase(),
+                _ => ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-'),
+            });
+
+        if is_valid {
+            Ok(())
+        } else {
+            Err(SinexError::validation(format!(
+                "Operation type '{operation_type}' must match ^[a-z][a-z0-9_.-]*$"
             )))
         }
     }
@@ -267,7 +289,7 @@ impl StateRepository<'_> {
 
     /// Log an operation
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
-        Self::validate_operation_type(&operation.operation_type)?;
+        Self::validate_audit_operation_type(&operation.operation_type)?;
         // Validate replay-specific scope only for replay operations; allow other shapes otherwise
         if operation.operation_type == "replay"
             && let Some(ref scope) = operation.scope
@@ -573,7 +595,7 @@ impl StateRepository<'_> {
         operator: &str,
         scope: JsonValue,
     ) -> DbResult<OperationRecord> {
-        Self::validate_operation_type(operation_type)?;
+        Self::validate_managed_operation_type(operation_type)?;
         let op_uuid = sqlx::query_scalar!(
             r#"SELECT core.start_operation($1, $2, $3)::uuid as "id!""#,
             operation_type,

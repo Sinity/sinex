@@ -505,13 +505,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
             },
         )
         // Content methods (Write)
-        .register(
-            "content.store_blob",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move { handle_store_blob(services, params).await })
-            },
-        )
+        .register("content.store_blob", Role::Write, |params, services, auth| {
+            Box::pin(async move { handle_store_blob(services, params, auth).await })
+        })
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,

@@ -149,12 +149,34 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-async fn log_operation_rejects_unknown_operation_type(ctx: TestContext) -> TestResult<()> {
+async fn log_operation_accepts_custom_audit_operation_type(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let logged = repo
+        .log_operation(Operation {
+            id: None,
+            operation_type: "content.store".to_string(),
+            operator: "tester@localhost".to_string(),
+            scope: Some(json!({ "source": "external" })),
+            result_status: OperationStatus::Running,
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        })
+        .await?;
+
+    assert_eq!(logged.operation_type, "content.store");
+    assert_eq!(logged.operator, "tester@localhost");
+    assert_eq!(logged.scope, Some(json!({ "source": "external" })));
+    Ok(())
+}
+
+#[sinex_test]
+async fn log_operation_rejects_malformed_operation_type(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let err = repo
         .log_operation(Operation {
             id: None,
-            operation_type: "test".to_string(),
+            operation_type: "Bad Operation".to_string(),
             operator: "tester@localhost".to_string(),
             scope: None,
             result_status: OperationStatus::Running,
@@ -163,9 +185,9 @@ async fn log_operation_rejects_unknown_operation_type(ctx: TestContext) -> TestR
             duration_ms: None,
         })
         .await
-        .expect_err("unknown operation type should be rejected before insert");
+        .expect_err("malformed operation type should be rejected before insert");
 
-    assert!(err.to_string().contains("Unsupported operation type"));
+    assert!(err.to_string().contains("must match"));
     Ok(())
 }
 

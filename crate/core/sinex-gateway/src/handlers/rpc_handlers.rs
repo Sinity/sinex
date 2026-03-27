@@ -92,9 +92,6 @@ impl<'a> RpcParams<'a> {
     }
 }
 
-// Default values for created_by fields when not provided by caller
-pub(crate) const DEFAULT_CREATOR_HOST: &str = "sinex-host";
-
 // Default values for content/blob handling
 pub(crate) const DEFAULT_BLOB_FILENAME: &str = "content.txt";
 pub(crate) const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";

@@ -174,7 +174,7 @@ async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyE
         ALTER TABLE core.operations_log
             DROP CONSTRAINT IF EXISTS operations_log_operation_type_check,
             ADD CONSTRAINT operations_log_operation_type_check
-            CHECK (operation_type IN ('replay', 'archive', 'restore', 'purge', 'tombstone'))
+            CHECK (operation_type ~ '^[a-z][a-z0-9_.-]*$')
         "#,
     )
     .await?;
@@ -200,7 +200,8 @@ async fn operations_log_operation_type_constraint_is_current(
     .await?;
 
     Ok(definition.is_some_and(|def| {
-        def.contains("'restore'") && def.contains("'tombstone'")
+        def.contains("operation_type ~")
+            && def.contains("^[a-z][a-z0-9_.-]*$")
     }))
 }
 
@@ -495,6 +496,10 @@ RETURNS UUID AS $$
 DECLARE
     v_operation_id UUID;
 BEGIN
+    IF p_operation_type NOT IN ('replay', 'archive', 'restore', 'purge', 'tombstone') THEN
+        RAISE EXCEPTION 'Unsupported managed operation type: %', p_operation_type
+            USING ERRCODE = '22023';
+    END IF;
     v_operation_id := uuidv7();
     INSERT INTO core.operations_log (id, operation_type, operator, scope, scope_window, result_status)
     VALUES (v_operation_id, p_operation_type, p_operator, p_scope, p_scope_window, 'running');

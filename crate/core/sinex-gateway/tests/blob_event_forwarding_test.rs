@@ -43,6 +43,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
             "fixture.bin",
             "application/octet-stream",
             "test",
+            "test",
         )
         .await?;
 

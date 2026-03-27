@@ -3,7 +3,10 @@
 //! Content service entry points for binary payload workflows.
 
 use sinex_db::DbPool;
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::state::Operation;
 use sinex_node_sdk::annex::BlobManager;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{Result, SinexError};
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,35 +33,25 @@ impl ContentService {
         operation_type: &str,
         operator: &str,
         scope: serde_json::Value,
-        result_status: &str,
-        result_message: Option<&str>,
+        result_status: OperationStatus,
+        result_message: Option<String>,
         preview_summary: Option<serde_json::Value>,
         duration_ms: Option<i32>,
-    ) -> std::result::Result<(), sqlx::Error> {
-        sqlx::query!(
-            r#"
-            INSERT INTO core.operations_log (
-                operation_type,
-                operator,
-                scope,
+    ) -> Result<()> {
+        self.pool
+            .state()
+            .log_operation(Operation {
+                id: None,
+                operation_type: operation_type.to_string(),
+                operator: operator.to_string(),
+                scope: Some(scope),
                 result_status,
                 result_message,
                 preview_summary,
-                duration_ms
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-            operation_type,
-            operator,
-            scope,
-            result_status,
-            result_message,
-            preview_summary,
-            duration_ms
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+                duration_ms,
+            })
+            .await
+            .map(|_| ())
     }
 
     /// Store content as blob and return annex key
@@ -71,6 +64,7 @@ impl ContentService {
         filename: &str,
         content_type: &str,
         source: &str,
+        operator: &str,
     ) -> Result<String> {
         let started = Instant::now();
         let scope = serde_json::json!({
@@ -92,16 +86,22 @@ impl ContentService {
                 if let Err(err) = self
                     .record_operation(
                         "content.store",
-                        source,
+                        operator,
                         scope.clone(),
-                        "failure",
-                        Some(&debug_error),
+                        OperationStatus::Failed,
+                        Some(debug_error.clone()),
                         None,
                         duration_ms,
                     )
                     .await
                 {
-                    warn!(error = %err, "Failed to record content.store failure");
+                    warn!(
+                        error = %err,
+                        operator,
+                        source,
+                        filename,
+                        "Failed to record content.store failure"
+                    );
                 }
 
                 warn!(filename = %filename, error = %debug_error, "Blob ingestion error");
@@ -124,16 +124,22 @@ impl ContentService {
         if let Err(err) = self
             .record_operation(
                 "content.store",
-                source,
+                operator,
                 scope,
-                "success",
+                OperationStatus::Success,
                 None,
                 Some(preview),
                 duration_ms,
             )
             .await
         {
-            warn!(error = %err, "Failed to record content.store success");
+            warn!(
+                error = %err,
+                operator,
+                source,
+                filename,
+                "Failed to record content.store success"
+            );
         }
 
         Ok(blob_metadata.annex_key())
