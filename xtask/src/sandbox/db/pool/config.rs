@@ -166,7 +166,7 @@ pub(super) fn force_user(url: &str, user: &str) -> String {
     }
 }
 
-pub(super) fn replace_db_name(url: &str, db: &str) -> String {
+pub(crate) fn replace_db_name(url: &str, db: &str) -> String {
     if let Ok(mut parsed) = Url::parse(url) {
         parsed.set_path(&format!("/{db}"));
         return parsed.to_string();
@@ -229,6 +229,19 @@ mod tests {
             "#,
         )?;
         assert_eq!(nextest_test_threads_from_config(&config, "default", 24)?, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_replace_db_name_preserves_query_parameters() -> Result<()> {
+        let replaced = replace_db_name(
+            "postgresql://postgres@localhost/sinex_dev?host=/run/postgresql&sslmode=disable",
+            "sinex_test_pool_1",
+        );
+        assert_eq!(
+            replaced,
+            "postgresql://postgres@localhost/sinex_test_pool_1?host=/run/postgresql&sslmode=disable"
+        );
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use crate::sandbox::prelude::*;
+use crate::sandbox::db::pool::replace_db_name;
 use sinex_schema::schema_registry;
 
 pub struct PermissionGranter {
@@ -57,17 +58,7 @@ pub async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
         return Ok(());
     };
 
-    // Use the superuser URL already stored in the granter
-    let admin_url = &granter.superuser_url;
-
-    // We need to parse and replace the DB name in the URL
-    // For simplicity in xtask, we assume it's a standard postgres URL
-    let db_url = if admin_url.contains('?') {
-        let (base, params) = admin_url.split_once('?').unwrap();
-        format!("{}/{}/?{}", base.trim_end_matches('/'), db_name, params)
-    } else {
-        format!("{}/{}", admin_url.trim_end_matches('/'), db_name)
-    };
+    let db_url = replace_db_name(&granter.superuser_url, db_name);
 
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)

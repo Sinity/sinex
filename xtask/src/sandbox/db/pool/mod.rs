@@ -33,6 +33,7 @@ pub use health::{
     PoolHealthReport, acquire_admin_connection, check_pool_health, pool_slot_count, prime_pool,
     reset_pool,
 };
+pub(crate) use config::replace_db_name;
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
 pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
