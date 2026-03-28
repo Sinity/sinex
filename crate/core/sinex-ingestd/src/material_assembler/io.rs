@@ -14,6 +14,7 @@ use super::{
 
         // MaterialBeginMessage removed (unused)
         MaterialEndMessage,
+        parse_material_started_at,
         TEMP_FILE_NAME,
         WAL_FILE_NAME,
         WalEntry,
@@ -288,8 +289,11 @@ async fn restore_state_params(
         buffered_slices,
         buffered_bytes,
         state_dir: state_dir.to_path_buf(),
-        started_at: Timestamp::parse_rfc3339(&state_snapshot.started_at)
-            .unwrap_or_else(|_| Timestamp::now()),
+        started_at: parse_material_started_at(
+            material_id,
+            &state_snapshot.started_at,
+            "restored WAL state",
+        )?,
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
         metadata: state_snapshot.metadata,
@@ -957,6 +961,20 @@ mod tests {
         Ok((assembler, annex_dir, state_dir))
     }
 
+    async fn write_wal_entry(
+        wal_path: &std::path::Path,
+        entry: WalEntry,
+    ) -> TestResult<()> {
+        let entry_json = serde_json::to_vec(&entry)?;
+        let envelope = WalEntryEnvelope {
+            seq: 0,
+            crc: crc32fast::hash(&entry_json),
+            entry,
+        };
+        tokio::fs::write(wal_path, format!("{}\n", serde_json::to_string(&envelope)?)).await?;
+        Ok(())
+    }
+
     #[sinex_test]
     async fn import_into_annex_preserves_staging_file_until_cleanup(
         ctx: TestContext,
@@ -1112,6 +1130,34 @@ mod tests {
         let parsed = parse_material_state_folder(&path)?;
 
         assert!(parsed.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_rejects_invalid_started_at_in_wal(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                started_at: "not-a-timestamp".to_string(),
+            }),
+        )
+        .await?;
+
+        let error = restore_state(&assembler)
+            .await
+            .expect_err("invalid WAL started_at must fail honestly");
+        assert!(error.to_string().contains("Invalid started_at"));
+        assert!(error.to_string().contains("restored WAL state"));
         Ok(())
     }
 
