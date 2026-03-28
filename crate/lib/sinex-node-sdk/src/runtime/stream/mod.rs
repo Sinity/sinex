@@ -2248,6 +2248,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
             None => None,
         };
+        let node_run_id = published
+            .node_run_id
+            .as_deref()
+            .map(|value| Self::parse_uuid(value, "node_run_id"))
+            .transpose()?;
 
         Ok(Event {
             id: Some(provisional.event_id),
@@ -2259,9 +2264,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 SinexError::processing("Invalid host in provisional event payload")
                     .with_source(error)
             })?,
-            node_run_id: published
-                .node_run_id
-                .and_then(|s| s.parse::<sinex_primitives::Uuid>().ok()),
+            node_run_id,
             payload_schema_id,
             provenance,
             associated_blob_ids,
@@ -2645,6 +2648,30 @@ mod tests {
 
         let message = format!("{error:#}");
         assert!(message.contains("Confirmed event missing from database"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn build_event_from_provisional_rejects_invalid_node_run_id() -> TestResult<()> {
+        let provisional = ProvisionalEvent {
+            event_id: EventId::from(Uuid::now_v7()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({
+                "source": "runtime-test-source",
+                "event_type": "runtime.test",
+                "host": "runtime-test-host",
+                "payload": {"ok": true},
+                "source_event_ids": [Uuid::now_v7().to_string()],
+                "node_run_id": "not-a-uuid"
+            }),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
+        };
+
+        let error = NodeRunner::<RuntimeTestNode>::build_event_from_provisional(&provisional)
+            .expect_err("invalid persisted node_run_id must fail honestly");
+        assert!(error.to_string().contains("Invalid UUID for node_run_id"));
         Ok(())
     }
 
