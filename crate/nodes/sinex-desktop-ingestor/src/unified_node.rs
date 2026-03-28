@@ -552,6 +552,16 @@ impl Default for DesktopNode {
 }
 
 impl DesktopNode {
+    fn env_string_override(name: &str) -> NodeResult<Option<String>> {
+        match std::env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+                "Environment variable '{name}' is not valid UTF-8"
+            ))),
+        }
+    }
+
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
         raw.parse::<WindowManagerType>().map_err(|error| {
             SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
@@ -597,11 +607,11 @@ impl DesktopNode {
     }
 
     fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
-        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
+        if let Some(val) = Self::env_string_override("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
             config.require_hyprland =
                 Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
         }
-        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
+        if let Some(path) = Self::env_string_override("SINEX_ACTIVITYWATCH_DB_PATH")? {
             config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
         }
 
@@ -1045,9 +1055,49 @@ impl IngestorNode for DesktopNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use serde_json::json;
     use std::time::Duration;
-    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
+    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test};
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&mut self, key: &str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
 
     fn sample_activitywatch_entry(
         kind: ActivityWatchEntryKind,
@@ -1161,6 +1211,30 @@ mod tests {
 
         assert!(message.contains("SINEX_DESKTOP_REQUIRE_HYPRLAND"));
         assert!(message.contains("maybe"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn desktop_env_override_rejects_non_unicode_activitywatch_db_path()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_ACTIVITYWATCH_DB_PATH",
+            "SINEX_DESKTOP_REQUIRE_HYPRLAND",
+        ]);
+        env.set(
+            "SINEX_ACTIVITYWATCH_DB_PATH",
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
+        env.remove("SINEX_DESKTOP_REQUIRE_HYPRLAND");
+
+        let mut config = DesktopConfig::default();
+        let error = DesktopNode::apply_env_overrides(&mut config)
+            .expect_err("non-UTF8 ActivityWatch overrides must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_ACTIVITYWATCH_DB_PATH"));
+        assert!(message.contains("not valid UTF-8"));
         Ok(())
     }
 

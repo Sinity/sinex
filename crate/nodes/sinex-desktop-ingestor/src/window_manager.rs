@@ -80,6 +80,17 @@ fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node
     sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
 }
 
+fn env_string(name: &str) -> NodeResult<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(platform_error(
+            format!("Environment variable '{name}' is not valid UTF-8"),
+            ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+        )),
+    }
+}
+
 fn collect_hyprland_candidates<I>(entries: I, hypr_dir: &Path) -> NodeResult<Vec<PathBuf>>
 where
     I: IntoIterator<Item = std::io::Result<PathBuf>>,
@@ -123,17 +134,20 @@ struct HyprlandSocketPaths {
 }
 
 fn resolve_hyprland_runtime_dir() -> NodeResult<PathBuf> {
-    std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
-        .or_else(dirs::runtime_dir)
-        .ok_or_else(|| {
-            platform_error(
-                "No Hyprland runtime dir found. Set SINEX_HYPRLAND_RUNTIME_DIR or XDG_RUNTIME_DIR.",
-                ERROR_CLASS_XDG_RUNTIME_MISSING,
-            )
-        })
+    if let Some(runtime_dir) = env_string("SINEX_HYPRLAND_RUNTIME_DIR")? {
+        return Ok(PathBuf::from(runtime_dir));
+    }
+
+    if let Some(runtime_dir) = env_string("XDG_RUNTIME_DIR")? {
+        return Ok(PathBuf::from(runtime_dir));
+    }
+
+    dirs::runtime_dir().ok_or_else(|| {
+        platform_error(
+            "No Hyprland runtime dir found. Set SINEX_HYPRLAND_RUNTIME_DIR or XDG_RUNTIME_DIR.",
+            ERROR_CLASS_XDG_RUNTIME_MISSING,
+        )
+    })
 }
 
 fn derive_hyprland_command_socket(event_socket: &str) -> String {
@@ -186,9 +200,9 @@ fn select_hyprland_base_path(
 }
 
 fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
-    if let Ok(event_socket) = std::env::var("SINEX_HYPRLAND_EVENT_SOCKET") {
-        let command_socket = std::env::var("SINEX_HYPRLAND_COMMAND_SOCKET")
-            .unwrap_or_else(|_| derive_hyprland_command_socket(&event_socket));
+    if let Some(event_socket) = env_string("SINEX_HYPRLAND_EVENT_SOCKET")? {
+        let command_socket = env_string("SINEX_HYPRLAND_COMMAND_SOCKET")?
+            .unwrap_or_else(|| derive_hyprland_command_socket(&event_socket));
         return Ok(HyprlandSocketPaths {
             event_socket,
             command_socket,
@@ -196,9 +210,8 @@ fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
     }
 
     let runtime_dir = resolve_hyprland_runtime_dir()?;
-    let explicit_signature = std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
-        .ok()
-        .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok());
+    let explicit_signature = env_string("SINEX_HYPRLAND_INSTANCE_SIGNATURE")?
+        .or(env_string("HYPRLAND_INSTANCE_SIGNATURE")?);
     let base_path = select_hyprland_base_path(&runtime_dir, explicit_signature)?;
 
     Ok(HyprlandSocketPaths {
@@ -1216,8 +1229,48 @@ impl WindowManagerWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&mut self, key: &str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
 
     #[sinex_test]
     async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
@@ -1323,6 +1376,48 @@ mod tests {
             .contains("Cannot inspect Hyprland runtime entry"));
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn resolve_hyprland_socket_paths_rejects_non_utf8_event_socket_override()
+    -> TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_HYPRLAND_EVENT_SOCKET",
+            "SINEX_HYPRLAND_COMMAND_SOCKET",
+        ]);
+        env.set(
+            "SINEX_HYPRLAND_EVENT_SOCKET",
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
+        env.remove("SINEX_HYPRLAND_COMMAND_SOCKET");
+
+        let error = resolve_hyprland_socket_paths()
+            .expect_err("non-UTF8 event socket overrides must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_HYPRLAND_EVENT_SOCKET"));
+        assert!(message.contains("not valid UTF-8"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn resolve_hyprland_runtime_dir_rejects_non_utf8_override() -> TestResult<()> {
+        let mut env = EnvGuard::new(&["SINEX_HYPRLAND_RUNTIME_DIR", "XDG_RUNTIME_DIR"]);
+        env.set(
+            "SINEX_HYPRLAND_RUNTIME_DIR",
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
+        env.remove("XDG_RUNTIME_DIR");
+
+        let error = resolve_hyprland_runtime_dir()
+            .expect_err("non-UTF8 runtime dir overrides must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_HYPRLAND_RUNTIME_DIR"));
+        assert!(message.contains("not valid UTF-8"));
         Ok(())
     }
 
