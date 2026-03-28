@@ -534,8 +534,36 @@ pub struct EnvironmentOverrideGuard {
 impl Drop for EnvironmentOverrideGuard {
     fn drop(&mut self) {
         let lock = ENVIRONMENT_OVERRIDE.get_or_init(|| std::sync::RwLock::new(None));
-        if let Ok(mut guard) = lock.write() {
-            *guard = self.previous.take();
+        restore_environment_override(lock, &mut self.previous);
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn clone_environment_override(
+    lock: &std::sync::RwLock<Option<SinexEnvironment>>,
+) -> Option<SinexEnvironment> {
+    match lock.read() {
+        Ok(guard) => guard.as_ref().cloned(),
+        Err(poisoned) => {
+            warn!("Environment override lock was poisoned while reading; preserving inner override state");
+            poisoned.into_inner().as_ref().cloned()
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn restore_environment_override(
+    lock: &std::sync::RwLock<Option<SinexEnvironment>>,
+    previous: &mut Option<SinexEnvironment>,
+) {
+    match lock.write() {
+        Ok(mut guard) => {
+            *guard = previous.take();
+        }
+        Err(poisoned) => {
+            warn!("Environment override lock was poisoned while restoring; preserving prior override state");
+            let mut guard = poisoned.into_inner();
+            *guard = previous.take();
         }
     }
 }
@@ -554,9 +582,7 @@ pub fn override_environment_for_tests(name: &str) -> Result<EnvironmentOverrideG
 
 #[cfg(any(test, feature = "testing"))]
 fn environment_override() -> Option<SinexEnvironment> {
-    ENVIRONMENT_OVERRIDE
-        .get()
-        .and_then(|lock| lock.read().ok().and_then(|guard| guard.as_ref().cloned()))
+    ENVIRONMENT_OVERRIDE.get().and_then(clone_environment_override)
 }
 
 /// Get the global environment instance
@@ -581,4 +607,46 @@ pub fn environment() -> SinexEnvironment {
             })
         })
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are used here because the helpers are private
+    // synchronization internals that would otherwise need extra visibility.
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn clone_environment_override_recovers_poisoned_lock() -> xtask::sandbox::TestResult<()> {
+        let lock = std::sync::Arc::new(std::sync::RwLock::new(Some(SinexEnvironment::new("dev")?)));
+        let poison_target = lock.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison_target.write().expect("lock write succeeds before poisoning");
+            panic!("intentional poison for test");
+        })
+        .join();
+
+        let env = clone_environment_override(&lock).expect("poisoned lock should still yield override");
+        assert_eq!(env.name, "dev");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_environment_override_recovers_poisoned_lock() -> xtask::sandbox::TestResult<()> {
+        let lock = std::sync::Arc::new(std::sync::RwLock::new(Some(SinexEnvironment::new("dev")?)));
+        let poison_target = lock.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison_target.write().expect("lock write succeeds before poisoning");
+            panic!("intentional poison for test");
+        })
+        .join();
+
+        let mut previous = Some(SinexEnvironment::new("prod")?);
+        restore_environment_override(&lock, &mut previous);
+
+        let restored = clone_environment_override(&lock).expect("restored override should survive poison");
+        assert_eq!(restored.name, "prod");
+        assert!(previous.is_none(), "restore should consume previous override value");
+        Ok(())
+    }
 }
