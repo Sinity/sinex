@@ -91,6 +91,13 @@ fn cache_path() -> std::path::PathBuf {
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 
+fn compiled_contracts_hash() -> &'static str {
+    match option_env!("SINEX_XTASK_BUILD_CONTRACTS_HASH") {
+        Some(hash) => hash,
+        None => "unknown",
+    }
+}
+
 fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).wrap_err_with(|| {
@@ -874,6 +881,7 @@ enum ContractsDeployOutcome {
     Unchanged,
     SkippedDatabaseNotReady,
     SkippedProbeFailed(String),
+    SkippedStaleRegistry(String),
     Deployed,
     Failed(String),
 }
@@ -886,6 +894,31 @@ impl ContractsDeployOutcome {
     fn cache_converged(&self) -> bool {
         matches!(self, Self::Unchanged | Self::Deployed)
     }
+}
+
+fn ensure_running_binary_contracts_inventory_current(
+    current_hash: &str,
+) -> Result<()> {
+    ensure_compiled_contracts_inventory_current(current_hash, compiled_contracts_hash())
+}
+
+fn ensure_compiled_contracts_inventory_current(
+    current_hash: &str,
+    compiled_hash: &str,
+) -> Result<()> {
+    if compiled_hash == "unknown" {
+        bail!(
+            "running xtask binary does not carry a compiled event payload inventory hash; rebuild xtask before deploying contracts"
+        );
+    }
+
+    if compiled_hash != current_hash {
+        bail!(
+            "running xtask binary carries stale event payload inventory (compiled hash {compiled_hash}, current source hash {current_hash}); rerun xtask after it rebuilds"
+        );
+    }
+
+    Ok(())
 }
 
 fn summarize_command_output(output: &std::process::Output) -> String {
@@ -958,6 +991,21 @@ fn auto_deploy_contracts(verbose: bool) -> ContractsDeployOutcome {
     if !tables_exist {
         // Database not ready for contracts yet
         return ContractsDeployOutcome::SkippedDatabaseNotReady;
+    }
+
+    let current_hash = match hash_contracts_dir() {
+        Ok(hash) => hash,
+        Err(error) => {
+            let message = format!("failed to hash event payload contracts before deployment: {error:#}");
+            eprintln!("⚠️  {message}");
+            return ContractsDeployOutcome::SkippedProbeFailed(message);
+        }
+    };
+
+    if let Err(error) = ensure_running_binary_contracts_inventory_current(&current_hash) {
+        let message = format!("{error:#}");
+        eprintln!("ℹ️  Contracts deployment deferred: {message}");
+        return ContractsDeployOutcome::SkippedStaleRegistry(message);
     }
 
     eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
@@ -1283,6 +1331,29 @@ mod tests {
 
         assert_ne!(hash, "empty");
         assert_eq!(hash, hash_after_non_rust_change);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_compiled_contracts_inventory_current_accepts_matching_hash() -> TestResult<()> {
+        ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "deadbeefcafebabe")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_compiled_contracts_inventory_current_rejects_stale_hash() -> TestResult<()> {
+        let error =
+            ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "feedface00000000")
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("stale event payload inventory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_compiled_contracts_inventory_current_rejects_missing_hash() -> TestResult<()> {
+        let error =
+            ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "unknown").unwrap_err();
+        assert!(format!("{error:#}").contains("does not carry a compiled event payload inventory hash"));
         Ok(())
     }
 

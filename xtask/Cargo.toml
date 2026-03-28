@@ -105,6 +105,7 @@ human-panic = "2.0"
 shadow-rs = "0.35"
 
 [build-dependencies]
+blake3 = { workspace = true }
 shadow-rs = "0.35"
 
 [dev-dependencies]
