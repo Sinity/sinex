@@ -23,6 +23,7 @@ use sinex_primitives::events::{
     SystemdUnitStoppedPayload,
 };
 use sinex_primitives::{
+    SinexError,
     events::enums::{
         JournalSyncType, SystemdActiveState as CoreSystemdActiveState,
         SystemdUnitType as CoreSystemdUnitType,
@@ -662,7 +663,6 @@ impl UnifiedJournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             };
 
-            #[allow(clippy::expect_used)] // Typed payload serialization is infallible
             let sync_event = Event::new(
                 EventJournalSyncCompletedPayload {
                     sync_type: sync_payload.sync_type,
@@ -676,7 +676,13 @@ impl UnifiedJournalWatcher {
                 material.initial_provenance(),
             )
             .to_json_event()
-            .expect("serializing journal sync event should not fail");
+            .map_err(|error| {
+                SinexError::serialization(
+                    "failed to serialize journal sync completion event",
+                )
+                .with_std_error(&error)
+                .with_context("entries_count", entries_count.to_string())
+            })?;
             self.send_event(journal_tx, sync_event, "journal_sync_event", material)
                 .await?;
         }
