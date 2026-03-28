@@ -260,6 +260,37 @@ async fn wait_for_any_child_exit(
     }
 }
 
+async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
+    match child
+        .try_wait()
+        .with_context(|| format!("failed to poll {name} before bundle shutdown"))?
+    {
+        Some(_) => return Ok(()),
+        None => {}
+    }
+
+    match child.kill().await {
+        Ok(()) => {}
+        Err(error) => {
+            if child
+                .try_wait()
+                .with_context(|| format!("failed to repoll {name} after bundle kill failure"))?
+                .is_none()
+            {
+                return Err(
+                    eyre!(error)
+                        .wrap_err(format!("failed to kill {name} during bundle shutdown"))
+                );
+            }
+        }
+    }
+
+    child.wait()
+        .await
+        .with_context(|| format!("failed to wait for {name} during bundle shutdown"))?;
+    Ok(())
+}
+
 /// Known binary targets and their package names
 static BINARIES: &[(&str, &str, &str)] = &[
     // (name, package, binary name)
@@ -821,15 +852,22 @@ impl RunCommand {
         if ctx.is_human() {
             println!("\nShutting down remaining processes...");
         }
+        let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
-                if let Err(e) = child.kill().await
-                    && ctx.is_human()
-                {
-                    eprintln!("Warning: couldn't kill {name}: {e}");
+                if let Err(error) = stop_bundle_child(name, child).await {
+                    if ctx.is_human() {
+                        eprintln!("Error stopping {name}: {error:#}");
+                    }
+                    shutdown_failures.push(format!("{name}: {error:#}"));
                 }
-                let _ = child.wait().await;
             }
+        }
+        if !shutdown_failures.is_empty() {
+            bail!(
+                "failed to stop remaining bundle processes:\n{}",
+                shutdown_failures.join("\n")
+            );
         }
 
         Ok(CommandResult::success()
@@ -1365,6 +1403,19 @@ mod tests {
             local_run_failure_suggestion(Some(path)),
             "Inspect the process output above or the dev journal at /tmp/dev-journal.log"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stop_bundle_child_succeeds_for_exited_process()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()?;
+        child.wait().await?;
+
+        stop_bundle_child("test child", &mut child).await?;
         Ok(())
     }
 }
