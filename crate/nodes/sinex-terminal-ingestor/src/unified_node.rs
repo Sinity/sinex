@@ -2897,8 +2897,10 @@ impl ExplorationProvider for TerminalNode {
         }
 
         let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
-        let healthy = configured_failures.is_empty() && processing_errors == 0;
-        let description = if configured_failures.is_empty() {
+        let healthy = usable_sources > 0 && configured_failures.is_empty() && processing_errors == 0;
+        let description = if self.config.history_sources.is_empty() {
+            "No terminal history sources configured".to_string()
+        } else if configured_failures.is_empty() {
             format!(
                 "Monitoring {} terminal history sources",
                 self.config.history_sources.len()
@@ -4851,6 +4853,26 @@ mod tests {
             "unexpected misconfigured source payload: {misconfigured:?}"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_source_state_marks_empty_configuration_unhealthy() -> TestResult<()> {
+        let node = TerminalNode::with_config(TerminalConfig {
+            history_sources: vec![],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        });
+
+        let state = ExplorationProvider::get_source_state(&node)?;
+        assert!(!state.is_connected, "empty configuration must not appear connected");
+        assert!(!state.healthy, "empty configuration must not appear healthy");
+        assert!(
+            state.description.contains("No terminal history sources configured"),
+            "description should make the missing configuration explicit: {}",
+            state.description
+        );
+        assert_eq!(state.total_items, Some(0));
         Ok(())
     }
 
