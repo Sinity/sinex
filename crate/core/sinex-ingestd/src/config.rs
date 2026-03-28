@@ -257,17 +257,13 @@ impl IngestdConfig {
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
         namespace: Option<String>,
-    ) -> Self {
-        let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
-        let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
+    ) -> IngestdResult<Self> {
+        let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
+        let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let pool_acquire_timeout_secs: u64 =
-            std::env::var("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
+            env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
                 .unwrap_or_else(default_pool_acquire_timeout_secs);
-        let pool_idle_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
+        let pool_idle_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_idle_timeout_secs);
 
         // Construct NatsConnectionConfig from args/environment.
@@ -311,7 +307,7 @@ impl IngestdConfig {
             config.assembler_state_dir = Utf8PathBuf::from(path);
         }
 
-        config.normalize()
+        Ok(config.normalize())
     }
 
     fn normalize(mut self) -> Self {
@@ -452,43 +448,40 @@ impl IngestdConfig {
     }
 }
 
-fn env_flag(name: &str) -> Option<bool> {
+fn env_flag(name: &str) -> IngestdResult<Option<bool>> {
     match std::env::var(name) {
         Ok(value) => {
             let normalized = value.trim().to_ascii_lowercase();
-            Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => Ok(Some(true)),
+                "0" | "false" | "no" | "off" => Ok(Some(false)),
+                _ => Err(SinexError::configuration(format!(
+                    "Environment variable {name} has invalid boolean value `{value}`"
+                ))),
+            }
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                env = name,
-                "Environment variable is not valid UTF-8; ignoring"
-            );
-            None
-        }
-        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable {name} is not valid UTF-8"
+        ))),
+        Err(std::env::VarError::NotPresent) => Ok(None),
     }
 }
 
-fn env_parsed<T>(name: &str) -> Option<T>
+fn env_parsed<T>(name: &str) -> IngestdResult<Option<T>>
 where
     T: std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
     match std::env::var(name) {
-        Ok(value) => match value.parse::<T>() {
-            Ok(parsed) => Some(parsed),
-            Err(_) => {
-                warn!(env = name, value = %value, "Environment variable failed to parse; ignoring");
-                None
-            }
-        },
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                env = name,
-                "Environment variable is not valid UTF-8; ignoring"
-            );
-            None
-        }
-        Err(std::env::VarError::NotPresent) => None,
+        Ok(value) => value.parse::<T>().map(Some).map_err(|error| {
+            SinexError::configuration(format!(
+                "Environment variable {name} has invalid value `{value}`: {error}"
+            ))
+        }),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable {name} is not valid UTF-8"
+        ))),
+        Err(std::env::VarError::NotPresent) => Ok(None),
     }
 }
 
@@ -709,25 +702,78 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
 }
 
 fn default_max_buffered_slices() -> usize {
-    env_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES").unwrap_or(100)
+    match env_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES") {
+        Ok(Some(value)) => value,
+        Ok(None) => 100,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MAX_BUFFERED_SLICES",
+                %error,
+                "Invalid env override for max buffered slices; using default"
+            );
+            100
+        }
+    }
 }
 
 fn default_slice_timeout_secs() -> u64 {
-    env_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS").unwrap_or(300) // 5 minutes
+    match env_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS") {
+        Ok(Some(value)) => value,
+        Ok(None) => 300,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_SLICE_TIMEOUT_SECS",
+                %error,
+                "Invalid env override for slice timeout; using default"
+            );
+            300
+        }
+    }
 }
 
 fn default_orphan_threshold_secs() -> u64 {
-    env_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS").unwrap_or(3600) // 1 hour
+    match env_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS") {
+        Ok(Some(value)) => value,
+        Ok(None) => 3600,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_ORPHAN_THRESHOLD_SECS",
+                %error,
+                "Invalid env override for orphan threshold; using default"
+            );
+            3600
+        }
+    }
 }
 
 fn default_disk_threshold_percent() -> u8 {
-    env_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT").unwrap_or(90)
+    match env_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT") {
+        Ok(Some(value)) => value,
+        Ok(None) => 90,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_DISK_THRESHOLD_PERCENT",
+                %error,
+                "Invalid env override for disk threshold percent; using default"
+            );
+            90
+        }
+    }
 }
 
 fn default_max_material_size_bytes() -> Bytes {
-    env_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES")
-        .map(Bytes::from_bytes)
-        .unwrap_or_else(|| Bytes::from_mebibytes(512))
+    match env_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES") {
+        Ok(Some(value)) => Bytes::from_bytes(value),
+        Ok(None) => Bytes::from_mebibytes(512),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES",
+                %error,
+                "Invalid env override for max material size; using default"
+            );
+            Bytes::from_mebibytes(512)
+        }
+    }
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {

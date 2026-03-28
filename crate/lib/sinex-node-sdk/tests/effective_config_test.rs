@@ -54,7 +54,7 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
     env.set("SINEX_DRY_RUN", "true");
     env.set("DATABASE_URL", "postgresql://global/db");
 
-    let config = NodeConfig::load_from_env("test-node");
+    let config = NodeConfig::load_from_env("test-node")?;
     assert_eq!(config.service_name, "test-node");
     assert_eq!(config.log_level, "debug");
     assert_eq!(config.nats.url, "tls://global-nats:4222");
@@ -91,7 +91,7 @@ async fn service_scoped_env_overrides_global_values() -> TestResult<()> {
     env.set("SINEX_DRY_RUN", "false");
     env.set("SINEX_MERGE_TEST_DRY_RUN", "true");
 
-    let config = NodeConfig::load_from_env("merge-test");
+    let config = NodeConfig::load_from_env("merge-test")?;
     assert_eq!(config.log_level, "debug");
     assert_eq!(config.nats.url, "tls://service:4222");
     assert_eq!(config.database_pool_size, 64);
@@ -111,7 +111,7 @@ async fn event_source_config_loads_env_overrides() -> TestResult<()> {
     env.set("SINEX_BATCH_TIMEOUT_SECS", "7");
     env.set("SINEX_FILESYSTEM_WATCHER_BATCH_SIZE", "50");
 
-    let config = EventSourceConfig::load_from_env("filesystem-watcher");
+    let config = EventSourceConfig::load_from_env("filesystem-watcher")?;
     assert_eq!(config.base.service_name, "filesystem-watcher");
     assert_eq!(config.batch_size, 50);
     assert_eq!(config.batch_timeout_secs, Seconds::from_secs(7));
@@ -150,7 +150,7 @@ async fn automaton_config_loads_env_overrides() -> TestResult<()> {
     env.set("SINEX_TERMINAL_CANONICALIZER_PROCESSING_BATCH_SIZE", "25");
     env.set("SINEX_TERMINAL_CANONICALIZER_CHECKPOINT_INTERVAL_SECS", "9");
 
-    let config = AutomatonConfig::load_from_env("terminal-canonicalizer");
+    let config = AutomatonConfig::load_from_env("terminal-canonicalizer")?;
     assert_eq!(config.base.service_name, "terminal-canonicalizer");
     assert_eq!(config.consumer_group, "canon-group");
     assert_eq!(config.consumer_name, "canon-instance");
@@ -185,11 +185,25 @@ async fn node_config_defaults_without_env() -> TestResult<()> {
         env.remove(key);
     }
 
-    let config = NodeConfig::load_from_env("defaults-node");
+    let config = NodeConfig::load_from_env("defaults-node")?;
     assert_eq!(config.service_name, "defaults-node");
     assert_eq!(config.log_level, "info");
     assert_eq!(config.database_pool_size, 10);
     assert!(!config.dry_run);
     assert!(config.work_dir.is_absolute());
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_config_rejects_invalid_boolean_env_overrides() -> TestResult<()> {
+    let mut env = ScopedEnvGuard::new(&["SINEX_DRY_RUN"]);
+    env.set("SINEX_DRY_RUN", "sometimes");
+
+    let error =
+        NodeConfig::load_from_env("defaults-node").expect_err("invalid env should fail load");
+    let message = error.to_string();
+
+    assert!(message.contains("SINEX_DRY_RUN"));
+    assert!(message.contains("sometimes"));
     Ok(())
 }

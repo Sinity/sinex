@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     setup_tracing(cli.log_format, tokio_console)?;
 
     // Load the typed gateway config (defaults → env overrides).
-    let base_config = GatewayConfig::load();
+    let base_config = GatewayConfig::load()?;
 
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

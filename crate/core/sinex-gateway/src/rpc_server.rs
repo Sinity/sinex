@@ -1657,7 +1657,7 @@ mod tests {
     }
 
     fn gateway_config_from_env() -> GatewayConfig {
-        GatewayConfig::load()
+        GatewayConfig::load().expect("gateway config should load in test env")
     }
 
     fn clear_auth_env() {

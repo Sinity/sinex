@@ -43,7 +43,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
-    let config = GatewayConfig::load().with_cli_overrides(
+    let config = GatewayConfig::load()?.with_cli_overrides(
         Some(db_url.clone()),
         Some("127.0.0.1:0".to_string()),
         None,

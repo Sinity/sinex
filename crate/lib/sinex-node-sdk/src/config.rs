@@ -13,7 +13,8 @@
 //! use sinex_node_sdk::NodeConfig;
 //!
 //! // Load from environment variables and defaults
-//! let config = NodeConfig::load_from_env("my-service");
+//! let config = NodeConfig::load_from_env("my-service")?;
+//! # Ok::<(), sinex_node_sdk::config::ConfigError>(())
 //! ```
 //!
 //! # Environment Variables
@@ -208,34 +209,37 @@ impl NodeConfig {
     /// use sinex_node_sdk::NodeConfig;
     ///
     /// // Load with defaults
-    /// let config = NodeConfig::load_from_env("my-service");
+    /// let config = NodeConfig::load_from_env("my-service")?;
     ///
     /// // With environment variables set:
     /// // SINEX_LOG_LEVEL=debug
     /// // SINEX_DRY_RUN=true
-    /// std::env::set_var("SINEX_LOG_LEVEL", "debug");
-    /// std::env::set_var("SINEX_DRY_RUN", "true");
-    /// let config = NodeConfig::load_from_env("debug-service");
+    /// unsafe { std::env::set_var("SINEX_LOG_LEVEL", "debug"); }
+    /// unsafe { std::env::set_var("SINEX_DRY_RUN", "true"); }
+    /// let config = NodeConfig::load_from_env("debug-service")?;
     /// assert_eq!(config.log_level, "debug");
     /// assert!(config.dry_run);
+    /// # Ok::<(), sinex_node_sdk::config::ConfigError>(())
     /// ```
-    pub fn load_from_env(service_name: &str) -> Self {
+    pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = Self::env_prefix(service_name);
-        Self {
+        Ok(Self {
             service_name: defaults.service_name,
-            log_level: service_or_global_env_string(&env_prefix, "LOG_LEVEL")
+            log_level: service_or_global_env_string(&env_prefix, "LOG_LEVEL")?
                 .unwrap_or_else(default_log_level),
             #[cfg(feature = "messaging")]
-            nats: nats_config_from_env(&env_prefix),
-            database_url: service_or_global_env_string(&env_prefix, "DATABASE_URL"),
-            database_pool_size: service_or_global_env_parse(&env_prefix, "DB_POOL_SIZE")
-                .or_else(|| service_or_global_env_parse(&env_prefix, "DATABASE_POOL_SIZE"))
-                .unwrap_or(defaults.database_pool_size),
-            work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")
+            nats: nats_config_from_env(&env_prefix)?,
+            database_url: service_or_global_env_string(&env_prefix, "DATABASE_URL")?,
+            database_pool_size: match service_or_global_env_parse(&env_prefix, "DB_POOL_SIZE")? {
+                Some(value) => value,
+                None => service_or_global_env_parse(&env_prefix, "DATABASE_POOL_SIZE")?
+                    .unwrap_or(defaults.database_pool_size),
+            },
+            work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")?
                 .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
-            dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN").unwrap_or(defaults.dry_run),
-        }
+            dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?.unwrap_or(defaults.dry_run),
+        })
     }
 
     /// Validate configuration
@@ -269,21 +273,21 @@ impl EventSourceConfig {
     }
 
     /// Load configuration for an event source ingestor from environment and defaults.
-    pub fn load_from_env(service_name: &str) -> Self {
+    pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
 
-        Self {
-            base: NodeConfig::load_from_env(service_name),
-            batch_size: service_or_global_env_parse(&env_prefix, "BATCH_SIZE")
+        Ok(Self {
+            base: NodeConfig::load_from_env(service_name)?,
+            batch_size: service_or_global_env_parse(&env_prefix, "BATCH_SIZE")?
                 .unwrap_or(defaults.batch_size),
             batch_timeout_secs: service_or_global_env_parse::<u64>(
                 &env_prefix,
                 "BATCH_TIMEOUT_SECS",
-            )
+            )?
             .map_or(defaults.batch_timeout_secs, Seconds::from_secs),
             source_config: HashMap::new(),
-        }
+        })
     }
 
     /// Validate event source configuration
@@ -314,29 +318,29 @@ impl AutomatonConfig {
     }
 
     /// Load configuration for an automaton from environment and defaults.
-    pub fn load_from_env(service_name: &str) -> Self {
+    pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
 
-        Self {
-            base: NodeConfig::load_from_env(service_name),
-            consumer_group: service_or_global_env_string(&env_prefix, "CONSUMER_GROUP")
+        Ok(Self {
+            base: NodeConfig::load_from_env(service_name)?,
+            consumer_group: service_or_global_env_string(&env_prefix, "CONSUMER_GROUP")?
                 .unwrap_or(defaults.consumer_group),
-            consumer_name: service_or_global_env_string(&env_prefix, "CONSUMER_NAME")
+            consumer_name: service_or_global_env_string(&env_prefix, "CONSUMER_NAME")?
                 .unwrap_or(defaults.consumer_name),
-            topics: service_or_global_env_list(&env_prefix, "TOPICS").unwrap_or(defaults.topics),
+            topics: service_or_global_env_list(&env_prefix, "TOPICS")?.unwrap_or(defaults.topics),
             processing_batch_size: service_or_global_env_parse(
                 &env_prefix,
                 "PROCESSING_BATCH_SIZE",
-            )
+            )?
             .unwrap_or(defaults.processing_batch_size),
             checkpoint_interval_secs: service_or_global_env_parse::<u64>(
                 &env_prefix,
                 "CHECKPOINT_INTERVAL_SECS",
-            )
+            )?
             .map_or(defaults.checkpoint_interval_secs, Seconds::from_secs),
             automaton_config: HashMap::new(),
-        }
+        })
     }
 
     /// Validate automaton configuration
@@ -485,78 +489,130 @@ fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::Validation
     Ok(())
 }
 
-fn service_or_global_env_string(service_prefix: &str, suffix: &str) -> Option<String> {
-    std::env::var(format!("SINEX_{service_prefix}_{suffix}"))
-        .ok()
-        .or_else(|| std::env::var(format!("SINEX_{suffix}")).ok())
-        .or_else(|| {
-            (suffix == "DATABASE_URL")
-                .then(|| std::env::var("DATABASE_URL").ok())
-                .flatten()
-        })
+fn env_var_optional(name: &str) -> Result<Option<String>, ConfigError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::Validation(format!(
+            "Environment variable {name} is not valid UTF-8"
+        ))),
+    }
 }
 
-fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Option<T>
+fn service_or_global_env_value(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<(String, String)>, ConfigError> {
+    let service_key = format!("SINEX_{service_prefix}_{suffix}");
+    if let Some(value) = env_var_optional(&service_key)? {
+        return Ok(Some((service_key, value)));
+    }
+
+    let global_key = format!("SINEX_{suffix}");
+    if let Some(value) = env_var_optional(&global_key)? {
+        return Ok(Some((global_key, value)));
+    }
+
+    if suffix == "DATABASE_URL"
+        && let Some(value) = env_var_optional("DATABASE_URL")?
+    {
+        return Ok(Some(("DATABASE_URL".to_string(), value)));
+    }
+
+    Ok(None)
+}
+
+fn service_or_global_env_string(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<String>, ConfigError> {
+    Ok(service_or_global_env_value(service_prefix, suffix)?.map(|(_, value)| value))
+}
+
+fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Result<Option<T>, ConfigError>
 where
     T: std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
-    service_or_global_env_string(service_prefix, suffix).and_then(|value| value.parse().ok())
-}
+    let Some((env_name, value)) = service_or_global_env_value(service_prefix, suffix)? else {
+        return Ok(None);
+    };
 
-fn service_or_global_env_bool(service_prefix: &str, suffix: &str) -> Option<bool> {
-    service_or_global_env_string(service_prefix, suffix).map(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
+    value.parse().map(Some).map_err(|error| {
+        ConfigError::Validation(format!(
+            "Environment variable {env_name} has invalid value `{value}`: {error}"
+        ))
     })
 }
 
-fn service_or_global_env_list(service_prefix: &str, suffix: &str) -> Option<Vec<String>> {
-    service_or_global_env_string(service_prefix, suffix).map(|value| {
+fn service_or_global_env_bool(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<bool>, ConfigError> {
+    let Some((env_name, value)) = service_or_global_env_value(service_prefix, suffix)? else {
+        return Ok(None);
+    };
+
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        _ => Err(ConfigError::Validation(format!(
+            "Environment variable {env_name} has invalid boolean value `{value}`"
+        ))),
+    }
+}
+
+fn service_or_global_env_list(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    Ok(service_or_global_env_string(service_prefix, suffix)?.map(|value| {
         value
             .split(',')
             .map(str::trim)
             .filter(|item| !item.is_empty())
             .map(ToOwned::to_owned)
             .collect()
-    })
+    }))
 }
 
 #[cfg(feature = "messaging")]
-fn nats_config_from_env(service_prefix: &str) -> sinex_primitives::nats::NatsConnectionConfig {
+fn nats_config_from_env(
+    service_prefix: &str,
+) -> Result<sinex_primitives::nats::NatsConnectionConfig, ConfigError> {
     let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
 
-    if let Some(url) = service_or_global_env_string(service_prefix, "NATS_URL") {
+    if let Some(url) = service_or_global_env_string(service_prefix, "NATS_URL")? {
         config.url = url;
     }
-    if let Some(name) = service_or_global_env_string(service_prefix, "NATS_NAME") {
+    if let Some(name) = service_or_global_env_string(service_prefix, "NATS_NAME")? {
         config.name = Some(name);
     }
-    if let Some(require_tls) = service_or_global_env_bool(service_prefix, "NATS_REQUIRE_TLS") {
+    if let Some(require_tls) = service_or_global_env_bool(service_prefix, "NATS_REQUIRE_TLS")? {
         config.require_tls = require_tls;
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CA_CERT") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CA_CERT")? {
         config.ca_cert = Some(path.into());
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_CERT") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_CERT")? {
         config.client_cert = Some(path.into());
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_KEY") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_KEY")? {
         config.client_key = Some(path.into());
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CREDS_FILE") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CREDS_FILE")? {
         config.creds_file = Some(path.into());
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_NKEY_SEED_FILE") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_NKEY_SEED_FILE")? {
         config.nkey_seed_file = Some(path.into());
     }
-    if let Some(token) = service_or_global_env_string(service_prefix, "NATS_TOKEN") {
+    if let Some(token) = service_or_global_env_string(service_prefix, "NATS_TOKEN")? {
         config.token = Some(token);
     }
-    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_TOKEN_FILE") {
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_TOKEN_FILE")? {
         config.token_file = Some(path.into());
     }
 
-    config
+    Ok(config)
 }

@@ -1,5 +1,4 @@
 use sinex_gateway::config::GatewayConfig;
-use sinex_primitives::environment::environment;
 use xtask::sandbox::prelude::*;
 
 struct EnvGuard {
@@ -39,12 +38,8 @@ async fn gateway_config_load_namespaces_database_url_from_env() -> TestResult<()
     let mut env = EnvGuard::new(&["DATABASE_URL"]);
     env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
 
-    let config = GatewayConfig::load();
-    let expected = environment()
-        .database_url("postgresql://gateway-config/sinex")
-        .unwrap_or_else(|_| "postgresql://gateway-config/sinex".to_string());
-
-    assert_eq!(config.database_url, expected);
+    let config = GatewayConfig::load()?;
+    assert_eq!(config.database_url, "postgresql://gateway-config/sinex");
     Ok(())
 }
 
@@ -55,10 +50,19 @@ async fn gateway_cli_database_override_uses_effective_database_url() -> TestResu
         None,
         None,
     );
-    let expected = environment()
-        .database_url("postgresql://gateway-cli/sinex")
-        .unwrap_or_else(|_| "postgresql://gateway-cli/sinex".to_string());
+    assert_eq!(config.database_url, "postgresql://gateway-cli/sinex");
+    Ok(())
+}
 
-    assert_eq!(config.database_url, expected);
+#[sinex_test]
+async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["SINEX_GATEWAY_MAX_CONCURRENCY"]);
+    env.set("SINEX_GATEWAY_MAX_CONCURRENCY", "many");
+
+    let error = GatewayConfig::load().expect_err("invalid env should fail gateway config load");
+    let message = error.to_string();
+
+    assert!(message.contains("SINEX_GATEWAY_MAX_CONCURRENCY"));
+    assert!(message.contains("many"));
     Ok(())
 }

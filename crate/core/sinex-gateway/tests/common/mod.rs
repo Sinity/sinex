@@ -19,7 +19,7 @@ impl NatsHarness {
     pub async fn start(ctx: TestContext) -> TestResult<Self> {
         let ctx = ctx.with_nats().dedicated().await?;
         let client = ctx.nats_client();
-        let mut config = GatewayConfig::load();
+        let mut config = GatewayConfig::load()?;
         config.database_url = ctx.database_url().to_string();
         config.nats.url = ctx.nats_url().ok_or_else(|| {
             color_eyre::eyre::eyre!("dedicated NATS test context must expose a NATS URL")
