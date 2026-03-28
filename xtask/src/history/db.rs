@@ -25,9 +25,13 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::Duration;
 use time::OffsetDateTime;
 
 const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
+const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
+const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
+const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 
 fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
     match current_dir {
@@ -51,6 +55,36 @@ fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
                         | rusqlite::ffi::ErrorCode::DatabaseLocked
                 )
             })
+    })
+}
+
+fn with_sqlite_lock_retry<T, F>(action: &str, mut operation: F) -> Result<T>
+where
+    F: FnMut() -> Result<T>,
+{
+    let mut delay = SQLITE_LOCK_RETRY_BASE_DELAY;
+    let mut last_lock_error = None;
+
+    for attempt in 0..SQLITE_LOCK_RETRY_ATTEMPTS {
+        match operation() {
+            Ok(result) => return Ok(result),
+            Err(error) if is_sqlite_lock_error(&error) => {
+                last_lock_error = Some(error);
+                if attempt + 1 == SQLITE_LOCK_RETRY_ATTEMPTS {
+                    break;
+                }
+                std::thread::sleep(delay);
+                delay = std::cmp::min(delay.saturating_mul(2), SQLITE_LOCK_RETRY_MAX_DELAY);
+            }
+            Err(error) => return Err(error).wrap_err_with(|| format!("failed to {action}")),
+        }
+    }
+
+    Err(last_lock_error.expect("lock retry should preserve last error")).wrap_err_with(|| {
+        format!(
+            "failed to {action} after {} lock retries",
+            SQLITE_LOCK_RETRY_ATTEMPTS
+        )
     })
 }
 
@@ -663,13 +697,16 @@ impl HistoryDb {
             self.clear_synthetic();
         }
 
-        self.conn.execute(
-            r"
-            INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running')
-            ",
-            params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd],
-        )?;
+        with_sqlite_lock_retry("start invocation history row", || {
+            self.conn.execute(
+                r"
+                INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running')
+                ",
+                params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd],
+            )?;
+            Ok(())
+        })?;
 
         Ok(self.conn.last_insert_rowid())
     }
@@ -684,14 +721,17 @@ impl HistoryDb {
     ) -> Result<()> {
         let finished_at = Timestamp::now().format_rfc3339();
 
-        self.conn.execute(
-            r"
-            UPDATE invocations
-            SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4
-            WHERE id = ?5
-            ",
-            params![finished_at, duration_secs, exit_code, status.as_str(), id],
-        )?;
+        with_sqlite_lock_retry("finish invocation history row", || {
+            self.conn.execute(
+                r"
+                UPDATE invocations
+                SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4
+                WHERE id = ?5
+                ",
+                params![finished_at, duration_secs, exit_code, status.as_str(), id],
+            )?;
+            Ok(())
+        })?;
 
         Ok(())
     }
@@ -705,13 +745,16 @@ impl HistoryDb {
         duration_secs: f64,
         success: bool,
     ) -> Result<()> {
-        self.conn.execute(
-            r"
-            INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            ",
-            params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
-        )?;
+        with_sqlite_lock_retry("record stage timing", || {
+            self.conn.execute(
+                r"
+                INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -720,19 +763,25 @@ impl HistoryDb {
     /// This is written at `start_stage()` time and cleared at `finish_stage()` time,
     /// giving real-time visibility into what a running background job is doing.
     pub fn set_live_stage(&self, invocation_id: i64, stage: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE invocations SET live_stage = ?1 WHERE id = ?2",
-            params![stage, invocation_id],
-        )?;
+        with_sqlite_lock_retry("set live stage", || {
+            self.conn.execute(
+                "UPDATE invocations SET live_stage = ?1 WHERE id = ?2",
+                params![stage, invocation_id],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     /// Clear the live stage field (called when a stage finishes).
     pub fn clear_live_stage(&self, invocation_id: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE invocations SET live_stage = NULL WHERE id = ?1",
-            params![invocation_id],
-        )?;
+        with_sqlite_lock_retry("clear live stage", || {
+            self.conn.execute(
+                "UPDATE invocations SET live_stage = NULL WHERE id = ?1",
+                params![invocation_id],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -821,38 +870,41 @@ impl HistoryDb {
         terminal_summary: Option<&str>,
     ) -> Result<()> {
         let updated_at = Timestamp::now().format_rfc3339();
-        self.conn.execute(
-            r"INSERT INTO invocation_progress
-                  (invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
-                   mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-              ON CONFLICT(invocation_id) DO UPDATE SET
-                  phase = excluded.phase,
-                  step = excluded.step,
-                  pct_done = excluded.pct_done,
-                  items_done = excluded.items_done,
-                  items_total = excluded.items_total,
-                  updated_at = excluded.updated_at,
-                  mode = excluded.mode,
-                  unit_kind = excluded.unit_kind,
-                  rate_per_sec = excluded.rate_per_sec,
-                  eta_confidence = excluded.eta_confidence,
-                  terminal_summary = excluded.terminal_summary",
-            params![
-                invocation_id,
-                phase,
-                step,
-                pct_done,
-                items_done,
-                items_total,
-                updated_at,
-                mode,
-                unit_kind,
-                rate_per_sec,
-                eta_confidence,
-                terminal_summary,
-            ],
-        )?;
+        with_sqlite_lock_retry("write invocation progress", || {
+            self.conn.execute(
+                r"INSERT INTO invocation_progress
+                      (invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
+                       mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                  ON CONFLICT(invocation_id) DO UPDATE SET
+                      phase = excluded.phase,
+                      step = excluded.step,
+                      pct_done = excluded.pct_done,
+                      items_done = excluded.items_done,
+                      items_total = excluded.items_total,
+                      updated_at = excluded.updated_at,
+                      mode = excluded.mode,
+                      unit_kind = excluded.unit_kind,
+                      rate_per_sec = excluded.rate_per_sec,
+                      eta_confidence = excluded.eta_confidence,
+                      terminal_summary = excluded.terminal_summary",
+                params![
+                    invocation_id,
+                    phase,
+                    step,
+                    pct_done,
+                    items_done,
+                    items_total,
+                    updated_at,
+                    mode,
+                    unit_kind,
+                    rate_per_sec,
+                    eta_confidence,
+                    terminal_summary,
+                ],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -897,11 +949,14 @@ impl HistoryDb {
         duration_secs: f64,
     ) -> Result<()> {
         let sampled_at = Timestamp::now().format_rfc3339();
-        self.conn.execute(
-            r"INSERT INTO invocation_eta_samples (invocation_id, command, phase, duration_secs, sampled_at)
-              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![invocation_id, command, phase, duration_secs, sampled_at],
-        )?;
+        with_sqlite_lock_retry("record eta sample", || {
+            self.conn.execute(
+                r"INSERT INTO invocation_eta_samples (invocation_id, command, phase, duration_secs, sampled_at)
+                  VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![invocation_id, command, phase, duration_secs, sampled_at],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -1773,17 +1828,20 @@ impl HistoryDb {
         profile: Option<&str>,
         args_json: Option<&str>,
     ) -> Result<bool> {
-        let updated = self.conn.execute(
-            r"
-            UPDATE invocations
-            SET command = ?1,
-                subcommand = ?2,
-                profile = ?3,
-                args_json = COALESCE(?4, args_json)
-            WHERE id = ?5 AND is_background = 1
-            ",
-            params![command, subcommand, profile, args_json, id],
-        )?;
+        let updated = with_sqlite_lock_retry("claim background invocation", || {
+            let updated = self.conn.execute(
+                r"
+                UPDATE invocations
+                SET command = ?1,
+                    subcommand = ?2,
+                    profile = ?3,
+                    args_json = COALESCE(?4, args_json)
+                WHERE id = ?5 AND is_background = 1
+                ",
+                params![command, subcommand, profile, args_json, id],
+            )?;
+            Ok(updated)
+        })?;
         Ok(updated == 1)
     }
 
@@ -3854,6 +3912,47 @@ mod tests {
 
         let unlock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
         assert_eq!(unlock_result, 0, "cleanup lock should release cleanly");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_with_sqlite_lock_retry_retries_busy_errors() -> TestResult<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let attempts = AtomicUsize::new(0);
+        let value = with_sqlite_lock_retry("record invocation progress", || {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            if attempt < 2 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error {
+                        code: rusqlite::ffi::ErrorCode::DatabaseBusy,
+                        extended_code: rusqlite::ffi::SQLITE_BUSY,
+                    },
+                    None,
+                )
+                .into());
+            }
+            Ok::<usize, color_eyre::Report>(42)
+        })?;
+
+        assert_eq!(value, 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_with_sqlite_lock_retry_does_not_retry_non_lock_errors() -> TestResult<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let attempts = AtomicUsize::new(0);
+        let error = with_sqlite_lock_retry("record invocation progress", || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err::<(), color_eyre::Report>(rusqlite::Error::InvalidQuery.into())
+        })
+        .expect_err("non-lock errors should fail immediately");
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!(error.to_string().contains("failed to record invocation progress"));
         Ok(())
     }
 
