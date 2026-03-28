@@ -513,6 +513,31 @@ impl TerminalMetrics {
 }
 
 impl HistoryWatcherContext {
+    fn requires_sqlite_row_id(&self) -> bool {
+        matches!(
+            self.source_mode,
+            HistorySourceMode::FishSqlite | HistorySourceMode::AtuinSqlite
+        )
+    }
+
+    fn empty_state(&self) -> HistoryState {
+        if self.requires_sqlite_row_id() {
+            Self::sqlite_history_state(0, VecDeque::new())
+        } else {
+            HistoryState::default()
+        }
+    }
+
+    fn require_sqlite_row_id(&self, state: &HistoryState) -> NodeResult<i64> {
+        state.sqlite_row_id.ok_or_else(|| {
+            SinexError::processing(
+                "history watcher state missing sqlite_row_id for SQLite-backed source",
+            )
+            .with_context("shell", self.shell.clone())
+            .with_context("path", self.path.to_string())
+        })
+    }
+
     async fn remove_temp_state_file(&self, temp_path: &std::path::Path) {
         if let Err(error) = fs::remove_file(temp_path).await {
             warn!(
@@ -525,6 +550,13 @@ impl HistoryWatcherContext {
     }
 
     fn validate_state(&self, state: HistoryState) -> NodeResult<HistoryState> {
+        if self.requires_sqlite_row_id() && state.sqlite_row_id.is_none() {
+            return Err(SinexError::processing(
+                "history watcher state missing sqlite_row_id for SQLite-backed source",
+            )
+            .with_context("shell", self.shell.clone())
+            .with_context("path", self.path.to_string()));
+        }
         if let Some(sqlite_row_id) = state.sqlite_row_id
             && sqlite_row_id < 0
         {
@@ -685,22 +717,19 @@ impl HistoryWatcherContext {
     }
 
     async fn monitor_fish_sqlite(self) {
-        let mut sqlite_row_id: i64 = 0;
-        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-        let mut shutdown_rx = self.shutdown_rx.clone();
-
-        match self.load_state().await {
-            Ok(Some(state)) => {
-                sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                recent_hashes = state.recent_hashes;
-                debug!(
-                    path = %self.path,
-                    sqlite_row_id,
-                    dedup_hashes = recent_hashes.len(),
-                    "Restored Fish history watcher state"
-                );
-            }
-            Ok(None) => {}
+        let (mut sqlite_row_id, mut recent_hashes) = match self.resolve_state(None).await {
+            Ok(state) => match self.require_sqlite_row_id(&state) {
+                Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes),
+                Err(error) => {
+                    let message = format!(
+                        "failed to restore Fish history watcher state for {}: {error}",
+                        self.path
+                    );
+                    self.record_error("load_history_state", &message);
+                    warn!("{message}");
+                    return;
+                }
+            },
             Err(error) => {
                 let message = format!(
                     "failed to restore Fish history watcher state for {}: {error}",
@@ -710,7 +739,14 @@ impl HistoryWatcherContext {
                 warn!("{message}");
                 return;
             }
-        }
+        };
+        let mut shutdown_rx = self.shutdown_rx.clone();
+        debug!(
+            path = %self.path,
+            sqlite_row_id,
+            dedup_hashes = recent_hashes.len(),
+            "Restored Fish history watcher state"
+        );
 
         loop {
             if *shutdown_rx.borrow() {
@@ -735,22 +771,19 @@ impl HistoryWatcherContext {
     }
 
     async fn monitor_atuin_sqlite(self) {
-        let mut sqlite_row_id: i64 = 0;
-        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
-        let mut shutdown_rx = self.shutdown_rx.clone();
-
-        match self.load_state().await {
-            Ok(Some(state)) => {
-                sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
-                recent_hashes = state.recent_hashes;
-                debug!(
-                    path = %self.path,
-                    sqlite_row_id,
-                    dedup_hashes = recent_hashes.len(),
-                    "Restored Atuin history watcher state"
-                );
-            }
-            Ok(None) => {}
+        let (mut sqlite_row_id, mut recent_hashes) = match self.resolve_state(None).await {
+            Ok(state) => match self.require_sqlite_row_id(&state) {
+                Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes),
+                Err(error) => {
+                    let message = format!(
+                        "failed to restore Atuin history watcher state for {}: {error}",
+                        self.path
+                    );
+                    self.record_error("load_history_state", &message);
+                    warn!("{message}");
+                    return;
+                }
+            },
             Err(error) => {
                 let message = format!(
                     "failed to restore Atuin history watcher state for {}: {error}",
@@ -760,7 +793,14 @@ impl HistoryWatcherContext {
                 warn!("{message}");
                 return;
             }
-        }
+        };
+        let mut shutdown_rx = self.shutdown_rx.clone();
+        debug!(
+            path = %self.path,
+            sqlite_row_id,
+            dedup_hashes = recent_hashes.len(),
+            "Restored Atuin history watcher state"
+        );
 
         loop {
             if *shutdown_rx.borrow() {
@@ -811,7 +851,7 @@ impl HistoryWatcherContext {
             Some(state) => self.validate_state(state),
             None => match self.load_state().await? {
                 Some(state) => self.validate_state(state),
-                None => Ok(HistoryState::default()),
+                None => Ok(self.empty_state()),
             },
         }
     }
@@ -872,7 +912,16 @@ impl HistoryWatcherContext {
                         );
                     }
                 };
-                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut sqlite_row_id = match self.require_sqlite_row_id(&state) {
+                    Ok(sqlite_row_id) => sqlite_row_id,
+                    Err(error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!("failed to restore Fish history watcher state: {error}"),
+                            self.empty_state(),
+                        );
+                    }
+                };
                 let mut recent_hashes = state.recent_hashes;
                 let poll_started_at = Instant::now();
                 let file_size = match self.history_file_size().await {
@@ -963,7 +1012,16 @@ impl HistoryWatcherContext {
                         );
                     }
                 };
-                let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
+                let mut sqlite_row_id = match self.require_sqlite_row_id(&state) {
+                    Ok(sqlite_row_id) => sqlite_row_id,
+                    Err(error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!("failed to restore Atuin history watcher state: {error}"),
+                            self.empty_state(),
+                        );
+                    }
+                };
                 let recent_hashes = state.recent_hashes;
                 let poll_started_at = Instant::now();
                 let file_size = match self.history_file_size().await {
@@ -2239,7 +2297,17 @@ pub struct TerminalNode {
 pub struct TerminalCheckpoint {}
 
 impl TerminalNode {
+    fn checkpoint_key_requires_sqlite_row_id(key: &str) -> bool {
+        key.starts_with("fish:") || key.starts_with("atuin:")
+    }
+
     fn validate_checkpoint_state(key: &str, state: HistoryState) -> NodeResult<HistoryState> {
+        if Self::checkpoint_key_requires_sqlite_row_id(key) && state.sqlite_row_id.is_none() {
+            return Err(SinexError::checkpoint(
+                "terminal history checkpoint missing sqlite_row_id for SQLite-backed source",
+            )
+            .with_context("source", key.to_string()));
+        }
         if let Some(sqlite_row_id) = state.sqlite_row_id
             && sqlite_row_id < 0
         {
@@ -2553,7 +2621,10 @@ impl IngestorNode for TerminalNode {
                         .with_context("source", checkpoint_key.clone())
                         .with_source(load_error)
                     })?;
-                    checkpoint_states.insert(checkpoint_key, preserved_state.unwrap_or_default());
+                    checkpoint_states.insert(
+                        checkpoint_key,
+                        preserved_state.unwrap_or_else(|| ctx.empty_state()),
+                    );
                     continue;
                 }
             };
@@ -3129,6 +3200,30 @@ mod tests {
             .expect_err("negative sqlite row ids must not be accepted from incoming checkpoints");
 
         assert!(error.to_string().contains("invalid negative sqlite_row_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_history_checkpoint_restore_rejects_missing_sqlite_row_id(
+    ) -> TestResult<()> {
+        let checkpoint = Checkpoint::external(
+            serde_json::json!({
+                "sources": {
+                    "atuin:/tmp/history.db": {
+                        "offset_bytes": 0,
+                        "line_number": 0,
+                        "pending_timestamp": null,
+                        "recent_hashes": [],
+                    }
+                }
+            }),
+            "terminal history source progress",
+        );
+
+        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, "atuin:/tmp/history.db")
+            .expect_err("sqlite-backed checkpoints must carry a row id");
+
+        assert!(error.to_string().contains("missing sqlite_row_id"));
         Ok(())
     }
 
@@ -4291,6 +4386,42 @@ mod tests {
             .ok_or_else(|| color_eyre::eyre::eyre!("corrupt state should fail the scan"))?;
         assert!(failure.contains("failed to restore terminal history watcher state"));
         assert!(failure.contains("failed to decode history watcher state"));
+        assert!(fix.commands.lock().await.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_history_once_from_state_fails_on_sqlite_state_missing_row_id(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let mut fix = make_watcher(&ctx, "sqlite-state-missing-row-id", 4096).await?;
+        fix.ctx.source_mode = HistorySourceMode::AtuinSqlite;
+        fix.ctx.shell = "atuin".to_string();
+        tokio::fs::write(&fix.history_path, "ignored\n").await?;
+        let state_path = fix
+            .ctx
+            .state_path
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should have a state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::json!({
+                "offset_bytes": 0,
+                "line_number": 0,
+                "pending_timestamp": null,
+                "recent_hashes": [17, 23]
+            })
+            .to_string(),
+        )
+        .await?;
+
+        let outcome = fix.ctx.scan_history_once_from_state(None, None).await;
+        assert_eq!(outcome.processed, 0);
+        let failure = outcome
+            .failure
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid sqlite state should fail the scan"))?;
+        assert!(failure.contains("missing sqlite_row_id"));
         assert!(fix.commands.lock().await.is_empty());
         Ok(())
     }
