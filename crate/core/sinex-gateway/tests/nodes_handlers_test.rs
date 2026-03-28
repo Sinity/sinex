@@ -151,3 +151,15 @@ async fn nodes_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResult<
     assert!(error.to_string().contains("broken-node"));
     Ok(())
 }
+
+#[sinex_test]
+async fn nodes_list_surfaces_bucket_open_failures(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+    harness.nats_handle()?.shutdown().await?;
+
+    let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
+        .await
+        .expect_err("closed JetStream should surface instead of looking empty");
+    assert!(error.to_string().contains("Failed to open node state bucket"));
+    Ok(())
+}

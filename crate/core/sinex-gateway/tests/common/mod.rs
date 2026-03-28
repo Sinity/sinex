@@ -5,6 +5,7 @@ use futures::StreamExt;
 use sinex_gateway::{auth::Role, rpc_server::RpcAuthContext};
 use sinex_gateway::{config::GatewayConfig, service_container::ServiceContainer};
 use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
+use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
 pub struct NatsHarness {
@@ -30,6 +31,10 @@ impl NatsHarness {
             env: environment(),
             services,
         })
+    }
+
+    pub fn nats_handle(&self) -> TestResult<Arc<xtask::sandbox::EphemeralNats>> {
+        self._ctx.nats_handle()
     }
 }
 
