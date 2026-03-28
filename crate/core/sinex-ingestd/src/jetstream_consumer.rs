@@ -1079,6 +1079,7 @@ impl JetStreamConsumer {
                             })
                             .collect();
                         let nak_results = join_all(nak_futs).await;
+                        let mut settlement_errors = Vec::new();
                         for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
                             if let Err(err) = result {
                                 warn!(
@@ -1087,6 +1088,14 @@ impl JetStreamConsumer {
                                     "Failed to NAK after confirmation publish failure"
                                 );
                                 self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                                settlement_errors.push((
+                                    prepared.parsed_id,
+                                    Self::message_settlement_failure(
+                                        "failed to NAK after confirmation publish failure",
+                                        prepared.parsed_id,
+                                        err,
+                                    ),
+                                ));
                             }
                         }
                         let processed_count = ack_messages.len() as u64;
@@ -1105,6 +1114,10 @@ impl JetStreamConsumer {
                         if let Some(ref handle) = self.heartbeat_handle {
                             handle.record_error("confirmation publish failure");
                         }
+                        Self::collapse_settlement_errors(
+                            "confirmation publish retry settlement",
+                            settlement_errors,
+                        )?;
                         continue;
                     }
 
@@ -1123,6 +1136,7 @@ impl JetStreamConsumer {
                     // possible (e.g. material registered between ready-set check and DB insert).
                 let is_fk_error = is_source_material_fk_violation_for_prepared_batch(&e, &batch);
                     if is_fk_error {
+                        let mut settlement_errors = Vec::new();
                         debug!(
                             batch_size = batch.len(),
                             "FK violation on batch - source material likely still registering; NAKing with delay"
@@ -1139,8 +1153,17 @@ impl JetStreamConsumer {
                                     "Failed to NAK after FK violation"
                                 );
                                 self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                                settlement_errors.push((
+                                    prepared.parsed_id,
+                                    Self::message_settlement_failure(
+                                        "failed to NAK after FK violation",
+                                        prepared.parsed_id,
+                                        &err,
+                                    ),
+                                ));
                             }
                         }
+                        Self::collapse_settlement_errors("FK violation retry settlement", settlement_errors)?;
                         // Don't count as failed - this is a transient condition
                         continue;
                     }
@@ -1180,6 +1203,7 @@ impl JetStreamConsumer {
                     }
 
                     error!("Failed to persist batch: {}", e);
+                    let mut settlement_errors = Vec::new();
                     for prepared in &batch {
                         if self.should_route_terminal_persistence_failure(&prepared.message) {
                             if let Err(err) = self
@@ -1194,6 +1218,14 @@ impl JetStreamConsumer {
                                     error = %err,
                                     "Failed to route persistence error to DLQ"
                                 );
+                                settlement_errors.push((
+                                    prepared.parsed_id,
+                                    Self::message_settlement_failure(
+                                        "failed to route persistence error to DLQ",
+                                        prepared.parsed_id,
+                                        &err,
+                                    ),
+                                ));
                             }
                         } else if let Err(err) = prepared
                             .message
@@ -1206,6 +1238,14 @@ impl JetStreamConsumer {
                                 "Failed to NAK after persistence failure"
                             );
                             self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                            settlement_errors.push((
+                                prepared.parsed_id,
+                                Self::message_settlement_failure(
+                                    "failed to NAK after persistence failure",
+                                    prepared.parsed_id,
+                                    &err,
+                                ),
+                            ));
                         }
                     }
                     let failed_count = batch.len() as u64;
@@ -1215,6 +1255,7 @@ impl JetStreamConsumer {
                     if let Some(ref handle) = self.heartbeat_handle {
                         handle.record_error("batch persistence failure");
                     }
+                    Self::collapse_settlement_errors("persistence failure settlement", settlement_errors)?;
                 }
             }
         }
@@ -1418,6 +1459,42 @@ impl JetStreamConsumer {
                 false
             }
         }
+    }
+
+    fn message_settlement_failure(
+        operation: &'static str,
+        event_id: Uuid,
+        error: impl std::fmt::Display,
+    ) -> SinexError {
+        SinexError::network(operation)
+            .with_context("event_id", event_id.to_string())
+            .with_source(error.to_string())
+    }
+
+    fn collapse_settlement_errors(
+        stage: &'static str,
+        mut errors: Vec<(Uuid, SinexError)>,
+    ) -> IngestdResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (event_id, error) = errors.remove(0);
+        let mut combined = error
+            .with_context("settlement_stage", stage)
+            .with_context("event_id", event_id.to_string());
+        for (index, (event_id, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(
+                    format!("additional_settlement_event_id_{}", index + 1),
+                    event_id.to_string(),
+                )
+                .with_context(
+                    format!("additional_settlement_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
     }
 
     fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
@@ -1898,6 +1975,52 @@ mod tests {
         drop(rx);
 
         assert!(!signal_ready(Some(tx), "jetstream-consumer"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collapse_settlement_errors_preserves_additional_failures() -> TestResult<()> {
+        let first = Uuid::now_v7();
+        let second = Uuid::now_v7();
+
+        let error = JetStreamConsumer::collapse_settlement_errors(
+            "persistence failure settlement",
+            vec![
+                (
+                    first,
+                    JetStreamConsumer::message_settlement_failure(
+                        "failed to NAK after persistence failure",
+                        first,
+                        "first boom",
+                    ),
+                ),
+                (
+                    second,
+                    JetStreamConsumer::message_settlement_failure(
+                        "failed to route persistence error to DLQ",
+                        second,
+                        "second boom",
+                    ),
+                ),
+            ],
+        )
+        .expect_err("multiple settlement failures must stay visible");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("failed to NAK after persistence failure"));
+        let second_id = second.to_string();
+        assert_eq!(
+            error
+                .context_map()
+                .get("additional_settlement_event_id_1")
+                .map(String::as_str),
+            Some(second_id.as_str())
+        );
+        let extra = error
+            .context_map()
+            .get("additional_settlement_error_1")
+            .expect("extra settlement error should stay attached");
+        assert!(extra.contains("failed to route persistence error to DLQ"));
         Ok(())
     }
 }
