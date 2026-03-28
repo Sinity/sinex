@@ -2,7 +2,10 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
 use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
-use sinex_primitives::{Id, Uuid};
+use sinex_primitives::rpc::lifecycle::{
+    TombstoneOperation, TombstoneOperationPhase, TombstoneOperationState,
+};
+use sinex_primitives::{Id, Timestamp, Uuid};
 use std::time::Duration;
 use xtask::sandbox::sinex_test;
 
@@ -260,6 +263,48 @@ async fn update_tombstone_operation_rejects_missing_operation(ctx: TestContext) 
         .expect_err("missing tombstone operation updates must fail");
 
     assert!(err.to_string().contains("Tombstone operation not found"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn cancel_tombstone_operation_rejects_invalid_created_at(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let operation_id = Uuid::now_v7().to_string();
+    let operation = TombstoneOperation {
+        operation_id: operation_id.clone(),
+        phase: TombstoneOperationPhase::Previewed,
+        state: TombstoneOperationState::Previewed,
+        before: None,
+        source: None,
+        event_ids: Some(vec![Uuid::now_v7().to_string()]),
+        limit: 1000,
+        reason: "test tombstone".to_string(),
+        cascade_analysis: None,
+        created_by: "tester@localhost".to_string(),
+        created_at: "not-a-timestamp".to_string(),
+        expires_at: (Timestamp::now() + time::Duration::hours(1)).format_rfc3339(),
+        approved_by: None,
+        approved_at: None,
+        started_at: None,
+        finished_at: None,
+        tombstoned_count: None,
+        error_details: None,
+    };
+
+    repo.create_tombstone_operation(
+        &operation_id,
+        "tester@localhost",
+        serde_json::to_value(&operation)?,
+        json!({ "message": "preview ready" }),
+    )
+    .await?;
+
+    let err = repo
+        .cancel_tombstone_operation(&operation_id, Some("cancelled for test"))
+        .await
+        .expect_err("invalid tombstone created_at must fail honestly");
+
+    assert!(err.to_string().contains("invalid created_at"));
     Ok(())
 }
 
