@@ -89,7 +89,8 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
-        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok());
+        let home =
+            crate::shell_detection::utf8_home_dir("building default terminal history sources");
         let default_sources = default_history_sources(home.as_ref());
 
         // Allow polling interval override via environment variable

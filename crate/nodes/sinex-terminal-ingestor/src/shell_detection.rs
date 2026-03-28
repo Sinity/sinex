@@ -5,7 +5,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, sync::RwLock};
+use std::{collections::HashMap, env, path::PathBuf, sync::RwLock};
 use tracing::{info, warn};
 
 /// Cache for command existence checks to avoid repeated `which::which()` calls
@@ -341,9 +341,28 @@ fn get_parent_pid() -> Option<u32> {
         .map(sysinfo::Pid::as_u32)
 }
 
+pub(crate) fn utf8_home_dir(context: &'static str) -> Option<Utf8PathBuf> {
+    utf8_home_dir_from(dirs::home_dir(), context)
+}
+
+fn utf8_home_dir_from(path: Option<PathBuf>, context: &'static str) -> Option<Utf8PathBuf> {
+    let path = path?;
+    match Utf8PathBuf::from_path_buf(path.clone()) {
+        Ok(path) => Some(path),
+        Err(_) => {
+            warn!(
+                path = %path.display(),
+                context,
+                "Home directory path is not valid UTF-8; shell defaults are unavailable"
+            );
+            None
+        }
+    }
+}
+
 /// Helper function to get home directory as `Utf8PathBuf`
 fn get_home_dir() -> Option<Utf8PathBuf> {
-    dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
+    utf8_home_dir("detecting shell home directory")
 }
 
 #[cfg(test)]
@@ -351,7 +370,7 @@ mod tests {
     // Inline because this covers local env/cache/version failure semantics.
     use super::{
         ShellType, get_shell_version, get_shell_version_impl, read_cached_command_exists,
-        read_optional_env_var, write_cached_command_exists,
+        read_optional_env_var, utf8_home_dir_from, write_cached_command_exists,
     };
     use std::sync::RwLock;
     use xtask::sandbox::sinex_serial_test;
@@ -454,5 +473,16 @@ mod tests {
 
         assert_eq!(session_id.as_deref(), Some("term-session"));
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn utf8_home_dir_from_rejects_non_utf8_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        use std::path::PathBuf;
+
+        let non_utf8 = PathBuf::from(OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
+        assert!(utf8_home_dir_from(Some(non_utf8), "test").is_none());
     }
 }
