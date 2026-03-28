@@ -195,8 +195,14 @@ impl RealWatcherMaterialContext {
             .map_err(|_| {
                 SinexError::processing("Material writer task dropped reply channel".to_string())
             })?
-            // The writer always sends `Some(offsets)` for a normal append.
-            .map(|opt| opt.unwrap_or((0, 0)))
+            .and_then(|opt| {
+                opt.ok_or_else(|| {
+                    SinexError::processing(
+                        "Material writer task returned finalize response for append request"
+                            .to_string(),
+                    )
+                })
+            })
     }
 }
 
@@ -271,8 +277,11 @@ impl MaterialContext for RealWatcherMaterialContext {
 
 #[cfg(test)]
 mod tests {
-    use super::send_material_reply;
-    use tokio::sync::oneshot;
+    use super::{RealWatcherMaterialContext, send_material_reply};
+    use sinex_db::models::SourceMaterial;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use tokio::sync::{mpsc, oneshot};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -290,6 +299,34 @@ mod tests {
 
         assert!(send_material_reply(tx, Ok(Some((1, 4))), "append"));
         assert_eq!(rx.await??, Some((1, 4)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_payload_rejects_finalize_reply_for_append() -> TestResult<()> {
+        let (writer_tx, mut writer_rx) = mpsc::channel(1);
+        let context = RealWatcherMaterialContext {
+            material_id: Id::<SourceMaterial>::new(),
+            writer_tx,
+            event_count: Arc::new(AtomicU64::new(0)),
+        };
+
+        tokio::spawn(async move {
+            let request = writer_rx
+                .recv()
+                .await
+                .expect("append request should reach synthetic writer");
+            let _ = request.reply.send(Ok(None));
+        });
+
+        let error = context
+            .append_payload(br#"{"message":"hello"}"#)
+            .await
+            .expect_err("append requests must not fabricate offsets from finalize replies");
+
+        assert!(error
+            .to_string()
+            .contains("finalize response for append request"));
         Ok(())
     }
 }

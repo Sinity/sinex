@@ -265,6 +265,29 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    async fn load_last_cursor(cursor_file: &str) -> NodeResult<Option<String>> {
+        match tokio::fs::read_to_string(cursor_file).await {
+            Ok(contents) => {
+                let trimmed = contents.trim().to_string();
+                if validate_journal_cursor(&trimmed) {
+                    Ok(Some(trimmed))
+                } else {
+                    Err(
+                        SinexError::processing("Journal cursor file is invalid")
+                            .with_context("cursor_file", cursor_file.to_string())
+                            .with_context("cursor", trimmed),
+                    )
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(
+                SinexError::io("Failed to read journal cursor file")
+                    .with_context("cursor_file", cursor_file.to_string())
+                    .with_std_error(&error),
+            ),
+        }
+    }
+
     fn resolve_max_line_bytes() -> NodeResult<usize> {
         match std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES") {
             Ok(raw) => raw.parse::<usize>().map_err(|error| {
@@ -446,29 +469,10 @@ impl UnifiedJournalWatcher {
         info!("Journal max line size configured: {} bytes", max_line_bytes);
 
         // Load last cursor if cursor file exists, validating format before use.
-        // A corrupted cursor file would cause `journalctl --after-cursor` to fail,
-        // so we fall back to no-cursor (which replays from the configured time window).
+        // A corrupt or unreadable cursor file would silently alter replay behavior,
+        // so fail early instead of pretending a fresh start is equivalent.
         let last_cursor = if let Some(ref cursor_file) = journal_config.cursor_file {
-            match tokio::fs::read_to_string(cursor_file).await {
-                Ok(contents) => {
-                    let trimmed = contents.trim().to_string();
-                    if validate_journal_cursor(&trimmed) {
-                        Some(trimmed)
-                    } else {
-                        warn!(
-                            cursor_file,
-                            cursor = %trimmed,
-                            "Ignoring invalid journal cursor (corrupt file?), starting fresh"
-                        );
-                        None
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => {
-                    warn!(cursor_file, error = %e, "Failed to read cursor file, starting fresh");
-                    None
-                }
-            }
+            Self::load_last_cursor(cursor_file).await?
         } else {
             None
         };
@@ -1531,20 +1535,15 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         self.cancel_token.cancel();
 
         // Flush any pending cursor before shutdown
-        if graceful && let Err(e) = self.flush_cursor().await {
-            warn!("Failed to flush cursor during shutdown: {}", e);
+        if graceful {
+            self.flush_cursor().await?;
         }
 
         // Kill the child process
         if let Some(ref mut child) = self.child_process {
-            match shutdown_child_process(child, graceful, GRACEFUL_CHILD_SHUTDOWN_TIMEOUT).await {
-                Ok(status) => {
-                    debug!(?status, graceful, "Journal watcher child shutdown completed");
-                }
-                Err(error) => {
-                    warn!(error = %error, "Failed to shut down journal watcher process");
-                }
-            }
+            let status =
+                shutdown_child_process(child, graceful, GRACEFUL_CHILD_SHUTDOWN_TIMEOUT).await?;
+            debug!(?status, graceful, "Journal watcher child shutdown completed");
         }
 
         Ok(())
@@ -1952,6 +1951,48 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn load_last_cursor_rejects_invalid_cursor_file(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let cursor_file = runtime_dir.join("cursor.state");
+        std::fs::write(&cursor_file, b"not-a-cursor")?;
+
+        let error = UnifiedJournalWatcher::load_last_cursor(
+            cursor_file
+                .to_str()
+                .expect("cursor file should be valid UTF-8"),
+        )
+        .await
+        .expect_err("invalid cursor files must not silently trigger a fresh replay");
+
+        assert!(error.to_string().contains("cursor file is invalid"));
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_last_cursor_rejects_unreadable_cursor_path(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let cursor_dir = runtime_dir.join("cursor.state");
+        std::fs::create_dir(&cursor_dir)?;
+
+        let error = UnifiedJournalWatcher::load_last_cursor(
+            cursor_dir
+                .to_str()
+                .expect("cursor directory should be valid UTF-8"),
+        )
+        .await
+        .expect_err("unreadable cursor paths must not silently trigger a fresh replay");
+
+        assert!(error.to_string().contains("Failed to read journal cursor file"));
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn save_cursor_rejects_poisoned_pending_cursor_lock(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -2025,6 +2066,36 @@ mod tests {
             .expect_err("poisoned cursor timing lock must not be ignored during flush");
 
         assert!(error.to_string().contains("last_cursor_save"));
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn graceful_shutdown_propagates_cursor_flush_failure(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let mut watcher = test_watcher();
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let blocker = runtime_dir.join("blocker");
+        std::fs::write(&blocker, b"not-a-directory")?;
+        watcher.journal_config.cursor_file =
+            Some(blocker.join("cursor.state").to_string_lossy().into_owned());
+        watcher
+            .pending_cursor
+            .lock()
+            .expect("pending cursor lock should not be poisoned")
+            .replace("s=abc".to_string());
+
+        let error = watcher
+            .shutdown(true)
+            .await
+            .expect_err("graceful shutdown must surface cursor flush failures");
+
+        assert!(error
+            .to_string()
+            .contains("Failed to create cursor directory"));
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
