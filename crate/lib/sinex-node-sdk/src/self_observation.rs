@@ -93,19 +93,71 @@ impl SelfObserverConfig {
     /// Create configuration from environment variables
     #[must_use]
     pub fn from_env(component: &str) -> Self {
-        let enabled = std::env::var("SINEX_SELF_OBSERVATION_ENABLED")
-            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
-
-        let min_interval_secs = std::env::var("SINEX_SELF_OBSERVATION_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
+        let enabled = env_bool_with_default("SINEX_SELF_OBSERVATION_ENABLED", true);
+        let min_interval_secs = env_u64_with_default("SINEX_SELF_OBSERVATION_INTERVAL_SECS", 1);
 
         Self {
             component: component.to_string(),
             subject_prefix: "sinex.telemetry".to_string(),
             enabled,
             min_emission_interval: Duration::from_secs(min_interval_secs),
+        }
+    }
+}
+
+fn env_bool_with_default(var: &str, default: bool) -> bool {
+    match std::env::var(var) {
+        Ok(raw) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => {
+                    warn!(
+                        variable = var,
+                        value = %raw,
+                        default,
+                        "Invalid self-observation override; using default"
+                    );
+                    default
+                }
+            }
+        }
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Self-observation override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
+}
+
+fn env_u64_with_default(var: &str, default: u64) -> u64 {
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid self-observation override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Self-observation override is not valid UTF-8; using default"
+            );
+            default
         }
     }
 }

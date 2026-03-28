@@ -29,17 +29,41 @@ const DEFAULT_DEGRADED_THRESHOLD: usize = 10;
 const DEFAULT_FAILED_THRESHOLD: usize = 50;
 
 fn get_degraded_threshold() -> usize {
-    std::env::var("SINEX_HEARTBEAT_DEGRADED_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_DEGRADED_THRESHOLD)
+    env_usize_with_default(
+        "SINEX_HEARTBEAT_DEGRADED_THRESHOLD",
+        DEFAULT_DEGRADED_THRESHOLD,
+    )
 }
 
 fn get_failed_threshold() -> usize {
-    std::env::var("SINEX_HEARTBEAT_FAILED_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_FAILED_THRESHOLD)
+    env_usize_with_default("SINEX_HEARTBEAT_FAILED_THRESHOLD", DEFAULT_FAILED_THRESHOLD)
+}
+
+fn env_usize_with_default(var: &str, default: usize) -> usize {
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid heartbeat override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Heartbeat override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
 }
 
 /// Heartbeat metrics and status
