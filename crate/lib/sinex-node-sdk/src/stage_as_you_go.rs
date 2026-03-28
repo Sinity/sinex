@@ -143,6 +143,27 @@ mod tests {
         assert!(*rx.borrow());
         Ok(())
     }
+
+    #[sinex_test]
+    async fn missing_material_started_at_is_rejected() -> TestResult<()> {
+        let (tx, _rx) = mpsc::channel(1);
+        let emitter = EventEmitter::new(tx, false);
+        let context = StageAsYouGoContext::from_optional_emitter(emitter);
+        let material_id = Uuid::now_v7();
+
+        let error = context
+            .require_material_started_at(material_id)
+            .await
+            .expect_err("missing in-flight timestamp should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("stage-as-you-go lost in-flight material timestamp"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
 }
 
 struct ReconciliationTask {
@@ -382,6 +403,16 @@ impl StageAsYouGoContext {
             .await
             .get(&material_id)
             .map(super::acquisition_manager::SourceMaterialHandle::started_at)
+    }
+
+    async fn require_material_started_at(
+        &self,
+        material_id: Uuid,
+    ) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+        self.material_started_at(material_id).await.ok_or_else(|| {
+            SinexError::processing("stage-as-you-go lost in-flight material timestamp")
+                .with_context("source_material_id", material_id.to_string())
+        })
     }
 
     /// Create and send an event with attached source material reference
@@ -875,13 +906,10 @@ impl StageAsYouGoNode for LogFileStageNode {
                 })?;
             // Use the material's started_at as fallback ts_orig — this value is
             // persisted in the temporal ledger by ingestd, making it reproducible
-            // on replay (unlike an ephemeral Timestamp::now()).
+            // on replay. If the in-flight handle vanished, fail honestly instead
+            // of fabricating wall-clock time.
             if event.ts_orig.is_none() {
-                let fallback_ts = self
-                    .context
-                    .material_started_at(source_material_id)
-                    .await
-                    .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
+                let fallback_ts = self.context.require_material_started_at(source_material_id).await?;
                 event.ts_orig = Some(fallback_ts);
             }
 
