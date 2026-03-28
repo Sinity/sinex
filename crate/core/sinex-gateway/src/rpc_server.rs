@@ -1370,6 +1370,24 @@ pub async fn spawn(
         (None, None)
     };
 
+    let metrics_task = metrics_task.map(|task| {
+        RpcServer::monitor_background_task(
+            "Metrics emission task",
+            task,
+            shutdown_rx.clone(),
+        )
+    });
+    let cleanup_task = cleanup_task.map(|task| {
+        RpcServer::monitor_background_task(
+            "Rate limiter cleanup task",
+            task,
+            shutdown_rx.clone(),
+        )
+    });
+    let sse_bus_task = sse_bus_task.map(|task| {
+        RpcServer::monitor_background_task("SSE subscription bus", task, shutdown_rx.clone())
+    });
+
     let state = AppState {
         services,
         auth,
@@ -1639,9 +1657,9 @@ impl RpcServer {
     }
 
     async fn wait_for_background_tasks(
-        metrics_task: Option<JoinHandle<()>>,
-        cleanup_task: Option<JoinHandle<()>>,
-        sse_bus_task: Option<JoinHandle<()>>,
+        metrics_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
+        cleanup_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
+        sse_bus_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
     ) -> color_eyre::eyre::Result<()> {
         Self::wait_for_background_tasks_with_timeout(
             metrics_task,
@@ -1652,26 +1670,68 @@ impl RpcServer {
         .await
     }
 
+    fn monitor_background_task(
+        task_name: &'static str,
+        task: JoinHandle<()>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> JoinHandle<color_eyre::eyre::Result<()>> {
+        tokio::spawn(async move {
+            let mut task = Some(task);
+            tokio::select! {
+                task_result = async {
+                    task.take()
+                        .expect("background task handle must be present until awaited")
+                        .await
+                } => {
+                    match task_result {
+                        Ok(()) => {
+                            if shutdown.has_changed().unwrap_or(true) || *shutdown.borrow() {
+                                Ok(())
+                            } else {
+                                Err(eyre!("{task_name} exited before gateway shutdown"))
+                            }
+                        }
+                        Err(error) => Err(eyre!("{task_name} join failed: {error}")),
+                    }
+                }
+                shutdown_result = shutdown.changed() => {
+                    if shutdown_result.is_err() {
+                        warn!(task = task_name, "Background task monitor shutdown channel dropped before explicit shutdown");
+                    }
+                    match task
+                        .take()
+                        .expect("background task handle must be present until awaited")
+                        .await
+                    {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(eyre!("{task_name} join failed during shutdown: {error}")),
+                    }
+                }
+            }
+        })
+    }
+
     async fn wait_for_background_tasks_with_timeout(
-        metrics_task: Option<JoinHandle<()>>,
-        cleanup_task: Option<JoinHandle<()>>,
-        sse_bus_task: Option<JoinHandle<()>>,
+        metrics_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
+        cleanup_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
+        sse_bus_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
         shutdown_timeout: Duration,
     ) -> color_eyre::eyre::Result<()> {
         let mut errors = Vec::new();
 
         async fn await_background_task(
-            task: JoinHandle<()>,
+            task: JoinHandle<color_eyre::eyre::Result<()>>,
             task_name: &'static str,
             shutdown_timeout: Duration,
         ) -> color_eyre::eyre::Result<()> {
             match tokio::time::timeout(shutdown_timeout, task).await {
-                Ok(Ok(())) => {
+                Ok(Ok(Ok(()))) => {
                     info!(task = task_name, "Background task shut down successfully");
                     Ok(())
                 }
+                Ok(Ok(Err(error))) => Err(error),
                 Ok(Err(error)) => Err(eyre!(
-                    "{task_name} join failed during shutdown: {error}"
+                    "{task_name} monitor join failed during shutdown: {error}"
                 )),
                 Err(_) => Err(eyre!(
                     "{task_name} did not shut down within {shutdown_timeout:?}"
@@ -1928,12 +1988,17 @@ mod tests {
 
     #[sinex_test]
     async fn wait_for_background_tasks_rejects_join_failures() -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let failing = tokio::spawn(async move {
             panic!("metrics task panicked");
         });
 
         let error = RpcServer::wait_for_background_tasks_with_timeout(
-            Some(failing),
+            Some(RpcServer::monitor_background_task(
+                "Metrics emission task",
+                failing,
+                shutdown_rx,
+            )),
             None,
             None,
             Duration::from_millis(50),
@@ -1944,6 +2009,25 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("Background task shutdown failed"));
         assert!(message.contains("Metrics emission task"));
+        drop(shutdown_tx);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_rejects_early_exit_before_shutdown() -> TestResult<()> {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let completed = tokio::spawn(async move {});
+
+        let error = RpcServer::monitor_background_task(
+            "Metrics emission task",
+            completed,
+            shutdown_rx,
+        )
+        .await
+        .expect("monitor join should succeed")
+        .expect_err("background task that exits before shutdown must be treated as a failure");
+
+        assert!(error.to_string().contains("exited before gateway shutdown"));
         Ok(())
     }
 
