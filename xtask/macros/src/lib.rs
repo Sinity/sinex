@@ -16,6 +16,7 @@ use syn::{
 };
 
 /// Configuration parsed from `sinex_test` attributes
+#[derive(Debug)]
 struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
@@ -25,58 +26,128 @@ struct SinexTestConfig {
 /// Known `sinex_test` attribute names for error reporting.
 const KNOWN_SINEX_TEST_ATTRS: &[&str] = &["timeout", "trace", "serial"];
 
+fn parse_u64_lit(lit: &Lit, field_name: &str) -> Result<u64, Error> {
+    match lit {
+        Lit::Int(lit_int) => lit_int.base10_parse::<u64>().map_err(|error| {
+            Error::new(
+                lit_int.span(),
+                format!("invalid `{field_name}` value: {error}"),
+            )
+        }),
+        _ => Err(Error::new(
+            lit.span(),
+            format!("`{field_name}` must be an integer literal"),
+        )),
+    }
+}
+
+fn parse_bool_lit(lit: &Lit, field_name: &str) -> Result<bool, Error> {
+    match lit {
+        Lit::Bool(lit_bool) => Ok(lit_bool.value()),
+        _ => Err(Error::new(
+            lit.span(),
+            format!("`{field_name}` must be a boolean literal"),
+        )),
+    }
+}
+
+fn lit_from_expr<'a>(expr: &'a Expr, field_name: &str) -> Result<&'a Lit, Error> {
+    if let Expr::Lit(expr_lit) = expr {
+        Ok(&expr_lit.lit)
+    } else {
+        Err(Error::new(
+            expr.span(),
+            format!("`{field_name}` must be a literal"),
+        ))
+    }
+}
+
 /// Parse `sinex_test` attributes.
 /// Supports: timeout = 30, trace = true, serial = true
 ///
 /// Returns a compile error for unknown attribute names, preventing
 /// silent typo bugs like `#[sinex_test(timout = 30)]`.
-fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestConfig, TokenStream> {
+fn parse_sinex_test_attrs_tokens(
+    attr_tokens: proc_macro2::TokenStream,
+) -> Result<SinexTestConfig, Error> {
     let mut config = SinexTestConfig {
         timeout: None,
         trace: false,
         serial: false,
     };
 
-    if attr.is_empty() {
+    if attr_tokens.is_empty() {
         return Ok(config);
     }
 
-    let attr_tokens = proc_macro2::TokenStream::from(attr.clone());
-    if let Ok(parsed) = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens) {
+    if let Ok(parsed) = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens.clone()) {
         for meta in parsed {
             match meta {
                 Meta::NameValue(MetaNameValue {
                     path,
-                    value:
-                        Expr::Lit(ExprLit {
-                            lit: Lit::Int(lit_int),
-                            ..
-                        }),
+                    value,
                     ..
                 }) if path.is_ident("timeout") => {
-                    config.timeout = lit_int.base10_parse().ok();
+                    let lit = match &value {
+                        Expr::Lit(ExprLit { lit, .. }) => lit,
+                        _ => {
+                            let error = Error::new(
+                                value.span(),
+                                "`timeout` must be an integer literal",
+                            );
+                            return Err(error);
+                        }
+                    };
+                    match parse_u64_lit(lit, "timeout") {
+                        Ok(timeout) => {
+                            config.timeout = Some(timeout);
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Meta::NameValue(MetaNameValue {
                     path,
-                    value:
-                        Expr::Lit(ExprLit {
-                            lit: Lit::Bool(lit_bool),
-                            ..
-                        }),
+                    value,
                     ..
                 }) if path.is_ident("trace") => {
-                    config.trace = lit_bool.value();
+                    let lit = match &value {
+                        Expr::Lit(ExprLit { lit, .. }) => lit,
+                        _ => {
+                            let error = Error::new(
+                                value.span(),
+                                "`trace` must be a boolean literal",
+                            );
+                            return Err(error);
+                        }
+                    };
+                    match parse_bool_lit(lit, "trace") {
+                        Ok(trace) => {
+                            config.trace = trace;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Meta::NameValue(MetaNameValue {
                     path,
-                    value:
-                        Expr::Lit(ExprLit {
-                            lit: Lit::Bool(lit_bool),
-                            ..
-                        }),
+                    value,
                     ..
                 }) if path.is_ident("serial") => {
-                    config.serial = lit_bool.value();
+                    let lit = match &value {
+                        Expr::Lit(ExprLit { lit, .. }) => lit,
+                        _ => {
+                            let error = Error::new(
+                                value.span(),
+                                "`serial` must be a boolean literal",
+                            );
+                            return Err(error);
+                        }
+                    };
+                    match parse_bool_lit(lit, "serial") {
+                        Ok(serial) => {
+                            config.serial = serial;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Meta::Path(path) if path.is_ident("trace") => {
                     config.trace = true;
@@ -99,7 +170,7 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestCon
                             KNOWN_SINEX_TEST_ATTRS.join(", ")
                         ),
                     );
-                    return Err(err.to_compile_error().into());
+                    return Err(err);
                 }
             }
         }
@@ -107,24 +178,27 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestCon
     }
 
     // Also try simple name=value parsing
-    if let Ok(Meta::NameValue(nv)) = syn::parse::<Meta>(attr) {
+    if let Ok(Meta::NameValue(nv)) = syn::parse2::<Meta>(attr_tokens) {
         if nv.path.is_ident("timeout") {
-            if let Expr::Lit(expr_lit) = &nv.value
-                && let Lit::Int(lit_int) = &expr_lit.lit
-            {
-                config.timeout = lit_int.base10_parse().ok();
+            match lit_from_expr(&nv.value, "timeout").and_then(|lit| parse_u64_lit(lit, "timeout")) {
+                Ok(timeout) => {
+                    config.timeout = Some(timeout);
+                }
+                Err(error) => return Err(error),
             }
         } else if nv.path.is_ident("trace") {
-            if let Expr::Lit(expr_lit) = &nv.value
-                && let Lit::Bool(lit_bool) = &expr_lit.lit
-            {
-                config.trace = lit_bool.value();
+            match lit_from_expr(&nv.value, "trace").and_then(|lit| parse_bool_lit(lit, "trace")) {
+                Ok(trace) => {
+                    config.trace = trace;
+                }
+                Err(error) => return Err(error),
             }
         } else if nv.path.is_ident("serial") {
-            if let Expr::Lit(expr_lit) = &nv.value
-                && let Lit::Bool(lit_bool) = &expr_lit.lit
-            {
-                config.serial = lit_bool.value();
+            match lit_from_expr(&nv.value, "serial").and_then(|lit| parse_bool_lit(lit, "serial")) {
+                Ok(serial) => {
+                    config.serial = serial;
+                }
+                Err(error) => return Err(error),
             }
         } else {
             let name = nv.path.to_token_stream().to_string();
@@ -136,11 +210,20 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestCon
                     KNOWN_SINEX_TEST_ATTRS.join(", ")
                 ),
             );
-            return Err(err.to_compile_error().into());
+            return Err(err);
         }
+        return Ok(config);
     }
 
-    Ok(config)
+    Err(Error::new(
+        proc_macro2::Span::call_site(),
+        "failed to parse sinex_test attributes — expected e.g. #[sinex_test(timeout = 30, trace, serial)]",
+    ))
+}
+
+fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestConfig, TokenStream> {
+    parse_sinex_test_attrs_tokens(proc_macro2::TokenStream::from(attr))
+        .map_err(|error| error.to_compile_error().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,4 +1479,50 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     output.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sinex_test_attrs_tokens;
+    use quote::quote;
+
+    fn parse_ok(tokens: proc_macro2::TokenStream) -> super::SinexTestConfig {
+        parse_sinex_test_attrs_tokens(tokens).expect("attributes should parse")
+    }
+
+    fn parse_err(tokens: proc_macro2::TokenStream) -> String {
+        parse_sinex_test_attrs_tokens(tokens)
+            .expect_err("attributes should fail")
+            .to_string()
+    }
+
+    #[test]
+    fn sinex_test_attrs_parse_valid_timeout_and_flags() {
+        let config = parse_ok(quote!(timeout = 45, trace = true, serial));
+
+        assert_eq!(config.timeout, Some(45));
+        assert!(config.trace);
+        assert!(config.serial);
+    }
+
+    #[test]
+    fn sinex_test_attrs_reject_invalid_timeout_literal() {
+        let error = parse_err(quote!(timeout = "fast"));
+        assert!(error.contains("timeout"));
+        assert!(error.contains("integer literal"));
+    }
+
+    #[test]
+    fn sinex_test_attrs_reject_invalid_trace_literal() {
+        let error = parse_err(quote!(trace = "yes"));
+        assert!(error.contains("trace"));
+        assert!(error.contains("boolean literal"));
+    }
+
+    #[test]
+    fn sinex_test_attrs_reject_unknown_attribute() {
+        let error = parse_err(quote!(timout = 30));
+        assert!(error.contains("unknown sinex_test attribute"));
+        assert!(error.contains("timout"));
+    }
 }
