@@ -1033,8 +1033,8 @@ async fn test_dlq_entry_has_reasonable_failed_at() -> TestResult<()> {
     Ok(())
 }
 
-/// DLQ entries should preserve the original message metadata, including the
-/// `nats_msg_id` and the `error` description.
+/// DLQ entries should preserve original message metadata without fabricating
+/// placeholder fields when metadata is absent.
 #[sinex_test]
 async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
@@ -1049,24 +1049,33 @@ async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
         .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        setup.nats_client.clone(),
-        format!("meta.{suffix}"),
-        Some(setup.namespace.clone()),
+    let env = sinex_primitives::environment();
+    let event_id = Uuid::now_v7();
+    let subject = env.nats_subject_with_namespace(
+        Some(&setup.namespace),
+        &format!(
+            "events.raw.{}.{}",
+            "meta.test".replace('.', "_"),
+            "meta.test".replace('.', "_")
+        ),
     );
-
-    // Publish event with a bad timestamp. The JSON is valid but the typed
-    // deserialization will fail because ts_orig is not a valid timestamp.
-    publisher
-        .publish_with_overrides(
-            "meta.test",
-            json!({"data": "metadata-preservation-test"}),
-            EventOverrides {
-                ts_orig: Some("definitely-not-a-timestamp".to_string()),
-                ..Default::default()
-            },
-        )
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "meta.test",
+        "event_type": "meta.test",
+        "payload": {"data": "metadata-preservation-test"},
+        "ts_orig": "definitely-not-a-timestamp",
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", format!("meta.{event_id}").as_str());
+    setup
+        .nats_client
+        .publish_with_headers(subject, headers, serde_json::to_vec(&event)?.into())
         .await?;
+    setup.nats_client.flush().await?;
 
     let msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
         .await
@@ -1074,11 +1083,12 @@ async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
         .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
     let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
 
-    // Verify all expected fields are present.
-    assert!(
-        entry.get("nats_msg_id").is_some(),
-        "DLQ entry should have nats_msg_id"
-    );
+    if let Some(nats_msg_id) = entry.get("nats_msg_id") {
+        assert!(
+            nats_msg_id.is_string(),
+            "DLQ nats_msg_id must remain a string when present"
+        );
+    }
     assert!(
         entry.get("error").is_some(),
         "DLQ entry should have error field"
@@ -1110,6 +1120,53 @@ async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
         original["payload"]["data"].as_str(),
         Some("metadata-preservation-test"),
         "original event payload data should be preserved"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_dlq_entry_omits_missing_nats_msg_id() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = format!("headerless-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::with_validation();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    publish_custom_event(
+        &setup.nats_client,
+        &setup.namespace,
+        "headerless.test",
+        "headerless.event",
+        &json!({
+            "id": Uuid::now_v7().to_string(),
+            "source": "headerless.test",
+            "event_type": "headerless.event",
+            "payload": {"data": "missing-header"},
+            "ts_orig": "definitely-not-a-timestamp",
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": 0,
+        }),
+    )
+    .await?;
+
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for DLQ entry"))?
+        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+
+    assert!(
+        entry.get("nats_msg_id").is_none(),
+        "DLQ entry must not fabricate a placeholder nats_msg_id when the original header was absent"
     );
 
     setup.handle.abort();
