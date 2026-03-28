@@ -300,6 +300,73 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
 }
 
 #[sinex_test]
+async fn health_aggregator_system_status_includes_trigger_component(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 60,
+        enable_system_health_status: true,
+        enable_component_health_reports: false,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config,
+        ..Default::default()
+    };
+
+    let outputs = process(
+        &mut aggregator,
+        &mut state,
+        json!({
+            "component": "service-a",
+            "previous_status": "unknown",
+            "current_status": "healthy",
+        }),
+        &make_context(Timestamp::now()),
+    )
+    .await?;
+
+    let system_status = outputs
+        .into_iter()
+        .find(|output| {
+            output.payload.get("report_type").and_then(|value| value.as_str())
+                == Some("system_health_status")
+        })
+        .expect("system-wide report should be emitted");
+
+    assert_eq!(
+        system_status
+            .payload
+            .get("total_components")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "system report should include the trigger component"
+    );
+    assert_eq!(
+        system_status
+            .payload
+            .get("healthy_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "healthy count should reflect the trigger component"
+    );
+    assert_eq!(
+        system_status
+            .payload
+            .get("components")
+            .and_then(serde_json::Value::as_array)
+            .map(|components| components.len()),
+        Some(1),
+        "component list should include the trigger component"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn health_aggregator_emits_all_due_reports_for_one_trigger(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -421,6 +488,54 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
             .and_then(serde_json::Value::as_u64),
         Some(1),
         "degraded count should match"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_reports_unknown_system_status_for_unknown_components(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+
+    let outputs = process(
+        &mut aggregator,
+        &mut state,
+        json!({
+            "component": "mystery-service",
+            "previous_status": "unknown",
+            "current_status": "unknown",
+        }),
+        &make_context(Timestamp::now()),
+    )
+    .await?;
+
+    let system_status = outputs
+        .into_iter()
+        .find(|output| {
+            output.payload.get("report_type").and_then(|value| value.as_str())
+                == Some("system_health_status")
+        })
+        .expect("system-wide report should be emitted");
+
+    assert_eq!(
+        system_status
+            .payload
+            .get("overall_status")
+            .and_then(|value| value.as_str()),
+        Some("unknown"),
+        "unknown-only systems should not be reported as healthy"
+    );
+    assert_eq!(
+        system_status
+            .payload
+            .get("unknown_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "unknown component count should be tracked explicitly"
     );
 
     Ok(())

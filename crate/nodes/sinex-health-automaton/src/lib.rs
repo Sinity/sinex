@@ -300,7 +300,97 @@ impl ScopeReconcilerNode for HealthAggregator {
         let previous_status = ComponentHealthStatus::parse_field(&input, "previous_status")?;
         let current_status = ComponentHealthStatus::parse_field(&input, "current_status")?;
 
-        // Check for periodic system-wide report
+        // Get or create component health tracking
+        let mut immediate_alert = None;
+        let mut component_report = None;
+        {
+            let component_health = state
+                .component_health
+                .entry(component.clone())
+                .or_insert_with(|| ComponentHealth {
+                    component_name: component.clone(),
+                    current_status,
+                    status_since: now,
+                    last_seen: now,
+                    last_check_emission: None,
+                    transition_count: 0,
+                    events: Vec::new(),
+                });
+
+            // Track status transition
+            let status_changed = component_health.current_status != current_status;
+            if status_changed {
+                component_health.current_status = current_status;
+                component_health.status_since = now;
+                component_health.transition_count += 1;
+            }
+
+            component_health.last_seen = now;
+
+            // Add event to sliding window
+            component_health.events.push(HealthEvent {
+                timestamp: now,
+                previous_status,
+                current_status,
+                event_id: context.trigger_uuid().to_string(),
+            });
+
+            // Prune events outside aggregation window
+            let window_start =
+                now - Duration::seconds(state.config.aggregation_window_seconds as i64);
+            component_health.events.retain(|e| e.timestamp >= window_start);
+
+            let window_event_ids =
+                Self::collect_event_ids(&component_health.events, &component, "component report")?;
+
+            // Immediate alert for component failure
+            if status_changed && matches!(current_status, ComponentHealthStatus::Failed) {
+                immediate_alert = Some(
+                    DerivedOutput::reconciled(
+                        self.create_alert(
+                            &component,
+                            current_status,
+                            now,
+                            "Component entered failed state",
+                        ),
+                        now,
+                        window_event_ids.clone(),
+                        component.clone(),
+                    )
+                    .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
+                    .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339())),
+                );
+            }
+
+            // Component-specific check interval
+            let check_interval = state
+                .config
+                .component_check_intervals
+                .get(&component)
+                .or_else(|| state.config.component_check_intervals.get("default"))
+                .copied()
+                .unwrap_or(60);
+
+            let should_emit_component = component_health.last_check_emission.is_none_or(|last| {
+                let elapsed = now - last;
+                elapsed >= Duration::seconds(check_interval as i64)
+            });
+
+            if should_emit_component && state.config.enable_component_health_reports {
+                component_report = Some(
+                    DerivedOutput::reconciled(
+                        self.create_component_report(component_health, now),
+                        now,
+                        window_event_ids,
+                        component.clone(),
+                    )
+                    .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
+                );
+                component_health.last_check_emission = Some(now);
+            }
+        }
+
+        // Check for periodic system-wide report after the current event has updated state.
         let mut periodic_reports = Vec::new();
 
         let should_emit_window = state.last_window_emission.is_none_or(|last| {
@@ -329,92 +419,8 @@ impl ScopeReconcilerNode for HealthAggregator {
             state.last_window_emission = Some(now);
         }
 
-        // Get or create component health tracking
-        let component_health = state
-            .component_health
-            .entry(component.clone())
-            .or_insert_with(|| ComponentHealth {
-                component_name: component.clone(),
-                current_status,
-                status_since: now,
-                last_seen: now,
-                last_check_emission: None,
-                transition_count: 0,
-                events: Vec::new(),
-            });
-
-        // Track status transition
-        let status_changed = component_health.current_status != current_status;
-        if status_changed {
-            component_health.current_status = current_status;
-            component_health.status_since = now;
-            component_health.transition_count += 1;
-        }
-
-        component_health.last_seen = now;
-
-        // Add event to sliding window
-        component_health.events.push(HealthEvent {
-            timestamp: now,
-            previous_status,
-            current_status,
-            event_id: context.trigger_uuid().to_string(),
-        });
-
-        // Prune events outside aggregation window
-        let window_start = now - Duration::seconds(state.config.aggregation_window_seconds as i64);
-        component_health
-            .events
-            .retain(|e| e.timestamp >= window_start);
-
-        let window_event_ids =
-            Self::collect_event_ids(&component_health.events, &component, "component report")?;
-
-        // Immediate alert for component failure
-        let mut immediate_alert = None;
-        if status_changed && matches!(current_status, ComponentHealthStatus::Failed) {
-            immediate_alert = Some(
-                DerivedOutput::reconciled(
-                    self.create_alert(
-                        &component,
-                        current_status,
-                        now,
-                        "Component entered failed state",
-                    ),
-                    now,
-                    window_event_ids.clone(),
-                    component.clone(),
-                )
-                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
-                .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339())),
-            );
-        }
-
-        // Component-specific check interval
-        let check_interval = state
-            .config
-            .component_check_intervals
-            .get(&component)
-            .or_else(|| state.config.component_check_intervals.get("default"))
-            .copied()
-            .unwrap_or(60);
-
-        let should_emit_component = component_health.last_check_emission.is_none_or(|last| {
-            let elapsed = now - last;
-            elapsed >= Duration::seconds(check_interval as i64)
-        });
-
-        if should_emit_component && state.config.enable_component_health_reports {
-            periodic_reports.push(
-                DerivedOutput::reconciled(
-                    self.create_component_report(component_health, now),
-                    now,
-                    window_event_ids,
-                    component.clone(),
-                )
-                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
-            );
-            component_health.last_check_emission = Some(now);
+        if let Some(report) = component_report {
+            periodic_reports.push(report);
         }
 
         let mut outputs = Vec::with_capacity(periodic_reports.len() + usize::from(immediate_alert.is_some()));
@@ -479,13 +485,16 @@ impl HealthAggregator {
             .values()
             .filter(|c| matches!(c.current_status, ComponentHealthStatus::Failed))
             .count();
+        let unknown = total_components.saturating_sub(healthy + degraded + failed);
 
         let overall_status = if failed > 0 {
             ComponentHealthStatus::Failed
         } else if degraded > 0 {
             ComponentHealthStatus::Degraded
-        } else {
+        } else if healthy == total_components && total_components > 0 {
             ComponentHealthStatus::Healthy
+        } else {
+            ComponentHealthStatus::Unknown
         };
 
         serde_json::json!({
@@ -496,6 +505,7 @@ impl HealthAggregator {
             "healthy_count": healthy,
             "degraded_count": degraded,
             "failed_count": failed,
+            "unknown_count": unknown,
             "components": state
                 .component_health
                 .iter()
