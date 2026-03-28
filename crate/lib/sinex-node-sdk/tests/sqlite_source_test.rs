@@ -11,7 +11,8 @@ use tokio::sync::Mutex;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn sqlite_history_lenient_import_collects_warnings_and_advances_checkpoint() -> TestResult<()>
+async fn sqlite_history_lenient_import_stops_at_first_warning_without_advancing_checkpoint()
+-> TestResult<()>
 {
     let seen_rows = Arc::new(Mutex::new(Vec::new()));
     let expected_end_time =
@@ -25,6 +26,7 @@ async fn sqlite_history_lenient_import_collects_warnings_and_advances_checkpoint
             assert_eq!(end_time, Some(expected_end_time));
             Ok::<_, IoError>((vec![1_i64, 2, 3], 9))
         },
+        |row_id| *row_id,
         |row_id| {
             let seen_rows = Arc::clone(&seen_rows);
             async move {
@@ -42,9 +44,34 @@ async fn sqlite_history_lenient_import_collects_warnings_and_advances_checkpoint
     .await?;
 
     assert_eq!(report.processed_rows, 1);
-    assert_eq!(report.last_row_id, 9);
+    assert_eq!(report.last_row_id, 5);
     assert_eq!(report.warnings, vec!["row 2 was malformed".to_string()]);
-    assert_eq!(*seen_rows.lock().await, vec![1, 2, 3]);
+    assert_eq!(*seen_rows.lock().await, vec![1, 2]);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlite_history_lenient_import_advances_across_processed_and_skipped_rows() -> TestResult<()>
+{
+    let report = import_sqlite_history_lenient(
+        0,
+        None,
+        |_from_row_id, _end_time| Ok::<_, IoError>((vec![1_i64, 2, 3], 3)),
+        |row_id| *row_id,
+        |row_id| async move {
+            if row_id == 2 {
+                Ok::<_, String>(SqliteHistoryRowOutcome::Skipped)
+            } else {
+                Ok::<_, String>(SqliteHistoryRowOutcome::Processed)
+            }
+        },
+    )
+    .await?;
+
+    assert_eq!(report.processed_rows, 2);
+    assert_eq!(report.last_row_id, 3);
+    assert!(report.warnings.is_empty());
 
     Ok(())
 }

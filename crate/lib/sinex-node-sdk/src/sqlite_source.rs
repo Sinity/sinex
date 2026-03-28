@@ -206,29 +206,47 @@ pub fn max_row_id_for_query(path: &Utf8Path, query: &str) -> Result<i64, rusqlit
     Ok(max_id.unwrap_or(0))
 }
 
-pub async fn import_sqlite_history_lenient<Entry, Warning, Read, ReadError, Process, ProcessFuture>(
+pub async fn import_sqlite_history_lenient<
+    Entry,
+    Warning,
+    Read,
+    ReadError,
+    RowId,
+    Process,
+    ProcessFuture,
+>(
     from_row_id: i64,
     end_time: Option<Timestamp>,
     read: Read,
+    row_id: RowId,
     mut process: Process,
 ) -> Result<SqliteHistoryImportReport<Warning>, ReadError>
 where
     Read: FnOnce(i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), ReadError>,
+    RowId: Fn(&Entry) -> i64,
     Process: FnMut(Entry) -> ProcessFuture,
     ProcessFuture: Future<Output = Result<SqliteHistoryRowOutcome, Warning>>,
 {
-    let (entries, last_row_id) = read(from_row_id, end_time)?;
+    let (entries, _) = read(from_row_id, end_time)?;
     let mut processed_rows = 0usize;
+    let mut last_row_id = from_row_id;
     let mut warnings = Vec::new();
 
     for entry in entries {
+        let entry_row_id = row_id(&entry);
         match process(entry).await {
             Ok(outcome) => {
                 if matches!(outcome, SqliteHistoryRowOutcome::Processed) {
                     processed_rows += 1;
                 }
+                last_row_id = last_row_id.max(entry_row_id);
             }
-            Err(warning) => warnings.push(warning),
+            Err(warning) => {
+                warnings.push(warning);
+                // Preserve the warned row for retry instead of silently stepping
+                // over it and duplicating/lossily skipping later rows.
+                break;
+            }
         }
     }
 

@@ -923,6 +923,7 @@ impl HistoryWatcherContext {
                     |from_row_id, end_time| {
                         crate::fish_history::read_fish_history(&self.path, from_row_id, end_time)
                     },
+                    |entry| entry.row_id,
                     |entry| {
                         let row_id = entry.row_id;
                         let prepared = match sqlite_row_id_to_line_number(self, row_id) {
@@ -1023,6 +1024,7 @@ impl HistoryWatcherContext {
                     |from_row_id, end_time| {
                         crate::atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
                     },
+                    |entry| entry.row_id,
                     |entry| {
                         let row_id = entry.row_id;
                         let prepared = match sqlite_row_id_to_line_number(self, row_id) {
@@ -1710,6 +1712,7 @@ impl HistoryWatcherContext {
             *sqlite_row_id,
             None,
             |from_row_id, end_time| fish_history::read_fish_history(&self.path, from_row_id, end_time),
+            |entry| entry.row_id,
             |entry| {
                 let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
                     Ok(line_number) => prepare_command_for_capture(
@@ -1801,6 +1804,7 @@ impl HistoryWatcherContext {
             |from_row_id, end_time| {
                 atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
             },
+            |entry| entry.row_id,
             |entry| {
                 let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
                     Ok(line_number) => {
@@ -5393,6 +5397,86 @@ mod tests {
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid sqlite state should fail the scan"))?;
         assert!(failure.contains("missing sqlite_row_id"));
         assert!(fix.commands.lock().await.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_history_once_from_state_does_not_advance_past_warned_sqlite_row(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let mut fix = make_watcher(&ctx, "sqlite-warning-checkpoint", 4096).await?;
+        fix.ctx.source_mode = HistorySourceMode::AtuinSqlite;
+        fix.ctx.shell = "atuin".to_string();
+
+        let history_path = fix.history_path.with_extension("sqlite");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "bad-row",
+                1_700_000_000_000_000_000_i64,
+                "echo broken",
+                "/tmp",
+                0_i64,
+                -1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "good-row",
+                1_700_000_000_000_000_100_i64,
+                "echo should-not-run-yet",
+                "/tmp",
+                0_i64,
+                1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+
+        fix.ctx.path = Utf8PathBuf::from_path_buf(history_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let outcome = fix
+            .ctx
+            .scan_history_once_from_state(Some(fix.ctx.empty_state()), None)
+            .await;
+        assert_eq!(outcome.processed, 0);
+        assert!(
+            outcome
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed to process Atuin row 1")),
+            "expected row warning, got {:?}",
+            outcome.warnings
+        );
+        assert_eq!(outcome.state.sqlite_row_id, Some(0));
+        assert!(
+            fix.commands.lock().await.is_empty(),
+            "rows after the warned row must not be emitted before the checkpoint advances"
+        );
+        fix._ingest_handle.stop().await?;
         Ok(())
     }
 
