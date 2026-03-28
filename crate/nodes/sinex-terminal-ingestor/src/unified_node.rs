@@ -2334,23 +2334,7 @@ pub struct TerminalNode {
 pub struct TerminalCheckpoint {}
 
 impl TerminalNode {
-    fn checkpoint_key_requires_sqlite_row_id(key: &str) -> bool {
-        if key.starts_with("atuin:") {
-            return true;
-        }
-
-        key.strip_prefix("fish:").is_some_and(|path| {
-            crate::fish_history::ensure_fish_sqlite_history(&Utf8PathBuf::from(path)).is_ok()
-        })
-    }
-
     fn validate_checkpoint_state(key: &str, state: HistoryState) -> NodeResult<HistoryState> {
-        if Self::checkpoint_key_requires_sqlite_row_id(key) && state.sqlite_row_id.is_none() {
-            return Err(SinexError::checkpoint(
-                "terminal history checkpoint missing sqlite_row_id for SQLite-backed source",
-            )
-            .with_context("source", key.to_string()));
-        }
         if let Some(sqlite_row_id) = state.sqlite_row_id
             && sqlite_row_id < 0
         {
@@ -2361,6 +2345,25 @@ impl TerminalNode {
             .with_context("sqlite_row_id", sqlite_row_id.to_string()));
         }
         Ok(state)
+    }
+
+    fn validate_checkpoint_state_for_source_mode(
+        key: &str,
+        state: HistoryState,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<HistoryState> {
+        if matches!(
+            source_mode,
+            HistorySourceMode::AtuinSqlite | HistorySourceMode::FishSqlite
+        ) && state.sqlite_row_id.is_none()
+        {
+            return Err(SinexError::checkpoint(
+                "terminal history checkpoint missing sqlite_row_id for SQLite-backed source",
+            )
+            .with_context("source", key.to_string()));
+        }
+
+        Self::validate_checkpoint_state(key, state)
     }
 
     #[must_use]
@@ -2532,12 +2535,41 @@ impl TerminalNode {
             })
     }
 
+    fn incoming_checkpoint_state_for_source_mode(
+        checkpoint: &Checkpoint,
+        key: &str,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<IncomingHistoryCheckpointState> {
+        match Self::incoming_checkpoint_state_for_source(checkpoint, key)? {
+            IncomingHistoryCheckpointState::State(state) => Ok(IncomingHistoryCheckpointState::State(
+                Self::validate_checkpoint_state_for_source_mode(key, state, source_mode)?,
+            )),
+            IncomingHistoryCheckpointState::MissingCheckpoint => {
+                Ok(IncomingHistoryCheckpointState::MissingCheckpoint)
+            }
+            IncomingHistoryCheckpointState::MissingSource => Ok(IncomingHistoryCheckpointState::MissingSource),
+        }
+    }
+
     #[cfg(test)]
     fn checkpoint_state_for_source(
         checkpoint: &Checkpoint,
         key: &str,
     ) -> NodeResult<Option<HistoryState>> {
         match Self::incoming_checkpoint_state_for_source(checkpoint, key)? {
+            IncomingHistoryCheckpointState::MissingCheckpoint
+            | IncomingHistoryCheckpointState::MissingSource => Ok(None),
+            IncomingHistoryCheckpointState::State(state) => Ok(Some(state)),
+        }
+    }
+
+    #[cfg(test)]
+    fn checkpoint_state_for_source_mode(
+        checkpoint: &Checkpoint,
+        key: &str,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<Option<HistoryState>> {
+        match Self::incoming_checkpoint_state_for_source_mode(checkpoint, key, source_mode)? {
             IncomingHistoryCheckpointState::MissingCheckpoint
             | IncomingHistoryCheckpointState::MissingSource => Ok(None),
             IncomingHistoryCheckpointState::State(state) => Ok(Some(state)),
@@ -2575,7 +2607,11 @@ impl TerminalNode {
         warnings: &mut Vec<String>,
     ) -> NodeResult<HistoryState> {
         let checkpoint_key = context.checkpoint_key();
-        match Self::incoming_checkpoint_state_for_source(from, &checkpoint_key) {
+        match Self::incoming_checkpoint_state_for_source_mode(
+            from,
+            &checkpoint_key,
+            &context.source_mode,
+        ) {
             Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
             Ok(IncomingHistoryCheckpointState::MissingSource) => Ok(context.empty_state()),
             Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => context
@@ -2704,7 +2740,11 @@ impl IngestorNode for TerminalNode {
 
         for ctx in contexts {
             let checkpoint_key = ctx.checkpoint_key();
-            let state_override = match Self::incoming_checkpoint_state_for_source(&from, &checkpoint_key) {
+            let state_override = match Self::incoming_checkpoint_state_for_source_mode(
+                &from,
+                &checkpoint_key,
+                &ctx.source_mode,
+            ) {
                 Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
                 Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
                     if matches!(ctx.source_mode, HistorySourceMode::ConfiguredError(_)) {
@@ -2736,7 +2776,10 @@ impl IngestorNode for TerminalNode {
                     })?;
                     checkpoint_states.insert(
                         checkpoint_key,
-                        preserved_state.unwrap_or_else(|| ctx.empty_state()),
+                        preserved_state
+                            .map(|state| ctx.validate_state(state))
+                            .transpose()?
+                            .unwrap_or_else(|| ctx.empty_state()),
                     );
                     continue;
                 }
@@ -2751,7 +2794,7 @@ impl IngestorNode for TerminalNode {
             } else {
                 successful_targets.push(checkpoint_key.clone());
             }
-            checkpoint_states.insert(checkpoint_key, outcome.state);
+            checkpoint_states.insert(checkpoint_key, ctx.validate_state(outcome.state)?);
         }
 
         Ok(ScanReport {
@@ -2797,9 +2840,10 @@ impl IngestorNode for TerminalNode {
                         .await?,
                 );
             } else {
-                let state_override = match Self::incoming_checkpoint_state_for_source(
+                let state_override = match Self::incoming_checkpoint_state_for_source_mode(
                     &from,
                     &checkpoint_key,
+                    &watch_ctx.source_mode,
                 ) {
                     Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
                     Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
@@ -2860,8 +2904,11 @@ impl IngestorNode for TerminalNode {
         drop(guard);
         for (watch_ctx, handle) in monitored_contexts.iter().zip(handles) {
             let checkpoint_key = watch_ctx.checkpoint_key();
-            let fallback_state = match Self::incoming_checkpoint_state_for_source(&from, &checkpoint_key)?
-            {
+            let fallback_state = match Self::incoming_checkpoint_state_for_source_mode(
+                &from,
+                &checkpoint_key,
+                &watch_ctx.source_mode,
+            )? {
                 IncomingHistoryCheckpointState::State(state) => state,
                 IncomingHistoryCheckpointState::MissingSource => watch_ctx.empty_state(),
                 IncomingHistoryCheckpointState::MissingCheckpoint => watch_ctx
@@ -3463,7 +3510,11 @@ mod tests {
             "terminal history source progress",
         );
 
-        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, "atuin:/tmp/history.db")
+        let error = TerminalNode::checkpoint_state_for_source_mode(
+            &checkpoint,
+            "atuin:/tmp/history.db",
+            &HistorySourceMode::AtuinSqlite,
+        )
             .expect_err("sqlite-backed checkpoints must carry a row id");
 
         assert!(error.to_string().contains("missing sqlite_row_id"));
@@ -3539,7 +3590,11 @@ mod tests {
             "terminal history source progress",
         );
 
-        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)
+        let error = TerminalNode::checkpoint_state_for_source_mode(
+            &checkpoint,
+            &source_key,
+            &HistorySourceMode::FishSqlite,
+        )
             .expect_err("SQLite-backed Fish checkpoints must carry a row id");
 
         assert!(error.to_string().contains("missing sqlite_row_id"));
