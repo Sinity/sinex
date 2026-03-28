@@ -60,9 +60,19 @@ pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
 }
 
 pub fn resolve_database_url() -> NodeResult<String> {
-    let base_url = std::env::var("DATABASE_URL").map_err(|_| {
-        SinexError::configuration("Database URL environment variable not set (DATABASE_URL)")
-    })?;
+    let base_url = match std::env::var("DATABASE_URL") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => {
+            return Err(SinexError::configuration(
+                "Database URL environment variable not set (DATABASE_URL)",
+            ));
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(SinexError::configuration(
+                "Environment variable 'DATABASE_URL' is not valid UTF-8",
+            ));
+        }
+    };
 
     sinex_db::resolve_effective_database_url(&base_url).map_err(|err| {
         SinexError::configuration("Failed to validate DATABASE_URL").with_std_error(&err)
@@ -94,7 +104,7 @@ pub fn resolve_nats_url() -> NodeResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_nats_url;
+    use super::{resolve_database_url, resolve_nats_url};
     use std::ffi::OsString;
     use std::sync::LazyLock;
     use xtask::sandbox::sinex_test;
@@ -138,6 +148,38 @@ mod tests {
 
         restore_var("SINEX_NATS_URL", previous);
 
+        assert!(error.to_string().contains("not valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_database_url_reports_missing_variable() -> xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let previous = std::env::var_os("DATABASE_URL");
+        unsafe { std::env::remove_var("DATABASE_URL") };
+
+        let error = resolve_database_url().expect_err("missing DATABASE_URL should surface");
+
+        restore_var("DATABASE_URL", previous);
+
+        assert!(error.to_string().contains("DATABASE_URL"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn resolve_database_url_rejects_non_unicode_override() -> xtask::sandbox::TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().await;
+        let previous = std::env::var_os("DATABASE_URL");
+        unsafe { std::env::set_var("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80])) };
+
+        let error = resolve_database_url().expect_err("non-unicode DATABASE_URL should surface");
+
+        restore_var("DATABASE_URL", previous);
+
+        assert!(error.to_string().contains("DATABASE_URL"));
         assert!(error.to_string().contains("not valid UTF-8"));
         Ok(())
     }
