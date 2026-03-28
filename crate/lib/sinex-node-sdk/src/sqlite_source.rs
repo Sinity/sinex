@@ -149,10 +149,6 @@ pub fn ensure_sqlite_with_tables(
     }
 }
 
-pub fn is_sqlite_with_tables(path: &Utf8Path, tables: &[&str]) -> bool {
-    ensure_sqlite_with_tables(path, tables).is_ok()
-}
-
 pub fn read_rows_after<T, F>(
     path: &Utf8Path,
     query: &str,

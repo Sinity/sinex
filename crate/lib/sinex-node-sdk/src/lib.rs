@@ -174,7 +174,7 @@ pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
     SqliteTableCheckError,
     ensure_sqlite_with_tables, import_sqlite_history_lenient, import_sqlite_history_strict,
-    is_sqlite_with_tables, max_row_id_for_query, read_rows_after, read_rows_with_params,
+    max_row_id_for_query, read_rows_after, read_rows_with_params,
 };
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]

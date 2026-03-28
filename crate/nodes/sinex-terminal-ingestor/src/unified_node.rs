@@ -233,13 +233,13 @@ fn default_polling_interval() -> Seconds {
 
 fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {
     match source.shell.to_lowercase().as_str() {
-        "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
-            HistorySourceMode::FishSqlite
-        }
-        "fish" => HistorySourceMode::ConfiguredError(format!(
-            "configured Fish history source {} is not SQLite-backed; native Fish YAML history is not supported",
-            source.path
-        )),
+        "fish" => match crate::fish_history::ensure_fish_sqlite_history(&source.path) {
+            Ok(()) => HistorySourceMode::FishSqlite,
+            Err(error) => HistorySourceMode::ConfiguredError(format!(
+                "configured Fish history source {} is unusable: {error}",
+                source.path
+            )),
+        },
         "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
             Ok(()) => HistorySourceMode::AtuinSqlite,
             Err(error) => HistorySourceMode::ConfiguredError(format!(
@@ -2308,7 +2308,13 @@ pub struct TerminalCheckpoint {}
 
 impl TerminalNode {
     fn checkpoint_key_requires_sqlite_row_id(key: &str) -> bool {
-        key.starts_with("fish:") || key.starts_with("atuin:")
+        if key.starts_with("atuin:") {
+            return true;
+        }
+
+        key.strip_prefix("fish:").is_some_and(|path| {
+            crate::fish_history::ensure_fish_sqlite_history(&Utf8PathBuf::from(path)).is_ok()
+        })
     }
 
     fn validate_checkpoint_state(key: &str, state: HistoryState) -> NodeResult<HistoryState> {
@@ -3372,6 +3378,82 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn terminal_history_checkpoint_restore_allows_text_fish_source_without_sqlite_row_id(
+    ) -> TestResult<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("fish_history");
+        std::fs::write(&history_path, "- cmd: echo hello\n  when: 1234567890\n")?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+        let source_key = format!("fish:{history_path}");
+        let checkpoint = Checkpoint::external(
+            serde_json::json!({
+                "sources": {
+                    source_key.clone(): {
+                        "offset_bytes": 42,
+                        "line_number": 3,
+                        "pending_timestamp": null,
+                        "recent_hashes": [],
+                    }
+                }
+            }),
+            "terminal history source progress",
+        );
+
+        let state = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)?
+            .expect("fish checkpoint state should be present");
+        assert_eq!(state.offset_bytes, 42);
+        assert_eq!(state.line_number, 3);
+        assert!(state.sqlite_row_id.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_history_checkpoint_restore_rejects_missing_sqlite_row_id_for_sqlite_fish_source(
+    ) -> TestResult<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("fish_history.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                command TEXT NOT NULL,
+                \"when\" INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Fish temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+        let source_key = format!("fish:{history_path}");
+        let checkpoint = Checkpoint::external(
+            serde_json::json!({
+                "sources": {
+                    source_key.clone(): {
+                        "offset_bytes": 0,
+                        "line_number": 0,
+                        "pending_timestamp": null,
+                        "recent_hashes": [],
+                    }
+                }
+            }),
+            "terminal history source progress",
+        );
+
+        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)
+            .expect_err("SQLite-backed Fish checkpoints must carry a row id");
+
+        assert!(error.to_string().contains("missing sqlite_row_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
@@ -4015,7 +4097,7 @@ mod tests {
         assert!(
             report.failed_targets[0]
                 .1
-                .contains("native Fish YAML history is not supported"),
+                .contains("configured Fish history source"),
             "unexpected failure: {:?}",
             report.failed_targets
         );
@@ -4118,6 +4200,12 @@ mod tests {
         assert!(
             error.to_string().contains("fish:"),
             "failed target context should remain visible: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("configured Fish history source"),
+            "continuous mode should preserve the real Fish SQLite validation error: {error}"
         );
 
         Ok(())
