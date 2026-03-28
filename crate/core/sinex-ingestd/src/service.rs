@@ -116,6 +116,13 @@ fn attach_startup_cleanup_error(
     startup_error.with_context("shutdown_cleanup_error", cleanup_error.to_string())
 }
 
+fn attach_background_shutdown_error(
+    error: SinexError,
+    cleanup_error: &SinexError,
+) -> SinexError {
+    error.with_context("background_shutdown_error", cleanup_error.to_string())
+}
+
 fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
     SinexError::service(format!("critical task failed during shutdown: {name}"))
         .with_context("task", name)
@@ -136,6 +143,20 @@ fn cleanup_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
 fn cleanup_task_timeout(count: usize, timeout: Duration) -> SinexError {
     SinexError::timeout(format!(
         "timed out waiting for {count} critical tasks during shutdown"
+    ))
+    .with_duration(timeout)
+    .with_count(count)
+}
+
+fn background_task_join_failure(index: usize, error: &tokio::task::JoinError) -> SinexError {
+    SinexError::service(format!("background task failed during shutdown: {index}"))
+        .with_context("task_index", index.to_string())
+        .with_source(error.to_string())
+}
+
+fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {
+    SinexError::timeout(format!(
+        "timed out waiting for {count} background tasks during shutdown"
     ))
     .with_duration(timeout)
     .with_count(count)
@@ -455,10 +476,23 @@ impl IngestService {
         systemd_notify::notify_stopping("sinex-ingestd");
 
         // Ensure background tasks have a chance to shut down before closing resources.
-        self.wait_for_tasks(Duration::from_secs(5)).await;
-
-        info!("Ingestion service stopped");
-        monitor_result
+        let shutdown_result = self.wait_for_tasks(Duration::from_secs(5)).await;
+        match (monitor_result, shutdown_result) {
+            (Ok(()), Ok(())) => {
+                info!("Ingestion service stopped");
+                Ok(())
+            }
+            (Err(error), Ok(())) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(cleanup_error)) => {
+                error!(
+                    runtime_error = %error,
+                    cleanup_error = %cleanup_error,
+                    "Runtime shutdown surfaced an additional background task failure"
+                );
+                Err(attach_background_shutdown_error(error, &cleanup_error))
+            }
+        }
     }
 
     async fn finish_startup_failure(
@@ -470,7 +504,7 @@ impl IngestService {
         error!(error = %startup_error, "Critical ingestd component failed during startup");
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
-        let startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
+        let mut startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
             Ok(()) => startup_error,
             Err(cleanup_error) => {
                 error!(
@@ -482,7 +516,14 @@ impl IngestService {
             }
         };
 
-        self.wait_for_tasks(Duration::from_secs(5)).await;
+        if let Err(cleanup_error) = self.wait_for_tasks(Duration::from_secs(5)).await {
+            error!(
+                startup_error = %startup_error,
+                cleanup_error = %cleanup_error,
+                "Startup failure cleanup surfaced an additional background task failure"
+            );
+            startup_error = attach_background_shutdown_error(startup_error, &cleanup_error);
+        }
         Err(startup_error)
     }
 
@@ -918,13 +959,33 @@ impl IngestService {
         handles.push(handle);
     }
 
-    fn log_aborted_task_shutdown_result(index: usize, result: Result<(), tokio::task::JoinError>) {
+    fn collapse_background_shutdown_errors(mut errors: Vec<SinexError>) -> IngestdResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let mut error = errors.remove(0);
+        for (index, extra) in errors.into_iter().enumerate() {
+            error = error.with_context(
+                format!("additional_shutdown_error_{}", index + 1),
+                extra.to_string(),
+            );
+        }
+        Err(error)
+    }
+
+    fn log_aborted_task_shutdown_result(
+        index: usize,
+        result: Result<(), tokio::task::JoinError>,
+    ) -> Option<SinexError> {
         match result {
             Ok(()) => {
                 debug!(task_index = index, "Background task finished before forced shutdown");
+                None
             }
             Err(error) if error.is_cancelled() => {
                 debug!(task_index = index, "Background task cancelled during forced shutdown");
+                None
             }
             Err(error) => {
                 error!(
@@ -932,18 +993,19 @@ impl IngestService {
                     error = %error,
                     "Background task exited unexpectedly during forced shutdown"
                 );
+                Some(background_task_join_failure(index, &error))
             }
         }
     }
 
-    async fn wait_for_tasks(&self, timeout: Duration) {
+    async fn wait_for_tasks(&self, timeout: Duration) -> IngestdResult<()> {
         let mut handles = {
             let mut guard = self.task_handles.lock().await;
             std::mem::take(&mut *guard)
         };
 
         if handles.is_empty() {
-            return;
+            return Ok(());
         }
 
         info!(
@@ -952,39 +1014,48 @@ impl IngestService {
         );
 
         let wait_task = async {
+            let mut shutdown_errors = Vec::new();
             for (i, handle) in handles.iter_mut().enumerate() {
-                if let Err(e) = handle.await {
-                    if let Ok(panic) = e.try_into_panic() {
-                        let msg = match panic.downcast_ref::<&'static str>() {
-                            Some(s) => *s,
-                            None => match panic.downcast_ref::<String>() {
-                                Some(s) => s.as_str(),
-                                None => "Unknown panic",
-                            },
-                        };
-                        error!("Background task {} panicked: {}", i, msg);
+                if let Err(error) = handle.await {
+                    if error.is_panic() {
+                        error!(
+                            task_index = i,
+                            error = %error,
+                            "Background task panicked during shutdown"
+                        );
                     } else {
-                        debug!("Background task {} was cancelled or failed", i);
+                        debug!(task_index = i, error = %error, "Background task exited during shutdown");
                     }
+                    shutdown_errors.push(background_task_join_failure(i, &error));
                 }
             }
+            shutdown_errors
         };
 
-        if tokio::time::timeout(timeout, wait_task).await.is_err() {
-            warn!(
-                "Timed out waiting for background tasks after {:?}, aborting {} remaining",
-                timeout,
-                handles.len()
-            );
-            for handle in &handles {
-                handle.abort();
+        match tokio::time::timeout(timeout, wait_task).await {
+            Ok(shutdown_errors) => {
+                info!("All background tasks finished");
+                Self::collapse_background_shutdown_errors(shutdown_errors)
             }
-            // Await aborted handles so their destructors run before we return.
-            for (index, handle) in handles.into_iter().enumerate() {
-                Self::log_aborted_task_shutdown_result(index, handle.await);
+            Err(_) => {
+                warn!(
+                    "Timed out waiting for background tasks after {:?}, aborting {} remaining",
+                    timeout,
+                    handles.len()
+                );
+                for handle in &handles {
+                    handle.abort();
+                }
+                let mut shutdown_errors = vec![background_task_timeout(handles.len(), timeout)];
+                // Await aborted handles so their destructors run before we return.
+                for (index, handle) in handles.into_iter().enumerate() {
+                    if let Some(error) = Self::log_aborted_task_shutdown_result(index, handle.await)
+                    {
+                        shutdown_errors.push(error);
+                    }
+                }
+                Self::collapse_background_shutdown_errors(shutdown_errors)
             }
-        } else {
-            info!("All background tasks finished");
         }
     }
 
@@ -995,7 +1066,7 @@ impl IngestService {
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
         // Let background tasks observe the flag and finish before tearing down shared state.
-        self.wait_for_tasks(Duration::from_secs(5)).await;
+        self.wait_for_tasks(Duration::from_secs(5)).await?;
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
@@ -1208,9 +1279,13 @@ mod tests {
 
         service.task_handles.lock().await.push(handle);
 
-        service.wait_for_tasks(Duration::from_millis(10)).await;
+        let error = service
+            .wait_for_tasks(Duration::from_millis(10))
+            .await
+            .expect_err("hung background tasks must fail shutdown honestly");
 
         assert!(cancelled.load(Ordering::SeqCst));
+        assert!(error.to_string().contains("timed out waiting for 1 background tasks"));
         Ok(())
     }
 
@@ -1218,7 +1293,8 @@ mod tests {
     async fn log_aborted_task_shutdown_result_accepts_clean_exit() -> xtask::sandbox::TestResult<()>
     {
         let handle = tokio::spawn(async {});
-        IngestService::log_aborted_task_shutdown_result(0, handle.await);
+        let error = IngestService::log_aborted_task_shutdown_result(0, handle.await);
+        assert!(error.is_none());
         Ok(())
     }
 
@@ -1229,17 +1305,52 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(30)).await;
         });
         handle.abort();
-        IngestService::log_aborted_task_shutdown_result(1, handle.await);
+        let error = IngestService::log_aborted_task_shutdown_result(1, handle.await);
+        assert!(error.is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn log_aborted_task_shutdown_result_accepts_panicked_task()
+    async fn log_aborted_task_shutdown_result_rejects_panicked_task()
     -> xtask::sandbox::TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("ingestd background task panic");
         });
-        IngestService::log_aborted_task_shutdown_result(2, handle.await);
+        let error = IngestService::log_aborted_task_shutdown_result(2, handle.await)
+            .expect("panicked background task must stay visible");
+        assert!(error.to_string().contains("background task failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_tasks_rejects_panicked_background_task() -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+        service.task_handles.lock().await.push(tokio::spawn(async {
+            panic!("background task exploded");
+        }));
+
+        let error = service
+            .wait_for_tasks(Duration::from_secs(1))
+            .await
+            .expect_err("panicked background task must fail shutdown");
+
+        assert!(error.to_string().contains("background task failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_surfaces_background_task_failures() -> xtask::sandbox::TestResult<()> {
+        let mut service = test_service();
+        service.task_handles.lock().await.push(tokio::spawn(async {
+            panic!("shutdown background task panic");
+        }));
+
+        let error = service
+            .shutdown()
+            .await
+            .expect_err("shutdown must fail when background tasks panic");
+
+        assert!(error.to_string().contains("background task failed during shutdown"));
         Ok(())
     }
 
@@ -1410,6 +1521,28 @@ mod tests {
             sibling_finished.load(Ordering::SeqCst),
             "startup cleanup should still await sibling critical tasks"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finish_startup_failure_preserves_background_task_error_context(
+    ) -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+        service.task_handles.lock().await.push(tokio::spawn(async {
+            panic!("startup cleanup background panic");
+        }));
+
+        let error = service
+            .finish_startup_failure(SinexError::service("startup failed"), None, None)
+            .await
+            .expect_err("startup failure should remain an error");
+
+        assert!(error.to_string().contains("startup failed"));
+        let cleanup_context = error
+            .context_map()
+            .get("background_shutdown_error")
+            .expect("background cleanup failure should stay attached");
+        assert!(cleanup_context.contains("background task failed during shutdown"));
         Ok(())
     }
 
