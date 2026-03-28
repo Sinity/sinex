@@ -475,10 +475,7 @@ impl FilesystemNode {
     fn snapshot_state(&self) -> FilesystemState {
         let host = self.service_info().map_or_else(
             |_| sinex_primitives::events::builder::get_hostname(),
-            |info| {
-                HostName::new(info.host().to_string())
-                    .unwrap_or_else(|_| sinex_primitives::events::builder::get_hostname())
-            },
+            |info| info.host().clone(),
         );
 
         FilesystemState {

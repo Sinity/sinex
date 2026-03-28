@@ -112,7 +112,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let service_info = ServiceInfo::new(
             service_name.clone(),
             service_name,
-            crate::sandbox::local_test_host().into_string(),
+            crate::sandbox::local_test_host(),
             work_dir.clone().into_std_path_buf(),
             dry_run,
             format!("sandbox-instance-{}", Uuid::now_v7().simple()),

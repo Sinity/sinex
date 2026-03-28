@@ -161,7 +161,7 @@ mod tests {
         let service_info = ServiceInfo::new(
             service_name.to_string(),
             service_name.to_string(),
-            gethostname::gethostname().to_string_lossy().to_string(),
+            sinex_primitives::events::builder::get_hostname(),
             work_dir.clone().into_std_path_buf(),
             false,
             format!("test-instance-{}", Uuid::now_v7().simple()),

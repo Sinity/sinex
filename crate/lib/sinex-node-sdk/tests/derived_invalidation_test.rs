@@ -20,7 +20,7 @@ use sinex_node_sdk::{
     ScopeReconcilerNodeAdapter, TransducerNode, WindowedNode,
 };
 use sinex_primitives::domain::{
-    EventSource, EventType, InvalidationAction, ProcessingMode, TriggerKind,
+    EventSource, EventType, HostName, InvalidationAction, ProcessingMode, TriggerKind,
 };
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::privacy::ProcessingContext;
@@ -796,7 +796,7 @@ async fn initialize_scope_reconciler_adapter_with_pool(
         ServiceInfo::new(
             "test-reconciler".to_string(),
             "test-reconciler".to_string(),
-            "test-host".to_string(),
+            HostName::from_static("test-host"),
             work_dir.clone(),
             false,
             "test-instance".to_string(),
