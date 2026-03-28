@@ -4,11 +4,16 @@ use common::{NatsHarness, ensure_events_stream};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_gateway::handlers::handle_events_ingest;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::rpc::ingest::EventIngestResponse;
 use std::time::Duration;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
+
+fn now_rfc3339() -> String {
+    Timestamp::now().format_rfc3339()
+}
 
 #[sinex_test]
 async fn events_ingest_registers_material_and_publishes_full_envelope(
@@ -29,6 +34,7 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
         json!({
             "source": "gateway.test",
             "event_type": "inline.event",
+            "ts_orig": now_rfc3339(),
             "payload": { "value": 42 }
         }),
     )
@@ -110,6 +116,7 @@ async fn events_ingest_rejects_invalid_host(ctx: TestContext) -> TestResult<()> 
         json!({
             "source": "gateway.test",
             "event_type": "inline.event",
+            "ts_orig": now_rfc3339(),
             "host": "bad_host",
             "payload": { "value": 42 }
         }),
@@ -132,6 +139,7 @@ async fn events_ingest_marks_material_failed_when_publish_fails(
         json!({
             "source": "gateway.test",
             "event_type": "inline.event",
+            "ts_orig": now_rfc3339(),
             "payload": { "value": 42 }
         }),
     )
@@ -166,5 +174,24 @@ async fn events_ingest_marks_material_failed_when_publish_fails(
         "failure_reason should be recorded in material metadata"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn events_ingest_rejects_missing_timestamp(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    let error = handle_events_ingest(
+        &harness.services,
+        json!({
+            "source": "gateway.test",
+            "event_type": "inline.event",
+            "payload": { "value": 42 }
+        }),
+    )
+    .await
+    .expect_err("missing ts_orig should be rejected by the gateway");
+
+    assert!(error.to_string().contains("`ts_orig`"));
     Ok(())
 }

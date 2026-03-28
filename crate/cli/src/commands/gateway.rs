@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sinex_primitives::events::builder::get_hostname;
 use sinex_primitives::rpc::ingest::EventIngestRequest;
+use sinex_primitives::temporal::Timestamp;
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -38,6 +39,10 @@ pub enum GatewayCommands {
         /// Host override (defaults to current hostname)
         #[arg(long)]
         host: Option<String>,
+
+        /// Original event timestamp in RFC3339 format (defaults to current time)
+        #[arg(long)]
+        ts_orig: Option<String>,
     },
 }
 
@@ -61,6 +66,7 @@ impl GatewayCommands {
                 event_type,
                 payload,
                 host,
+                ts_orig,
             } => {
                 let payload_value: Value = serde_json::from_str(payload)
                     .map_err(|e| color_eyre::eyre::eyre!("invalid --payload JSON: {e}"))?;
@@ -73,7 +79,9 @@ impl GatewayCommands {
                     source: source.clone(),
                     event_type: event_type.clone(),
                     payload: payload_value,
-                    ts_orig: None,
+                    ts_orig: ts_orig
+                        .clone()
+                        .unwrap_or_else(|| Timestamp::now().format_rfc3339()),
                     host: Some(resolved_host),
                 };
 
