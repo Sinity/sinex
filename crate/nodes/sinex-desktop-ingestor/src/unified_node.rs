@@ -288,22 +288,18 @@ impl DesktopNode {
         Ok((acquisition.as_ref(), stage_context))
     }
 
-    fn redact_window_title(value: Option<String>) -> Option<String> {
-        value.map(|raw| {
-            privacy::engine()
-                .process(&raw, ProcessingContext::WindowTitle)
-                .text
-                .into_owned()
-        })
+    fn redact_window_title(value: &str) -> String {
+        privacy::engine()
+            .process(value, ProcessingContext::WindowTitle)
+            .text
+            .into_owned()
     }
 
-    fn redact_document(value: Option<String>) -> Option<String> {
-        value.map(|raw| {
-            privacy::engine()
-                .process(&raw, ProcessingContext::Document)
-                .text
-                .into_owned()
-        })
+    fn redact_document(value: &str) -> String {
+        privacy::engine()
+            .process(value, ProcessingContext::Document)
+            .text
+            .into_owned()
     }
 
     fn require_activitywatch_string_field(
@@ -384,7 +380,7 @@ impl DesktopNode {
 
                 ActivityWatchWindowActivePayload {
                     app,
-                    title: Self::redact_window_title(Some(title)).unwrap_or_default(),
+                    title: Self::redact_window_title(&title),
                     duration_ms: entry.duration_ms,
                     bucket_id: entry.bucket_id.clone(),
                 }
@@ -418,8 +414,8 @@ impl DesktopNode {
 
                 ActivityWatchBrowserTabActivePayload {
                     browser,
-                    title: Self::redact_window_title(Some(title)).unwrap_or_default(),
-                    url: Self::redact_document(Some(url)).unwrap_or_default(),
+                    title: Self::redact_window_title(&title),
+                    url: Self::redact_document(&url),
                     duration_ms: entry.duration_ms,
                     bucket_id: entry.bucket_id.clone(),
                 }
@@ -1099,6 +1095,20 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn activitywatch_window_event_keeps_nonempty_redacted_title()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Window,
+            json!({ "app": "Alacritty", "title": "main.rs" }),
+        )?;
+
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+
+        assert_eq!(event.payload["title"], json!("main.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn activitywatch_web_event_rejects_non_string_url_field()
     -> xtask::sandbox::TestResult<()> {
         let entry = sample_activitywatch_entry(
@@ -1110,6 +1120,20 @@ mod tests {
             .expect_err("non-string ActivityWatch url should fail honestly");
 
         assert!(error.to_string().contains("field 'url' must be a string"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_web_event_keeps_nonempty_redacted_url()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Web,
+            json!({ "app": "Firefox", "title": "Docs", "url": "https://example.com/docs" }),
+        )?;
+
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+
+        assert_eq!(event.payload["url"], json!("https://example.com/docs"));
         Ok(())
     }
 
