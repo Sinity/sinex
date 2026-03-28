@@ -162,6 +162,17 @@ impl PkmService {
         Self { pool }
     }
 
+    fn required_source_uri<'a>(material_type: &str, source_uri: Option<&'a str>) -> Result<&'a str> {
+        source_uri
+            .map(str::trim)
+            .filter(|uri| !uri.is_empty())
+            .ok_or_else(|| {
+                SinexError::validation(format!(
+                    "source_uri is required for source material type '{material_type}'"
+                ))
+            })
+    }
+
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
@@ -337,11 +348,17 @@ impl PkmService {
 
         // Insert new source material
         let new_material = match material_type {
-            "file" => SourceMaterial::file(source_uri.unwrap_or("unknown")),
-            "stream" => SourceMaterial::stream(source_uri.unwrap_or("unknown")),
+            "file" => SourceMaterial::file(Self::required_source_uri(material_type, source_uri)?),
+            "stream" => {
+                SourceMaterial::stream(Self::required_source_uri(material_type, source_uri)?)
+            }
             "blob" => SourceMaterial::blob(),
-            "blob.binary" => SourceMaterial::blob_binary(source_uri.unwrap_or("binary")),
-            "blob.text" => SourceMaterial::blob_text(source_uri.unwrap_or("text")),
+            "blob.binary" => {
+                SourceMaterial::blob_binary(Self::required_source_uri(material_type, source_uri)?)
+            }
+            "blob.text" => {
+                SourceMaterial::blob_text(Self::required_source_uri(material_type, source_uri)?)
+            }
             _ => SourceMaterial::blob(),
         }
         .with_metadata(enhanced_metadata)
