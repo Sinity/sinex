@@ -73,9 +73,9 @@ async fn test_accepts_shell_atuin_source() -> TestResult<()> {
     assert!(result.is_some(), "shell.atuin should be accepted");
     let payload = result.unwrap().payload;
     assert_eq!(payload.command, "git status");
-    assert_eq!(payload.working_directory, "/home/user/project");
-    assert_eq!(payload.duration_ms, 1500);
-    assert_eq!(payload.session_id, "sess-001");
+    assert_eq!(payload.working_directory.as_deref(), Some("/home/user/project"));
+    assert_eq!(payload.duration_ms, Some(1500));
+    assert_eq!(payload.session_id.as_deref(), Some("sess-001"));
     Ok(())
 }
 
@@ -221,20 +221,20 @@ async fn test_extracts_all_fields() -> TestResult<()> {
         .expect("should produce output");
 
     assert_eq!(result.payload.command, "cargo build");
-    assert_eq!(result.payload.working_directory, "/home/user/project");
+    assert_eq!(result.payload.working_directory.as_deref(), Some("/home/user/project"));
     assert_eq!(
         result.payload.exit_code,
-        sinex_primitives::units::ExitCode::from_raw(0)
+        Some(sinex_primitives::units::ExitCode::from_raw(0))
     );
-    assert_eq!(result.payload.duration_ms, 1500);
-    assert_eq!(result.payload.user, "testuser");
-    assert_eq!(result.payload.session_id, "sess-001");
-    assert_eq!(result.payload.environment_hash, "abc123");
+    assert_eq!(result.payload.duration_ms, Some(1500));
+    assert_eq!(result.payload.user.as_deref(), Some("testuser"));
+    assert_eq!(result.payload.session_id.as_deref(), Some("sess-001"));
+    assert_eq!(result.payload.environment_hash.as_deref(), Some("abc123"));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_defaults_for_missing_optional_fields() -> TestResult<()> {
+async fn test_missing_optional_fields_remain_unknown() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
     let ctx = make_context("shell.history.bash", "command.executed");
@@ -247,15 +247,12 @@ async fn test_defaults_for_missing_optional_fields() -> TestResult<()> {
         .expect("should produce output");
 
     assert_eq!(result.payload.command, "pwd");
-    assert_eq!(result.payload.working_directory, "");
-    assert_eq!(
-        result.payload.exit_code,
-        sinex_primitives::units::ExitCode::from_raw(0)
-    );
-    assert_eq!(result.payload.duration_ms, 0);
-    assert_eq!(result.payload.user, "");
-    assert_eq!(result.payload.session_id, "");
-    assert_eq!(result.payload.environment_hash, "");
+    assert_eq!(result.payload.working_directory, None);
+    assert_eq!(result.payload.exit_code, None);
+    assert_eq!(result.payload.duration_ms, None);
+    assert_eq!(result.payload.user, None);
+    assert_eq!(result.payload.session_id, None);
+    assert_eq!(result.payload.environment_hash, None);
     Ok(())
 }
 
@@ -276,7 +273,7 @@ async fn test_exit_code_nonzero() -> TestResult<()> {
 
     assert_eq!(
         result.payload.exit_code,
-        sinex_primitives::units::ExitCode::from_raw(1)
+        Some(sinex_primitives::units::ExitCode::from_raw(1))
     );
     Ok(())
 }
@@ -296,7 +293,7 @@ async fn test_exit_code_signal_killed() -> TestResult<()> {
 
     assert_eq!(
         result.payload.exit_code,
-        sinex_primitives::units::ExitCode::from_raw(137)
+        Some(sinex_primitives::units::ExitCode::from_raw(137))
     );
     Ok(())
 }
@@ -331,7 +328,7 @@ async fn test_atuin_timestamps_are_preserved() -> TestResult<()> {
     let end = sinex_primitives::temporal::parse_rfc3339("2025-01-15T10:30:00Z").unwrap();
     assert_eq!(result.payload.start_time, start);
     assert_eq!(result.payload.end_time, end);
-    assert_eq!(result.payload.duration_ms, 1500);
+    assert_eq!(result.payload.duration_ms, Some(1500));
     Ok(())
 }
 

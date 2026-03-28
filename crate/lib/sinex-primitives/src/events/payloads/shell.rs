@@ -233,17 +233,21 @@ pub struct KittyContentStreamedPayload {
 // Canonical command payloads
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "canonical.terminal", event_type = "command.canonical")]
+#[event_payload(
+    source = "canonical.terminal",
+    event_type = "command.canonical",
+    version = "2.0.0"
+)]
 pub struct CanonicalCommandPayload {
     pub command: String,
-    pub working_directory: String,
-    pub exit_code: ExitCode,
-    pub duration_ms: u64,
+    pub working_directory: Option<String>,
+    pub exit_code: Option<ExitCode>,
+    pub duration_ms: Option<u64>,
     pub start_time: Timestamp,
     pub end_time: Timestamp,
-    pub user: String,
-    pub session_id: String,
-    pub environment_hash: String,
+    pub user: Option<String>,
+    pub session_id: Option<String>,
+    pub environment_hash: Option<String>,
     pub source_events: Vec<String>,
     pub enrichment_history: Vec<serde_json::Value>,
 }
