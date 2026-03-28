@@ -863,20 +863,45 @@ impl IngestorNode for DesktopNode {
         .iter()
         .filter(|&&enabled| enabled)
         .count() as u64;
+        let connected_sources = [
+            state.health.clipboard_active,
+            state.health.window_manager_active,
+        ]
+        .iter()
+        .filter(|&&active| active)
+        .count() as u64;
+        let healthy = connected_sources > 0 || active_sources == 0;
+        let mut metadata = HashMap::new();
+        metadata.insert("enabled_sources".to_string(), json!(active_sources));
+        metadata.insert("connected_sources".to_string(), json!(connected_sources));
+        metadata.insert(
+            "watcher_health".to_string(),
+            json!({
+                "clipboard_active": state.health.clipboard_active,
+                "window_manager_active": state.health.window_manager_active,
+            }),
+        );
+        let description = if active_sources == 0 {
+            "Desktop Source (all watchers disabled)".to_string()
+        } else if connected_sources == 0 {
+            format!("Desktop Source ({active_sources} enabled watcher(s), none connected)")
+        } else {
+            format!(
+                "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)"
+            )
+        };
 
         Ok(SourceState {
-            description: "Desktop Source".to_string(),
+            description,
             last_updated: state
                 .last_state
                 .as_ref()
                 .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
-            healthy: state.health.clipboard_active
-                || state.health.window_manager_active
-                || active_sources == 0,
+            healthy,
             recent_activity,
-            metadata: HashMap::new(),
-            is_connected: true,
+            metadata,
+            is_connected: connected_sources > 0 || active_sources == 0,
             lag_seconds: None,
         })
     }
@@ -965,6 +990,36 @@ mod tests {
 
         assert!(message.contains("SINEX_DESKTOP_REQUIRE_HYPRLAND"));
         assert!(message.contains("maybe"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_is_disconnected_when_enabled_watchers_are_inactive()
+    -> xtask::sandbox::TestResult<()> {
+        let node = DesktopNode::new();
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert!(
+            source.description.contains("none connected"),
+            "unexpected description: {}",
+            source.description
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("enabled_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
         Ok(())
     }
 }

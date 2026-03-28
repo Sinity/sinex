@@ -229,6 +229,35 @@ impl EventMetrics {
     pub(crate) fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
         vec![]
     }
+
+    fn metadata(&self) -> HashMap<String, serde_json::Value> {
+        HashMap::from([
+            (
+                "events_processed".to_string(),
+                serde_json::json!(self.events_processed.load(Ordering::Relaxed)),
+            ),
+            (
+                "events_created".to_string(),
+                serde_json::json!(self.events_created.load(Ordering::Relaxed)),
+            ),
+            (
+                "events_modified".to_string(),
+                serde_json::json!(self.events_modified.load(Ordering::Relaxed)),
+            ),
+            (
+                "events_deleted".to_string(),
+                serde_json::json!(self.events_deleted.load(Ordering::Relaxed)),
+            ),
+            (
+                "events_moved".to_string(),
+                serde_json::json!(self.events_moved.load(Ordering::Relaxed)),
+            ),
+            (
+                "processing_errors".to_string(),
+                serde_json::json!(self.processing_errors.load(Ordering::Relaxed)),
+            ),
+        ])
+    }
 }
 
 #[derive(Clone)]
@@ -585,15 +614,33 @@ impl IngestorNode for FilesystemNode {
 
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
+        let watched_paths = self.config.watch_paths.len();
+        let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
+        let dropped_events = self.dropped_event_count();
+        let healthy = processing_errors == 0;
+        let description = if watched_paths == 0 {
+            "No filesystem watch paths configured".to_string()
+        } else if healthy {
+            format!("Monitoring {watched_paths} filesystem paths")
+        } else {
+            format!(
+                "Monitoring {watched_paths} filesystem paths with {processing_errors} processing error(s)"
+            )
+        };
+
+        let mut metadata = self.metrics.metadata();
+        metadata.insert("watched_paths".to_string(), serde_json::json!(watched_paths));
+        metadata.insert("dropped_events".to_string(), serde_json::json!(dropped_events));
+
         Ok(SourceState {
-            is_connected: true,
-            healthy: true,
-            description: format!("Monitoring {} paths", self.config.watch_paths.len()),
+            is_connected: watched_paths > 0,
+            healthy,
+            description,
             last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
-            total_items: None,
-            metadata: std::collections::HashMap::new(),
+            total_items: Some(watched_paths as u64),
+            metadata,
         })
     }
 
@@ -1215,6 +1262,39 @@ mod tests {
         let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
             .expect_err("filesystem node should not fabricate coverage analysis");
         assert!(error.to_string().contains("not implemented"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_is_disconnected_without_watch_paths() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
+
+        assert!(!state.is_connected);
+        assert!(state.healthy);
+        assert_eq!(state.total_items, Some(0));
+        assert!(state.description.contains("No filesystem watch paths configured"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_surfaces_processing_errors() -> TestResult<()> {
+        let node = FilesystemNode::with_config(FilesystemConfig {
+            watch_paths: vec!["/tmp".to_string()],
+            ..FilesystemConfig::default()
+        });
+        node.metrics.record_error();
+
+        let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected);
+        assert!(!state.healthy);
+        assert!(
+            state
+                .metadata
+                .get("processing_errors")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|count| count == 1)
+        );
         Ok(())
     }
 
