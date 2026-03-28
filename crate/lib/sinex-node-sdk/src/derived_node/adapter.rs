@@ -34,6 +34,17 @@ use tracing::{debug, error, info, warn};
 
 const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 
+fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -> bool {
+    if shutdown_tx.send(true).is_err() {
+        warn!(
+            node = node_name,
+            "Derived-node shutdown receiver was already dropped before graceful shutdown"
+        );
+        return false;
+    }
+    true
+}
+
 /// Shared runtime adapter for all derived node models.
 ///
 /// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
@@ -965,8 +976,14 @@ where
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() {
+                        warn!(
+                            node = %node_name,
+                            "Derived-node invalidation shutdown channel dropped before explicit shutdown"
+                        );
+                    }
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(node = %node_name, "Shutdown signal received");
                         // Process any pending invalidations before shutdown
                         for payload in pending_invalidations.drain(..) {
@@ -1206,7 +1223,7 @@ where
     /// Signal shutdown.
     pub fn signal_shutdown(&self) {
         if let Some(tx) = &self.shutdown_tx {
-            let _ = tx.send(true);
+            signal_shutdown_channel(tx, self.node.name());
         }
     }
 }
@@ -1454,3 +1471,30 @@ pub type WindowedNodeAdapter<N> = DerivedNodeAdapter<super::traits::WindowedWrap
 /// Adapter for a `ScopeReconcilerNode` implementation.
 pub type ScopeReconcilerNodeAdapter<N> =
     DerivedNodeAdapter<super::traits::ScopeReconcilerWrapper<N>>;
+
+#[cfg(test)]
+mod tests {
+    // Inline because these cover a private shutdown-signaling helper.
+    use super::signal_shutdown_channel;
+    use tokio::sync::watch;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = watch::channel(false);
+        drop(rx);
+
+        assert!(!signal_shutdown_channel(&tx, "test-derived"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
+        let (tx, mut rx) = watch::channel(false);
+
+        assert!(signal_shutdown_channel(&tx, "test-derived"));
+        rx.changed().await?;
+        assert!(*rx.borrow());
+        Ok(())
+    }
+}

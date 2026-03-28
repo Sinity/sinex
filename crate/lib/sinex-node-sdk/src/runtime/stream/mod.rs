@@ -642,6 +642,20 @@ struct FailedDispatchedScanOutcome {
 }
 
 impl<T: Node + 'static> NodeRunner<T> {
+    fn signal_shutdown_channel(
+        shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        task_name: &str,
+    ) -> bool {
+        if shutdown_tx.send(()).is_err() {
+            warn!(
+                task = task_name,
+                "Shutdown receiver was already dropped before graceful shutdown"
+            );
+            return false;
+        }
+        true
+    }
+
     fn log_shutdown_join_result(task_name: &str, result: Result<(), tokio::task::JoinError>) {
         match result {
             Ok(()) => {
@@ -1289,7 +1303,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         };
 
-        let _ = heartbeat_shutdown_tx.send(());
+        Self::signal_shutdown_channel(heartbeat_shutdown_tx, "heartbeat");
         if let Err(error) = heartbeat_handle.await {
             warn!(error = %error, "Failed to join heartbeat task");
         }
@@ -2503,7 +2517,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     async fn shutdown_event_batcher(&mut self) {
         if let Some(shutdown_tx) = self.event_batcher_shutdown.take() {
-            let _ = shutdown_tx.send(());
+            Self::signal_shutdown_channel(shutdown_tx, "event batcher");
         }
         if let Some(handle) = self.event_batcher_handle.take() {
             match handle.await {
@@ -2704,6 +2718,24 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("Failed to load checkpoint state for automaton bridge"));
         assert!(message.contains("Failed to decode checkpoint from KV"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        drop(rx);
+
+        assert!(!NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        assert!(NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
+        rx.await?;
         Ok(())
     }
 }

@@ -311,15 +311,7 @@ jetstream {{
         let log_file = fs::File::create(&self.config.log_file)?;
 
         let child = self
-            .nats_command()
-            .args([
-                "-js",
-                "-c",
-                self.config
-                    .config_file
-                    .to_str()
-                    .expect("config file path must be valid UTF-8"),
-            ])
+            .nats_server_command()
             .stdout(log_file.try_clone()?)
             .stderr(log_file)
             .spawn()
@@ -444,6 +436,15 @@ jetstream {{
         }
     }
 
+    fn nats_server_command(&self) -> Command {
+        let mut command = self.nats_command();
+        command
+            .arg("-js")
+            .arg("-c")
+            .arg(&self.config.config_file);
+        command
+    }
+
     fn read_pid_result(&self) -> Result<Option<u32>> {
         if !self.config.pid_file.exists() {
             return Ok(None);
@@ -521,6 +522,10 @@ fn listener_port_for_pid_probe(
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     fn test_manager(root: &tempfile::TempDir) -> NatsManager {
         NatsManager::new(NatsConfig {
@@ -700,6 +705,28 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
 
         let error = remove_service_file(temp.path(), "test pid file").unwrap_err();
         assert!(format!("{error:#}").contains("failed to remove test pid file"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn nats_server_command_preserves_non_utf8_config_path() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let config_file = PathBuf::from(OsString::from_vec(b"/tmp/nats-\xff.conf".to_vec()));
+        let manager = NatsManager::new(NatsConfig {
+            port: 4222,
+            config_file: config_file.clone(),
+            data_dir: temp.path().join("data"),
+            pid_file: temp.path().join("run/nats.pid"),
+            log_file: temp.path().join("run/nats.log"),
+        });
+
+        let args: Vec<OsString> = manager
+            .nats_server_command()
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect();
+        assert!(args.iter().any(|arg| arg == config_file.as_os_str()));
         Ok(())
     }
 }

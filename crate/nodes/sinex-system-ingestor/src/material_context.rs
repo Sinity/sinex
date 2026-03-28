@@ -19,6 +19,19 @@ pub trait MaterialContext: Send + Sync + fmt::Debug {
 
 pub type WatcherMaterialContext = Arc<dyn MaterialContext>;
 
+fn send_material_reply(
+    reply: oneshot::Sender<NodeResult<Option<(i64, i64)>>>,
+    result: NodeResult<Option<(i64, i64)>>,
+    phase: &str,
+) -> bool {
+    if reply.send(result).is_err() {
+        warn!(phase, "System material writer reply receiver dropped");
+        false
+    } else {
+        true
+    }
+}
+
 /// Request sent to the background writer task.
 ///
 /// `payload = None` is the finalize sentinel: the writer drains pending requests,
@@ -70,7 +83,7 @@ async fn material_writer_task(
                 };
 
                 // Ignore send error: caller may have been cancelled.
-                let _ = req.reply.send(result);
+                send_material_reply(req.reply, result, "append");
             }
 
             // ── finalize sentinel ─────────────────────────────────────────
@@ -87,7 +100,7 @@ async fn material_writer_task(
                     });
 
                 // Notify caller that finalization completed (or failed).
-                let _ = req.reply.send(finalize_result);
+                send_material_reply(req.reply, finalize_result, "finalize");
 
                 // Exit the loop — the handle has been consumed.
                 return;
@@ -253,5 +266,30 @@ impl MaterialContext for RealWatcherMaterialContext {
 
     fn event_count(&self) -> u64 {
         self.event_count.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::send_material_reply;
+    use tokio::sync::oneshot;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn send_material_reply_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+
+        assert!(!send_material_reply(tx, Ok(None), "append"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_material_reply_delivers_payload() -> TestResult<()> {
+        let (tx, rx) = oneshot::channel();
+
+        assert!(send_material_reply(tx, Ok(Some((1, 4))), "append"));
+        assert_eq!(rx.await??, Some((1, 4)));
+        Ok(())
     }
 }

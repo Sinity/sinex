@@ -1290,7 +1290,13 @@ impl ReplayStateMachine {
                 meta.state,
                 ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
             ) {
-                tx.rollback().await.ok();
+                if let Err(error) = tx.rollback().await {
+                    warn!(
+                        operation_id = %operation_id,
+                        error = %error,
+                        "Failed to rollback replay recovery transaction after state changed"
+                    );
+                }
                 continue;
             }
 

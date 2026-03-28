@@ -316,7 +316,7 @@ async fn test_gateway_limits_matrix() -> TestResult<()> {
             env.set("SINEX_GATEWAY_MAX_BODY_BYTES", value);
         }
 
-        let limits = rpc_test_support::rpc_server_limits_snapshot();
+        let limits = rpc_test_support::rpc_server_limits_snapshot()?;
         assert_eq!(
             limits.concurrency_limit, case.expected.concurrency_limit,
             "case {} concurrency mismatch",

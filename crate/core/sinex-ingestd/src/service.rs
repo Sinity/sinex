@@ -796,6 +796,24 @@ impl IngestService {
         handles.push(handle);
     }
 
+    fn log_aborted_task_shutdown_result(index: usize, result: Result<(), tokio::task::JoinError>) {
+        match result {
+            Ok(()) => {
+                debug!(task_index = index, "Background task finished before forced shutdown");
+            }
+            Err(error) if error.is_cancelled() => {
+                debug!(task_index = index, "Background task cancelled during forced shutdown");
+            }
+            Err(error) => {
+                error!(
+                    task_index = index,
+                    error = %error,
+                    "Background task exited unexpectedly during forced shutdown"
+                );
+            }
+        }
+    }
+
     async fn wait_for_tasks(&self, timeout: Duration) {
         let mut handles = {
             let mut guard = self.task_handles.lock().await;
@@ -840,8 +858,8 @@ impl IngestService {
                 handle.abort();
             }
             // Await aborted handles so their destructors run before we return.
-            for handle in handles {
-                let _ = handle.await;
+            for (index, handle) in handles.into_iter().enumerate() {
+                Self::log_aborted_task_shutdown_result(index, handle.await);
             }
         } else {
             info!("All background tasks finished");
@@ -1071,6 +1089,35 @@ mod tests {
         service.wait_for_tasks(Duration::from_millis(10)).await;
 
         assert!(cancelled.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_aborted_task_shutdown_result_accepts_clean_exit() -> xtask::sandbox::TestResult<()>
+    {
+        let handle = tokio::spawn(async {});
+        IngestService::log_aborted_task_shutdown_result(0, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_aborted_task_shutdown_result_accepts_cancelled_task()
+    -> xtask::sandbox::TestResult<()> {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        IngestService::log_aborted_task_shutdown_result(1, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_aborted_task_shutdown_result_accepts_panicked_task()
+    -> xtask::sandbox::TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("ingestd background task panic");
+        });
+        IngestService::log_aborted_task_shutdown_result(2, handle.await);
         Ok(())
     }
 

@@ -1144,8 +1144,11 @@ pub async fn run_with_transport<T: NativeMessagingTransport>(
                     break;
                 }
             }
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
+            shutdown_result = shutdown.changed() => {
+                if shutdown_result.is_err() {
+                    warn!("Native messaging shutdown channel dropped before explicit shutdown");
+                }
+                if shutdown_result.is_err() || *shutdown.borrow() {
                     info!("Shutdown signal received, stopping native messaging");
                     break;
                 }

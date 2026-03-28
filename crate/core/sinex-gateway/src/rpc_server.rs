@@ -62,6 +62,23 @@ use std::{
 };
 pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 
+fn send_token_watcher_ready(
+    ready_tx: &mut Option<std::sync::mpsc::SyncSender<color_eyre::eyre::Result<()>>>,
+    result: color_eyre::eyre::Result<()>,
+    phase: &str,
+) -> bool {
+    if let Some(tx) = ready_tx.take()
+        && tx.send(result).is_err()
+    {
+        warn!(
+            phase,
+            "RPC token file watcher readiness receiver was dropped before initialization completed"
+        );
+        return false;
+    }
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct JsonRpcRequest {
     jsonrpc: String,
@@ -282,8 +299,16 @@ impl GatewayAuth {
                 let mut shutdown_clone = shutdown.clone();
                 tokio::spawn(async move {
                     // wait_for blocks until the predicate matches or the sender is dropped.
-                    let _ = shutdown_clone.wait_for(|v| *v).await;
-                    let _ = done_tx.send(());
+                    if shutdown_clone.wait_for(|v| *v).await.is_err() {
+                        warn!(
+                            "RPC token file watcher shutdown channel dropped before explicit shutdown"
+                        );
+                    }
+                    if done_tx.send(()).is_err() {
+                        debug!(
+                            "RPC token file watcher shutdown bridge receiver was already dropped"
+                        );
+                    }
                 });
             }
 
@@ -328,32 +353,35 @@ impl GatewayAuth {
                 let mut watcher = match watcher {
                     Ok(w) => w,
                     Err(e) => {
-                        if let Some(tx) = ready_tx.take() {
-                            let _ = tx.send(Err(eyre!("Failed to create file watcher: {e}")));
-                        }
+                        send_token_watcher_ready(
+                            &mut ready_tx,
+                            Err(eyre!("Failed to create file watcher: {e}")),
+                            "create",
+                        );
                         error!("Failed to create file watcher: {}", e);
                         return;
                     }
                 };
 
                 if let Err(e) = watcher.watch(&path_clone, RecursiveMode::NonRecursive) {
-                    if let Some(tx) = ready_tx.take() {
-                        let _ = tx.send(Err(eyre!(
-                            "Failed to watch token file {:?}: {e}",
-                            path_clone
-                        )));
-                    }
+                    send_token_watcher_ready(
+                        &mut ready_tx,
+                        Err(eyre!("Failed to watch token file {:?}: {e}", path_clone)),
+                        "watch",
+                    );
                     error!("Failed to watch token file {:?}: {}", path_clone, e);
                     return;
                 }
 
-                if let Some(tx) = ready_tx.take() {
-                    let _ = tx.send(Ok(()));
-                }
+                send_token_watcher_ready(&mut ready_tx, Ok(()), "ready");
                 info!("Watching token file {:?} for changes", path_clone);
 
                 // Block until the shutdown signal fires; no busy-polling.
-                let _ = done_rx.recv();
+                if done_rx.recv().is_err() {
+                    warn!(
+                        "RPC token file watcher shutdown bridge disconnected before explicit shutdown"
+                    );
+                }
                 debug!("Token file watcher shutting down");
             });
 
@@ -1370,7 +1398,9 @@ pub async fn spawn(
 
         // Signal all background tasks to shut down
         info!("Shutting down background tasks...");
-        let _ = shutdown_tx.send(true);
+        if shutdown_tx.send(true).is_err() {
+            warn!("RPC server background-task shutdown receiver was already dropped");
+        }
 
         RpcServer::wait_for_background_tasks(metrics_task, cleanup_task, sse_bus_task).await;
 
@@ -1565,8 +1595,11 @@ impl RpcServer {
                         }
                     });
                 }
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
+                shutdown_result = shutdown.changed() => {
+                    if shutdown_result.is_err() {
+                        warn!("RPC server shutdown channel dropped before explicit shutdown");
+                    }
+                    if shutdown_result.is_err() || *shutdown.borrow() {
                         info!("Shutdown signal received, stopping RPC server");
                         break;
                     }
@@ -2090,6 +2123,36 @@ mod tests {
             auth.verify(&bearer_headers("wrong-token")),
             Err(AuthError::Invalid)
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_token_watcher_ready_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        drop(rx);
+        let mut ready_tx = Some(tx);
+
+        assert!(!super::send_token_watcher_ready(
+            &mut ready_tx,
+            Ok(()),
+            "ready"
+        ));
+        assert!(ready_tx.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_token_watcher_ready_delivers_result() -> TestResult<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let mut ready_tx = Some(tx);
+
+        assert!(super::send_token_watcher_ready(
+            &mut ready_tx,
+            Ok(()),
+            "ready"
+        ));
+        assert!(ready_tx.is_none());
+        rx.recv_timeout(Duration::from_secs(1))??;
         Ok(())
     }
 }

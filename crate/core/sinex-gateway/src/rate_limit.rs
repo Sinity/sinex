@@ -161,8 +161,11 @@ impl TokenRateLimiter {
                     _ = interval.tick() => {
                         self.cleanup_stale();
                     }
-                    _ = shutdown.changed() => {
-                        if *shutdown.borrow() {
+                    shutdown_result = shutdown.changed() => {
+                        if shutdown_result.is_err() {
+                            debug!("Rate limiter cleanup shutdown channel dropped before explicit shutdown");
+                        }
+                        if shutdown_result.is_err() || *shutdown.borrow() {
                             debug!("Rate limiter cleanup task shutting down");
                             // Final cleanup before shutdown
                             self.cleanup_stale();
@@ -172,5 +175,26 @@ impl TokenRateLimiter {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::{Duration, timeout};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn cleanup_task_exits_when_shutdown_sender_is_dropped() -> TestResult<()> {
+        let limiter = Arc::new(TokenRateLimiter::new(RateLimitConfig::default()));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handle = limiter.spawn_cleanup_task(shutdown_rx);
+
+        drop(shutdown_tx);
+
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("cleanup task should exit after shutdown sender drops"))??;
+        Ok(())
     }
 }

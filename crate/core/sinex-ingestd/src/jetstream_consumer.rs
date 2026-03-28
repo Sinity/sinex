@@ -39,6 +39,20 @@ struct ConfirmationRetryRequest {
     event_id: String,
 }
 
+fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &str) -> bool {
+    match ready_tx {
+        Some(tx) => {
+            if tx.send(()).is_err() {
+                warn!(component, "Readiness receiver dropped before ready signal");
+                false
+            } else {
+                true
+            }
+        }
+        None => true,
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct DlqEntry {
     /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
@@ -673,9 +687,7 @@ impl JetStreamConsumer {
 
         // Signal readiness: consumer is bound and the pull loop is about to start.
         // This allows callers to delay sd_notify(READY) until the subscription is live.
-        if let Some(tx) = ready_tx {
-            let _ = tx.send(());
-        }
+        signal_ready(ready_tx, "jetstream-consumer");
 
         // Stats logging interval
         let mut stats_interval = tokio::time::interval(self.stats_log_interval);
@@ -1867,6 +1879,15 @@ mod tests {
             now + time::Duration::minutes(61),
             now
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ready_signal_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        drop(rx);
+
+        assert!(!signal_ready(Some(tx), "jetstream-consumer"));
         Ok(())
     }
 }

@@ -34,6 +34,18 @@ enum FinalizationCommitOutcome {
     Unknown(SinexError),
 }
 
+fn rollback_finalization_failure(
+    original_error: SinexError,
+    rollback_error: impl std::fmt::Display,
+    stage: &'static str,
+) -> SinexError {
+    SinexError::database("Failed to rollback material finalization transaction")
+        .with_source(rollback_error.to_string())
+        .with_context("stage", stage)
+        .with_context("original_error", original_error.to_string())
+        .with_operation("persist_finalized_material")
+}
+
 /// DLQ payload for material failures
 #[derive(Debug, Serialize)]
 struct MaterialDlqPayload {
@@ -403,7 +415,14 @@ impl MaterialAssembler {
             .ensure_material_record_present_with_executor(&mut tx, final_state)
             .await
         {
-            let _ = tx.rollback().await;
+            let error = match tx.rollback().await {
+                Ok(()) => error,
+                Err(rollback_error) => rollback_finalization_failure(
+                    error,
+                    rollback_error,
+                    "ensure_material_record_present",
+                ),
+            };
             self.cleanup_annex_import_failure(annex_key).await;
             return Err(error);
         }
@@ -414,7 +433,12 @@ impl MaterialAssembler {
         {
             Ok(id) => id,
             Err(error) => {
-                let _ = tx.rollback().await;
+                let error = match tx.rollback().await {
+                    Ok(()) => error,
+                    Err(rollback_error) => {
+                        rollback_finalization_failure(error, rollback_error, "upsert_blob")
+                    }
+                };
                 self.cleanup_annex_import_failure(annex_key).await;
                 return Err(error);
             }
@@ -430,13 +454,25 @@ impl MaterialAssembler {
             )
             .await
         {
-            let _ = tx.rollback().await;
+            let error = match tx.rollback().await {
+                Ok(()) => error,
+                Err(rollback_error) => rollback_finalization_failure(
+                    error,
+                    rollback_error,
+                    "finalize_material_record",
+                ),
+            };
             self.cleanup_annex_import_failure(annex_key).await;
             return Err(error);
         }
 
         if let Err(error) = self.record_ledger_entry_with_executor(&mut tx, final_state).await {
-            let _ = tx.rollback().await;
+            let error = match tx.rollback().await {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    rollback_finalization_failure(error, rollback_error, "record_ledger_entry")
+                }
+            };
             self.cleanup_annex_import_failure(annex_key).await;
             return Err(error);
         }
@@ -1460,6 +1496,22 @@ mod tests {
             "retrying finalization after a landed commit should not duplicate ledger entries"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn rollback_finalization_failure_preserves_original_error_context() -> TestResult<()> {
+        let error = rollback_finalization_failure(
+            SinexError::validation("original finalize failure"),
+            "rollback broke too",
+            "record_ledger_entry",
+        );
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Failed to rollback material finalization transaction"));
+        assert!(rendered.contains("rollback broke too"));
+        assert!(rendered.contains("original finalize failure"));
+        assert!(rendered.contains("record_ledger_entry"));
         Ok(())
     }
 }

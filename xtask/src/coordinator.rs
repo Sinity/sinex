@@ -167,7 +167,7 @@ impl JobCoordinator {
         let scope_key = scope_key(command, args);
 
         // Read current state (if any)
-        let current_state = read_state(&state_path);
+        let current_state = read_state(&state_path)?;
 
         let result = if let Some(state) = current_state {
             // There's an existing state — check if process is still alive
@@ -194,7 +194,7 @@ impl JobCoordinator {
                 }
             } else {
                 // Process died (or reservation is stale) — clean up and start fresh
-                let _ = fs::remove_file(&state_path);
+                remove_state_file(&state_path, "remove stale coordinator state before restart")?;
                 self.start_new_job(
                     command,
                     args,
@@ -284,7 +284,7 @@ impl JobCoordinator {
 
         lock_exclusive_retry(lock_file.as_raw_fd())?;
 
-        let state = read_state(&state_path);
+        let state = read_state(&state_path)?;
 
         match state {
             Some(mut state) if !state.queue.is_empty() => {
@@ -293,7 +293,10 @@ impl JobCoordinator {
 
                 if state.queue.is_empty() {
                     // No more items — delete state file
-                    let _ = fs::remove_file(&state_path);
+                    remove_state_file(
+                        &state_path,
+                        "remove coordinator state after draining the final queued job",
+                    )?;
                 } else {
                     // More items waiting — preserve state with sentinel values.
                     // Caller updates via update_state() after spawning.
@@ -310,7 +313,10 @@ impl JobCoordinator {
             }
             _ => {
                 // No queue or no state — clean up
-                let _ = fs::remove_file(&state_path);
+                remove_state_file(
+                    &state_path,
+                    "remove coordinator state after completion with no queued work",
+                )?;
                 Ok(None)
             }
         }
@@ -319,7 +325,7 @@ impl JobCoordinator {
     /// Read current state for display.
     pub fn state(&self, command: &str) -> Result<Option<CoordinationState>> {
         let state_path = self.locks_dir.join(format!("{command}.state.json"));
-        Ok(read_state(&state_path))
+        read_state(&state_path)
     }
 
     // --- Internal decision logic ---
@@ -353,7 +359,10 @@ impl JobCoordinator {
                 let old_job_id = state.job_id;
                 cancel_process(state.pid);
                 mark_cancelled(old_job_id);
-                let _ = fs::remove_file(state_path);
+                remove_state_file(
+                    state_path,
+                    "remove superseded coordinator state before starting replacement job",
+                )?;
 
                 let new_result = self.start_new_job(
                     command,
@@ -503,7 +512,7 @@ impl JobCoordinator {
 
         lock_exclusive_retry(lock_file.as_raw_fd())?;
 
-        if let Some(mut state) = read_state(&state_path) {
+        if let Some(mut state) = read_state(&state_path)? {
             state.job_id = job_id;
             state.pid = pid;
             write_state(&state_path, &state)?;
@@ -856,10 +865,17 @@ fn mark_cancelled(job_id: i64) {
     }
 }
 
-fn read_state(path: &std::path::Path) -> Option<CoordinationState> {
-    let content = fs::read_to_string(path).ok()?;
+fn read_state(path: &std::path::Path) -> Result<Option<CoordinationState>> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read coordinator state: {}", path.display()));
+        }
+    };
     match serde_json::from_str::<CoordinationState>(&content) {
-        Ok(state) => Some(state),
+        Ok(state) => Ok(Some(state)),
         Err(e) => {
             tracing::warn!(
                 target: "xtask::coordinator",
@@ -867,8 +883,17 @@ fn read_state(path: &std::path::Path) -> Option<CoordinationState> {
                 error = %e,
                 "corrupt coordinator state — treating as empty"
             );
-            None
+            Ok(None)
         }
+    }
+}
+
+fn remove_state_file(path: &std::path::Path, reason: &str) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("{reason}: {}", path.display())),
     }
 }
 
@@ -1178,6 +1203,8 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
     use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
     fn run_git(args: &[&str], cwd: &Path) -> ::xtask::sandbox::TestResult<()> {
@@ -1439,7 +1466,7 @@ mod tests {
         write_state(&state_path, &state)?;
 
         // Queue three items
-        let mut s = read_state(&state_path).expect("state should exist");
+        let mut s = read_state(&state_path)?.expect("state should exist");
         s.queue.push(QueuedWork {
             args: vec!["first".into()],
             is_foreground: false,
@@ -1458,7 +1485,7 @@ mod tests {
         write_state(&state_path, &s)?;
 
         // Read back and verify FIFO order
-        let s = read_state(&state_path).expect("state should exist");
+        let s = read_state(&state_path)?.expect("state should exist");
         assert_eq!(s.queue.len(), 3);
         assert_eq!(s.queue[0].args, vec!["first"]);
         assert_eq!(s.queue[1].args, vec!["second"]);
@@ -1604,7 +1631,7 @@ mod tests {
         };
 
         write_state(&path, &state)?;
-        let loaded = read_state(&path).expect("state should exist");
+        let loaded = read_state(&path)?.expect("state should exist");
 
         assert_eq!(loaded.job_id, 42);
         assert_eq!(loaded.pid, 1234);
@@ -1616,7 +1643,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_read_state_missing_file() -> TestResult<()> {
-        let result = read_state(std::path::Path::new("/nonexistent/path/state.json"));
+        let result = read_state(std::path::Path::new("/nonexistent/path/state.json"))?;
         assert!(result.is_none());
         Ok(())
     }
@@ -1626,8 +1653,69 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("state.json");
         fs::write(&path, "not json at all {{{")?;
-        let result = read_state(&path);
+        let result = read_state(&path)?;
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_state_surfaces_unreadable_state_path() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = ScopedEnvGuard::set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(&state_path)?;
+
+        let error = coordinator
+            .state("check")
+            .expect_err("directory state path must surface as unreadable");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read coordinator state"));
+        assert!(message.contains(state_path.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_request_surfaces_stale_state_cleanup_failures() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = ScopedEnvGuard::set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let coordinator_dir = tempdir.path().join("coordinator");
+        let state_path = coordinator_dir.join("check.state.json");
+        let lock_path = coordinator_dir.join("check.lock");
+
+        fs::write(&lock_path, [])?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 41,
+                pid: 999_999_999,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "old".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        let original_mode = fs::metadata(&coordinator_dir)?.permissions().mode();
+        let mut read_only = fs::metadata(&coordinator_dir)?.permissions();
+        read_only.set_mode(0o555);
+        fs::set_permissions(&coordinator_dir, read_only)?;
+
+        let result = coordinator.request_with_format("check", &[], false, OutputFormat::Human);
+
+        let mut restore = fs::metadata(&coordinator_dir)?.permissions();
+        restore.set_mode(original_mode);
+        fs::set_permissions(&coordinator_dir, restore)?;
+
+        let error = result.expect_err("stale state cleanup failure must surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("remove stale coordinator state before restart"));
+        assert!(message.contains(state_path.display().to_string().as_str()));
         Ok(())
     }
 

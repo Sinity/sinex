@@ -243,11 +243,21 @@ fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> Strin
                 error = %error,
                 "Failed to serialize SSE payload"
             );
-            serde_json::to_string(&SseErrorPayload {
+            match serde_json::to_string(&SseErrorPayload {
                 code: "serialization_error".to_string(),
                 message: format!("failed to serialize SSE {payload_kind} payload: {error}"),
             })
-            .expect("SSE error payload should always serialize")
+            {
+                Ok(error_payload) => error_payload,
+                Err(fallback_error) => {
+                    tracing::error!(
+                        payload_kind,
+                        error = %fallback_error,
+                        "Failed to serialize SSE fallback error payload"
+                    );
+                    r#"{"code":"serialization_error","message":"failed to serialize SSE fallback error payload"}"#.to_string()
+                }
+            }
         }
     }
 }

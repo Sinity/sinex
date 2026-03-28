@@ -264,6 +264,38 @@ impl SystemNode {
         Ok(Arc::new(context))
     }
 
+    fn dbus_connected(&self) -> bool {
+        self.config.dbus_enabled
+            && self
+                .dbus_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn journal_connected(&self) -> bool {
+        self.config.journal_enabled
+            && self
+                .unified_journal_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn udev_connected(&self) -> bool {
+        self.config.udev_enabled
+            && self
+                .udev_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn systemd_connected(&self) -> bool {
+        self.config.systemd_enabled
+            && self
+                .unified_journal_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
     fn apply_config_overrides<S: ConfigAccessor>(
         config: &mut SystemConfig,
         source: &S,
@@ -322,7 +354,7 @@ impl SystemNode {
                     .iter()
                     .map(std::string::ToString::to_string)
                     .collect(),
-                connection_active: self.dbus_watcher.is_some(),
+                connection_active: self.dbus_connected(),
                 recent_signal_count: self
                     .dbus_watcher
                     .as_ref()
@@ -334,7 +366,7 @@ impl SystemNode {
         if self.config.journal_enabled {
             enabled_sources.push("journal".to_string());
             journal_status = Some(JournalStatus {
-                following_active: self.unified_journal_watcher.is_some(),
+                following_active: self.journal_connected(),
                 cursor_position: None, // Would need to track this
                 recent_entry_count: self
                     .unified_journal_watcher
@@ -347,7 +379,7 @@ impl SystemNode {
         if self.config.udev_enabled {
             enabled_sources.push("udev".to_string());
             udev_status = Some(UdevStatus {
-                monitoring_active: self.udev_watcher.is_some(),
+                monitoring_active: self.udev_connected(),
                 recent_device_events: self
                     .udev_watcher
                     .as_ref()
@@ -359,7 +391,7 @@ impl SystemNode {
         if self.config.systemd_enabled {
             enabled_sources.push("systemd".to_string());
             systemd_status = Some(SystemdStatus {
-                monitoring_active: self.unified_journal_watcher.is_some(),
+                monitoring_active: self.systemd_connected(),
                 units_tracked: 0,        // Would need to query systemd
                 recent_state_changes: 0, // Systemd events are mixed in journal watcher, hard to separate without filter
             });
@@ -382,12 +414,11 @@ impl SystemNode {
     /// Expose watcher readiness for tests and diagnostics.
     #[must_use]
     pub fn watcher_snapshot(&self) -> WatcherSnapshot {
-        let unified_ready = self.unified_journal_watcher.is_some();
         WatcherSnapshot {
-            dbus_ready: self.dbus_watcher.is_some(),
-            journal_ready: unified_ready,
-            udev_ready: self.udev_watcher.is_some(),
-            systemd_ready: unified_ready,
+            dbus_ready: self.dbus_connected(),
+            journal_ready: self.journal_connected(),
+            udev_ready: self.udev_connected(),
+            systemd_ready: self.systemd_connected(),
         }
     }
 
@@ -742,6 +773,23 @@ impl SystemNode {
         self.start_udev_stream().await?;
         Ok(())
     }
+
+    fn record_snapshot_result(
+        state: &mut SystemPersistentState,
+        warnings: &mut Vec<String>,
+        snapshot_result: NodeResult<SystemState>,
+    ) {
+        match snapshot_result {
+            Ok(snapshot) => state.last_state = Some(snapshot),
+            Err(error) => {
+                let warning = format!("system snapshot refresh failed: {error}");
+                warn!("{warning}");
+                if !warnings.iter().any(|existing| existing == &warning) {
+                    warnings.push(warning);
+                }
+            }
+        }
+    }
 }
 
 impl IngestorNode for SystemNode {
@@ -866,10 +914,17 @@ impl IngestorNode for SystemNode {
         // Periodic snapshot loop: updates `state.health` every 30 seconds.
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         let start_time = std::time::Instant::now();
+        let mut warnings = Vec::new();
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => {
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() {
+                        let warning =
+                            "system continuous monitoring shutdown channel dropped before explicit shutdown";
+                        warn!("{warning}");
+                        warnings.push(warning.to_string());
+                    }
                     break;
                 }
                 _ = interval.tick() => {
@@ -887,10 +942,8 @@ impl IngestorNode for SystemNode {
                         systemd_active: snapshot.systemd_ready,
                     };
 
-                    // We can also take a full snapshot and update state.last_state
-                    if let Ok(s) = self.take_snapshot(state).await {
-                        state.last_state = Some(s);
-                    }
+                    let snapshot_result = self.take_snapshot(state).await;
+                    Self::record_snapshot_result(state, &mut warnings, snapshot_result);
                 }
             }
         }
@@ -905,7 +958,7 @@ impl IngestorNode for SystemNode {
             node_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
-            warnings: vec![],
+            warnings,
         })
     }
 
@@ -955,10 +1008,10 @@ impl IngestorNode for SystemNode {
         .filter(|&&enabled| enabled)
         .count() as u64;
         let connected_sources = [
-            state.health.dbus_active,
-            state.health.journal_active,
-            state.health.udev_active,
-            state.health.systemd_active,
+            self.dbus_connected(),
+            self.journal_connected(),
+            self.udev_connected(),
+            self.systemd_connected(),
         ]
         .iter()
         .filter(|&&active| active)
@@ -970,10 +1023,10 @@ impl IngestorNode for SystemNode {
         metadata.insert(
             "watcher_health".to_string(),
             json!({
-                "dbus_active": state.health.dbus_active,
-                "journal_active": state.health.journal_active,
-                "udev_active": state.health.udev_active,
-                "systemd_active": state.health.systemd_active,
+                "dbus_active": self.dbus_connected(),
+                "journal_active": self.journal_connected(),
+                "udev_active": self.udev_connected(),
+                "systemd_active": self.systemd_connected(),
             }),
         );
         let description = if active_sources == 0 {
@@ -1208,6 +1261,94 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn system_source_state_ignores_stale_persisted_watcher_flags() -> TestResult<()> {
+        let node = SystemNode::new();
+        let state = SystemPersistentState {
+            health: SystemMonitorHealth {
+                dbus_active: true,
+                journal_active: true,
+                udev_active: true,
+                systemd_active: true,
+            },
+            ..SystemPersistentState::default()
+        };
+
+        let source = IngestorNode::get_source_state(&node, &state)?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": false,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn watcher_snapshot_requires_live_tasks() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        node.dbus_watcher = Some(WatcherHandle::initialized("dbus"));
+        node.unified_journal_watcher = Some(WatcherHandle::initialized("unified_journal"));
+        node.udev_watcher = Some(WatcherHandle::initialized("udev"));
+
+        let snapshot = node.watcher_snapshot();
+
+        assert_eq!(
+            snapshot,
+            WatcherSnapshot {
+                dbus_ready: false,
+                journal_ready: false,
+                udev_ready: false,
+                systemd_ready: false,
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_reports_live_watcher_handles() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        node.dbus_watcher = Some(WatcherHandle::running("dbus", task, None, None));
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert!(source.is_connected);
+        assert!(source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": true,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_watcher_resilience() -> TestResult<()> {
         let dbus_count = Arc::new(AtomicUsize::new(0));
         let mut node = SystemNode::new_with_factory(Box::new(MockFactory {
@@ -1247,6 +1388,41 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn run_continuous_warns_when_shutdown_sender_drops() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let (tx, _rx) = mpsc::channel(16);
+        node.set_emitter_override(EventEmitter::new(tx, true));
+        node.set_material_override(Arc::new(MockMaterialContext));
+
+        let state = SystemPersistentState::default();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        assert!(
+            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            "expected shutdown channel drop warning, got: {:?}",
+            report.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn system_config_overrides_reject_invalid_bool_types() -> TestResult<()> {
         let mut config = SystemConfig::default();
         let overrides = HashMap::from([("dbus_enabled".to_string(), json!("yes"))]);
@@ -1257,6 +1433,42 @@ mod tests {
 
         assert!(message.contains("dbus_enabled"));
         assert!(message.contains("bool"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_snapshot_result_preserves_successful_snapshot() -> TestResult<()> {
+        let mut state = SystemPersistentState::default();
+        let mut warnings = Vec::new();
+        let snapshot = SystemState {
+            captured_at: Timestamp::now(),
+            enabled_sources: vec!["dbus".to_string()],
+            dbus_status: None,
+            journal_status: None,
+            udev_status: None,
+            systemd_status: None,
+            recent_activity: vec!["ok".to_string()],
+        };
+
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Ok(snapshot.clone()));
+
+        assert_eq!(state.last_state.as_ref().map(|s| &s.enabled_sources), Some(&snapshot.enabled_sources));
+        assert!(warnings.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_snapshot_result_surfaces_failures_once() -> TestResult<()> {
+        let mut state = SystemPersistentState::default();
+        let mut warnings = Vec::new();
+        let error = SinexError::processing("snapshot exploded");
+
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Err(error.clone()));
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Err(error));
+
+        assert!(state.last_state.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("snapshot exploded"));
         Ok(())
     }
 }

@@ -10,7 +10,7 @@ mod build {
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
-use tracing::info;
+use tracing::{info, warn};
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -163,7 +163,9 @@ async fn main() -> Result<()> {
                 },
             }
 
-            let _ = shutdown_tx.send(true);
+            if shutdown_tx.send(true).is_err() {
+                warn!("Gateway shutdown receiver was already dropped before signal delivery");
+            }
         })
     };
 
