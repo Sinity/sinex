@@ -2509,6 +2509,13 @@ impl TerminalNode {
             "terminal history source progress",
         ))
     }
+
+    fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
+        match checkpoint {
+            Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
+            _ => None,
+        }
+    }
 }
 
 impl Default for TerminalNode {
@@ -2567,20 +2574,23 @@ impl IngestorNode for TerminalNode {
         _state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
+        let start_time = Instant::now();
         let monitored: Vec<Utf8PathBuf> = self
             .config
             .history_sources
             .iter()
             .map(|src| src.path.clone())
             .collect();
+        let finished_at = Timestamp::now();
 
         debug!(monitored = monitored.len(), "Terminal snapshot captured");
 
         Ok(ScanReport {
             events_processed: 0,
-            duration: std::time::Duration::from_millis(0),
-            final_checkpoint: Checkpoint::None,
-            time_range: None,
+            duration: start_time.elapsed(),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["snapshot".to_string()],
             failed_targets: Vec::new(),
@@ -2592,7 +2602,7 @@ impl IngestorNode for TerminalNode {
         &mut self,
         _state: &mut Self::State,
         from: Checkpoint,
-        _until: TimeHorizon,
+        until: TimeHorizon,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         let started_at = Instant::now();
@@ -2637,7 +2647,7 @@ impl IngestorNode for TerminalNode {
                 }
             };
             let outcome = ctx
-                .scan_history_once_from_state(state_override, _until.end_time())
+                .scan_history_once_from_state(state_override, until.end_time())
                 .await;
             events_processed = events_processed.saturating_add(outcome.processed as u64);
             warnings.extend(outcome.warnings);
@@ -2653,7 +2663,9 @@ impl IngestorNode for TerminalNode {
             events_processed,
             duration: started_at.elapsed(),
             final_checkpoint: Self::checkpoint_from_states(checkpoint_states)?,
-            time_range: None,
+            time_range: Self::checkpoint_timestamp(&from)
+                .zip(until.end_time())
+                .map(|(started_at, finished_at)| (started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets,
             failed_targets,
@@ -2667,6 +2679,8 @@ impl IngestorNode for TerminalNode {
         from: Checkpoint,
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
+        let start_time = Instant::now();
         let contexts = self.build_history_contexts(shutdown_rx.clone())?;
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
@@ -2708,12 +2722,13 @@ impl IngestorNode for TerminalNode {
             warn!("{warning}");
             warnings.push(warning.to_string());
         }
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: 0,
-            duration: std::time::Duration::from_millis(0),
+            duration: start_time.elapsed(),
             final_checkpoint: from,
-            time_range: None,
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets,
             failed_targets,
@@ -4214,6 +4229,127 @@ mod tests {
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_reports_elapsed_time_window(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-time-range")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let (window_start, window_end) = report
+            .time_range
+            .expect("continuous monitoring should report an elapsed time window");
+        assert!(window_end >= window_start);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_reports_requested_time_window(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-time-range")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let start =
+            Timestamp::from_unix_timestamp(1_700_100_000).expect("timestamp should be valid");
+        let end =
+            Timestamp::from_unix_timestamp(1_700_100_600).expect("timestamp should be valid");
+
+        let report = node
+            .scan_historical(
+                &mut TerminalCheckpoint::default(),
+                Checkpoint::timestamp(start, None),
+                TimeHorizon::Historical { end_time: end },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.time_range, Some((start, end)));
         Ok(())
     }
 
