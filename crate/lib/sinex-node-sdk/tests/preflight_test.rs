@@ -664,6 +664,35 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
     Ok(())
 }
 
+/// Test Phase 4: Resource verification surfaces non-UTF8 directory overrides
+#[cfg(unix)]
+#[sinex_test]
+async fn test_phase4_system_resources_rejects_non_unicode_work_dir() -> TestResult<()> {
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let previous = env::var_os("SINEX_WORK_DIR");
+    unsafe { env::set_var("SINEX_WORK_DIR", OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x80])) };
+
+    let (status, _details, messages) = resources::verify_system_resources().await?;
+
+    unsafe {
+        match previous {
+            Some(value) => env::set_var("SINEX_WORK_DIR", value),
+            None => env::remove_var("SINEX_WORK_DIR"),
+        }
+    }
+
+    assert_eq!(status, VerificationStatus::Fail);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("SINEX_WORK_DIR") && message.contains("not valid UTF-8")),
+        "expected invalid UTF-8 work dir message, got {messages:#?}"
+    );
+    Ok(())
+}
+
 // ====== PHASE 5: CONFIGURATION TESTS ======
 
 /// Test Phase 5: Configuration verification success

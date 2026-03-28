@@ -18,31 +18,58 @@ use tracing::info;
 
 use super::VerificationStatus;
 
-fn configured_state_dir() -> String {
-    std::env::var("SINEX_STATE_DIR")
-        .or_else(|_| std::env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex")))
-        .unwrap_or_else(|_| "/var/lib/sinex".to_string())
+fn env_string(name: &str) -> NodeResult<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable '{name}' is not valid UTF-8"
+        ))),
+    }
 }
 
-fn configured_data_dir() -> String {
-    std::env::var("SINEX_DATA_DIR").unwrap_or_else(|_| configured_state_dir())
+fn configured_state_dir() -> NodeResult<String> {
+    if let Some(state_dir) = env_string("SINEX_STATE_DIR")? {
+        return Ok(state_dir);
+    }
+    if let Some(state_home) = env_string("XDG_STATE_HOME")? {
+        return Ok(format!("{state_home}/sinex"));
+    }
+    Ok("/var/lib/sinex".to_string())
 }
 
-fn configured_log_dir() -> String {
-    std::env::var("SINEX_LOG_DIR").unwrap_or_else(|_| format!("{}/logs", configured_state_dir()))
+fn configured_data_dir() -> NodeResult<String> {
+    env_string("SINEX_DATA_DIR")?.map_or_else(configured_state_dir, Ok)
 }
 
-fn configured_work_dir() -> String {
-    std::env::var("SINEX_WORK_DIR").unwrap_or_else(|_| {
-        dirs::cache_dir()
-            .map(|dir| dir.join("sinex"))
-            .and_then(|dir| dir.into_os_string().into_string().ok())
-            .unwrap_or_else(|| "/tmp/sinex".to_string())
-    })
+fn configured_log_dir() -> NodeResult<String> {
+    if let Some(log_dir) = env_string("SINEX_LOG_DIR")? {
+        return Ok(log_dir);
+    }
+    Ok(format!("{}/logs", configured_state_dir()?))
 }
 
-fn configured_tmp_dir() -> String {
-    std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+fn configured_work_dir() -> NodeResult<String> {
+    if let Some(work_dir) = env_string("SINEX_WORK_DIR")? {
+        return Ok(work_dir);
+    }
+
+    match dirs::cache_dir() {
+        Some(dir) => dir
+            .join("sinex")
+            .into_os_string()
+            .into_string()
+            .map_err(|path| {
+                SinexError::configuration(format!(
+                    "Default cache directory for SINEX_WORK_DIR is not valid UTF-8: {path:?}"
+                ))
+            }),
+        None => Ok("/tmp/sinex".to_string()),
+    }
+}
+
+fn configured_tmp_dir() -> NodeResult<String> {
+    Ok(env_string("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
 }
 
 /// Verify system resource availability for Sinex deployment
@@ -189,9 +216,9 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
 }
 
 async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let data_dir = configured_data_dir();
-    let tmp_dir = configured_tmp_dir();
-    let log_dir = configured_log_dir();
+    let data_dir = configured_data_dir()?;
+    let tmp_dir = configured_tmp_dir()?;
+    let log_dir = configured_log_dir()?;
     let paths_to_check = vec![
         (data_dir, "Sinex data directory".to_string(), 10.0), // 10GB minimum
         (tmp_dir, "Temporary directory".to_string(), 5.0),    // 5GB minimum
@@ -326,11 +353,11 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut directories_to_check = Vec::new();
     for dir in [
-        configured_state_dir(),
-        configured_data_dir(),
-        configured_log_dir(),
-        configured_tmp_dir(),
-        configured_work_dir(),
+        configured_state_dir()?,
+        configured_data_dir()?,
+        configured_log_dir()?,
+        configured_tmp_dir()?,
+        configured_work_dir()?,
     ] {
         if !directories_to_check.contains(&dir) {
             directories_to_check.push(dir);
