@@ -45,18 +45,29 @@ impl Blob {
     }
 
     /// Parse an annex key into its components
-    #[must_use]
-    pub fn parse_annex_key(key: &str) -> Option<(String, i64, String)> {
+    pub fn parse_annex_key(key: &str) -> Result<(String, i64, String), String> {
         let mut segments = key.splitn(2, "--");
-        let prefix = segments.next()?;
-        let hash_fragment = segments.next()?.to_string();
+        let prefix = segments
+            .next()
+            .ok_or_else(|| format!("invalid annex key `{key}`: missing backend/size prefix"))?;
+        let hash_fragment = segments
+            .next()
+            .ok_or_else(|| format!("invalid annex key `{key}`: missing hash fragment"))?
+            .to_string();
 
         let mut prefix_parts = prefix.splitn(2, "-s");
-        let backend = prefix_parts.next()?.to_string();
-        let size_str = prefix_parts.next()?;
-        let size = size_str.parse::<i64>().ok()?;
+        let backend = prefix_parts
+            .next()
+            .ok_or_else(|| format!("invalid annex key `{key}`: missing backend"))?
+            .to_string();
+        let size_str = prefix_parts
+            .next()
+            .ok_or_else(|| format!("invalid annex key `{key}`: missing size segment"))?;
+        let size = size_str
+            .parse::<i64>()
+            .map_err(|error| format!("invalid annex key `{key}`: invalid size `{size_str}`: {error}"))?;
 
-        Some((backend, size, hash_fragment))
+        Ok((backend, size, hash_fragment))
     }
 }
 
@@ -221,6 +232,22 @@ mod tests {
 
         let err = Blob::try_from(record).expect_err("invalid status must be rejected");
         assert!(err.contains("invalid blob verification_status"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn annex_key_parser_rejects_invalid_size() -> ::xtask::sandbox::TestResult<()> {
+        let err = Blob::parse_annex_key("SHA256E-sabc--deadbeef")
+            .expect_err("invalid annex size must fail honestly");
+        assert!(err.contains("invalid size `abc`"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn annex_key_parser_rejects_missing_hash_fragment() -> ::xtask::sandbox::TestResult<()> {
+        let err = Blob::parse_annex_key("SHA256E-s42")
+            .expect_err("missing annex hash fragment must fail honestly");
+        assert!(err.contains("missing hash fragment"));
         Ok(())
     }
 }

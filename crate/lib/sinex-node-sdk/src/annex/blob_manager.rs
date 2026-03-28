@@ -259,7 +259,7 @@ impl BlobManager {
         blake3_hash: String,
     ) -> NodeResult<BlobMetadata> {
         let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
-            .ok_or_else(|| SinexError::processing("Invalid annex key format".to_string()))?;
+            .map_err(SinexError::processing)?;
 
         let blob = Blob::builder()
             .annex_backend(backend)
@@ -559,9 +559,8 @@ impl BlobManager {
 
     /// Get blob metadata by annex key
     pub async fn get_blob_metadata(&self, annex_key: &str) -> NodeResult<Blob> {
-        let (backend, size, hash_fragment) = Blob::parse_annex_key(annex_key).ok_or_else(|| {
-            SinexError::processing(format!("Invalid annex key format: {annex_key}"))
-        })?;
+        let (backend, size, hash_fragment) =
+            Blob::parse_annex_key(annex_key).map_err(SinexError::processing)?;
 
         self.db_pool
             .blobs()
