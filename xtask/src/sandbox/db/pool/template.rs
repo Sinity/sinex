@@ -863,7 +863,9 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
         }
 
         // Reset operation_id
-        let _ = sqlx::query("RESET sinex.operation_id").execute(pool).await;
+        if let Err(error) = sqlx::query("RESET sinex.operation_id").execute(pool).await {
+            warn!(error = %error, "Could not reset sinex.operation_id after template optimization");
+        }
 
         eprintln!("✅ Template database optimized for test performance");
         Ok::<(), SinexError>(())

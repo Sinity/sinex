@@ -509,7 +509,7 @@ impl DatabasePool {
             )
             .await?;
             let expected_extensions = template_guard.info.extensions.clone();
-            let _ = template_guard.release().await;
+            template_guard.release().await?;
             let expected_fingerprint = Some(schema_fingerprint()?);
 
             let mut slots = Vec::with_capacity(config.size);
@@ -823,7 +823,11 @@ impl DatabasePool {
                 Ok(pool)
             }
             Err(err) => {
-                let _ = template_guard.release().await;
+                if let Err(release_error) = template_guard.release().await {
+                    return Err(err.wrap_err(format!(
+                        "failed to release template database guard after pool initialization error: {release_error:#}"
+                    )));
+                }
                 Err(err)
             }
         }

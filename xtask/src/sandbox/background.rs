@@ -104,7 +104,9 @@ impl BackgroundRegistry {
                 () = &mut timeout_sleep => {
                     warn!(%label, "Background task did not finish within timeout; aborting");
                     handle.abort();
-                    let _ = handle.await;
+                    if let Err(join_err) = handle.await {
+                        warn!(%label, error = %join_err, "Background task join failed after abort");
+                    }
                 }
             };
         }
