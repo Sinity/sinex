@@ -297,14 +297,16 @@ impl JournalReader {
             let mut entries = Vec::new();
             let reader = BufReader::new(file);
 
-            for line in reader.lines() {
-                match line {
-                    Ok(entry) => entries.push(entry),
-                    Err(e) => {
-                        warn!("Error reading journal line: {}", e);
-                        break;
-                    }
-                }
+            for (line_index, line) in reader.lines().enumerate() {
+                let entry = line.map_err(|error| {
+                    eyre!(
+                        "Failed to read journal line {} from {:?}: {}",
+                        line_index + 1,
+                        self.journal_path,
+                        error
+                    )
+                })?;
+                entries.push(entry);
             }
 
             self.last_position = current_size;
@@ -422,7 +424,9 @@ impl SystemdChangeMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::forward_journal_entries;
+    use super::{JournalReader, forward_journal_entries};
+    use std::fs::OpenOptions;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -447,6 +451,59 @@ mod tests {
         assert!(forwarded);
         assert_eq!(rx.recv().await.as_deref(), Some("entry-1"));
         assert_eq!(rx.recv().await.as_deref(), Some("entry-2"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journal_reader_reads_new_entries_and_advances_position() -> TestResult<()> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "sinex-systemd-journal-test-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir)?;
+        let journal_file = temp_dir.join("system.journal");
+        std::fs::write(&journal_file, b"entry-1\nentry-2\n")?;
+
+        let file = OpenOptions::new().read(true).open(&journal_file)?;
+        let mut reader = JournalReader {
+            journal_path: temp_dir.clone(),
+            file: Some(file),
+            last_position: 0,
+        };
+
+        let entries = reader.read_new_entries().await?;
+
+        assert_eq!(entries, vec!["entry-1".to_string(), "entry-2".to_string()]);
+        assert_eq!(reader.last_position, std::fs::metadata(&journal_file)?.len());
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journal_reader_rejects_invalid_utf8_without_advancing_position() -> TestResult<()> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "sinex-systemd-journal-test-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir)?;
+        let journal_file = temp_dir.join("system.journal");
+        std::fs::write(&journal_file, b"entry-1\n\xffentry-2\n")?;
+
+        let file = OpenOptions::new().read(true).open(&journal_file)?;
+        let mut reader = JournalReader {
+            journal_path: temp_dir.clone(),
+            file: Some(file),
+            last_position: 0,
+        };
+
+        let error = reader
+            .read_new_entries()
+            .await
+            .expect_err("invalid UTF-8 journal lines must fail honestly");
+
+        assert!(error.to_string().contains("Failed to read journal line 2"));
+        assert_eq!(reader.last_position, 0);
+        std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
     }
 }

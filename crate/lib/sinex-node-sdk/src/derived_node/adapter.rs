@@ -598,11 +598,25 @@ where
 
             let mut keys = Vec::new();
             for id in &affected_ids {
-                if let Ok(Some(event)) = pool.events().get_by_id(*id).await
-                    && let Some(ref sk) = event.scope_key
-                    && !keys.contains(sk)
-                {
-                    keys.push(sk.clone());
+                match pool.events().get_by_id(*id).await {
+                    Ok(Some(event)) => {
+                        if let Some(ref sk) = event.scope_key
+                            && !keys.contains(sk)
+                        {
+                            keys.push(sk.clone());
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Err(
+                            SinexError::database(
+                                "Failed to load affected event while deriving invalidation scope keys",
+                            )
+                            .with_context("event_id", id.to_string())
+                            .with_context("node", self.node.name())
+                            .with_source(error),
+                        );
+                    }
                 }
             }
             keys

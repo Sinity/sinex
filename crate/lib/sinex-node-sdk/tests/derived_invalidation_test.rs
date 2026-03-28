@@ -706,6 +706,13 @@ async fn windowed_output_has_latest_input_temporal_policy() -> TestResult<()> {
 async fn initialize_scope_reconciler_adapter(
     ctx: &TestContext,
 ) -> TestResult<ScopeReconcilerNodeAdapter<TestReconciler>> {
+    initialize_scope_reconciler_adapter_with_pool(ctx, ctx.pool().clone()).await
+}
+
+async fn initialize_scope_reconciler_adapter_with_pool(
+    ctx: &TestContext,
+    pool: sqlx::PgPool,
+) -> TestResult<ScopeReconcilerNodeAdapter<TestReconciler>> {
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;
     let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(nats_client.clone())));
@@ -727,7 +734,7 @@ async fn initialize_scope_reconciler_adapter(
     let (event_sender, _event_receiver) = mpsc::channel::<sinex_primitives::Event<JsonValue>>(1024);
     let emitter = EventEmitter::new(event_sender, false);
     let handles = NodeHandles::new(
-        ctx.pool().clone(),
+        pool,
         checkpoint_manager,
         emitter,
         transport,
@@ -861,5 +868,49 @@ async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestCon
         "invalidations must archive every stale scope output, not just the first page"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-scope-lookup"))
+        .await?;
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 1_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some("scope:lookup-failure".to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation =
+        DerivedScopeInvalidation::replaced(vec![*input_id.as_uuid()], "measurements", "measurement.taken");
+
+    let bad_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
+    let mut adapter = initialize_scope_reconciler_adapter_with_pool(&ctx, bad_pool).await?;
+
+    let error = adapter
+        .process_invalidation(&invalidation)
+        .await
+        .expect_err("query failures must surface while deriving invalidation scope keys");
+
+    assert!(error.to_string().contains("Failed to load affected event"));
+    assert!(error.to_string().contains(&input_id.to_string()));
     Ok(())
 }
