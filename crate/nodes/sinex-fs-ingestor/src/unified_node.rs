@@ -1068,7 +1068,7 @@ async fn capture_material(
     reason: &str,
     content: Option<&[u8]>,
 ) -> NodeResult<Uuid> {
-    let identifier = path.to_string_lossy();
+    let identifier = observed_path_string(path)?;
     let mut handle = ctx
         .acquisition
         .begin_material(&identifier)
@@ -1140,7 +1140,7 @@ async fn capture_material_from_file_inner(
         .await
         .map_err(|_| SinexError::processing("Capture semaphore closed".to_string()))?;
 
-    let identifier = path.to_string_lossy();
+    let identifier = observed_path_string(path)?;
     let mut handle = ctx
         .acquisition
         .begin_material(&identifier)
@@ -1228,8 +1228,15 @@ fn is_transient_capture_error(err: &SinexError) -> bool {
 }
 
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
-    RecordedPath::from_observed(path.to_string_lossy().to_string())
+    RecordedPath::from_observed(observed_path_string(path)?)
         .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
+}
+
+fn observed_path_string(path: &Path) -> NodeResult<String> {
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+        SinexError::validation("filesystem watcher observed non-utf8 path")
+            .with_context("path_debug", format!("{path:?}"))
+    })
 }
 
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
@@ -1264,6 +1271,7 @@ mod tests {
     use sinex_db::models::{Event as SinexEvent, Provenance};
     use sinex_node_sdk::AcquisitionManager;
     use sinex_primitives::Id;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
@@ -1273,6 +1281,10 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1398,6 +1410,27 @@ mod tests {
             panic!("filesystem watcher panic");
         });
         FilesystemNode::log_watcher_shutdown_result(2, handle.await);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn observed_path_string_rejects_non_utf8_paths() -> TestResult<()> {
+        let invalid_path = PathBuf::from(OsString::from_vec(vec![
+            b'/',
+            b't',
+            b'm',
+            b'p',
+            b'/',
+            0xff,
+        ]));
+
+        let error =
+            observed_path_string(&invalid_path).expect_err("non-utf8 observed paths must fail");
+
+        assert!(error
+            .to_string()
+            .contains("filesystem watcher observed non-utf8 path"));
         Ok(())
     }
 
