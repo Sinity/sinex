@@ -33,6 +33,7 @@ use std::{
 };
 use tokio::{
     sync::Mutex,
+    sync::oneshot,
     sync::RwLock,
     task::{JoinHandle, JoinSet},
     time::{Duration, interval},
@@ -77,6 +78,35 @@ fn log_node_manifest_write_failure(
         error = %error,
         "Failed to persist ingestd node manifest state"
     );
+}
+
+async fn await_ready_signal(
+    component: &'static str,
+    ready_timeout: Duration,
+    ready_rx: oneshot::Receiver<()>,
+) -> IngestdResult<()> {
+    match tokio::time::timeout(ready_timeout, ready_rx).await {
+        Ok(Ok(())) => {
+            info!(component, "Startup component reached ready state");
+            Ok(())
+        }
+        Ok(Err(_)) => Err(
+            SinexError::service(format!(
+                "{component} setup failed before signaling ready"
+            ))
+            .with_operation("service.await_ready_signal")
+            .with_context("component", component)
+            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
+        ),
+        Err(_) => Err(
+            SinexError::service(format!(
+                "{component} did not signal ready within {ready_timeout:?}"
+            ))
+            .with_operation("service.await_ready_signal")
+            .with_context("component", component)
+            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
+        ),
+    }
 }
 
 /// Main ingestion service
@@ -262,7 +292,7 @@ impl IngestService {
         }
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
-        let (js_handle, js_ready_rx) = match (&self.nats_client, &self.db_pool) {
+        let (mut js_handle, mut js_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
                 let (h, rx) = self
                     .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
@@ -272,7 +302,7 @@ impl IngestService {
             _ => (None, None),
         };
 
-        let (ma_handle, ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
+        let (mut ma_handle, mut ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
                 let (h, rx) = self
                     .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
@@ -369,36 +399,30 @@ impl IngestService {
         // (streams bound, WAL restored) before telling systemd we're ready.
         // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
         let ready_timeout = Duration::from_secs(30);
-        if let Some(rx) = js_ready_rx {
-            match tokio::time::timeout(ready_timeout, rx).await {
-                Ok(Ok(())) => info!("JetStream consumer ready"),
-                // Sender dropped without sending — setup task failed before reaching the ready point.
-                // monitor_runtime will observe the task exit and report the actual error.
-                Ok(Err(_)) => {
-                    warn!("JetStream consumer setup failed (ready channel closed without signal)");
-                }
-                Err(_) => warn!(
-                    "JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"
-                ),
-            }
+        if let Some(rx) = js_ready_rx.take()
+            && let Err(error) = await_ready_signal("JetStream consumer", ready_timeout, rx).await
+        {
+            error!(error = %error, "Critical ingestd component failed during startup");
+            trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
+            let _ = self.monitor_runtime(js_handle.take(), ma_handle.take()).await;
+            self.wait_for_tasks(Duration::from_secs(5)).await;
+            return Err(error);
         }
-        if let Some(rx) = ma_ready_rx {
-            match tokio::time::timeout(ready_timeout, rx).await {
-                Ok(Ok(())) => info!("MaterialAssembler ready"),
-                Ok(Err(_)) => {
-                    warn!("MaterialAssembler setup failed (ready channel closed without signal)");
-                }
-                Err(_) => warn!(
-                    "MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"
-                ),
-            }
+        if let Some(rx) = ma_ready_rx.take()
+            && let Err(error) = await_ready_signal("MaterialAssembler", ready_timeout, rx).await
+        {
+            error!(error = %error, "Critical ingestd component failed during startup");
+            trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
+            let _ = self.monitor_runtime(js_handle.take(), ma_handle.take()).await;
+            self.wait_for_tasks(Duration::from_secs(5)).await;
+            return Err(error);
         }
 
         systemd_notify::notify_ready("sinex-ingestd");
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-ingestd");
 
         // Monitor critical tasks - exit on first failure or shutdown signal
-        let monitor_result = self.monitor_runtime(js_handle, ma_handle).await;
+        let monitor_result = self.monitor_runtime(js_handle.take(), ma_handle.take()).await;
         systemd_notify::stop_watchdog(watchdog_handle, "sinex-ingestd").await;
         systemd_notify::notify_stopping("sinex-ingestd");
 
@@ -1207,6 +1231,45 @@ mod tests {
         .await
         .expect("late shutdown waiters should observe an already-triggered shutdown");
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_ready_signal_accepts_ready_component() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = oneshot::channel();
+        tx.send(())
+            .expect("sending ready signal should succeed in the test");
+
+        await_ready_signal("JetStream consumer", Duration::from_millis(10), rx).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_ready_signal_rejects_dropped_sender() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = oneshot::channel::<()>();
+        drop(tx);
+
+        let error = await_ready_signal("MaterialAssembler", Duration::from_millis(10), rx)
+            .await
+            .expect_err("dropped ready sender must fail honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("setup failed"));
+        assert!(message.contains("MaterialAssembler"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_ready_signal_rejects_timeout() -> xtask::sandbox::TestResult<()> {
+        let (_tx, rx) = oneshot::channel::<()>();
+
+        let error = await_ready_signal("JetStream consumer", Duration::from_millis(10), rx)
+            .await
+            .expect_err("timed out ready signal must fail honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("did not signal ready"));
+        assert!(message.contains("JetStream consumer"));
         Ok(())
     }
 

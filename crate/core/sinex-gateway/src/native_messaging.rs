@@ -5,13 +5,14 @@ use crate::config::env_var_optional;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_primitives::SinexError;
 use std::collections::HashSet;
 use std::io::{self};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use subtle::ConstantTimeEq;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 use crate::service_container::ServiceContainer;
@@ -894,6 +895,44 @@ mod tests {
         );
         Ok(())
     }
+
+    #[sinex_test]
+    async fn native_messaging_read_rejects_header_timeout() -> TestResult<()> {
+        let (_writer, mut reader) = tokio::io::duplex(64);
+
+        let error = read_message_from(
+            &mut reader,
+            DEFAULT_MAX_MESSAGE_SIZE_BYTES,
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect_err("header timeout should be surfaced");
+
+        let message = error.to_string();
+        assert!(message.contains("header"));
+        assert!(message.contains("timed out"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn native_messaging_read_rejects_body_timeout() -> TestResult<()> {
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        writer.write_all(&(4_u32).to_le_bytes()).await?;
+        writer.write_all(&[0x7b, 0x7d]).await?;
+
+        let error = read_message_from(
+            &mut reader,
+            DEFAULT_MAX_MESSAGE_SIZE_BYTES,
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect_err("body timeout should be surfaced");
+
+        let message = error.to_string();
+        assert!(message.contains("body"));
+        assert!(message.contains("expected_bytes"));
+        Ok(())
+    }
 }
 
 /// Transport abstraction so tests can drive the native messaging loop without stdin/stdout.
@@ -958,19 +997,41 @@ async fn read_message_async(
     read_timeout: std::time::Duration,
 ) -> Result<Option<NativeMessage>> {
     let mut stdin = tokio::io::stdin();
+    read_message_from(&mut stdin, max_message_size, read_timeout).await
+}
 
+fn native_messaging_read_timeout(
+    phase: &'static str,
+    read_timeout: std::time::Duration,
+    expected_bytes: Option<usize>,
+) -> color_eyre::Report {
+    let mut error = SinexError::network(format!(
+        "Native messaging {phase} read timed out after {read_timeout:?}"
+    ))
+    .with_context("phase", phase)
+    .with_context("timeout_secs", read_timeout.as_secs_f64().to_string());
+
+    if let Some(expected_bytes) = expected_bytes {
+        error = error.with_context("expected_bytes", expected_bytes.to_string());
+    }
+
+    error.into()
+}
+
+async fn read_message_from<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    max_message_size: usize,
+    read_timeout: std::time::Duration,
+) -> Result<Option<NativeMessage>> {
     // Read message length (4 bytes, little-endian)
     let mut len_bytes = [0u8; 4];
 
     // Wrap read in timeout to prevent indefinite blocking if browser crashes
-    match tokio::time::timeout(read_timeout, stdin.read_exact(&mut len_bytes)).await {
+    match tokio::time::timeout(read_timeout, reader.read_exact(&mut len_bytes)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Ok(Err(e)) => return Err(e.into()),
-        Err(_) => {
-            warn!("Native messaging read timeout after {:?}", read_timeout);
-            return Ok(None);
-        }
+        Err(_) => return Err(native_messaging_read_timeout("header", read_timeout, None)),
     }
     let length = u32::from_le_bytes(len_bytes) as usize;
 
@@ -983,16 +1044,10 @@ async fn read_message_async(
     }
 
     let mut buffer = vec![0u8; length];
-    match tokio::time::timeout(read_timeout, stdin.read_exact(&mut buffer)).await {
+    match tokio::time::timeout(read_timeout, reader.read_exact(&mut buffer)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(e.into()),
-        Err(_) => {
-            warn!(
-                "Native messaging body read timeout after {:?} (expected {} bytes)",
-                read_timeout, length
-            );
-            return Ok(None);
-        }
+        Err(_) => return Err(native_messaging_read_timeout("body", read_timeout, Some(length))),
     }
 
     let message: NativeMessage =
