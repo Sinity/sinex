@@ -23,10 +23,10 @@ use sinex_node_sdk::SinexError;
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::{
     EventTransport, ingestor_node::IngestorNode, nats_publisher::NatsPublisher,
-    watcher_handle::WatcherHandle,
+    watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::{
     sync::mpsc,
     sync::watch,
@@ -709,16 +709,17 @@ impl SystemNode {
         &self,
         material: WatcherMaterialContext,
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
+        let handle = WatcherHandle::initialized("dbus").with_material(material.clone());
+        let health = handle.health_tracker();
         let emitter = self.emitter_clone()?;
         let (tx, rx) = mpsc::channel(DBUS_CHANNEL_CAPACITY);
-        let forwarder = spawn_forwarder("system.dbus.signal", rx, emitter);
+        let forwarder =
+            spawn_forwarder("system.dbus.signal", rx, emitter, Some(Arc::clone(&health)));
         let mut watcher = self
             .factory
             .create_dbus_watcher(self.config.dbus_config.clone())
             .await?;
         let watcher_material = material.clone();
-        let handle = WatcherHandle::initialized("dbus").with_material(material);
-        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
                 match health.write() {
@@ -741,14 +742,25 @@ impl SystemNode {
         &self,
         material: WatcherMaterialContext,
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
+        let handle = WatcherHandle::initialized("unified_journal").with_material(material.clone());
+        let health = handle.health_tracker();
         let emitter = self.emitter_clone()?;
 
         let (journal_tx, journal_rx) = mpsc::channel(JOURNAL_CHANNEL_CAPACITY);
         let (systemd_tx, systemd_rx) = mpsc::channel(SYSTEMD_CHANNEL_CAPACITY);
 
-        let journal_forwarder =
-            spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
-        let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
+        let journal_forwarder = spawn_forwarder(
+            "system.journal.entry",
+            journal_rx,
+            emitter.clone(),
+            Some(Arc::clone(&health)),
+        );
+        let systemd_forwarder = spawn_forwarder(
+            "system.systemd.unit_state",
+            systemd_rx,
+            emitter,
+            Some(Arc::clone(&health)),
+        );
 
         let mut watcher = self
             .factory
@@ -759,8 +771,6 @@ impl SystemNode {
             )
             .await?;
         let watcher_material = material.clone();
-        let handle = WatcherHandle::initialized("unified_journal").with_material(material);
-        let health = handle.health_tracker();
         let systemd_tx_opt = if self.config.systemd_enabled {
             Some(systemd_tx)
         } else {
@@ -808,13 +818,14 @@ impl SystemNode {
         &self,
         material: WatcherMaterialContext,
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
+        let handle = WatcherHandle::initialized("udev").with_material(material.clone());
+        let health = handle.health_tracker();
         let emitter = self.emitter_clone()?;
         let (tx, rx) = mpsc::channel(UDEV_CHANNEL_CAPACITY);
-        let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
+        let forwarder =
+            spawn_forwarder("system.udev.device", rx, emitter, Some(Arc::clone(&health)));
         let mut watcher = self.factory.create_udev_watcher(true).await?;
         let watcher_material = material.clone();
-        let handle = WatcherHandle::initialized("udev").with_material(material);
-        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
                 match health.write() {
@@ -851,8 +862,9 @@ impl SystemNode {
         let (systemd_tx, systemd_rx) = mpsc::channel(SYSTEMD_CHANNEL_CAPACITY);
 
         let journal_forwarder =
-            spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
-        let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
+            spawn_forwarder("system.journal.entry", journal_rx, emitter.clone(), None);
+        let systemd_forwarder =
+            spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter, None);
 
         let material = self
             .new_watcher_material("unified-journal-historical")
@@ -1228,10 +1240,25 @@ impl IngestorNode for SystemNode {
 }
 
 /// Helper to forward events from a watcher channel to the emitter
+fn record_forwarder_health_error(
+    health: &Arc<RwLock<WatcherHealth>>,
+    error: &SinexError,
+) {
+    match health.write() {
+        Ok(mut watcher_health) => {
+            watcher_health.last_error = Some(error.to_string());
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().last_error = Some(error.to_string());
+        }
+    }
+}
+
 fn spawn_forwarder<E>(
     channel_name: &'static str,
     mut rx: mpsc::Receiver<Event<E>>,
     emitter: EventEmitter,
+    health: Option<Arc<RwLock<WatcherHealth>>>,
 ) -> JoinHandle<()>
 where
     E: Serialize + Send + 'static,
@@ -1241,21 +1268,27 @@ where
             match event.to_json_event() {
                 Ok(json_event) => {
                     if let Err(err) = emitter.emit(json_event).await {
-                        panic!(
-                            "{}",
-                            SinexError::processing("Failed to emit forwarded event")
-                                .with_context("channel", channel_name.to_string())
-                                .with_source(err)
-                        );
+                        let error = SinexError::processing("Failed to emit forwarded event")
+                            .with_context("channel", channel_name.to_string())
+                            .with_source(err);
+                        if let Some(health) = &health {
+                            record_forwarder_health_error(health, &error);
+                            warn!(error = %error, channel = channel_name, "System forwarder terminated");
+                            return;
+                        }
+                        panic!("{error}");
                     }
                 }
                 Err(err) => {
-                    panic!(
-                        "{}",
-                        SinexError::processing("Failed to convert forwarded event to JSON")
-                            .with_context("channel", channel_name.to_string())
-                            .with_source(err)
-                    );
+                    let error = SinexError::processing("Failed to convert forwarded event to JSON")
+                        .with_context("channel", channel_name.to_string())
+                        .with_source(err);
+                    if let Some(health) = &health {
+                        record_forwarder_health_error(health, &error);
+                        warn!(error = %error, channel = channel_name, "System forwarder terminated");
+                        return;
+                    }
+                    panic!("{error}");
                 }
             }
         }
@@ -1879,7 +1912,7 @@ mod tests {
         let emitter = EventEmitter::new(emitter_tx, false);
 
         let (tx, rx) = mpsc::channel(1);
-        let handle = spawn_forwarder("system.test.forwarder", rx, emitter);
+        let handle = spawn_forwarder("system.test.forwarder", rx, emitter, None);
 
         let event = DynamicPayload::new(
             "system.test",
@@ -1901,6 +1934,45 @@ mod tests {
         assert!(message.contains("system.test.forwarder"));
         assert!(message.contains("Failed to emit forwarded event"));
         assert!(message.contains("Event channel closed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn spawn_forwarder_records_emission_failures_in_health() -> TestResult<()> {
+        let (emitter_tx, emitter_rx) = mpsc::channel(1);
+        drop(emitter_rx);
+        let emitter = EventEmitter::new(emitter_tx, false);
+
+        let health = Arc::new(RwLock::new(WatcherHealth::default()));
+        let (tx, rx) = mpsc::channel(1);
+        let handle = spawn_forwarder(
+            "system.test.forwarder",
+            rx,
+            emitter,
+            Some(Arc::clone(&health)),
+        );
+
+        let event = DynamicPayload::new(
+            "system.test",
+            "system.test.forwarded",
+            serde_json::json!({ "ok": true }),
+        )
+        .from_material(Id::<SourceMaterial>::new())
+        .build()?;
+
+        tx.send(event)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!(error.to_string()))?;
+        drop(tx);
+
+        handle.await?;
+        let watcher_health = health.read().expect("test health lock should not be poisoned");
+        let error = watcher_health
+            .last_error
+            .as_deref()
+            .expect("forwarder failure should be recorded in watcher health");
+        assert!(error.contains("Failed to emit forwarded event"));
+        assert!(error.contains("system.test.forwarder"));
         Ok(())
     }
 }
