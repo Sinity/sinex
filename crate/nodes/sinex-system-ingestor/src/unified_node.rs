@@ -27,7 +27,11 @@ use sinex_node_sdk::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
+use tokio::{
+    sync::mpsc,
+    sync::watch,
+    task::{JoinError, JoinHandle},
+};
 use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
@@ -136,6 +140,31 @@ const DBUS_CHANNEL_CAPACITY: usize = 8192;
 const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
+
+fn log_forwarder_join_result(task_name: &str, result: Result<(), JoinError>) {
+    match result {
+        Ok(()) => {}
+        Err(err) if err.is_cancelled() => {
+            warn!(task = task_name, "System forwarder task was cancelled");
+        }
+        Err(err) => {
+            warn!(task = task_name, error = %err, "System forwarder task failed");
+        }
+    }
+}
+
+async fn finalize_material_after_scan_error(
+    material: &WatcherMaterialContext,
+    reason: &str,
+    original_error: &SinexError,
+) -> NodeResult<()> {
+    material.finalize(reason).await.map_err(|finalize_error| {
+        SinexError::processing("unified journal historical scan failed and material finalization also failed")
+            .with_context("scan_error", original_error.to_string())
+            .with_context("finalize_error", finalize_error.to_string())
+    })?;
+    Err(original_error.clone())
+}
 
 /// Unified system node implementing `IngestorNode`
 pub struct SystemNode {
@@ -662,7 +691,9 @@ impl SystemNode {
 
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
-            let _ = tokio::join!(journal_forwarder, systemd_forwarder);
+            let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
+            log_forwarder_join_result("journal", journal_result);
+            log_forwarder_join_result("systemd", systemd_result);
         });
 
         Ok(WatcherHandle::running(
@@ -738,9 +769,12 @@ impl SystemNode {
         {
             Ok(count) => count,
             Err(err) => {
-                let _ = material
-                    .finalize("system-unified-journal historical scan")
-                    .await;
+                finalize_material_after_scan_error(
+                    &material,
+                    "system-unified-journal historical scan",
+                    &err,
+                )
+                .await?;
                 return Err(err);
             }
         };
@@ -749,12 +783,8 @@ impl SystemNode {
         drop(systemd_tx_opt);
 
         let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-        if let Err(err) = journal_result {
-            warn!(error = %err, "Historical journal forwarder task failed");
-        }
-        if let Err(err) = systemd_result {
-            warn!(error = %err, "Historical systemd forwarder task failed");
-        }
+        log_forwarder_join_result("historical journal", journal_result);
+        log_forwarder_join_result("historical systemd", systemd_result);
 
         material
             .finalize("system-unified-journal historical scan")
@@ -1177,6 +1207,34 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FailingFinalizeMaterialContext;
+
+    #[async_trait::async_trait]
+    impl MaterialContext for FailingFinalizeMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: sinex_primitives::Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Err(SinexError::processing("finalize exploded"))
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
     struct MockWatcher;
     #[async_trait::async_trait]
     impl SystemWatcher for MockWatcher {
@@ -1469,6 +1527,50 @@ mod tests {
         assert!(state.last_state.is_none());
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("snapshot exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalize_material_after_scan_error_preserves_both_failures() -> TestResult<()> {
+        let material: WatcherMaterialContext = Arc::new(FailingFinalizeMaterialContext);
+        let error = finalize_material_after_scan_error(
+            &material,
+            "system-unified-journal historical scan",
+            &SinexError::processing("historical scan exploded"),
+        )
+        .await
+        .expect_err("double failure should be surfaced honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("historical scan failed"));
+        assert!(message.contains("historical scan exploded"));
+        assert!(message.contains("finalize exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
+        let handle = tokio::spawn(async {});
+        log_forwarder_join_result("journal", handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        log_forwarder_join_result("journal", handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_panicked_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("journal forwarder panic");
+        });
+        log_forwarder_join_result("journal", handle.await);
         Ok(())
     }
 }

@@ -65,6 +65,20 @@ fn trigger_shutdown(
     }
 }
 
+fn log_node_manifest_write_failure(
+    operation: &'static str,
+    node_name: &NodeName,
+    error: &SinexError,
+) {
+    warn!(
+        operation,
+        node = %node_name,
+        version = env!("CARGO_PKG_VERSION"),
+        error = %error,
+        "Failed to persist ingestd node manifest state"
+    );
+}
+
 /// Main ingestion service
 pub struct IngestService {
     config: IngestdConfig,
@@ -304,10 +318,19 @@ impl IngestService {
                 Err(e) => {
                     // May fail if already registered (unique constraint) - update heartbeat instead
                     debug!("Node registration failed (may already exist): {e}");
-                    let _ = pool
+                    if let Err(update_error) = pool
                         .state()
                         .update_node_heartbeat_for_version(&node_name, env!("CARGO_PKG_VERSION"))
-                        .await;
+                        .await
+                    {
+                        warn!(
+                            node = %node_name,
+                            version = env!("CARGO_PKG_VERSION"),
+                            register_error = %e,
+                            heartbeat_error = %update_error,
+                            "Failed to recover ingestd node manifest registration by updating heartbeat"
+                        );
+                    }
                 }
             }
 
@@ -329,10 +352,13 @@ impl IngestService {
                     () = emitter.start_periodic_heartbeat(None) => {}
                     () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                         let node_name = NodeName::new("sinex-ingestd");
-                        let _ = heartbeat_pool
+                        if let Err(error) = heartbeat_pool
                             .state()
                             .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
-                            .await;
+                            .await
+                        {
+                            log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+                        }
                     }
                 }
             });
@@ -1253,6 +1279,15 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("missing from repository"));
         assert!(message.contains(&missing_schema_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_node_manifest_write_failure_accepts_processing_errors(
+    ) -> xtask::sandbox::TestResult<()> {
+        let node_name = NodeName::new("sinex-ingestd");
+        let error = SinexError::processing("node manifest update exploded");
+        log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
         Ok(())
     }
 }
