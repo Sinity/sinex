@@ -943,12 +943,13 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
         return Ok(());
     }
 
+    let created_at = file_created_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_CREATED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileCreatedPayload {
         path: sanitize_path(path)?,
         size,
-        created_at: file_created_at(&metadata),
+        created_at,
         permissions: file_permissions(&metadata),
     };
 
@@ -999,12 +1000,13 @@ async fn handle_file_modified(
         return Ok(());
     }
 
+    let modified_at = file_modified_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_MODIFIED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileModifiedPayload {
         path: sanitize_path(path)?,
         size,
-        modified_at: file_modified_at(&metadata),
+        modified_at,
         modification_type,
     };
 
@@ -1281,17 +1283,31 @@ fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
     }
 }
 
-fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
-    metadata
-        .created()
-        .or_else(|_| metadata.modified())
-        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+fn filesystem_timestamp(
+    timestamp: std::io::Result<std::time::SystemTime>,
+    field: &str,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    timestamp.map(Timestamp::from).map_err(|error| {
+        SinexError::processing("failed to read filesystem timestamp")
+            .with_context("field", field)
+            .with_context("path", path.display().to_string())
+            .with_source(error)
+    })
 }
 
-fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
-    metadata
-        .modified()
-        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+fn file_created_at(
+    metadata: &StdMetadata,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    filesystem_timestamp(metadata.created().or_else(|_| metadata.modified()), "created_at", path)
+}
+
+fn file_modified_at(
+    metadata: &StdMetadata,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    filesystem_timestamp(metadata.modified(), "modified_at", path)
 }
 
 #[cfg(test)]
@@ -1513,6 +1529,58 @@ mod tests {
         assert!(error
             .to_string()
             .contains("filesystem watcher observed non-utf8 path"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_timestamp_rejects_unavailable_created_at() -> TestResult<()> {
+        let path = Path::new("/tmp/example.txt");
+        let error = filesystem_timestamp(
+            Err(std::io::Error::other("created timestamp unavailable")),
+            "created_at",
+            path,
+        )
+        .expect_err("missing created_at must fail honestly");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to read filesystem timestamp"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("created_at"),
+            "field context should be preserved: {message}"
+        );
+        assert!(
+            message.contains("/tmp/example.txt"),
+            "path context should be preserved: {message}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_timestamp_rejects_unavailable_modified_at() -> TestResult<()> {
+        let path = Path::new("/tmp/example.txt");
+        let error = filesystem_timestamp(
+            Err(std::io::Error::other("modified timestamp unavailable")),
+            "modified_at",
+            path,
+        )
+        .expect_err("missing modified_at must fail honestly");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to read filesystem timestamp"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("modified_at"),
+            "field context should be preserved: {message}"
+        );
+        assert!(
+            message.contains("/tmp/example.txt"),
+            "path context should be preserved: {message}"
+        );
         Ok(())
     }
 
