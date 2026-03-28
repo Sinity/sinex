@@ -18,7 +18,6 @@ const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::fro
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
-use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_node_sdk::annex::GitAnnex;
@@ -27,7 +26,13 @@ use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
-use tokio::{fs, fs::File, sync::Mutex};
+use tokio::{
+    fs,
+    fs::File,
+    sync::Mutex,
+    task::{JoinHandle, JoinSet},
+    time::Duration,
+};
 use tracing::{debug, info, warn};
 
 fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &str) -> bool {
@@ -42,6 +47,33 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
         }
         None => true,
     }
+}
+
+type MaterialTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
+
+fn material_task_cleanup_failure(name: &'static str, error: &SinexError) -> SinexError {
+    SinexError::service(format!("material task failed during shutdown: {name}"))
+        .with_source(error.clone())
+}
+
+fn material_task_join_failure(
+    name: &'static str,
+    error: &tokio::task::JoinError,
+) -> SinexError {
+    SinexError::service(format!("material task join failed during shutdown: {name}"))
+        .with_context("join_error", error.to_string())
+}
+
+fn material_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
+    SinexError::service("material task monitor join failed during shutdown")
+        .with_context("join_error", error.to_string())
+}
+
+fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
+    SinexError::service(format!(
+        "timed out waiting for {count} material tasks during shutdown"
+    ))
+    .with_context("timeout_secs", timeout.as_secs().to_string())
 }
 
 /// Assembly statistics for observability
@@ -645,37 +677,121 @@ impl MaterialAssembler {
         // Signal readiness: streams bootstrapped, WAL restored, consumers about to start.
         signal_ready(ready_tx, "material-assembler");
 
-        let mut consumers = MaterialConsumerHandles {
-            begin: pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
-            slices: pipeline::spawn_slices_consumer(&self, shutdown_flag.clone()),
-            end: pipeline::spawn_end_consumer(&self, shutdown_flag.clone()),
-        };
+        let mut tasks = JoinSet::new();
+        Self::track_material_task(
+            &mut tasks,
+            "material begin consumer",
+            pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
+        );
+        Self::track_material_task(
+            &mut tasks,
+            "material slice consumer",
+            pipeline::spawn_slices_consumer(&self, shutdown_flag.clone()),
+        );
+        Self::track_material_task(
+            &mut tasks,
+            "material end consumer",
+            pipeline::spawn_end_consumer(&self, shutdown_flag.clone()),
+        );
 
-        // Spawn stale assembly cleanup task
         let cleanup_task = {
             let assembler = self.clone_for_task();
             let shutdown = shutdown_flag.clone();
             tokio::spawn(async move { assembler.run_stale_assembly_cleanup(shutdown).await })
         };
+        Self::track_material_task(&mut tasks, "material stale cleanup task", cleanup_task);
 
-        tokio::select! {
-            result = &mut consumers.begin => {
-                Self::handle_task_exit("material begin consumer", result, &shutdown_flag)
-            }
-            result = &mut consumers.slices => {
-                Self::handle_task_exit("material slice consumer", result, &shutdown_flag)
-            }
-            result = &mut consumers.end => {
-                Self::handle_task_exit("material end consumer", result, &shutdown_flag)
-            }
-            result = cleanup_task => {
-                match result {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(e)) => Err(e),
-                    Err(e) => Err(SinexError::service(format!("Cleanup task panicked: {e}"))),
+        let result = match tasks.join_next().await {
+            Some(Ok((name, result))) => Self::handle_task_exit(name, result, &shutdown_flag),
+            Some(Err(error)) => Err(material_task_monitor_failure(&error)),
+            None => Ok(()),
+        };
+
+        shutdown_flag.store(true, std::sync::atomic::Ordering::Release);
+        let cleanup_error = Self::wait_for_material_tasks(&mut tasks, Duration::from_secs(5)).await;
+        match (result, cleanup_error) {
+            (Ok(()), Some(error)) => Err(error),
+            (Err(error), _) => Err(error),
+            (Ok(()), None) => Ok(()),
+        }
+    }
+
+    fn track_material_task(
+        tasks: &mut JoinSet<MaterialTaskOutcome>,
+        name: &'static str,
+        handle: JoinHandle<IngestdResult<()>>,
+    ) {
+        tasks.spawn(async move { (name, handle.await) });
+    }
+
+    async fn wait_for_material_tasks(
+        tasks: &mut JoinSet<MaterialTaskOutcome>,
+        timeout: Duration,
+    ) -> Option<SinexError> {
+        if tasks.is_empty() {
+            return None;
+        }
+
+        info!("Waiting for {} material tasks to finish...", tasks.len());
+
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+        let mut cleanup_error = None;
+
+        loop {
+            tokio::select! {
+                maybe = tasks.join_next(), if !tasks.is_empty() => {
+                    match maybe {
+                        Some(Ok((name, Ok(Ok(()))))) => {
+                            debug!(task = name, "Material task stopped cleanly");
+                        }
+                        Some(Ok((name, Ok(Err(error))))) => {
+                            warn!(task = name, error = %error, "Material task exited with error during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(material_task_cleanup_failure(name, &error));
+                            }
+                        }
+                        Some(Ok((name, Err(error)))) => {
+                            warn!(task = name, error = ?error, "Material task join failed during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(material_task_join_failure(name, &error));
+                            }
+                        }
+                        Some(Err(error)) => {
+                            warn!(error = ?error, "Material task monitor join failed during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(material_task_monitor_failure(&error));
+                            }
+                        }
+                        None => break,
+                    }
+                    if tasks.is_empty() {
+                        break;
+                    }
+                }
+                () = &mut deadline => {
+                    let remaining = tasks.len();
+                    warn!(
+                        "Timed out waiting for {} material tasks after {:?}, aborting remaining work",
+                        remaining,
+                        timeout
+                    );
+                    tasks.abort_all();
+                    while let Some(result) = tasks.join_next().await {
+                        if let Err(error) = result {
+                            debug!(error = ?error, "Material task aborted during shutdown cleanup");
+                        }
+                    }
+                    if cleanup_error.is_none() {
+                        cleanup_error = Some(material_task_timeout(remaining, timeout));
+                    }
+                    break;
                 }
             }
         }
+
+        info!("Material task cleanup complete");
+        cleanup_error
     }
 
     fn handle_task_exit(
@@ -930,13 +1046,15 @@ impl MaterialAssembler {
 #[cfg(test)]
 mod tests {
     // Inline because this exercises private orphan-state cleanup paths.
-    use super::{MaterialAssembler, signal_ready};
+    use super::{MaterialAssembler, MaterialTaskOutcome, signal_ready};
     use crate::MaterialReadySet;
     use camino::Utf8PathBuf;
     use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::task::JoinSet;
     use xtask::sandbox::prelude::*;
 
     async fn test_assembler(
@@ -1010,6 +1128,64 @@ mod tests {
         drop(rx);
 
         assert!(!signal_ready(Some(tx), "material-assembler"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_material_tasks_accepts_clean_shutdown() -> TestResult<()> {
+        let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
+        tasks.spawn(async { ("material begin consumer", Ok(Ok(()))) });
+
+        let error = MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1))
+            .await;
+
+        assert!(error.is_none(), "clean shutdown should not report an error");
+        assert!(tasks.is_empty(), "all tracked tasks should be drained");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_material_tasks_preserves_first_shutdown_error() -> TestResult<()> {
+        let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
+        tasks.spawn(async {
+            (
+                "material slice consumer",
+                Ok(Err(sinex_primitives::error::SinexError::service(
+                    "slice consumer failed",
+                ))),
+            )
+        });
+        tasks.spawn(async { ("material end consumer", Ok(Ok(()))) });
+
+        let error = MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1))
+            .await
+            .expect("shutdown error should be preserved");
+
+        assert!(error.to_string().contains("material slice consumer"));
+        assert!(
+            error.to_string().contains("shutdown"),
+            "cleanup path should annotate the shutdown phase"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_material_tasks_times_out_hung_tasks() -> TestResult<()> {
+        let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
+        tasks.spawn(async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            ("material stale cleanup task", Ok(Ok(())))
+        });
+
+        let error = MaterialAssembler::wait_for_material_tasks(
+            &mut tasks,
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("hung task should time out");
+
+        assert!(error.to_string().contains("timed out waiting"));
+        assert!(tasks.is_empty(), "timed out tasks should be aborted and drained");
         Ok(())
     }
 }

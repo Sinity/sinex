@@ -55,21 +55,6 @@ async fn nak_with_warning(
     }
 }
 
-/// Handles for the three material consumer tasks
-pub(super) struct MaterialConsumerHandles {
-    pub(crate) begin: JoinHandle<IngestdResult<()>>,
-    pub(crate) slices: JoinHandle<IngestdResult<()>>,
-    pub(crate) end: JoinHandle<IngestdResult<()>>,
-}
-
-impl Drop for MaterialConsumerHandles {
-    fn drop(&mut self) {
-        self.begin.abort();
-        self.slices.abort();
-        self.end.abort();
-    }
-}
-
 /// Bootstrap `JetStream` streams for materials
 pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdResult<()> {
     info!("Bootstrapping material streams");
