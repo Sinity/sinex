@@ -343,6 +343,11 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
         match check_directory_permissions(dir_path.as_str()).await {
             Ok(perms) => {
                 let is_writable = perms["writable"].as_bool().unwrap_or(false);
+                if let Some(cleanup_error) = perms.get("cleanup_error").and_then(Value::as_str) {
+                    messages.push(format!(
+                        "⚠ Directory {dir_path} left a preflight probe file behind: {cleanup_error}"
+                    ));
+                }
                 permissions_info.insert(dir_path.clone(), perms);
 
                 if is_writable {
@@ -410,15 +415,17 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
 
     match tokio::fs::write(test_file.as_std_path(), "test").await {
         Ok(()) => {
-            // Clean up test file
-            tokio::fs::remove_file(test_file.as_std_path()).await.ok();
-
-            Ok(json!({
+            let mut details = json!({
                 "exists": true,
                 "is_directory": true,
                 "writable": true,
                 "readable": true
-            }))
+            });
+            if let Err(error) = tokio::fs::remove_file(test_file.as_std_path()).await {
+                details["cleanup_error"] = json!(error.to_string());
+            }
+
+            Ok(details)
         }
         Err(e) => Ok(json!({
             "exists": true,

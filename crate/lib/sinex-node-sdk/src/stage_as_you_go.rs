@@ -260,8 +260,11 @@ impl StageAsYouGoContext {
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
+                    shutdown_result = shutdown_rx.changed() => {
+                        if shutdown_result.is_err() {
+                            warn!("Stage-as-You-Go reconciliation shutdown channel dropped before explicit shutdown");
+                        }
+                        if shutdown_result.is_err() || *shutdown_rx.borrow() {
                             break;
                         }
                     }

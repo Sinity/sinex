@@ -293,8 +293,11 @@ impl GatewayMetrics {
                                 warn!("Failed to emit gateway metrics: {}", e);
                             }
                     }
-                    _ = cancel.changed() => {
-                        if *cancel.borrow() {
+                    cancel_result = cancel.changed() => {
+                        if cancel_result.is_err() {
+                            warn!("Gateway metrics shutdown channel dropped before explicit shutdown");
+                        }
+                        if cancel_result.is_err() || *cancel.borrow() {
                             debug!("Gateway metrics emission task cancelled");
                             // Final emission before shutdown
                             if self.observer.is_enabled()
@@ -389,6 +392,20 @@ mod tests {
         assert_eq!(snapshot.latency_sum_us, 2500);
         assert_eq!(snapshot.latency_min_us, 500);
         assert_eq!(snapshot.latency_max_us, 2000);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emission_task_exits_when_shutdown_sender_is_dropped() -> TestResult<()> {
+        let metrics = Arc::new(GatewayMetrics::disabled());
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let handle = metrics.spawn_emission_task(cancel_rx);
+
+        drop(cancel_tx);
+
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("metrics task should exit after shutdown sender drops"))??;
         Ok(())
     }
 }

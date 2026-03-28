@@ -56,14 +56,14 @@ pub fn read_token_from_env() -> eyre::Result<Option<String>> {
 }
 
 #[must_use]
-pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
-    let config = GatewayConfig::load().expect("gateway config should load for rpc server tests");
+pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
+    let config = GatewayConfig::load().wrap_err("gateway config should load for rpc server tests")?;
     let limits = RpcServerLimits::from_config(&config);
-    RpcServerLimitsSnapshot {
+    Ok(RpcServerLimitsSnapshot {
         concurrency_limit: limits.concurrency_limit,
         request_timeout_secs: Seconds::from_secs(limits.request_timeout.as_secs()),
         max_body_bytes: limits.max_body_bytes,
-    }
+    })
 }
 
 pub fn validate_jsonrpc_value(value: &Value) -> eyre::Result<()> {

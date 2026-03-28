@@ -88,8 +88,7 @@ pub fn read_activitywatch_history(
         let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
         let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
         let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
-        let duration_ms = u64::try_from(duration_ns / 1_000_000)
-            .expect("non-negative ActivityWatch duration should fit into u64 milliseconds");
+        let duration_ms = (duration_ns / 1_000_000) as u64;
 
         let payload = row
             .get::<_, Option<String>>(4)?

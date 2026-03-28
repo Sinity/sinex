@@ -808,6 +808,7 @@ impl IngestorNode for DesktopNode {
     ) -> NodeResult<ScanReport> {
         info!("Starting continuous desktop monitoring");
         let start_time = std::time::Instant::now();
+        let mut warnings = Vec::new();
 
         // Ensure handles are initialized
         self.initialize_watcher_handles().await?;
@@ -891,7 +892,12 @@ impl IngestorNode for DesktopNode {
         }
 
         // Wait for shutdown
-        let _ = shutdown_rx.changed().await;
+        if shutdown_rx.changed().await.is_err() {
+            let warning =
+                "desktop continuous monitoring shutdown channel dropped before explicit shutdown";
+            warn!("{warning}");
+            warnings.push(warning.to_string());
+        }
 
         // Cleanup handled by Drop of WatcherHandles when DesktopNode is dropped?
         // IngestorNode doesn't drop self immediately, shutdown is called.
@@ -904,7 +910,7 @@ impl IngestorNode for DesktopNode {
             node_stats: HashMap::new(),
             successful_targets: vec!["desktop_continuous".to_string()],
             failed_targets: vec![],
-            warnings: vec![],
+            warnings,
         })
     }
 
@@ -1009,7 +1015,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::time::Duration;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
 
     fn sample_activitywatch_entry(
         kind: ActivityWatchEntryKind,
@@ -1216,6 +1222,43 @@ mod tests {
                 "clipboard_active": true,
                 "window_manager_active": false,
             }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_run_continuous_warns_when_shutdown_sender_drops(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let runtime = TestRuntimeBuilder::new(&ctx, "desktop-shutdown-drop")
+            .with_dry_run(true)
+            .build()
+            .await?;
+
+        let mut node = DesktopNode::new();
+        let mut config = DesktopConfig::default();
+        config.clipboard_enabled = false;
+        config.window_manager_enabled = false;
+        config.activitywatch_db_path = None;
+        let mut state = DesktopPersistentState::default();
+        node.initialize(config, &runtime.runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        assert!(
+            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            "expected shutdown channel drop warning, got: {:?}",
+            report.warnings
         );
         Ok(())
     }

@@ -897,10 +897,17 @@ impl IngestorNode for SystemNode {
         // Periodic snapshot loop: updates `state.health` every 30 seconds.
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         let start_time = std::time::Instant::now();
+        let mut warnings = Vec::new();
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => {
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() {
+                        let warning =
+                            "system continuous monitoring shutdown channel dropped before explicit shutdown";
+                        warn!("{warning}");
+                        warnings.push(warning.to_string());
+                    }
                     break;
                 }
                 _ = interval.tick() => {
@@ -936,7 +943,7 @@ impl IngestorNode for SystemNode {
             node_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
-            warnings: vec![],
+            warnings,
         })
     }
 
@@ -1362,6 +1369,41 @@ mod tests {
         assert_eq!(dbus_count.load(Ordering::SeqCst), 2);
         assert!(node.is_dbus_watcher_active());
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_warns_when_shutdown_sender_drops() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let (tx, _rx) = mpsc::channel(16);
+        node.set_emitter_override(EventEmitter::new(tx, true));
+        node.set_material_override(Arc::new(MockMaterialContext));
+
+        let state = SystemPersistentState::default();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        assert!(
+            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            "expected shutdown channel drop warning, got: {:?}",
+            report.warnings
+        );
         Ok(())
     }
 

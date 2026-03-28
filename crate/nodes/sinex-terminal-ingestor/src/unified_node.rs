@@ -513,6 +513,17 @@ impl TerminalMetrics {
 }
 
 impl HistoryWatcherContext {
+    async fn remove_temp_state_file(&self, temp_path: &std::path::Path) {
+        if let Err(error) = fs::remove_file(temp_path).await {
+            warn!(
+                path = %self.path,
+                temp_path = %temp_path.display(),
+                error = %error,
+                "Failed to remove temporary terminal history state file"
+            );
+        }
+    }
+
     fn validate_state(&self, state: HistoryState) -> NodeResult<HistoryState> {
         if let Some(sqlite_row_id) = state.sqlite_row_id
             && sqlite_row_id < 0
@@ -1289,7 +1300,7 @@ impl HistoryWatcherContext {
                                 "Failed to persist history watcher state {:?}: {}",
                                 temp_path, e
                             );
-                            let _ = fs::remove_file(&temp_path).await;
+                            self.remove_temp_state_file(&temp_path).await;
                             return;
                         }
                         if let Err(e) = file.sync_all().await {
@@ -1297,12 +1308,12 @@ impl HistoryWatcherContext {
                                 "Failed to fsync history watcher state {:?}: {}",
                                 temp_path, e
                             );
-                            let _ = fs::remove_file(&temp_path).await;
+                            self.remove_temp_state_file(&temp_path).await;
                             return;
                         }
                         if let Err(e) = fs::rename(&temp_path, path).await {
                             warn!("Failed to replace history watcher state {:?}: {}", path, e);
-                            let _ = fs::remove_file(&temp_path).await;
+                            self.remove_temp_state_file(&temp_path).await;
                         } else {
                             // Fsync the parent directory to ensure the rename is durable.
                             // Without this, the renamed file might not be visible after a crash.
@@ -2612,7 +2623,12 @@ impl IngestorNode for TerminalNode {
         );
 
         let mut shutdown_rx = shutdown_rx;
-        let _ = shutdown_rx.changed().await;
+        if shutdown_rx.changed().await.is_err() {
+            let warning =
+                "terminal continuous monitoring shutdown channel dropped before explicit shutdown";
+            warn!("{warning}");
+            warnings.push(warning.to_string());
+        }
 
         Ok(ScanReport {
             events_processed: 0,
@@ -4025,6 +4041,68 @@ mod tests {
         let (report, incoming) = node_task.await??;
 
         assert_eq!(report.final_checkpoint, incoming);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_warns_when_shutdown_sender_drops(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-shutdown-drop")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        assert!(
+            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            "expected shutdown channel drop warning, got: {:?}",
+            report.warnings
+        );
         Ok(())
     }
 

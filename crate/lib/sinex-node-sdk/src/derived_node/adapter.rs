@@ -965,8 +965,14 @@ where
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() {
+                        warn!(
+                            node = %node_name,
+                            "Derived-node invalidation shutdown channel dropped before explicit shutdown"
+                        );
+                    }
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(node = %node_name, "Shutdown signal received");
                         // Process any pending invalidations before shutdown
                         for payload in pending_invalidations.drain(..) {

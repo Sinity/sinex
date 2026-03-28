@@ -1037,7 +1037,11 @@ impl DbusWatcher {
                         "notification hint objects must contain exactly one entry".to_string(),
                     ));
                 }
-                let (key, value) = obj.iter().next().expect("validated single-entry object");
+                let Some((key, value)) = obj.iter().next() else {
+                    return Err(sinex_node_sdk::SinexError::validation(
+                        "notification hint objects must contain exactly one entry".to_string(),
+                    ));
+                };
                 let redacted = if let Some(s) = value.as_str() {
                     serde_json::Value::String(
                         privacy::engine()

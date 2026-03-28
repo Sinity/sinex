@@ -282,8 +282,16 @@ impl GatewayAuth {
                 let mut shutdown_clone = shutdown.clone();
                 tokio::spawn(async move {
                     // wait_for blocks until the predicate matches or the sender is dropped.
-                    let _ = shutdown_clone.wait_for(|v| *v).await;
-                    let _ = done_tx.send(());
+                    if shutdown_clone.wait_for(|v| *v).await.is_err() {
+                        warn!(
+                            "RPC token file watcher shutdown channel dropped before explicit shutdown"
+                        );
+                    }
+                    if done_tx.send(()).is_err() {
+                        debug!(
+                            "RPC token file watcher shutdown bridge receiver was already dropped"
+                        );
+                    }
                 });
             }
 
@@ -348,12 +356,20 @@ impl GatewayAuth {
                 }
 
                 if let Some(tx) = ready_tx.take() {
-                    let _ = tx.send(Ok(()));
+                    if tx.send(Ok(())).is_err() {
+                        warn!(
+                            "RPC token file watcher readiness receiver was dropped before initialization completed"
+                        );
+                    }
                 }
                 info!("Watching token file {:?} for changes", path_clone);
 
                 // Block until the shutdown signal fires; no busy-polling.
-                let _ = done_rx.recv();
+                if done_rx.recv().is_err() {
+                    warn!(
+                        "RPC token file watcher shutdown bridge disconnected before explicit shutdown"
+                    );
+                }
                 debug!("Token file watcher shutting down");
             });
 
@@ -1565,8 +1581,11 @@ impl RpcServer {
                         }
                     });
                 }
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
+                shutdown_result = shutdown.changed() => {
+                    if shutdown_result.is_err() {
+                        warn!("RPC server shutdown channel dropped before explicit shutdown");
+                    }
+                    if shutdown_result.is_err() || *shutdown.borrow() {
                         info!("Shutdown signal received, stopping RPC server");
                         break;
                     }
