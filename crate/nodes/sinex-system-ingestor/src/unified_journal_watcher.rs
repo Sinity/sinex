@@ -31,6 +31,7 @@ use sinex_primitives::{
     units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid},
 };
 use std::collections::{HashMap, HashSet};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -53,6 +54,27 @@ const JOURNAL_LINE_PREVIEW_LIMIT: usize = 512;
 /// Required keys in a systemd journal cursor string.
 /// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
 const CURSOR_REQUIRED_KEYS: &[&str] = &["s", "i", "b", "m", "t", "x"];
+
+#[derive(Debug, Clone, Copy)]
+enum FollowExitReason {
+    Shutdown,
+    UnexpectedEof,
+    ReadError,
+}
+
+fn check_follow_exit_status(exit_reason: FollowExitReason, status: ExitStatus) -> NodeResult<()> {
+    match exit_reason {
+        FollowExitReason::Shutdown => Ok(()),
+        FollowExitReason::UnexpectedEof => Err(
+            SinexError::processing("journalctl follow stream ended unexpectedly")
+                .with_context("exit_status", status.to_string()),
+        ),
+        FollowExitReason::ReadError => Err(
+            SinexError::processing("journalctl follow stream terminated after a read failure")
+                .with_context("exit_status", status.to_string()),
+        ),
+    }
+}
 
 /// Validate that a string looks like a legitimate systemd journal cursor.
 ///
@@ -714,6 +736,7 @@ impl UnifiedJournalWatcher {
         systemd_tx: Option<mpsc::Sender<Event<JsonValue>>>,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let mut exit_reason = FollowExitReason::UnexpectedEof;
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
         // Add cursor position if we have one
@@ -786,6 +809,7 @@ impl UnifiedJournalWatcher {
                 result = reader.read_line(&mut line) => result,
                 () = self.cancel_token.cancelled() => {
                     info!("Journal follow cancelled by shutdown signal");
+                    exit_reason = FollowExitReason::Shutdown;
                     break;
                 }
             };
@@ -896,6 +920,7 @@ impl UnifiedJournalWatcher {
                 }
                 Err(e) => {
                     error!("Error reading journal output: {}", e);
+                    exit_reason = FollowExitReason::ReadError;
                     break;
                 }
             }
@@ -903,8 +928,19 @@ impl UnifiedJournalWatcher {
 
         // Wait for child process
         if let Some(mut child) = self.child_process.take() {
-            if let Err(error) = child.wait().await {
-                warn!(error = %error, "Failed to wait for journal watcher process exit");
+            match child.wait().await {
+                Ok(status) => {
+                    check_follow_exit_status(exit_reason, status)?;
+                }
+                Err(error) => {
+                    warn!(error = %error, "Failed to wait for journal watcher process exit");
+                    if !matches!(exit_reason, FollowExitReason::Shutdown) {
+                        return Err(
+                            SinexError::io("Failed to wait for journal watcher process exit")
+                                .with_source(error),
+                        );
+                    }
+                }
             }
         }
 
@@ -1877,6 +1913,47 @@ mod tests {
             .last_event_timestamp()
             .expect("poisoned last_event lock should still yield stored time");
         assert_eq!(last_event, poisoned_time);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_follow_exit_status_rejects_unexpected_eof(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .status()?;
+
+        let error = check_follow_exit_status(FollowExitReason::UnexpectedEof, status)
+            .expect_err("unexpected EOF must not be treated as healthy shutdown");
+        assert!(error.to_string().contains("ended unexpectedly"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_follow_exit_status_rejects_read_failure(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 17")
+            .status()?;
+
+        let error = check_follow_exit_status(FollowExitReason::ReadError, status)
+            .expect_err("read failures must surface even after the child exits");
+        assert!(error.to_string().contains("read failure"));
+        assert!(error.to_string().contains("17"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_follow_exit_status_allows_shutdown_exit(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 143")
+            .status()?;
+
+        check_follow_exit_status(FollowExitReason::Shutdown, status)?;
         Ok(())
     }
 }
