@@ -50,7 +50,12 @@ fn collect_rust_sources_from_dir(
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
+        let name = entry.file_name().into_string().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("source entry in {} is not valid UTF-8", dir.display()),
+            )
+        })?;
 
         if path.is_dir() {
             let child_prefix = if prefix.is_empty() {

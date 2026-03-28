@@ -646,7 +646,16 @@ where
     for entry in entries {
         match entry {
             Ok(name) => {
-                let name = name.to_string_lossy();
+                let name = match name.into_string() {
+                    Ok(name) => name,
+                    Err(_) => {
+                        issues.push(format!(
+                            "failed to read snapshot entry in {}: entry name is not valid UTF-8",
+                            dir.display()
+                        ));
+                        continue;
+                    }
+                };
                 if name.ends_with(".tar.zst") {
                     snapshots.push(name.trim_end_matches(".tar.zst").to_string());
                 } else if name.ends_with(".sql.zst") {
@@ -802,6 +811,28 @@ mod tests {
                 .issue
                 .unwrap_or_default()
                 .contains("failed to read snapshot entry")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_snapshot_names_reports_non_utf8_entry_names() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let probe = collect_snapshot_names(
+            Path::new("/tmp/snapshots"),
+            [
+                Ok(OsString::from_vec(vec![b'b', 0xff, b'.', b't', b'a', b'r', b'.', b'z', b's', b't'])),
+                Ok(OsString::from("a.sql.zst")),
+            ],
+        );
+
+        assert_eq!(probe.snapshots, vec!["a".to_string()]);
+        assert!(
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("entry name is not valid UTF-8")
         );
     }
 

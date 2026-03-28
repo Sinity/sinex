@@ -387,7 +387,12 @@ fn collect_rust_sources_from_dir(
 
     for entry in entries {
         let entry = entry.wrap_err_with(|| format!("failed to enumerate {}", dir.display()))?;
-        let name = entry.file_name().to_string_lossy().to_string();
+        let name = entry.file_name().into_string().map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "source file entry in {} is not valid UTF-8",
+                dir.display()
+            )
+        })?;
         if !name.ends_with(".rs") {
             continue;
         }
@@ -1346,6 +1351,23 @@ mod tests {
 
         assert_ne!(hash, "empty");
         assert_eq!(hash, hash_after_non_rust_change);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_rejects_non_utf8_source_names() -> TestResult<()> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempdir()?;
+        let invalid_name = OsString::from_vec(vec![b'a', b'l', b'p', b'h', b'a', 0xff, b'.', b'r', b's']);
+        std::fs::write(dir.path().join(invalid_name), "pub struct Alpha;")?;
+
+        let error = hash_contracts_dir_from(dir.path()).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("not valid UTF-8"));
+        assert!(message.contains(&dir.path().display().to_string()));
         Ok(())
     }
 
