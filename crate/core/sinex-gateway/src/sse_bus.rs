@@ -415,8 +415,9 @@ impl SubscriptionBus {
                 warn!(
                     ?e,
                     count = ids.len(),
-                    "Failed to fetch events for SSE fan-out"
+                    "Failed to fetch events for SSE fan-out; preserving batch for retry"
                 );
+                *id_buffer = ids;
                 return;
             }
         };
@@ -452,7 +453,7 @@ impl SubscriptionBus {
 mod tests {
     use super::SubscriptionBus;
     use sinex_primitives::{Id, Uuid};
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
 
     // Inline because these exercise private confirmation parsing/reporting helpers.
     #[sinex_test]
@@ -508,6 +509,25 @@ mod tests {
         let preview = SubscriptionBus::payload_preview(&vec![b'a'; 200]);
         assert!(preview.ends_with('…'));
         assert_eq!(preview.chars().count(), 161);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_batch_preserves_ids_when_db_fetch_fails(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool().clone();
+        pool.close().await;
+
+        let bus = SubscriptionBus::new();
+        let event_id = Id::from_uuid(Uuid::now_v7());
+        let mut id_buffer = vec![event_id];
+
+        bus.flush_batch(&mut id_buffer, &pool).await;
+
+        assert_eq!(
+            id_buffer,
+            vec![event_id],
+            "SSE confirmation batches should stay buffered when DB fan-out fetch fails"
+        );
         Ok(())
     }
 }
