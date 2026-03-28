@@ -6,6 +6,7 @@
 //! implementing the service/scan/explore subcommand pattern.
 
 use crate::event_node::EventTransport;
+use crate::error_helpers::env_bool_with_default;
 pub use crate::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
@@ -515,8 +516,11 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             )
             .await?;
 
-        let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let coordination_disabled = env_bool_with_default(
+            "SINEX_COORDINATION_DISABLED",
+            false,
+            "node coordination",
+        );
         let node_type = runner.node_type();
 
         // Run service with optional coordination

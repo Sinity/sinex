@@ -9,6 +9,7 @@ use super::output::DerivedOutput;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
+use crate::error_helpers::env_bool_with_default;
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
@@ -1252,8 +1253,11 @@ where
                 use crate::health_reporter::{HealthReporter, HealthThresholds};
                 use crate::self_observation::{SelfObserver, SelfObserverConfig};
 
-                let health_enabled = std::env::var("SINEX_HEALTH_MONITORING_ENABLED")
-                    .map_or(true, |v| v != "false" && v != "0");
+                let health_enabled = env_bool_with_default(
+                    "SINEX_HEALTH_MONITORING_ENABLED",
+                    true,
+                    "derived node health monitoring",
+                );
 
                 if health_enabled {
                     let config = SelfObserverConfig {

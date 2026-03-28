@@ -24,6 +24,7 @@ use crate::{
     NodeResult, SinexError,
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
+    error_helpers::env_parse_with_default,
     event_node::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
@@ -1242,10 +1243,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             "Starting service with startup sequence"
         );
 
-        let heartbeat_interval = std::env::var("SINEX_COORDINATION_HEARTBEAT")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(30);
+        let heartbeat_interval = env_parse_with_default(
+            "SINEX_COORDINATION_HEARTBEAT",
+            30_u64,
+            "node coordination heartbeat",
+        );
         let runtime = self
             .runtime_state()
             .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;

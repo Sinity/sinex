@@ -6,6 +6,7 @@
 //! by the health aggregator automaton.
 
 use crate::runtime::stream::NodeRuntimeState;
+use crate::error_helpers::env_parse_with_default;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::NodeName;
@@ -40,30 +41,7 @@ fn get_failed_threshold() -> usize {
 }
 
 fn env_usize_with_default(var: &str, default: usize) -> usize {
-    match std::env::var(var) {
-        Ok(raw) => match raw.parse::<usize>() {
-            Ok(value) => value,
-            Err(error) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    %error,
-                    default,
-                    "Invalid heartbeat override; using default"
-                );
-                default
-            }
-        },
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                default,
-                "Heartbeat override is not valid UTF-8; using default"
-            );
-            default
-        }
-    }
+    env_parse_with_default(var, default, "heartbeat")
 }
 
 /// Heartbeat metrics and status
