@@ -170,8 +170,12 @@ fn collect_core_service_statuses() -> Vec<ServiceStatus> {
 }
 
 fn resolve_runtime_metrics_database_url(database_url: Option<&str>) -> Result<Option<String>> {
-    let descriptor = DeploymentReadinessDescriptor::load()
-        .wrap_err("failed to load deployment readiness descriptor for runtime metrics")?;
+    let descriptor = if database_url.is_some() {
+        None
+    } else {
+        DeploymentReadinessDescriptor::load()
+            .wrap_err("failed to load deployment readiness descriptor for runtime metrics")?
+    };
     crate::commands::doctor::resolve_effective_database_probe_url(
         database_url,
         descriptor.as_ref(),
@@ -2308,6 +2312,7 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
     use tempfile::tempdir;
+    use xtask::sandbox::EnvGuard;
 
     fn run_git(args: &[&str], cwd: &Path) -> ::xtask::sandbox::TestResult<()> {
         let output = std::process::Command::new("git")
@@ -2723,6 +2728,52 @@ mod tests {
             runtime_query_error_message(&metrics).as_deref(),
             Some("Runtime metrics query failed: runtime metrics collection thread panicked: boom")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_runtime_metrics_database_url_skips_descriptor_load_when_explicit_url_present()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempdir()?;
+        let descriptor_path = temp.path().join("deployment-readiness.json");
+        std::fs::write(&descriptor_path, "{ definitely-not-json")?;
+
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_DEPLOYMENT_READINESS_CONFIG",
+            descriptor_path.display().to_string(),
+        );
+
+        let url = resolve_runtime_metrics_database_url(Some(
+            "postgresql:///sinex_dev?host=/tmp/sinex-test-run",
+        ))?;
+
+        assert_eq!(
+            url.as_deref(),
+            Some("postgresql:///sinex_dev?host=/tmp/sinex-test-run")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_runtime_metrics_database_url_reports_descriptor_parse_failure_without_explicit_url()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempdir()?;
+        let descriptor_path = temp.path().join("deployment-readiness.json");
+        std::fs::write(&descriptor_path, "{ definitely-not-json")?;
+
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_DEPLOYMENT_READINESS_CONFIG",
+            descriptor_path.display().to_string(),
+        );
+
+        let error = resolve_runtime_metrics_database_url(None)
+            .expect_err("invalid descriptor should still fail when no DATABASE_URL is provided");
+
+        let error_text = format!("{error:?}");
+        assert!(error_text.contains("failed to load deployment readiness descriptor"));
+        assert!(error_text.contains("failed to parse deployment readiness descriptor"));
         Ok(())
     }
 
