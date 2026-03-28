@@ -145,7 +145,7 @@ pub(super) fn spawn_begin_consumer(
             .map_err(|e| SinexError::network("Failed to create begin consumer").with_source(e))?;
 
         loop {
-            if shutdown_flag.load(Ordering::Relaxed) {
+            if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
             let mut messages = consumer
@@ -158,7 +158,7 @@ pub(super) fn spawn_begin_consumer(
                 })?;
 
             while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Relaxed) {
+                if shutdown_flag.load(Ordering::Acquire) {
                     break;
                 }
                 let message = match message {
@@ -268,7 +268,7 @@ pub(super) fn spawn_slices_consumer(
             .map_err(|e| SinexError::network("Failed to create slices consumer").with_source(e))?;
 
         loop {
-            if shutdown_flag.load(Ordering::Relaxed) {
+            if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
 
@@ -287,7 +287,7 @@ pub(super) fn spawn_slices_consumer(
                 })?;
 
             while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Relaxed) {
+                if shutdown_flag.load(Ordering::Acquire) {
                     break;
                 }
                 let message = match message {
@@ -446,7 +446,7 @@ pub(super) fn spawn_end_consumer(
             .map_err(|e| SinexError::network("Failed to create end consumer").with_source(e))?;
 
         loop {
-            if shutdown_flag.load(Ordering::Relaxed) {
+            if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
             let mut messages = consumer
@@ -457,7 +457,7 @@ pub(super) fn spawn_end_consumer(
                 .map_err(|e| SinexError::network("Failed to fetch end messages").with_source(e))?;
 
             while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Relaxed) {
+                if shutdown_flag.load(Ordering::Acquire) {
                     break;
                 }
                 let message = match message {

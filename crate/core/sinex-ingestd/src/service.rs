@@ -530,7 +530,7 @@ impl IngestService {
         shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
         match result {
-            Ok(()) if shutdown_flag.load(Ordering::Relaxed) => {
+            Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("{name} completed during shutdown");
                 Ok(())
             }
@@ -706,7 +706,7 @@ impl IngestService {
             let result = assembler
                 .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
                 .await;
-            if shutdown_flag.load(Ordering::Relaxed) {
+            if shutdown_flag.load(Ordering::Acquire) {
                 info!("MaterialAssembler shutting down normally");
                 Ok(())
             } else {
