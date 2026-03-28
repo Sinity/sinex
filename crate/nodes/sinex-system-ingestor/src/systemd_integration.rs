@@ -320,11 +320,8 @@ impl JournalReader {
 
         loop {
             let entries = self.read_new_entries().await?;
-            for entry in entries {
-                if tx.send(entry).await.is_err() {
-                    info!("Journal follower: receiver dropped");
-                    break;
-                }
+            if !forward_journal_entries(&tx, entries).await {
+                return Ok(());
             }
 
             // Poll interval: 100ms provides responsive state change detection
@@ -332,6 +329,17 @@ impl JournalReader {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+}
+
+async fn forward_journal_entries(tx: &mpsc::Sender<String>, entries: Vec<String>) -> bool {
+    for entry in entries {
+        if tx.send(entry).await.is_err() {
+            info!("Journal follower: receiver dropped");
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Helper to monitor systemd unit changes via cgroup inotify
@@ -409,6 +417,37 @@ impl SystemdChangeMonitor {
         }
 
         Ok(changes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forward_journal_entries;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn forward_journal_entries_stops_when_receiver_drops() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+
+        let forwarded =
+            forward_journal_entries(&tx, vec!["entry-1".to_string(), "entry-2".to_string()]).await;
+
+        assert!(!forwarded);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn forward_journal_entries_delivers_all_entries() -> TestResult<()> {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+
+        let forwarded =
+            forward_journal_entries(&tx, vec!["entry-1".to_string(), "entry-2".to_string()]).await;
+
+        assert!(forwarded);
+        assert_eq!(rx.recv().await.as_deref(), Some("entry-1"));
+        assert_eq!(rx.recv().await.as_deref(), Some("entry-2"));
+        Ok(())
     }
 }
 
