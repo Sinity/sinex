@@ -2,7 +2,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use sinex_db::PoolConfig;
+use sinex_db::{PoolConfig, resolve_effective_database_url};
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::nats::NatsConnectionConfig;
@@ -295,6 +295,12 @@ impl GatewayConfig {
         };
         config.apply_gateway_env_overrides()?;
         config.apply_manual_env_overrides()?;
+        if config.database_url.trim().is_empty() {
+            return Err(SinexError::configuration(
+                "Database URL not provided — set DATABASE_URL or pass --database-url",
+            ));
+        }
+        config.database_url = resolve_effective_database_url(&config.database_url)?;
         Ok(config)
     }
 

@@ -18,6 +18,10 @@ impl EnvGuard {
     fn set(&mut self, key: &str, value: &str) {
         unsafe { std::env::set_var(key, value) };
     }
+
+    fn remove(&mut self, key: &str) {
+        unsafe { std::env::remove_var(key) };
+    }
 }
 
 impl Drop for EnvGuard {
@@ -40,6 +44,30 @@ async fn gateway_config_load_namespaces_database_url_from_env() -> TestResult<()
 
     let config = GatewayConfig::load()?;
     assert_eq!(config.database_url, "postgresql://gateway-config/sinex");
+    Ok(())
+}
+
+#[sinex_test]
+async fn gateway_config_load_requires_database_url() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    env.remove("DATABASE_URL");
+
+    let error = GatewayConfig::load().expect_err("missing database url should fail gateway config load");
+    let message = error.to_string();
+
+    assert!(message.contains("Database URL not provided"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn gateway_config_load_rejects_malformed_database_url() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    env.set("DATABASE_URL", "not-a-database-url");
+
+    let error = GatewayConfig::load().expect_err("malformed database url should fail gateway config load");
+    let message = error.to_string();
+
+    assert!(message.contains("failed to parse DATABASE_URL"));
     Ok(())
 }
 
