@@ -897,7 +897,9 @@ impl UnifiedJournalWatcher {
 
         // Wait for child process
         if let Some(mut child) = self.child_process.take() {
-            let _ = child.wait().await;
+            if let Err(error) = child.wait().await {
+                warn!(error = %error, "Failed to wait for journal watcher process exit");
+            }
         }
 
         Ok(())
@@ -1410,7 +1412,9 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
                     }
                     Err(_) => {
                         warn!("Journal watcher process did not exit within 30s, killing");
-                        let _ = child.kill().await;
+                        if let Err(error) = child.kill().await {
+                            warn!(error = %error, "Failed to kill journal watcher process after shutdown timeout");
+                        }
                     }
                 }
             } else {

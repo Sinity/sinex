@@ -21,6 +21,40 @@ use crate::{IngestdResult, SinexError};
 
 const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
 
+async fn ack_with_warning(
+    message: &jetstream::Message,
+    reason: &'static str,
+    material_id: Option<&Uuid>,
+) {
+    if let Err(error) = message.ack().await {
+        warn!(
+            subject = %message.subject,
+            material_id = ?material_id,
+            error = %error,
+            reason,
+            "Failed to ack material assembler message"
+        );
+    }
+}
+
+async fn nak_with_warning(
+    message: &jetstream::Message,
+    delay: Option<std::time::Duration>,
+    reason: &'static str,
+    material_id: Option<&Uuid>,
+) {
+    if let Err(error) = message.ack_with(jetstream::AckKind::Nak(delay)).await {
+        warn!(
+            subject = %message.subject,
+            material_id = ?material_id,
+            error = %error,
+            reason,
+            retry_delay_ms = delay.map(|value| value.as_millis() as u64),
+            "Failed to NAK material assembler message"
+        );
+    }
+}
+
 /// Handles for the three material consumer tasks
 pub(super) struct MaterialConsumerHandles {
     pub(crate) begin: JoinHandle<IngestdResult<()>>,
@@ -147,7 +181,13 @@ pub(super) fn spawn_begin_consumer(
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
                         error!("Failed to process begin message: {}", err);
-                        let _ = message.ack_with(jetstream::AckKind::Nak(None)).await;
+                        nak_with_warning(
+                            &message,
+                            None,
+                            "begin_processing_failed",
+                            material_id.as_ref().ok(),
+                        )
+                        .await;
                         continue;
                     }
                     Err(panic) => {
@@ -170,11 +210,13 @@ pub(super) fn spawn_begin_consumer(
                                 .finalize_failed_material(material_id, "begin_consumer_panic")
                                 .await;
                         }
-                        let _ = message
-                            .ack_with(jetstream::AckKind::Nak(Some(
-                                std::time::Duration::from_millis(200),
-                            )))
-                            .await;
+                        nak_with_warning(
+                            &message,
+                            Some(std::time::Duration::from_millis(200)),
+                            "begin_processing_panicked",
+                            material_id.as_ref().ok(),
+                        )
+                        .await;
                         continue;
                     }
                 }
@@ -264,7 +306,7 @@ pub(super) fn spawn_slices_consumer(
                         error = %material_id.unwrap_err(),
                         "Rejecting malformed slice message subject"
                     );
-                    let _ = message.ack().await;
+                    ack_with_warning(&message, "slice_subject_invalid", None).await;
                     continue;
                 };
 
@@ -324,7 +366,13 @@ pub(super) fn spawn_slices_consumer(
                                 json!({ "error": err.to_string(), "offset": offset }),
                             )
                             .await;
-                        let _ = message.ack_with(jetstream::AckKind::Nak(None)).await;
+                        nak_with_warning(
+                            &message,
+                            None,
+                            "slice_processing_failed",
+                            Some(&material_id),
+                        )
+                        .await;
                         continue;
                     }
                     Err(panic) => {
@@ -344,11 +392,13 @@ pub(super) fn spawn_slices_consumer(
                         assembler
                             .finalize_failed_material(material_id, "slice_consumer_panic")
                             .await;
-                        let _ = message
-                            .ack_with(jetstream::AckKind::Nak(Some(
-                                std::time::Duration::from_millis(200),
-                            )))
-                            .await;
+                        nak_with_warning(
+                            &message,
+                            Some(std::time::Duration::from_millis(200)),
+                            "slice_processing_panicked",
+                            Some(&material_id),
+                        )
+                        .await;
                         continue;
                     }
                 }
@@ -440,11 +490,13 @@ pub(super) fn spawn_end_consumer(
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
                         error!("Failed to process end message: {}", err);
-                        let _ = message
-                            .ack_with(jetstream::AckKind::Nak(Some(
-                                std::time::Duration::from_millis(200),
-                            )))
-                            .await;
+                        nak_with_warning(
+                            &message,
+                            Some(std::time::Duration::from_millis(200)),
+                            "end_processing_failed",
+                            material_id.as_ref().ok(),
+                        )
+                        .await;
                         continue;
                     }
                     Err(panic) => {
@@ -467,11 +519,13 @@ pub(super) fn spawn_end_consumer(
                                 .finalize_failed_material(material_id, "end_consumer_panic")
                                 .await;
                         }
-                        let _ = message
-                            .ack_with(jetstream::AckKind::Nak(Some(
-                                std::time::Duration::from_millis(200),
-                            )))
-                            .await;
+                        nak_with_warning(
+                            &message,
+                            Some(std::time::Duration::from_millis(200)),
+                            "end_processing_panicked",
+                            material_id.as_ref().ok(),
+                        )
+                        .await;
                         continue;
                     }
                 }
