@@ -1263,24 +1263,38 @@ impl UnifiedJournalWatcher {
         u128::from_be_bytes(bytes)
     }
 
+    fn lock_pending_cursor(&self) -> NodeResult<std::sync::MutexGuard<'_, Option<String>>> {
+        self.pending_cursor.lock().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(
+                "Journal cursor state lock was poisoned".to_string(),
+            )
+            .with_context("lock", "pending_cursor")
+            .with_source(error.to_string())
+        })
+    }
+
+    fn lock_last_cursor_save(&self) -> NodeResult<std::sync::MutexGuard<'_, Instant>> {
+        self.last_cursor_save.lock().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(
+                "Journal cursor state lock was poisoned".to_string(),
+            )
+            .with_context("lock", "last_cursor_save")
+            .with_source(error.to_string())
+        })
+    }
+
     /// Save cursor to file for position tracking (batched)
     /// Saves based on configured event threshold and interval (defaults: 100 events or 10 seconds)
     async fn save_cursor(&self, cursor: &str) -> NodeResult<()> {
         // Update pending cursor
-        if let Ok(mut pending) = self.pending_cursor.lock() {
-            *pending = Some(cursor.to_string());
-        }
+        *self.lock_pending_cursor()? = Some(cursor.to_string());
 
         // Increment cursor save counter
         let count = self.cursor_save_count.fetch_add(1, Ordering::Relaxed) + 1;
 
         // Check if we should flush
         let should_flush = {
-            let elapsed = if let Ok(last_save) = self.last_cursor_save.lock() {
-                last_save.elapsed()
-            } else {
-                std::time::Duration::from_secs(0)
-            };
+            let elapsed = self.lock_last_cursor_save()?.elapsed();
 
             // Flush based on configured thresholds
             let event_threshold = self.journal_config.cursor_flush_event_threshold;
@@ -1300,11 +1314,7 @@ impl UnifiedJournalWatcher {
 
     /// Flush pending cursor to disk
     async fn flush_cursor(&self) -> NodeResult<()> {
-        let cursor_to_save = if let Ok(mut pending) = self.pending_cursor.lock() {
-            pending.take()
-        } else {
-            None
-        };
+        let cursor_to_save = self.lock_pending_cursor()?.take();
 
         if let Some(cursor) = cursor_to_save
             && let Some(ref cursor_file) = self.journal_config.cursor_file
@@ -1328,9 +1338,7 @@ impl UnifiedJournalWatcher {
 
             // Reset counters
             self.cursor_save_count.store(0, Ordering::Relaxed);
-            if let Ok(mut last_save) = self.last_cursor_save.lock() {
-                *last_save = Instant::now();
-            }
+            *self.lock_last_cursor_save()? = Instant::now();
 
             debug!("Cursor flushed to disk: {}", cursor);
         }
@@ -1834,6 +1842,84 @@ mod tests {
             .to_string()
             .contains("Failed to create cursor directory"));
 
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_cursor_rejects_poisoned_pending_cursor_lock(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        poison_mutex(Arc::clone(&watcher.pending_cursor), None::<String>);
+
+        let error = watcher
+            .save_cursor("s=abc")
+            .await
+            .expect_err("poisoned pending cursor lock must surface as an error");
+
+        assert!(error.to_string().contains("pending_cursor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_cursor_rejects_poisoned_last_cursor_save_lock(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        poison_mutex(Arc::clone(&watcher.last_cursor_save), Instant::now());
+
+        let error = watcher
+            .save_cursor("s=abc")
+            .await
+            .expect_err("poisoned cursor timing lock must surface as an error");
+
+        assert!(error.to_string().contains("last_cursor_save"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_cursor_rejects_poisoned_pending_cursor_lock(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        poison_mutex(Arc::clone(&watcher.pending_cursor), Some("s=abc".to_string()));
+
+        let error = watcher
+            .flush_cursor()
+            .await
+            .expect_err("poisoned pending cursor lock must not be ignored during flush");
+
+        assert!(error.to_string().contains("pending_cursor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_cursor_rejects_poisoned_last_cursor_save_lock(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let mut watcher = test_watcher();
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        watcher.journal_config.cursor_file =
+            Some(runtime_dir.join("cursor.state").to_string_lossy().into_owned());
+        watcher
+            .pending_cursor
+            .lock()
+            .expect("pending cursor lock should not be poisoned")
+            .replace("s=abc".to_string());
+        poison_mutex(Arc::clone(&watcher.last_cursor_save), Instant::now());
+
+        let error = watcher
+            .flush_cursor()
+            .await
+            .expect_err("poisoned cursor timing lock must not be ignored during flush");
+
+        assert!(error.to_string().contains("last_cursor_save"));
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }

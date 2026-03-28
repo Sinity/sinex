@@ -773,6 +773,23 @@ impl SystemNode {
         self.start_udev_stream().await?;
         Ok(())
     }
+
+    fn record_snapshot_result(
+        state: &mut SystemPersistentState,
+        warnings: &mut Vec<String>,
+        snapshot_result: NodeResult<SystemState>,
+    ) {
+        match snapshot_result {
+            Ok(snapshot) => state.last_state = Some(snapshot),
+            Err(error) => {
+                let warning = format!("system snapshot refresh failed: {error}");
+                warn!("{warning}");
+                if !warnings.iter().any(|existing| existing == &warning) {
+                    warnings.push(warning);
+                }
+            }
+        }
+    }
 }
 
 impl IngestorNode for SystemNode {
@@ -925,10 +942,8 @@ impl IngestorNode for SystemNode {
                         systemd_active: snapshot.systemd_ready,
                     };
 
-                    // We can also take a full snapshot and update state.last_state
-                    if let Ok(s) = self.take_snapshot(state).await {
-                        state.last_state = Some(s);
-                    }
+                    let snapshot_result = self.take_snapshot(state).await;
+                    Self::record_snapshot_result(state, &mut warnings, snapshot_result);
                 }
             }
         }
@@ -1418,6 +1433,42 @@ mod tests {
 
         assert!(message.contains("dbus_enabled"));
         assert!(message.contains("bool"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_snapshot_result_preserves_successful_snapshot() -> TestResult<()> {
+        let mut state = SystemPersistentState::default();
+        let mut warnings = Vec::new();
+        let snapshot = SystemState {
+            captured_at: Timestamp::now(),
+            enabled_sources: vec!["dbus".to_string()],
+            dbus_status: None,
+            journal_status: None,
+            udev_status: None,
+            systemd_status: None,
+            recent_activity: vec!["ok".to_string()],
+        };
+
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Ok(snapshot.clone()));
+
+        assert_eq!(state.last_state.as_ref().map(|s| &s.enabled_sources), Some(&snapshot.enabled_sources));
+        assert!(warnings.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_snapshot_result_surfaces_failures_once() -> TestResult<()> {
+        let mut state = SystemPersistentState::default();
+        let mut warnings = Vec::new();
+        let error = SinexError::processing("snapshot exploded");
+
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Err(error.clone()));
+        SystemNode::record_snapshot_result(&mut state, &mut warnings, Err(error));
+
+        assert!(state.last_state.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("snapshot exploded"));
         Ok(())
     }
 }
