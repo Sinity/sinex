@@ -2,7 +2,7 @@
 
 // Local crate imports
 use crate::{
-    config::GatewayConfig,
+    config::{GatewayConfig, env_var_optional},
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
     handlers::system::system_health_response,
@@ -412,21 +412,21 @@ impl GatewayAuth {
 }
 
 fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
-    if let Ok(path_str) = std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE") {
+    if let Some(path_str) = env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents = std::fs::read_to_string(&path)
             .wrap_err("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Ok(path_str) = std::env::var("SINEX_RPC_TOKEN_FILE") {
+    if let Some(path_str) = env_var_optional("SINEX_RPC_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents =
             std::fs::read_to_string(&path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Ok(token) = std::env::var("SINEX_RPC_TOKEN") {
+    if let Some(token) = env_var_optional("SINEX_RPC_TOKEN")? {
         return Ok((Some(token.trim().to_string()), None));
     }
 
@@ -1965,6 +1965,26 @@ mod tests {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = bearer_headers("secret");
         assert!(auth.verify(&headers).is_ok());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn token_env_rejects_non_utf8_values() -> TestResult<()> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().await;
+        clear_auth_env();
+        unsafe {
+            std::env::set_var("SINEX_RPC_TOKEN", OsString::from_vec(vec![0x73, 0x80, 0x65]));
+        }
+
+        let error = read_token_and_path_from_env()
+            .expect_err("non-UTF-8 token env should be rejected");
+        assert!(error.to_string().contains("SINEX_RPC_TOKEN"));
+
+        clear_auth_env();
         Ok(())
     }
 
