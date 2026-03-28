@@ -1110,10 +1110,8 @@ impl UnifiedJournalWatcher {
         let event = match event_kind {
             SystemdEventKind::Started => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let main_pid = entry["_PID"]
-                    .as_str()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .map(ProcessId::from_raw);
+                let main_pid =
+                    Self::parse_optional_field::<u32>(obj, "_PID", &cursor)?.map(ProcessId::from_raw);
                 let e = Event::new(
                     SystemdUnitStartedPayload {
                         unit_name: unit_name.to_string(),
@@ -1587,6 +1585,28 @@ mod tests {
         let expected =
             Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
         assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_rejects_invalid_pid(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "not-a-pid",
+        });
+
+        let error = watcher
+            .parse_systemd_entry(&entry, &material)
+            .expect_err("invalid systemd pid must fail honestly");
+
+        assert!(error.to_string().contains("invalid _PID"));
+        assert!(error.to_string().contains("not-a-pid"));
         Ok(())
     }
 
