@@ -173,6 +173,27 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn resolve_max_line_bytes() -> NodeResult<usize> {
+        match std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES") {
+            Ok(raw) => raw.parse::<usize>().map_err(|error| {
+                sinex_node_sdk::SinexError::configuration(
+                    "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer".to_string(),
+                )
+                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
+                .with_context("value", raw)
+                .with_source(error)
+            }),
+            Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAX_JOURNAL_LINE_BYTES),
+            Err(error) => Err(
+                sinex_node_sdk::SinexError::configuration(
+                    "Failed to read SINEX_JOURNAL_MAX_LINE_BYTES".to_string(),
+                )
+                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
+                .with_source(error),
+            ),
+        }
+    }
+
     fn parse_optional_field<T>(
         entry: &serde_json::Map<String, serde_json::Value>,
         field: &str,
@@ -328,10 +349,7 @@ impl UnifiedJournalWatcher {
         }
 
         // Load max line bytes from environment or use default
-        let max_line_bytes = std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES);
+        let max_line_bytes = Self::resolve_max_line_bytes()?;
 
         info!("Journal max line size configured: {} bytes", max_line_bytes);
 
@@ -1444,6 +1462,42 @@ mod tests {
         Arc::new(TestMaterialContext)
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, original }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.as_deref() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
     #[sinex_test]
     async fn parse_journal_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
@@ -1461,6 +1515,37 @@ mod tests {
 
         assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
         assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_max_line_bytes_rejects_invalid_env(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let _guard = EnvVarGuard::set("SINEX_JOURNAL_MAX_LINE_BYTES", "not-a-number");
+
+        let error = UnifiedJournalWatcher::resolve_max_line_bytes()
+            .expect_err("invalid journal max line env must fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer")
+        );
+        assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_max_line_bytes_uses_default_when_env_is_absent(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let _guard = EnvVarGuard::unset("SINEX_JOURNAL_MAX_LINE_BYTES");
+
+        assert_eq!(
+            UnifiedJournalWatcher::resolve_max_line_bytes()?,
+            DEFAULT_MAX_JOURNAL_LINE_BYTES
+        );
         Ok(())
     }
 
