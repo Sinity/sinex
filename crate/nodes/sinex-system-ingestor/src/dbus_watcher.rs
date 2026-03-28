@@ -149,6 +149,57 @@ pub struct DbusWatcher {
 }
 
 impl DbusWatcher {
+    fn monitoring_task_exit_error(
+        index: usize,
+        result: std::result::Result<NodeResult<()>, tokio::task::JoinError>,
+    ) -> sinex_node_sdk::SinexError {
+        match result {
+            Ok(Ok(())) => sinex_node_sdk::SinexError::invalid_state(
+                "D-Bus monitoring task completed unexpectedly".to_string(),
+            )
+            .with_context("task_index", index.to_string())
+            .with_operation("dbus_start_streaming"),
+            Ok(Err(error)) => error
+                .with_context("task_index", index.to_string())
+                .with_operation("dbus_start_streaming"),
+            Err(error) => sinex_node_sdk::SinexError::processing(
+                "D-Bus monitoring task panicked".to_string(),
+            )
+            .with_source(error.to_string())
+            .with_context("task_index", index.to_string())
+            .with_operation("dbus_start_streaming"),
+        }
+    }
+
+    async fn drain_cancelled_monitor_task(
+        index: usize,
+        task: tokio::task::JoinHandle<NodeResult<()>>,
+    ) {
+        match tokio::time::timeout(Duration::from_secs(5), task).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(error))) => {
+                warn!(
+                    task_index = index,
+                    error = %error,
+                    "Cancelled D-Bus monitoring task failed while draining"
+                );
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    task_index = index,
+                    error = %error,
+                    "Cancelled D-Bus monitoring task panicked while draining"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    task_index = index,
+                    "Timed out waiting for cancelled D-Bus monitoring task to drain"
+                );
+            }
+        }
+    }
+
     /// Create new D-Bus watcher
     pub async fn new(config: DbusConfig) -> NodeResult<Self> {
         info!("D-Bus watcher initialized with config: {:?}", config);
@@ -211,26 +262,15 @@ impl DbusWatcher {
         // Signal cancellation to other tasks
         cancel_token.cancel();
 
-        // Check if the task panicked
-        match result {
-            Ok(Ok(())) => {
-                warn!("D-Bus monitoring task {} completed normally", index);
-            }
-            Ok(Err(e)) => {
-                error!("D-Bus monitoring task {} failed: {}", index, e);
-            }
-            Err(e) => {
-                error!("D-Bus monitoring task {} panicked: {:?}", index, e);
-            }
-        }
+        let primary_error = Self::monitoring_task_exit_error(index, result);
+        error!(error = %primary_error, "D-Bus monitoring task exited unexpectedly");
 
         // Await remaining tasks with timeout
-        for task in remaining {
-            let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+        for (remaining_index, task) in remaining.into_iter().enumerate() {
+            Self::drain_cancelled_monitor_task(remaining_index, task).await;
         }
 
-        error!("D-Bus monitoring stopped unexpectedly");
-        Ok(())
+        Err(primary_error)
     }
 
     /// Monitor a specific D-Bus bus with configuration struct
@@ -1239,6 +1279,43 @@ mod tests {
         assert_eq!(payload.status, PlaybackStatus::Playing);
         assert!(payload.can_pause);
         assert!(!payload.can_seek);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitoring_task_exit_error_rejects_normal_completion() -> TestResult<()> {
+        let error = DbusWatcher::monitoring_task_exit_error(2, Ok(Ok(())));
+        assert!(
+            error
+                .to_string()
+                .contains("completed unexpectedly"),
+            "normal completion must not be treated as success"
+        );
+        assert!(error.to_string().contains("task_index"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitoring_task_exit_error_preserves_worker_failure() -> TestResult<()> {
+        let error = DbusWatcher::monitoring_task_exit_error(
+            1,
+            Ok(Err(sinex_node_sdk::SinexError::processing(
+                "worker failed".to_string(),
+            ))),
+        );
+        assert!(error.to_string().contains("worker failed"));
+        assert!(error.to_string().contains("task_index"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitoring_task_exit_error_rejects_panics() -> TestResult<()> {
+        let join_error = tokio::spawn(async { panic!("dbus watcher panic"); })
+            .await
+            .expect_err("panicing task must produce join error");
+        let error = DbusWatcher::monitoring_task_exit_error(0, Err(join_error));
+        assert!(error.to_string().contains("panicked"));
+        assert!(error.to_string().contains("task_index"));
         Ok(())
     }
 }
