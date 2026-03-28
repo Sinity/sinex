@@ -9,7 +9,7 @@ use super::output::DerivedOutput;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
-use crate::error_helpers::env_bool_with_default;
+use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
@@ -954,10 +954,11 @@ where
         // Invalidation debounce: buffer signals and process after a quiet period.
         // This prevents a replay archiving N scopes from triggering N immediate
         // recomputations — instead they coalesce into a single batch.
-        let debounce_ms: u64 = std::env::var("SINEX_DERIVED_INVALIDATION_DEBOUNCE_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(500);
+        let debounce_ms = env_parse_with_default(
+            "SINEX_DERIVED_INVALIDATION_DEBOUNCE_MS",
+            500_u64,
+            "derived invalidation debounce",
+        );
         let debounce_duration = Duration::from_millis(debounce_ms);
         let mut pending_invalidations: Vec<Vec<u8>> = Vec::new();
         let mut debounce_deadline: Option<tokio::time::Instant> = None;

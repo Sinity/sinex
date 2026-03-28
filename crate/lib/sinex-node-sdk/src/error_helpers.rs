@@ -158,6 +158,36 @@ pub fn env_bool_with_default(var: &str, default: bool, context: &str) -> bool {
     }
 }
 
+pub fn env_string_optional(var: &str, context: &str) -> Option<String> {
+    match std::env::var(var) {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                context,
+                "Environment override is not valid UTF-8; ignoring value"
+            );
+            None
+        }
+    }
+}
+
+pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
+    env_string_optional(var, context).and_then(|raw| {
+        if raw.trim().is_empty() {
+            warn!(
+                variable = var,
+                context,
+                "Environment override is blank; ignoring value"
+            );
+            None
+        } else {
+            Some(raw)
+        }
+    })
+}
+
 pub fn env_parse_with_default<T>(var: &str, default: T, context: &str) -> T
 where
     T: std::str::FromStr + Clone,
@@ -307,7 +337,14 @@ impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
 #[cfg(test)]
 mod tests {
     // Inline because these helpers are local implementation detail and only exercised via env-driven call sites.
-    use super::{env_bool_with_default, env_parse_with_default};
+    use super::{
+        env_bool_with_default, env_nonempty_string_optional, env_parse_with_default,
+        env_string_optional,
+    };
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::sinex_serial_test;
 
     struct ScopedEnvGuard {
@@ -323,7 +360,7 @@ mod tests {
             Self { keys: previous }
         }
 
-        fn set(&mut self, key: &str, value: &str) {
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
             unsafe { std::env::set_var(key, value) };
         }
     }
@@ -358,6 +395,30 @@ mod tests {
 
         let value = env_parse_with_default("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
         assert_eq!(value, 42);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn env_string_optional_ignores_non_utf8_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_STRING_OVERRIDE"]);
+        env.set(
+            "SINEX_TEST_STRING_OVERRIDE",
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
+
+        let value = env_string_optional("SINEX_TEST_STRING_OVERRIDE", "test");
+        assert_eq!(value, None);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_STRING_OVERRIDE"]);
+        env.set("SINEX_TEST_STRING_OVERRIDE", "   ");
+
+        let value = env_nonempty_string_optional("SINEX_TEST_STRING_OVERRIDE", "test");
+        assert_eq!(value, None);
         Ok(())
     }
 }

@@ -4,14 +4,14 @@
 //! persistence directly. This module keeps only the shared checkpoint-path and
 //! shutdown-configuration surface that the runtimes still use.
 
+use crate::error_helpers::env_nonempty_string_optional;
 use std::path::PathBuf;
 
 /// Default checkpoint file path for a node.
 #[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
-    let runtime_dir = std::env::var("SINEX_RUNTIME_DIR")
-        .or_else(|_| std::env::var("SINEX_WORK_DIR"))
-        .ok()
+    let runtime_dir = env_nonempty_string_optional("SINEX_RUNTIME_DIR", "shutdown checkpoint path")
+        .or_else(|| env_nonempty_string_optional("SINEX_WORK_DIR", "shutdown checkpoint path"))
         .map(PathBuf::from)
         .or_else(|| dirs::cache_dir().map(|dir| dir.join("sinex")))
         .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
