@@ -342,6 +342,23 @@ fn print_unavailable_section(label: &str, error: &crate::SinexError) {
     println!("{}", unavailable_section(label, &error.to_string()));
 }
 
+fn handle_export_result(path: &SanitizedPath, result: NodeResult<()>) -> NodeResult<()> {
+    match result {
+        Ok(()) => {
+            println!("Data exported to: {}", path.as_str());
+            Ok(())
+        }
+        Err(error) => {
+            print_unavailable_section("Data Export", &error);
+            Err(
+                SinexError::processing("failed to export node exploration data")
+                    .with_context("path", path.as_str())
+                    .with_source(error),
+            )
+        }
+    }
+}
+
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
 
     /// Create new CLI runner with a node instance
@@ -873,15 +890,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 Some("csv") => ExportFormat::Csv,
                 _ => ExportFormat::Raw,
             };
-
-            match node.export_data(export_path, format) {
-                Ok(()) => {
-                    println!("Data exported to: {}", export_path.as_str());
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to export data");
-                }
-            }
+            handle_export_result(export_path, node.export_data(export_path, format))?;
         }
         Ok(())
     }
@@ -946,7 +955,10 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 
 #[cfg(test)]
 mod tests {
-    use super::unavailable_section;
+    use super::{handle_export_result, unavailable_section};
+    use crate::SinexError;
+    use sinex_primitives::SanitizedPath;
+    use std::str::FromStr;
 
     // Inline test is appropriate because this exercises private CLI formatting only.
     #[test]
@@ -955,6 +967,22 @@ mod tests {
             unavailable_section("Coverage Analysis", "coverage analysis is not implemented"),
             "Coverage Analysis:\n  Unavailable: coverage analysis is not implemented"
         );
+    }
+
+    #[test]
+    fn export_result_surfaces_failure_with_path_context() {
+        let path = SanitizedPath::from_str("/tmp/export.json")
+            .expect("test export path should validate");
+        let error = handle_export_result(
+            &path,
+            Err(SinexError::io("disk full while exporting")),
+        )
+        .expect_err("export failures should not be swallowed");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to export node exploration data"));
+        assert!(message.contains("/tmp/export.json"));
+        assert!(message.contains("disk full while exporting"));
     }
 }
 

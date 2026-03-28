@@ -21,10 +21,14 @@ const TRUSTED_EXTENSION_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS";
 const TRUSTED_HOSTS_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS";
 /// Environment variable used to enforce a protocol version for native messaging.
 const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
+/// Environment variable for maximum native messaging payload size in bytes.
+const MAX_MESSAGE_SIZE_ENV: &str = "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES";
 /// Environment variable for read timeout in seconds (default: 30)
 const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
 /// Default read timeout for native messaging reads (30 seconds)
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
+/// Default maximum native messaging payload size (1 MiB).
+const DEFAULT_MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 /// Environment variable for capability-based access control (JSON map: `extension_id` -> capabilities)
 const CAPABILITIES_ENV: &str = "SINEX_NATIVE_MESSAGING_CAPABILITIES";
 /// Environment variable for per-extension role mapping (JSON map: `extension_id` -> role)
@@ -160,16 +164,11 @@ impl NativeMessagingConfig {
             std::env::var(PROTOCOL_VERSION_ENV).ok(),
             std::env::var(CAPABILITIES_ENV).ok(),
             std::env::var(EXTENSION_ROLES_ENV).ok(),
-            std::env::var("SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-                .unwrap_or(1024 * 1024),
-            std::time::Duration::from_secs(
-                std::env::var(READ_TIMEOUT_ENV)
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(DEFAULT_READ_TIMEOUT_SECS),
-            ),
+            env_positive_usize_with_default(MAX_MESSAGE_SIZE_ENV, DEFAULT_MAX_MESSAGE_SIZE_BYTES),
+            std::time::Duration::from_secs(env_positive_u64_with_default(
+                READ_TIMEOUT_ENV,
+                DEFAULT_READ_TIMEOUT_SECS,
+            )),
         )
     }
 
@@ -487,6 +486,78 @@ impl NativeMessagingConfig {
     }
 }
 
+fn env_positive_usize_with_default(var: &str, default: usize) -> usize {
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    default,
+                    "Invalid native messaging override; expected a positive integer, using default"
+                );
+                default
+            }
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid native messaging override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Native messaging override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
+}
+
+fn env_positive_u64_with_default(var: &str, default: u64) -> u64 {
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    default,
+                    "Invalid native messaging override; expected a positive integer, using default"
+                );
+                default
+            }
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid native messaging override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Native messaging override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
+}
+
 fn normalize_optional_string(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -773,6 +844,35 @@ mod tests {
             .enforce_capabilities(&message)
             .expect_err("invalid capabilities config should be surfaced");
         assert!(error.to_string().contains(CAPABILITIES_ENV));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn native_messaging_numeric_env_overrides_apply_valid_values() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(MAX_MESSAGE_SIZE_ENV, "2048");
+        env.set(READ_TIMEOUT_ENV, "12");
+
+        let config = NativeMessagingConfig::from_env();
+
+        assert_eq!(config.max_message_size, 2048);
+        assert_eq!(config.read_timeout, std::time::Duration::from_secs(12));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn native_messaging_numeric_env_overrides_reject_invalid_values() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(MAX_MESSAGE_SIZE_ENV, "0");
+        env.set(READ_TIMEOUT_ENV, "forever");
+
+        let config = NativeMessagingConfig::from_env();
+
+        assert_eq!(config.max_message_size, DEFAULT_MAX_MESSAGE_SIZE_BYTES);
+        assert_eq!(
+            config.read_timeout,
+            std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS)
+        );
         Ok(())
     }
 }

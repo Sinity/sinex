@@ -393,7 +393,7 @@ impl ClipboardWatcher {
             .register_in_flight(&self.source_identifier, Some(selection_type), metadata)
             .await?;
 
-        let mut event = if selection_type == "primary" {
+        let event = if selection_type == "primary" {
             ClipboardSelectedPayload {
                 selection_type: selection_type.to_string(),
                 content_type: content.content_type.clone(),

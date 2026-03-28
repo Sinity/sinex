@@ -65,66 +65,13 @@ impl TransducerNode for TerminalCommandCanonicalizer {
             return Ok(None);
         }
 
-        let command = input
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if command.trim().is_empty() {
-            return Ok(None);
-        }
-
-        info!("Canonicalizing command: {}", command);
-
         // 1:1 transform: ts_orig from input, single parent
         let ts_orig = context.ts_orig.unwrap_or_else(now);
-
-        let payload = CanonicalCommandPayload {
-            command: command.to_string(),
-            working_directory: input
-                .get("working_directory")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            exit_code: sinex_primitives::units::ExitCode::from_raw(
-                input
-                    .get("exit_code")
-                    .and_then(sinex_primitives::JsonValue::as_i64)
-                    .unwrap_or(0) as i32,
-            ),
-            duration_ms: input
-                .get("duration_ms")
-                .and_then(sinex_primitives::JsonValue::as_u64)
-                .unwrap_or(0),
-            start_time: ts_orig,
-            end_time: input
-                .get("end_time")
-                .and_then(|v| v.as_str())
-                .and_then(|s| {
-                    sinex_primitives::temporal::parse_rfc3339(s)
-                        .inspect_err(|e| {
-                            tracing::warn!(original = %s, error = %e, "Failed to parse end_time, using event timestamp");
-                        })
-                        .ok()
-                })
-                .unwrap_or(ts_orig),
-            user: input
-                .get("user")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            session_id: input
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            environment_hash: input
-                .get("environment_hash")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            source_events: vec![context.trigger_uuid().to_string()],
-            enrichment_history: Vec::new(),
+        let Some(mut payload) = canonicalize_payload(context.source.as_str(), input, ts_orig)? else {
+            return Ok(None);
         };
+        info!("Canonicalizing command: {}", payload.command);
+        payload.source_events = vec![context.trigger_uuid().to_string()];
 
         Ok(Some(
             DerivedOutput::transduced(payload, ts_orig, context.trigger_uuid())
@@ -140,6 +87,133 @@ fn is_accepted_source(source: &str) -> bool {
         || source == BashCommandExecutedPayload::SOURCE.as_static_str()
         || source == ZshCommandExecutedPayload::SOURCE.as_static_str()
         || source == FishCommandExecutedPayload::SOURCE.as_static_str()
+}
+
+fn canonicalize_payload(
+    source: &str,
+    input: JsonValue,
+    ts_orig: sinex_primitives::Timestamp,
+) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+    match source {
+        source if source == KittyCommandExecutedPayload::SOURCE.as_static_str() => {
+            let payload = parse_payload::<KittyCommandExecutedPayload>(input, source)?;
+            canonicalize_kitty(payload, ts_orig)
+        }
+        source if source == AtuinCommandExecutedPayload::SOURCE.as_static_str() => {
+            let payload = parse_payload::<AtuinCommandExecutedPayload>(input, source)?;
+            canonicalize_atuin(payload)
+        }
+        source if source == BashCommandExecutedPayload::SOURCE.as_static_str() => {
+            let payload = parse_payload::<BashCommandExecutedPayload>(input, source)?;
+            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+        }
+        source if source == ZshCommandExecutedPayload::SOURCE.as_static_str() => {
+            let payload = parse_payload::<ZshCommandExecutedPayload>(input, source)?;
+            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+        }
+        source if source == FishCommandExecutedPayload::SOURCE.as_static_str() => {
+            let payload = parse_payload::<FishCommandExecutedPayload>(input, source)?;
+            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn parse_payload<T>(input: JsonValue, source: &str) -> Result<T, NodeLogicError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(input).map_err(|error| {
+        NodeLogicError::InputParsing(format!(
+            "failed to parse {source} command.executed payload: {error}"
+        ))
+    })
+}
+
+fn canonicalize_kitty(
+    payload: KittyCommandExecutedPayload,
+    ts_orig: sinex_primitives::Timestamp,
+) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+    let command = payload.command.to_string();
+    if command.trim().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(CanonicalCommandPayload {
+        command,
+        working_directory: payload
+            .working_directory
+            .map(|path| path.to_string())
+            .unwrap_or_default(),
+        exit_code: payload.exit_status.unwrap_or_default(),
+        duration_ms: payload.execution_time_ms.unwrap_or(0),
+        start_time: ts_orig,
+        end_time: ts_orig,
+        user: String::new(),
+        session_id: String::new(),
+        environment_hash: String::new(),
+        source_events: Vec::new(),
+        enrichment_history: Vec::new(),
+    }))
+}
+
+fn canonicalize_atuin(
+    payload: AtuinCommandExecutedPayload,
+) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+    let command = payload.command_string.to_string();
+    if command.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let duration_nanos = payload.duration_ns.as_nanos();
+    let duration_ms = u64::try_from(duration_nanos / 1_000_000).map_err(|error| {
+        NodeLogicError::InputParsing(format!(
+            "shell.atuin command duration is too large to represent in milliseconds: {error}"
+        ))
+    })?;
+
+    Ok(Some(CanonicalCommandPayload {
+        command,
+        working_directory: payload.cwd.to_string(),
+        exit_code: payload.exit_code,
+        duration_ms,
+        start_time: payload.ts_start_orig,
+        end_time: payload.ts_end_orig,
+        user: String::new(),
+        session_id: payload.atuin_session_id,
+        environment_hash: String::new(),
+        source_events: Vec::new(),
+        enrichment_history: Vec::new(),
+    }))
+}
+
+fn canonicalize_history(
+    command: String,
+    working_directory: Option<sinex_primitives::domain::RecordedPath>,
+    exit_code: Option<sinex_primitives::units::ExitCode>,
+    duration_ms: Option<u64>,
+    user: Option<String>,
+    session_id: Option<String>,
+    environment_hash: Option<String>,
+    ts_orig: sinex_primitives::Timestamp,
+) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+    if command.trim().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(CanonicalCommandPayload {
+        command,
+        working_directory: working_directory.map(|path| path.to_string()).unwrap_or_default(),
+        exit_code: exit_code.unwrap_or_default(),
+        duration_ms: duration_ms.unwrap_or(0),
+        start_time: ts_orig,
+        end_time: ts_orig,
+        user: user.unwrap_or_default(),
+        session_id: session_id.unwrap_or_default(),
+        environment_hash: environment_hash.unwrap_or_default(),
+        source_events: Vec::new(),
+        enrichment_history: Vec::new(),
+    }))
 }
 
 /// Node type alias for use with `node_entrypoint!`.

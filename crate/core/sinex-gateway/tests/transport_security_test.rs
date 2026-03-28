@@ -152,7 +152,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
 
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
-    let config = sinex_gateway::config::GatewayConfig::load().with_cli_overrides(
+    let config = sinex_gateway::config::GatewayConfig::load()?.with_cli_overrides(
         Some(ctx.database_url().to_string()),
         Some(tcp_listen.clone()),
         None,

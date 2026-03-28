@@ -7,7 +7,7 @@ use xtask::sandbox::sinex_test;
 async fn test_node_environment_path_validation() -> TestResult<()> {
     unsafe { std::env::set_var("SINEX_WORK_DIR", "../../../etc") };
 
-    let config = NodeConfig::load_from_env("test-node");
+    let config = NodeConfig::load_from_env("test-node")?;
     assert!(!config.work_dir.as_str().contains("../../"));
     assert!(config.work_dir.is_absolute());
 
@@ -17,7 +17,7 @@ async fn test_node_environment_path_validation() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_node_default_work_dir_is_secure() -> TestResult<()> {
-    let config = NodeConfig::load_from_env("test-service");
+    let config = NodeConfig::load_from_env("test-service")?;
     assert!(config.work_dir.is_absolute());
     assert!(!config.work_dir.as_str().contains(".."));
     Ok(())

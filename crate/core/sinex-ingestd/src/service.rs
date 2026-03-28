@@ -24,6 +24,7 @@ use sqlx::PgPool;
 
 // Standard library and common crates
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{
         Arc,
@@ -889,6 +890,24 @@ struct SchemaBroadcastEntry {
 }
 
 impl IngestService {
+    fn parse_schema_broadcast_entries<'a>(
+        entries: &'a [SchemaBroadcastEntry],
+    ) -> IngestdResult<Vec<(uuid::Uuid, &'a SchemaBroadcastEntry)>> {
+        entries
+            .iter()
+            .map(|entry| {
+                let schema_id = entry.schema_id.parse::<uuid::Uuid>().map_err(|error| {
+                    SinexError::invalid_state("schema broadcast contains invalid schema_id")
+                        .with_context("schema_name", &entry.name)
+                        .with_context("schema_version", &entry.version)
+                        .with_context("schema_id", &entry.schema_id)
+                        .with_std_error(&error)
+                })?;
+                Ok((schema_id, entry))
+            })
+            .collect()
+    }
+
     async fn broadcast_active_schemas(
         validator: &EventValidator,
         nats_client: &NatsClient,
@@ -909,9 +928,7 @@ impl IngestService {
             .collect();
 
         // Store full schemas in NATS KV for node-side validation
-        if let Err(e) = Self::store_schemas_in_kv(&entries, pool, &js).await {
-            warn!("Failed to store schemas in KV: {}", e);
-        }
+        Self::store_schemas_in_kv(&entries, pool, &js).await?;
 
         // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
         // This is fire-and-forget since it's just a notification - no durability needed.
@@ -937,7 +954,6 @@ impl IngestService {
         js: &jetstream::Context,
     ) -> IngestdResult<()> {
         use sinex_db::repositories::DbPoolExt;
-        use uuid::Uuid;
 
         // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
         // schema pollution when multiple environments share the same NATS cluster.
@@ -954,9 +970,10 @@ impl IngestService {
         let kv = create_or_open_kv_store(js, kv_config).await?;
 
         // Parse schema IDs and fetch in bulk via centralized repository
-        let schema_ids: Vec<Uuid> = entries
+        let parsed_entries = Self::parse_schema_broadcast_entries(entries)?;
+        let schema_ids: Vec<uuid::Uuid> = parsed_entries
             .iter()
-            .filter_map(|entry| entry.schema_id.parse::<Uuid>().ok())
+            .map(|(schema_id, _entry)| *schema_id)
             .collect();
 
         let schemas = pool
@@ -964,6 +981,21 @@ impl IngestService {
             .get_schemas_by_ids(&schema_ids)
             .await
             .map_err(|e| SinexError::database("Failed to fetch schemas").with_source(e))?;
+
+        let resolved_ids: HashSet<uuid::Uuid> = schemas.iter().map(|schema| schema.id).collect();
+        if let Some((missing_schema_id, entry)) = parsed_entries
+            .iter()
+            .find(|(schema_id, _entry)| !resolved_ids.contains(schema_id))
+        {
+            return Err(
+                SinexError::invalid_state(
+                    "schema broadcast references schema missing from repository",
+                )
+                .with_context("schema_name", &entry.name)
+                .with_context("schema_version", &entry.version)
+                .with_context("schema_id", missing_schema_id.to_string()),
+            );
+        }
 
         // Store each schema in KV
         for schema in schemas {
@@ -993,6 +1025,7 @@ impl IngestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
     use xtask::sandbox::sinex_test;
 
     fn test_service() -> IngestService {
@@ -1109,6 +1142,49 @@ mod tests {
             sibling_finished.load(Ordering::SeqCst),
             "monitor_runtime should await the sibling critical task after shutdown"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn store_schemas_in_kv_rejects_invalid_schema_ids(
+        ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let js = ctx.jetstream().await?;
+        let entries = vec![SchemaBroadcastEntry {
+            name: "test.schema".to_string(),
+            version: "1.0.0".to_string(),
+            schema_id: "not-a-uuid".to_string(),
+        }];
+
+        let error = IngestService::store_schemas_in_kv(&entries, ctx.pool(), &js)
+            .await
+            .expect_err("invalid schema ids must fail honestly");
+        let message = error.to_string();
+        assert!(message.contains("invalid schema_id"));
+        assert!(message.contains("test.schema"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn store_schemas_in_kv_rejects_missing_repository_rows(
+        ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let js = ctx.jetstream().await?;
+        let missing_schema_id = uuid::Uuid::now_v7().to_string();
+        let entries = vec![SchemaBroadcastEntry {
+            name: "test.schema".to_string(),
+            version: "1.0.0".to_string(),
+            schema_id: missing_schema_id.clone(),
+        }];
+
+        let error = IngestService::store_schemas_in_kv(&entries, ctx.pool(), &js)
+            .await
+            .expect_err("missing schema rows must fail honestly");
+        let message = error.to_string();
+        assert!(message.contains("missing from repository"));
+        assert!(message.contains(&missing_schema_id));
         Ok(())
     }
 }

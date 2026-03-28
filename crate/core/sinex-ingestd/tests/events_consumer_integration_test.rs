@@ -942,6 +942,88 @@ async fn jetstream_consumer_sets_stable_dedupe_identity_on_dlq_messages(
 }
 
 #[sinex_test]
+async fn jetstream_consumer_stamps_retryable_dlq_headers(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = format!("dlq-headers-{}", Uuid::now_v7().to_string().to_lowercase());
+    let (hooks, _counters) = TestHooks::builder()
+        .fail_once()
+        .route_db_errors_to_dlq()
+        .build();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let event_id = Uuid::now_v7();
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        "dlq.headers",
+        Some(setup.namespace.clone()),
+    );
+    publisher
+        .publish_with_overrides(
+            "db.failure",
+            json!({"force": "db_error"}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = setup.topology.dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages >= 1)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    let consumer_name = format!("dlq-header-inspect-{suffix}");
+    let dlq_message =
+        consume_one_stream_message(&setup.js, &setup.topology.dlq_stream, &consumer_name).await?;
+
+    let headers = dlq_message
+        .headers
+        .as_ref()
+        .expect("DLQ message should include retry metadata headers");
+    let expected_event_id = event_id.to_string();
+    let expected_subject = environment().nats_subject_with_namespace(
+        Some(setup.namespace.as_str()),
+        "events.raw.dlq_headers.db_failure",
+    );
+    assert_eq!(headers.get("Retry-Count").map(|v| v.as_str()), Some("0"));
+    assert_eq!(
+        headers.get("Event-Id").map(|v| v.as_str()),
+        Some(expected_event_id.as_str())
+    );
+    assert_eq!(
+        headers.get("Original-Subject").map(|v| v.as_str()),
+        Some(expected_subject.as_str())
+    );
+
+    dlq_message
+        .ack()
+        .await
+        .map_err(|error| eyre!(error.to_string()))?;
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
 async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("dlq-reasons-{}", Uuid::now_v7().to_string().to_lowercase());

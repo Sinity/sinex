@@ -5,10 +5,10 @@
 
 // Use local facade for common types
 use crate::common::{
-    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry,
-    NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
-    SourceState, TimeHorizon, error, info, instrument, parse_config_value, parse_typed_config,
-    warn,
+    ActivityEntry, Checkpoint, ConfigAccessor, CoverageAnalysis, Deserialize, HashMap,
+    IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport,
+    Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument,
+    parse_config_value, parse_typed_config, warn,
 };
 
 use crate::{
@@ -288,22 +288,49 @@ impl DesktopNode {
         Ok((acquisition.as_ref(), stage_context))
     }
 
-    fn redact_window_title(value: Option<String>) -> Option<String> {
-        value.map(|raw| {
-            privacy::engine()
-                .process(&raw, ProcessingContext::WindowTitle)
-                .text
-                .into_owned()
-        })
+    fn redact_window_title(value: &str) -> String {
+        privacy::engine()
+            .process(value, ProcessingContext::WindowTitle)
+            .text
+            .into_owned()
     }
 
-    fn redact_document(value: Option<String>) -> Option<String> {
-        value.map(|raw| {
-            privacy::engine()
-                .process(&raw, ProcessingContext::Document)
-                .text
-                .into_owned()
-        })
+    fn redact_document(value: &str) -> String {
+        privacy::engine()
+            .process(value, ProcessingContext::Document)
+            .text
+            .into_owned()
+    }
+
+    fn require_activitywatch_string_field(
+        entry: &ActivityWatchHistoryEntry,
+        field: &str,
+    ) -> NodeResult<String> {
+        match entry.data.get(field) {
+            Some(serde_json::Value::String(value)) => Ok(value.clone()),
+            Some(other) => Err(SinexError::validation(format!(
+                "ActivityWatch row {} field '{field}' must be a string, got {other}",
+                entry.row_id
+            ))),
+            None => Err(SinexError::validation(format!(
+                "ActivityWatch row {} is missing required field '{field}'",
+                entry.row_id
+            ))),
+        }
+    }
+
+    fn require_activitywatch_nonempty_string_field(
+        entry: &ActivityWatchHistoryEntry,
+        field: &str,
+    ) -> NodeResult<String> {
+        let value = Self::require_activitywatch_string_field(entry, field)?;
+        if value.trim().is_empty() {
+            return Err(SinexError::validation(format!(
+                "ActivityWatch row {} field '{field}' must not be empty",
+                entry.row_id
+            )));
+        }
+        Ok(value)
     }
 
     async fn stage_activitywatch_material(
@@ -347,92 +374,105 @@ impl DesktopNode {
         })?;
 
         match entry.kind {
-            ActivityWatchEntryKind::Window => ActivityWatchWindowActivePayload {
-                app: entry.string_field("app").unwrap_or_default(),
-                title: Self::redact_window_title(entry.string_field("title")).unwrap_or_default(),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Window => {
+                let app = Self::require_activitywatch_nonempty_string_field(entry, "app")?;
+                let title = Self::require_activitywatch_string_field(entry, "title")?;
+
+                ActivityWatchWindowActivePayload {
+                    app,
+                    title: Self::redact_window_title(&title),
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch window event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch window event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch window event")
-                    .with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch window event")
-                    .with_source(error)
-            }),
-            ActivityWatchEntryKind::Web => ActivityWatchBrowserTabActivePayload {
-                browser: entry
-                    .string_field("app")
-                    .unwrap_or_else(|| "browser".to_string()),
-                title: Self::redact_window_title(entry.string_field("title")).unwrap_or_default(),
-                url: Self::redact_document(entry.string_field("url")).unwrap_or_default(),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Web => {
+                let browser = Self::require_activitywatch_nonempty_string_field(entry, "app")?;
+                let title = Self::require_activitywatch_string_field(entry, "title")?;
+                let url = Self::require_activitywatch_string_field(entry, "url")?;
+
+                ActivityWatchBrowserTabActivePayload {
+                    browser,
+                    title: Self::redact_window_title(&title),
+                    url: Self::redact_document(&url),
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch web event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch web event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch web event").with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch web event")
-                    .with_source(error)
-            }),
-            ActivityWatchEntryKind::Afk => ActivityWatchAfkChangedPayload {
-                status: entry
-                    .string_field("status")
-                    .unwrap_or_else(|| "unknown".to_string()),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Afk => {
+                let status = Self::require_activitywatch_nonempty_string_field(entry, "status")?;
+
+                ActivityWatchAfkChangedPayload {
+                    status,
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch afk event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch afk event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch afk event").with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch afk event")
-                    .with_source(error)
-            }),
         }
     }
 
@@ -464,6 +504,64 @@ impl DesktopNode {
 impl Default for DesktopNode {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl DesktopNode {
+    fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
+        raw.parse::<WindowManagerType>().map_err(|error| {
+            SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
+        })
+    }
+
+    fn parse_bool_env_override(var_name: &str, raw: &str) -> NodeResult<bool> {
+        raw.parse::<bool>().map_err(|error| {
+            SinexError::processing(format!("Invalid {var_name} value `{raw}`: {error}"))
+        })
+    }
+
+    fn apply_config_overrides<S: ConfigAccessor>(
+        config: &mut DesktopConfig,
+        source: &S,
+    ) -> NodeResult<()> {
+        if let Some(context_config) = parse_typed_config::<DesktopConfig, _>("desktop", source)? {
+            *config = context_config;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool, _>("clipboard_enabled", source)? {
+            config.clipboard_enabled = enabled;
+        }
+        if let Some(enabled) = parse_config_value::<bool, _>("window_manager_enabled", source)? {
+            config.window_manager_enabled = enabled;
+        }
+        if let Some(wm_type_str) = parse_config_value::<String, _>("window_manager_type", source)? {
+            config.window_manager_type = Self::parse_window_manager_type_override(&wm_type_str)?;
+        }
+        if let Some(interval) =
+            parse_config_value::<Seconds, _>("clipboard_poll_interval_secs", source)?
+        {
+            config.clipboard_poll_interval_secs = interval;
+        }
+        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", source)? {
+            config.require_hyprland = require_hyprland;
+        }
+        if let Some(path) = parse_config_value::<String, _>("activitywatch_db_path", source)? {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
+
+        Ok(())
+    }
+
+    fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
+        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
+            config.require_hyprland =
+                Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
+        }
+        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
+
+        Ok(())
     }
 }
 
@@ -502,41 +600,8 @@ impl IngestorNode for DesktopNode {
             "Initializing desktop node"
         );
 
-        // Apply config overrides logic
-        if let Some(context_config) = parse_typed_config::<DesktopConfig, _>("desktop", runtime) {
-            config = context_config;
-        }
-
-        if let Some(enabled) = parse_config_value::<bool, _>("clipboard_enabled", runtime) {
-            config.clipboard_enabled = enabled;
-        }
-        if let Some(enabled) = parse_config_value::<bool, _>("window_manager_enabled", runtime) {
-            config.window_manager_enabled = enabled;
-        }
-        if let Some(wm_type_str) = parse_config_value::<String, _>("window_manager_type", runtime) {
-            if let Ok(wm_type) = wm_type_str.parse::<WindowManagerType>() {
-                config.window_manager_type = wm_type;
-            } else {
-                warn!("Invalid window manager type: {}", wm_type_str);
-            }
-        }
-        if let Some(interval) =
-            parse_config_value::<Seconds, _>("clipboard_poll_interval_secs", runtime)
-        {
-            config.clipboard_poll_interval_secs = interval;
-        }
-        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", runtime) {
-            config.require_hyprland = require_hyprland;
-        }
-        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
-            config.require_hyprland = val.parse().unwrap_or(false);
-        }
-        if let Some(path) = parse_config_value::<String, _>("activitywatch_db_path", runtime) {
-            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
-        }
-        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
-            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
-        }
+        Self::apply_config_overrides(&mut config, runtime)?;
+        Self::apply_env_overrides(&mut config)?;
 
         info!(
             clipboard_enabled = config.clipboard_enabled,
@@ -838,20 +903,45 @@ impl IngestorNode for DesktopNode {
         .iter()
         .filter(|&&enabled| enabled)
         .count() as u64;
+        let connected_sources = [
+            state.health.clipboard_active,
+            state.health.window_manager_active,
+        ]
+        .iter()
+        .filter(|&&active| active)
+        .count() as u64;
+        let healthy = connected_sources > 0 || active_sources == 0;
+        let mut metadata = HashMap::new();
+        metadata.insert("enabled_sources".to_string(), json!(active_sources));
+        metadata.insert("connected_sources".to_string(), json!(connected_sources));
+        metadata.insert(
+            "watcher_health".to_string(),
+            json!({
+                "clipboard_active": state.health.clipboard_active,
+                "window_manager_active": state.health.window_manager_active,
+            }),
+        );
+        let description = if active_sources == 0 {
+            "Desktop Source (all watchers disabled)".to_string()
+        } else if connected_sources == 0 {
+            format!("Desktop Source ({active_sources} enabled watcher(s), none connected)")
+        } else {
+            format!(
+                "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)"
+            )
+        };
 
         Ok(SourceState {
-            description: "Desktop Source".to_string(),
+            description,
             last_updated: state
                 .last_state
                 .as_ref()
                 .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
-            healthy: state.health.clipboard_active
-                || state.health.window_manager_active
-                || active_sources == 0,
+            healthy,
             recent_activity,
-            metadata: HashMap::new(),
-            is_connected: true,
+            metadata,
+            is_connected: connected_sources > 0 || active_sources == 0,
             lag_seconds: None,
         })
     }
@@ -881,6 +971,24 @@ mod tests {
     use super::*;
     use serde_json::json;
     use xtask::sandbox::sinex_test;
+
+    fn sample_activitywatch_entry(
+        kind: ActivityWatchEntryKind,
+        data: serde_json::Value,
+    ) -> xtask::sandbox::TestResult<ActivityWatchHistoryEntry> {
+        Ok(ActivityWatchHistoryEntry {
+            row_id: 7,
+            bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            kind,
+            host: "sinnix-prime".to_string(),
+            started_at: Timestamp::from_unix_timestamp(10)
+                .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?,
+            ended_at: Timestamp::from_unix_timestamp(11)
+                .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?,
+            duration_ms: 1000,
+            data,
+        })
+    }
 
     #[sinex_test]
     async fn activitywatch_historical_start_row_prefers_checkpoint_when_present()
@@ -913,6 +1021,132 @@ mod tests {
             DesktopNode::historical_activitywatch_start_row(&state, &Checkpoint::None),
             42
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_config_overrides_reject_invalid_window_manager_type()
+    -> xtask::sandbox::TestResult<()> {
+        let mut config = DesktopConfig::default();
+        let overrides = HashMap::from([("window_manager_type".to_string(), json!("sway"))]);
+
+        let error = DesktopNode::apply_config_overrides(&mut config, &overrides)
+            .expect_err("invalid window manager overrides should fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("window manager type"));
+        assert!(message.contains("sway"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_env_override_rejects_invalid_require_hyprland_value()
+    -> xtask::sandbox::TestResult<()> {
+        let error = DesktopNode::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", "maybe")
+            .expect_err("invalid env bool should fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_DESKTOP_REQUIRE_HYPRLAND"));
+        assert!(message.contains("maybe"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_is_disconnected_when_enabled_watchers_are_inactive()
+    -> xtask::sandbox::TestResult<()> {
+        let node = DesktopNode::new();
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert!(
+            source.description.contains("none connected"),
+            "unexpected description: {}",
+            source.description
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("enabled_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_window_event_rejects_missing_app_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry =
+            sample_activitywatch_entry(ActivityWatchEntryKind::Window, json!({ "title": "main.rs" }))?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("missing ActivityWatch app should fail honestly");
+
+        assert!(error.to_string().contains("missing required field 'app'"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_window_event_keeps_nonempty_redacted_title()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Window,
+            json!({ "app": "Alacritty", "title": "main.rs" }),
+        )?;
+
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+
+        assert_eq!(event.payload["title"], json!("main.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_web_event_rejects_non_string_url_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Web,
+            json!({ "app": "Firefox", "title": "Docs", "url": 42 }),
+        )?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("non-string ActivityWatch url should fail honestly");
+
+        assert!(error.to_string().contains("field 'url' must be a string"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_web_event_keeps_nonempty_redacted_url()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Web,
+            json!({ "app": "Firefox", "title": "Docs", "url": "https://example.com/docs" }),
+        )?;
+
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+
+        assert_eq!(event.payload["url"], json!("https://example.com/docs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_afk_event_rejects_empty_status_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry =
+            sample_activitywatch_entry(ActivityWatchEntryKind::Afk, json!({ "status": "   " }))?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("empty ActivityWatch status should fail honestly");
+
+        assert!(error.to_string().contains("field 'status' must not be empty"));
         Ok(())
     }
 }

@@ -39,6 +39,9 @@ pub(crate) fn template_db_name() -> Option<String> {
 static TEMPLATE_CREATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+const CREATE_TEMPLATE_DB_TIMEOUT: Duration = Duration::from_secs(10);
+const APPLY_TEMPLATE_SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
+
 // ── TemplateGuard ───────────────────────────────────────────────────────────
 
 /// Holds a shared advisory lock for the template database on a live admin connection.
@@ -494,7 +497,7 @@ async fn rebuild_template(
 async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) -> TestResult<()> {
     let create_query = format!("CREATE DATABASE {template_name}");
     match tokio::time::timeout(
-        Duration::from_secs(10),
+        CREATE_TEMPLATE_DB_TIMEOUT,
         sqlx::query(&create_query).execute(&mut *admin_conn),
     )
     .await
@@ -510,7 +513,10 @@ async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) 
                 Err(eyre!(format!("Create database failed: {err}")))
             }
         }
-        Err(_) => Err(eyre!("Create database timeout")),
+        Err(_) => Err(eyre!(format!(
+            "Create database timed out after {:?} while creating template {template_name}",
+            CREATE_TEMPLATE_DB_TIMEOUT
+        ))),
     }
 }
 
@@ -547,11 +553,18 @@ async fn run_template_schema_apply(
         })?;
 
     let apply_result = tokio::time::timeout(
-        Duration::from_secs(30),
+        APPLY_TEMPLATE_SCHEMA_TIMEOUT,
         sinex_db::apply_schema_for_url(&template_schema_url),
     )
     .await
-    .map_err(|_| eyre!("Schema apply timeout - check if all required extensions are installed"))
+    .map_err(|_| {
+        eyre!(format!(
+            "Schema apply timed out after {:?} for template database {template_name}. \
+             Check for missing PostgreSQL extensions, exhausted Timescale background workers, \
+             or a stuck declarative DDL statement.",
+            APPLY_TEMPLATE_SCHEMA_TIMEOUT
+        ))
+    })
     .and_then(|res| res.map_err(|e| eyre!(format!("Schema apply failed: {e}"))));
     apply_result?;
 

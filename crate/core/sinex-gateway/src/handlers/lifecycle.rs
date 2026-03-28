@@ -584,11 +584,18 @@ fn merge_preview_summary(preview_summary: Option<Value>, extra: Value) -> Option
     }
 }
 
-fn tombstone_duration_ms(operation: &TombstoneOperation, finished_at: Timestamp) -> Option<i32> {
-    let created_at = Timestamp::parse_rfc3339(&operation.created_at).ok()?;
+fn tombstone_duration_ms(
+    operation: &TombstoneOperation,
+    finished_at: Timestamp,
+) -> Result<Option<i32>> {
+    let created_at = Timestamp::parse_rfc3339(&operation.created_at).map_err(|error| {
+        SinexError::invalid_state("Tombstone operation has invalid created_at timestamp")
+            .with_context("created_at", &operation.created_at)
+            .with_std_error(&error)
+    })?;
     let elapsed_ms = (finished_at - created_at).whole_milliseconds();
     let clamped = elapsed_ms.clamp(0, i128::from(i32::MAX));
-    Some(clamped as i32)
+    Ok(Some(clamped as i32))
 }
 
 fn parse_previewed_event_ids(
@@ -636,7 +643,7 @@ async fn reconcile_tombstone_expiry(
         operation.error_details = Some("Expired before approval".to_string());
         sync_tombstone_phase(operation);
         let scope = serde_json::to_value(&*operation)?;
-        let duration_ms = tombstone_duration_ms(operation, now);
+        let duration_ms = tombstone_duration_ms(operation, now)?;
         pool.state()
             .update_tombstone_operation(
                 operation_id,
@@ -1109,7 +1116,7 @@ pub async fn handle_tombstone_cancel(
             scope,
             record.preview_summary.clone(),
             Some("Tombstone operation cancelled"),
-            tombstone_duration_ms(&operation, finished_at),
+            tombstone_duration_ms(&operation, finished_at)?,
         )
         .await
         .map_err(|e| {

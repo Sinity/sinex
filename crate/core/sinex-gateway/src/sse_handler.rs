@@ -6,14 +6,15 @@
 use crate::auth::Role;
 use crate::rpc_server::{AccessOutcome, RpcAuthContext, log_access_audit};
 use crate::sse_bus::{
-    HEARTBEAT_INTERVAL, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
+    HEARTBEAT_INTERVAL, SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload,
+    SseMessage,
     SubscriptionBus,
 };
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::query::SubscriptionFilter;
 use std::convert::Infallible;
@@ -205,8 +206,7 @@ enum MergedItem {
 fn format_sse_message(msg: SseMessage) -> SseEvent {
     match msg {
         SseMessage::Event { seq, event } => {
-            let data = serde_json::to_string(&SseEventPayload { event: &event })
-                .unwrap_or_else(|_| "{}".to_string());
+            let data = serialize_sse_payload("event", &SseEventPayload { event: &event });
             SseEvent::default()
                 .event("event")
                 .id(seq.to_string())
@@ -217,19 +217,70 @@ fn format_sse_message(msg: SseMessage) -> SseEvent {
             to_seq,
             dropped,
         } => {
-            let data = serde_json::to_string(&SseGapPayload {
-                from_seq,
-                to_seq,
-                dropped,
-            })
-            .unwrap_or_else(|_| "{}".to_string());
+            let data = serialize_sse_payload(
+                "gap",
+                &SseGapPayload {
+                    from_seq,
+                    to_seq,
+                    dropped,
+                },
+            );
             SseEvent::default().event("gap").data(data)
         }
         SseMessage::Heartbeat { ts } => {
-            let data = serde_json::to_string(&SseHeartbeatPayload { ts })
-                .unwrap_or_else(|_| "{}".to_string());
+            let data = serialize_sse_payload("heartbeat", &SseHeartbeatPayload { ts });
             SseEvent::default().event("heartbeat").data(data)
         }
+    }
+}
+
+fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> String {
+    match serde_json::to_string(payload) {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::error!(
+                payload_kind,
+                error = %error,
+                "Failed to serialize SSE payload"
+            );
+            serde_json::to_string(&SseErrorPayload {
+                code: "serialization_error".to_string(),
+                message: format!("failed to serialize SSE {payload_kind} payload: {error}"),
+            })
+            .expect("SSE error payload should always serialize")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serialize_sse_payload;
+    use serde::Serialize;
+    use xtask::sandbox::sinex_test;
+
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("boom"))
+        }
+    }
+
+    #[sinex_test]
+    async fn serialize_sse_payload_surfaces_serialization_failures() -> TestResult<()> {
+        let rendered = serialize_sse_payload("event", &FailingSerialize);
+        let payload: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(payload["code"], "serialization_error");
+        assert!(
+            payload["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("event") && message.contains("boom"))
+        );
+        Ok(())
     }
 }
 

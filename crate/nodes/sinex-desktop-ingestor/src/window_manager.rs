@@ -80,6 +80,42 @@ fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node
     sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
 }
 
+fn collect_hyprland_candidates<I>(entries: I, hypr_dir: &Path) -> NodeResult<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = std::io::Result<PathBuf>>,
+{
+    let mut candidates = Vec::new();
+
+    for entry in entries {
+        let path = entry.map_err(|error| {
+            platform_error(
+                format!(
+                    "Cannot inspect Hyprland runtime entry under {}: {error}",
+                    hypr_dir.display()
+                ),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            )
+        })?;
+
+        let socket_path = path.join(".socket2.sock");
+        let has_socket = socket_path.try_exists().map_err(|error| {
+            platform_error(
+                format!(
+                    "Cannot probe Hyprland event socket {}: {error}",
+                    socket_path.display()
+                ),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            )
+        })?;
+
+        if has_socket {
+            candidates.push(path);
+        }
+    }
+
+    Ok(candidates)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HyprlandSocketPaths {
     event_socket: String,
@@ -127,10 +163,8 @@ fn select_hyprland_base_path(
         )
     })?;
 
-    let candidates: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|value| value.path()))
-        .filter(|path| path.join(".socket2.sock").exists())
-        .collect();
+    let candidates =
+        collect_hyprland_candidates(entries.map(|entry| entry.map(|value| value.path())), &hypr_dir)?;
 
     match candidates.as_slice() {
         [candidate] => Ok(candidate.clone()),
@@ -356,7 +390,7 @@ impl WindowManagerWatcher {
         &self,
         material_id: Uuid,
         payload_bytes: Vec<u8>,
-        mut event: Event<JsonValue>,
+        event: Event<JsonValue>,
     ) -> NodeResult<()> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(
@@ -391,11 +425,41 @@ impl WindowManagerWatcher {
         })
     }
 
-    /// Parse ID string to integer with fallback and warning
-    fn parse_id(&self, id_str: &str, context: &str) -> i32 {
-        id_str.parse().unwrap_or_else(|_| {
-            warn!("Failed to parse {} '{}', defaulting to 0", context, id_str);
-            0
+    fn parse_id(&self, id_str: &str, context: &str) -> NodeResult<i32> {
+        id_str.parse().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to parse {context} '{id_str}' as integer: {error}"
+            ))
+            .with_context("id_context", context)
+            .with_context("id_value", id_str.to_string())
+        })
+    }
+
+    fn parse_optional_id_or_zero(&self, value: Option<&str>, context: &str) -> NodeResult<i32> {
+        value.map_or(Ok(0), |id| self.parse_id(id, context))
+    }
+
+    fn serialize_snapshot_entry<T: serde::Serialize>(
+        &self,
+        value: &T,
+        context: &str,
+    ) -> NodeResult<JsonValue> {
+        serde_json::to_value(value).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to serialize {context} for window manager snapshot: {error}"
+            ))
+            .with_context("snapshot_context", context.to_string())
+        })
+    }
+
+    fn serialize_snapshot_payload(
+        &self,
+        payload: &HyprlandStateCapturedPayload,
+    ) -> NodeResult<String> {
+        serde_json::to_string(payload).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to serialize window manager snapshot payload: {error}"
+            ))
         })
     }
 
@@ -522,7 +586,7 @@ impl WindowManagerWatcher {
             let workspace_id = self
                 .current_workspace
                 .as_deref()
-                .map_or(0, |id| self.parse_id(id, "workspace_id"));
+                .map_or(Ok(0), |id| self.parse_id(id, "workspace_id"))?;
             let metadata = serde_json::json!({
                 "window_class": class,
                 "window_title": title,
@@ -595,7 +659,7 @@ impl WindowManagerWatcher {
                 .text
                 .into_owned(); // Title might contain commas
 
-            let workspace_id_parsed = self.parse_id(&workspace_id, "workspace_id");
+            let workspace_id_parsed = self.parse_id(&workspace_id, "workspace_id")?;
             let metadata = serde_json::json!({
                 "window_id": window_address,
                 "window_class": window_class,
@@ -696,9 +760,10 @@ impl WindowManagerWatcher {
                 .as_ref()
                 .map(|info| info.title.clone())
                 .unwrap_or_default(),
-            workspace_id: window_info
-                .as_ref()
-                .map_or(0, |info| self.parse_id(&info.workspace_id, "workspace_id")),
+            workspace_id: self.parse_optional_id_or_zero(
+                window_info.as_ref().map(|info| info.workspace_id.as_str()),
+                "workspace_id",
+            )?,
             close_reason: None,
         };
         let event = payload
@@ -734,9 +799,10 @@ impl WindowManagerWatcher {
     async fn handle_window_moved(&mut self, data: &str) -> NodeResult<()> {
         // Format: "address,workspace"
         if let Some((address, workspace)) = data.split_once(',') {
+            let new_workspace_id = self.parse_id(workspace, "workspace_id")?;
             let metadata = serde_json::json!({
                 "window_address": address,
-                "new_workspace_id": self.parse_id(workspace, "workspace_id"),
+                "new_workspace_id": new_workspace_id,
             });
             let material_id = self
                 .register_material("movewindow", metadata.clone())
@@ -749,7 +815,7 @@ impl WindowManagerWatcher {
             })?;
             let payload = HyprlandWindowMovedPayload {
                 window_address: address.to_string(),
-                new_workspace_id: self.parse_id(workspace, "workspace_id"),
+                new_workspace_id,
                 moved_at: Timestamp::now().to_string(),
             };
             let event = payload
@@ -790,11 +856,17 @@ impl WindowManagerWatcher {
     /// Handle workspace changed event
     async fn handle_workspace_changed(&mut self, data: &str) -> NodeResult<()> {
         let workspace_id = data.trim().to_string();
+        let from_workspace_id = self.parse_optional_id_or_zero(
+            self.current_workspace.as_deref(),
+            "current_workspace_id",
+        )?;
+        let to_workspace_id = self.parse_id(&workspace_id, "workspace_id")?;
+        let monitor_id =
+            self.parse_optional_id_or_zero(self.current_monitor.as_deref(), "monitor_id")?;
 
         let metadata = serde_json::json!({
-            "from_workspace_id": self.current_workspace.as_ref()
-                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
-            "to_workspace_id": self.parse_id(&workspace_id, "workspace_id"),
+            "from_workspace_id": from_workspace_id,
+            "to_workspace_id": to_workspace_id,
         });
         let material_id = self
             .register_material("workspace", metadata.clone())
@@ -806,15 +878,9 @@ impl WindowManagerWatcher {
             ))
         })?;
         let payload = HyprlandWorkspaceSwitchedPayload {
-            from_workspace_id: self
-                .current_workspace
-                .as_ref()
-                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
-            to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-            monitor_id: self
-                .current_monitor
-                .as_ref()
-                .map_or(0, |m| self.parse_id(m, "monitor_id")),
+            from_workspace_id,
+            to_workspace_id,
+            monitor_id,
             active_window_id: self.current_focused_window.clone(),
         };
         let event = payload
@@ -849,9 +915,16 @@ impl WindowManagerWatcher {
     async fn handle_monitor_focused(&mut self, data: &str) -> NodeResult<()> {
         // Format: "monitor,workspace"
         if let Some((monitor, workspace)) = data.split_once(',') {
+            let monitor_id = self.parse_id(monitor, "monitor_id")?;
+            let workspace_id = self.parse_id(workspace, "workspace_id")?;
+            let previous_monitor = self
+                .current_monitor
+                .as_ref()
+                .map(|value| self.parse_id(value, "monitor_id"))
+                .transpose()?;
             let metadata = serde_json::json!({
-                "monitor_id": self.parse_id(monitor, "monitor_id"),
-                "workspace_id": self.parse_id(workspace, "workspace_id"),
+                "monitor_id": monitor_id,
+                "workspace_id": workspace_id,
                 "previous_monitor": self.current_monitor,
             });
             let material_id = self
@@ -864,12 +937,9 @@ impl WindowManagerWatcher {
                 ))
             })?;
             let payload = HyprlandMonitorFocusedPayload {
-                monitor_id: self.parse_id(monitor, "monitor_id"),
-                workspace_id: self.parse_id(workspace, "workspace_id"),
-                previous_monitor: self
-                    .current_monitor
-                    .as_ref()
-                    .map(|m| self.parse_id(m, "monitor_id")),
+                monitor_id,
+                workspace_id,
+                previous_monitor,
                 focused_at: Timestamp::now().to_string(),
             };
             let event = payload
@@ -1061,23 +1131,13 @@ impl WindowManagerWatcher {
         let windows = self
             .windows
             .values()
-            .map(|window| {
-                serde_json::to_value(window).unwrap_or_else(|e| {
-                    warn!("Failed to serialize window info: {}", e);
-                    serde_json::json!({})
-                })
-            })
-            .collect::<Vec<_>>();
+            .map(|window| self.serialize_snapshot_entry(window, "window"))
+            .collect::<NodeResult<Vec<_>>>()?;
         let workspaces = self
             .workspaces
             .values()
-            .map(|workspace| {
-                serde_json::to_value(workspace).unwrap_or_else(|e| {
-                    warn!("Failed to serialize workspace info: {}", e);
-                    serde_json::json!({})
-                })
-            })
-            .collect::<Vec<_>>();
+            .map(|workspace| self.serialize_snapshot_entry(workspace, "workspace"))
+            .collect::<NodeResult<Vec<_>>>()?;
         let metadata = serde_json::json!({
             "snapshot": true,
             "window_count": self.windows.len(),
@@ -1087,19 +1147,17 @@ impl WindowManagerWatcher {
             windows,
             workspaces,
             monitors: Vec::new(),
-            current_workspace: self
-                .current_workspace
-                .as_ref()
-                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
+            current_workspace: self.parse_optional_id_or_zero(
+                self.current_workspace.as_deref(),
+                "current_workspace_id",
+            )?,
             current_monitor: self
-                .current_monitor
-                .as_ref()
-                .map_or(0, |m| self.parse_id(m, "monitor_id")),
+                .parse_optional_id_or_zero(self.current_monitor.as_deref(), "monitor_id")?,
             captured_at: Timestamp::now().to_string(),
         };
         let material_payload = self.build_material_payload(
             "state_snapshot",
-            &serde_json::to_string(&snapshot_payload).unwrap_or_else(|_| "{}".to_string()),
+            &self.serialize_snapshot_payload(&snapshot_payload)?,
             metadata.clone(),
         );
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
@@ -1245,6 +1303,66 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_hyprland_candidates_rejects_entry_iteration_failures() -> TestResult<()> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-wm-{}", Uuid::now_v7()));
+        let hypr_dir = runtime_dir.join("hypr");
+        std::fs::create_dir_all(&hypr_dir)?;
+
+        let error = collect_hyprland_candidates(
+            vec![Err(std::io::Error::other("broken directory entry"))],
+            &hypr_dir,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Cannot inspect Hyprland runtime entry"));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_workspace_changed_rejects_invalid_workspace_id() -> TestResult<()> {
+        let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
+
+        let error = watcher
+            .handle_workspace_changed("not-a-number")
+            .await
+            .expect_err("invalid workspace ids must not be coerced to zero");
+
+        assert!(error.to_string().contains("workspace_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_monitor_focused_rejects_invalid_monitor_id() -> TestResult<()> {
+        let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
+
+        let error = watcher
+            .handle_monitor_focused("left,2")
+            .await
+            .expect_err("invalid monitor ids must not be coerced to zero");
+
+        assert!(error.to_string().contains("monitor_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn capture_state_snapshot_rejects_invalid_current_workspace_id() -> TestResult<()> {
+        let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
+        watcher.current_workspace = Some("oops".to_string());
+
+        let error = watcher
+            .capture_state_snapshot()
+            .await
+            .expect_err("invalid snapshot ids must fail before emitting");
+
+        assert!(error.to_string().contains("current_workspace_id"));
         Ok(())
     }
 }

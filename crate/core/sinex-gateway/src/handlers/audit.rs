@@ -39,11 +39,44 @@ struct AffectedEventRow {
     tier: String,
 }
 
-fn explicit_lifecycle_summary(summary: Option<&Value>) -> Option<LifecycleOperationSummary> {
-    summary
-        .cloned()
-        .and_then(|value| serde_json::from_value::<LifecycleOperationSummary>(value).ok())
-        .filter(|summary| !summary.affected_event_ids.is_empty())
+fn uses_lifecycle_audit_summary(operation_type: &str) -> bool {
+    matches!(operation_type, "archive" | "restore" | "purge" | "tombstone")
+}
+
+fn explicit_lifecycle_summary(
+    operation_type: &str,
+    summary: Option<&Value>,
+) -> Result<Option<LifecycleOperationSummary>> {
+    if !uses_lifecycle_audit_summary(operation_type) {
+        return Ok(None);
+    }
+
+    let Some(summary) = summary else {
+        return Ok(None);
+    };
+
+    let summary =
+        serde_json::from_value::<LifecycleOperationSummary>(summary.clone()).map_err(|error| {
+            SinexError::invalid_state(format!(
+                "invalid lifecycle preview_summary for {operation_type} audit trail"
+            ))
+            .with_std_error(&error)
+        })?;
+
+    if summary.affected_event_ids.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(summary))
+}
+
+fn parse_affected_event_tier(operation_id: &Id<Operation>, tier: &str) -> Result<Option<DataTier>> {
+    DataTier::from_str(tier).map(Some).map_err(|error| {
+        SinexError::invalid_state(format!(
+            "operation {operation_id} returned invalid affected-event tier '{tier}'"
+        ))
+        .with_context("reason", error)
+    })
 }
 
 async fn query_affected_events_by_operation_links(
@@ -111,16 +144,18 @@ async fn query_affected_events_by_operation_links(
 
     let events = rows
         .into_iter()
-        .map(|row| EventSummary {
-            id: Id::from_uuid(row.id),
-            source: row.source.into(),
-            event_type: row.event_type.into(),
-            ts_orig: row.ts_orig,
-            ts_coided: row.ts_coided,
-            tier: DataTier::from_str(&row.tier).ok(),
-            provenance_operation_id: Some(*operation_id),
+        .map(|row| {
+            Ok(EventSummary {
+                id: Id::from_uuid(row.id),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
+                ts_orig: row.ts_orig,
+                ts_coided: row.ts_coided,
+                tier: parse_affected_event_tier(operation_id, &row.tier)?,
+                provenance_operation_id: Some(*operation_id),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok((events, has_more))
 }
@@ -204,16 +239,18 @@ async fn query_affected_events_by_ids(
 
     let events = rows
         .into_iter()
-        .map(|row| EventSummary {
-            id: Id::from_uuid(row.id),
-            source: row.source.into(),
-            event_type: row.event_type.into(),
-            ts_orig: row.ts_orig,
-            ts_coided: row.ts_coided,
-            tier: DataTier::from_str(&row.tier).ok(),
-            provenance_operation_id: Some(*operation_id),
+        .map(|row| {
+            Ok(EventSummary {
+                id: Id::from_uuid(row.id),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
+                ts_orig: row.ts_orig,
+                ts_coided: row.ts_coided,
+                tier: parse_affected_event_tier(operation_id, &row.tier)?,
+                provenance_operation_id: Some(*operation_id),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok((events, has_more))
 }
@@ -224,13 +261,14 @@ async fn query_affected_events_by_ids(
 /// operations without that data fall back to the legacy archive-window heuristic.
 async fn query_affected_events(
     pool: &PgPool,
+    operation_type: &str,
     operation_id: &Id<Operation>,
     duration_ms: Option<i32>,
     limit: i64,
     after_id: Option<&Id<Event>>,
     preview_summary: Option<&Value>,
 ) -> Result<(Vec<EventSummary>, bool)> {
-    if let Some(summary) = explicit_lifecycle_summary(preview_summary) {
+    if let Some(summary) = explicit_lifecycle_summary(operation_type, preview_summary)? {
         let affected_event_ids = summary
             .affected_event_ids
             .iter()
@@ -261,7 +299,7 @@ async fn query_affected_events(
     let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
     let fetch_limit = page_size + 1;
     let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
-    let op_uuid = operation_id.as_uuid().to_string();
+    let op_uuid = operation_id.to_uuid();
 
     let mut rows: Vec<AffectedEventRow> = if let Some(cursor) = after_id {
         let cursor_uuid = cursor.to_uuid();
@@ -275,8 +313,8 @@ async fn query_affected_events(
                 ts_coided,
                 'archive'::text AS tier
             FROM audit.archived_events
-            WHERE archived_at >= ($1::uuid)::timestamptz
-              AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
+            WHERE archived_at >= uuid_extract_timestamp($1::uuid)::timestamptz
+              AND archived_at <= uuid_extract_timestamp($1::uuid)::timestamptz + make_interval(secs => $2)
               AND id < $4::uuid
             ORDER BY id DESC
             LIMIT $3
@@ -302,8 +340,8 @@ async fn query_affected_events(
                 ts_coided,
                 'archive'::text AS tier
             FROM audit.archived_events
-            WHERE archived_at >= ($1::uuid)::timestamptz
-              AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
+            WHERE archived_at >= uuid_extract_timestamp($1::uuid)::timestamptz
+              AND archived_at <= uuid_extract_timestamp($1::uuid)::timestamptz + make_interval(secs => $2)
             ORDER BY id DESC
             LIMIT $3
             ",
@@ -323,16 +361,18 @@ async fn query_affected_events(
 
     let events = rows
         .into_iter()
-        .map(|row| EventSummary {
-            id: Id::from_uuid(row.id),
-            source: row.source.into(),
-            event_type: row.event_type.into(),
-            ts_orig: row.ts_orig,
-            ts_coided: row.ts_coided,
-            tier: DataTier::from_str(&row.tier).ok(),
-            provenance_operation_id: Some(*operation_id),
+        .map(|row| {
+            Ok(EventSummary {
+                id: Id::from_uuid(row.id),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
+                ts_orig: row.ts_orig,
+                ts_coided: row.ts_coided,
+                tier: parse_affected_event_tier(operation_id, &row.tier)?,
+                provenance_operation_id: Some(*operation_id),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok((events, has_more))
 }
@@ -355,9 +395,10 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         .ok_or_else(|| SinexError::not_found(format!("Operation not found: {operation_id}")))?;
 
     let preview_summary = record.preview_summary.clone();
+    let operation_type = record.operation_type.clone();
     let operation = OperationRecord {
         id: Id::from_uuid(*record.id.as_uuid()),
-        operation_type: record.operation_type,
+        operation_type,
         operator: record.operator,
         scope: record.scope,
         result_status: record.result_status,
@@ -369,6 +410,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let limit = (request.limit as i64).min(MAX_AUDIT_PAGE_SIZE).max(1);
     let (affected_events, has_more) = query_affected_events(
         pool,
+        &operation.operation_type,
         &operation_id,
         record.duration_ms,
         limit,

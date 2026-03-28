@@ -53,7 +53,8 @@ pub fn processing_error_fmt(args: std::fmt::Arguments<'_>) -> SinexError {
 /// ```rust
 /// use sinex_node_sdk::error_helpers::parse_config_value;
 ///
-/// let value: Option<bool> = parse_config_value("enabled", &context);
+/// let value: Option<bool> = parse_config_value("enabled", &context)?;
+/// # Ok::<(), sinex_node_sdk::SinexError>(())
 /// ```
 pub trait ConfigAccessor {
     fn config_map(&self) -> &HashMap<String, serde_json::Value>;
@@ -74,11 +75,20 @@ impl ConfigAccessor for HashMap<String, serde_json::Value> {
 pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     key: &str,
     source: &S,
-) -> Option<T> {
-    source
-        .config_map()
-        .get(key)
-        .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
+) -> Result<Option<T>, SinexError> {
+    let Some(json) = source.config_map().get(key) else {
+        return Ok(None);
+    };
+
+    serde_json::from_value::<T>(json.clone()).map(Some).map_err(|error| {
+        json_error_with_context(
+            error,
+            &format!(
+                "Invalid configuration value for key `{key}` as {}",
+                std::any::type_name::<T>()
+            ),
+        )
+    })
 }
 
 /// Parse strongly-typed configuration from a specific key in the context
@@ -93,16 +103,26 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
 ///     enabled: bool,
 /// }
 ///
-/// let config: Option<MyConfig> = parse_typed_config("my_service", &context);
+/// let config: Option<MyConfig> = parse_typed_config("my_service", &context)?;
+/// # Ok::<(), sinex_node_sdk::SinexError>(())
 /// ```
 pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     config_key: &str,
     source: &S,
-) -> Option<T> {
-    source
-        .config_map()
-        .get(config_key)
-        .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
+) -> Result<Option<T>, SinexError> {
+    let Some(json) = source.config_map().get(config_key) else {
+        return Ok(None);
+    };
+
+    serde_json::from_value::<T>(json.clone()).map(Some).map_err(|error| {
+        json_error_with_context(
+            error,
+            &format!(
+                "Invalid configuration section `{config_key}` as {}",
+                std::any::type_name::<T>()
+            ),
+        )
+    })
 }
 
 /// Path sanitization utilities

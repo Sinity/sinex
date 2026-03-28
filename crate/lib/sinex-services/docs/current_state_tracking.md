@@ -2,7 +2,9 @@
 
 ## Overview
 
-Sinex uses **TimescaleDB continuous aggregates** and **PostgreSQL materialized views** to track current state efficiently, addressing the architectural gap where event sourcing tracks "what happened" but not "what is."
+Sinex uses a mix of **TimescaleDB continuous aggregates**, **event-time SQL views**, and
+**PostgreSQL materialized views** to track current state efficiently, addressing the
+architectural gap where event sourcing tracks "what happened" but not "what is."
 
 ## Architecture Decision
 
@@ -10,7 +12,8 @@ Sinex uses **TimescaleDB continuous aggregates** and **PostgreSQL materialized v
 
 **Compressed conclusion**:
 - keep PostgreSQL + TimescaleDB as the active current-state substrate,
-- use continuous aggregates for time-bucketed operational state,
+- use continuous aggregates for ingest-time operational telemetry,
+- use live event-time views for user-facing activity timelines,
 - use materialized views for entity-level current-state projections,
 - reserve synthesis events for business-meaningful derived facts, not generic state mirrors,
 - revisit dedicated streaming databases only if freshness or scale requirements exceed what this stack can realistically satisfy.
@@ -19,11 +22,12 @@ Sinex uses **TimescaleDB continuous aggregates** and **PostgreSQL materialized v
 
 | Approach | Use Case | Freshness | Example |
 |----------|----------|-----------|---------|
-| **Continuous Aggregates** | Time-series current state | 5-10 min | "What window is focused right now?" |
+| **Event-Time Views** | User-facing activity timelines | Immediate | "What window was focused then?" |
+| **Continuous Aggregates** | Ingest-time operational telemetry | 5-10 min | "How is ingestd behaving?" |
 | **Materialized Views** | Entity-level current state | Manual refresh | "What's the current state of entity X?" |
 | **Synthesis Events** | Business-meaningful derivations | Real-time | "User became idle" |
 
-## Continuous Aggregates (Time-Series State)
+## Event-Time Activity Views
 
 ### `current_window_focus`
 
@@ -43,7 +47,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 3-hour lag window
+**Freshness**: Live view, keyed by `ts_orig`
 
 **Schema**:
 
@@ -74,7 +78,7 @@ ORDER BY total_executions DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 3-hour lag window
+**Freshness**: Live view, keyed by `ts_orig`
 
 **Schema**:
 
@@ -105,7 +109,7 @@ ORDER BY total_events DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 3-hour lag window
+**Freshness**: Live view, keyed by `ts_orig`
 
 **Schema**:
 
@@ -134,7 +138,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 3-hour lag window
+**Freshness**: Live view, keyed by `ts_orig`
 
 **Schema**:
 
@@ -240,21 +244,12 @@ ORDER BY timestamp DESC;
 
 ## Refresh Strategies
 
-### Continuous Aggregates
+### Event-Time Views
 
-Continuous aggregates are automatically refreshed by TimescaleDB according to their refresh policies.
-
-**Default policies**:
-
-- 5-minute buckets: Refresh every 5 minutes
-- 1-hour buckets: Refresh every 10 minutes
-- Lag window: 3 hours (allows late-arriving events)
-
-**Manual refresh** (if needed):
-
-```sql
-CALL refresh_continuous_aggregate('sinex_telemetry.current_window_focus', NULL, NULL);
-```
+The activity read models (`current_window_focus`, `command_frequency_hourly`,
+`file_activity_summary`, `current_system_state`, and `recent_activity_summary`) are ordinary
+views over `core.events`. They stay fresh immediately and respect `ts_orig`, which makes
+historical imports visible without waiting for a refresh policy.
 
 ### Materialized Views
 
@@ -279,7 +274,8 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY sinex_telemetry.current_device_state;
 
 ### Query Performance
 
-Continuous aggregates pre-compute common queries, providing:
+The event-time activity views avoid import-time drift and "empty until first refresh" behavior.
+The operator-facing continuous aggregates still pre-compute common ingest telemetry, providing:
 
 - **Sub-second latency** for current state queries
 - **No full table scans** on core.events
@@ -303,9 +299,9 @@ Continuous aggregates use additional storage:
 
 ### Refresh Load
 
-Continuous aggregates refresh incrementally:
+Only the operator-facing continuous aggregates refresh incrementally:
 
-- **Refresh window**: Only processes new data since last refresh
+- **Refresh window**: Only processes new ingest-time data since last refresh
 - **Background refresh**: Does not block queries or writes
 - **Concurrency**: Multiple aggregates can refresh in parallel
 
@@ -358,16 +354,18 @@ psql -c "SELECT view_name, schedule_interval, start_offset, end_offset FROM time
 
 ### Manual Refresh
 
-If you need to force a refresh (e.g., after backfilling events):
+If you need to force a refresh of the operator telemetry CAs:
 
 ```sql
--- Refresh all continuous aggregates
-CALL refresh_continuous_aggregate('sinex_telemetry.current_window_focus', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.command_frequency_hourly', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.file_activity_summary', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.current_system_state', NULL, NULL);
+-- Refresh operator continuous aggregates
+CALL refresh_continuous_aggregate('sinex_telemetry.gateway_stats_1h', NULL, NULL);
+CALL refresh_continuous_aggregate('sinex_telemetry.stream_stats_1h', NULL, NULL);
+CALL refresh_continuous_aggregate('sinex_telemetry.assembly_stats_1h', NULL, NULL);
+CALL refresh_continuous_aggregate('sinex_telemetry.node_stats_1h', NULL, NULL);
+CALL refresh_continuous_aggregate('sinex_telemetry.metric_counters_1h', NULL, NULL);
+CALL refresh_continuous_aggregate('sinex_telemetry.ingestd_batch_stats_1h', NULL, NULL);
 
--- Refresh all materialized views
+-- Refresh materialized views
 REFRESH MATERIALIZED VIEW CONCURRENTLY entities.current_entity_state;
 REFRESH MATERIALIZED VIEW CONCURRENTLY sinex_telemetry.current_device_state;
 ```

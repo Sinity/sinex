@@ -4,10 +4,7 @@ This document captures the current design of `sinexctl`.
 
 ## Scope
 
-`sinexctl` is an operator CLI for Sinex with two execution paths:
-
-- Gateway RPC path (default for most commands)
-- Direct database path (`sinexctl db ...`) for diagnostics
+`sinexctl` is an operator CLI for Sinex. Its control path is the gateway RPC surface.
 
 ## Command Shape
 
@@ -27,7 +24,7 @@ Global options are layered with runtime env and local preferences:
 - Gateway/system: `gateway`, `core`
 - Query/inspection: `query`, `status`, `recent`, `errors`, `watch`, `tui`
 - Operations: `ops`, `audit`, `node`, `replay`, `dlq`, `lifecycle`, `gitops`
-- Local tooling: `config`, `completions`, `db`
+- Local tooling: `config`, `completions`
 
 ## Transport and Auth
 
@@ -52,7 +49,7 @@ Global options are layered with runtime env and local preferences:
 ## Design Constraints
 
 - Keep command names aligned with gateway method namespaces where practical (`replay.*`, `dlq.*`, `node.*`).
-- Keep direct-DB behavior isolated to `db` commands; avoid hidden fallback modes.
+- Keep operator behavior on the gateway surface; avoid hidden direct-DB fallback modes.
 - Prefer explicit operator intent for destructive flows (`dlq purge --confirm`, lifecycle tombstone approvals).
 
 ## Pointers

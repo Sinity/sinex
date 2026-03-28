@@ -243,7 +243,7 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
 
     let config =
-        GatewayConfig::load().with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+        GatewayConfig::load()?.with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
     let container = ServiceContainer::new(&config).await?;
 
     // pool_max_connections sums the max connections across all two pools.

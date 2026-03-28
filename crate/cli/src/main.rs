@@ -1,10 +1,10 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands, DbCommands,
-    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands,
-    NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
+    AuditCommand, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands, DemoCommand,
+    DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands,
+    OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, StatusCommand,
+    TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -117,12 +117,6 @@ enum Commands {
     /// Seed database with deterministic fake events for testing/demos
     Demo(DemoCommand),
 
-    /// Direct database access (bypasses gateway)
-    Db {
-        #[command(subcommand)]
-        cmd: DbCommands,
-    },
-
     /// Data lifecycle management (archive, restore, tombstone)
     Lifecycle {
         #[command(subcommand)]
@@ -135,7 +129,7 @@ enum Commands {
         cmd: GitOpsCommands,
     },
 
-    /// Telemetry data from continuous-aggregate views
+    /// Telemetry data from event-time activity views and operator read models
     Telemetry {
         #[command(subcommand)]
         cmd: TelemetryCommands,
@@ -194,11 +188,6 @@ async fn main() -> color_eyre::Result<()> {
         return cmd.execute(&mut clap_cmd);
     }
 
-    // Handle db commands early (doesn't need a gateway client)
-    if let Commands::Db { cmd } = cli.command {
-        return cmd.execute().await;
-    }
-
     // Handle demo command early (connects directly to DB, no gateway needed)
     if let Commands::Demo(cmd) = cli.command {
         return cmd.execute().await;
@@ -248,7 +237,6 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Audit(cmd) => cmd.execute(&client).await?,
         Commands::Tui(cmd) => cmd.execute(&client).await?,
         Commands::Config { .. } => unreachable!("Config command handled above"),
-        Commands::Db { .. } => unreachable!("Db command handled above"),
         Commands::Demo(_) => unreachable!("Demo command handled above"),
         Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
         Commands::GitOps { cmd } => cmd.execute(&client, format).await?,

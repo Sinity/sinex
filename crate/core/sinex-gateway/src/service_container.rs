@@ -52,7 +52,7 @@ impl ServiceContainer {
     /// Builds a default `GatewayConfig` with the given URL. For production use,
     /// prefer `new()` with a full `GatewayConfig` loaded from the environment.
     pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
-        let mut config = GatewayConfig::load();
+        let mut config = GatewayConfig::default();
         config.database_url = database_url.into();
         Self::new(&config).await
     }

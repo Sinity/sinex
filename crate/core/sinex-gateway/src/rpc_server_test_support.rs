@@ -57,7 +57,7 @@ pub fn read_token_from_env() -> eyre::Result<Option<String>> {
 
 #[must_use]
 pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
-    let config = GatewayConfig::load();
+    let config = GatewayConfig::load().expect("gateway config should load for rpc server tests");
     let limits = RpcServerLimits::from_config(&config);
     RpcServerLimitsSnapshot {
         concurrency_limit: limits.concurrency_limit,
