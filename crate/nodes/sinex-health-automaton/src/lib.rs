@@ -237,12 +237,14 @@ impl ScopeReconcilerNode for HealthAggregator {
         });
 
         if should_emit_window && state.config.enable_system_health_status {
-            let all_event_ids: Vec<Uuid> = state
-                .component_health
-                .values()
-                .flat_map(|ch| ch.events.iter())
-                .filter_map(|e| e.event_id.parse().ok())
-                .collect();
+            let mut all_event_ids = Vec::new();
+            for component_health in state.component_health.values() {
+                all_event_ids.extend(Self::collect_event_ids(
+                    &component_health.events,
+                    &component_health.component_name,
+                    "system status",
+                )?);
+            }
             periodic_reports.push(
                 DerivedOutput::reconciled(
                     self.create_system_status(state, now),
@@ -293,11 +295,8 @@ impl ScopeReconcilerNode for HealthAggregator {
             .events
             .retain(|e| e.timestamp >= window_start);
 
-        let window_event_ids: Vec<Uuid> = component_health
-            .events
-            .iter()
-            .filter_map(|e| e.event_id.parse().ok())
-            .collect();
+        let window_event_ids =
+            Self::collect_event_ids(&component_health.events, &component, "component report")?;
 
         // Immediate alert for component failure
         let mut immediate_alert = None;
@@ -356,6 +355,24 @@ impl ScopeReconcilerNode for HealthAggregator {
 }
 
 impl HealthAggregator {
+    fn collect_event_ids(
+        events: &[HealthEvent],
+        component: &str,
+        report_kind: &str,
+    ) -> Result<Vec<Uuid>, NodeLogicError> {
+        events
+            .iter()
+            .map(|event| {
+                Uuid::parse_str(&event.event_id).map_err(|error| {
+                    NodeLogicError::Processing(format!(
+                        "health aggregator {report_kind} for component '{component}' contains invalid event_id '{}': {error}",
+                        event.event_id
+                    ))
+                })
+            })
+            .collect()
+    }
+
     fn create_alert(
         &self,
         component: &str,
