@@ -332,6 +332,24 @@ impl FilesystemNode {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
+    fn log_watcher_shutdown_result(index: usize, result: Result<(), tokio::task::JoinError>) {
+        match result {
+            Ok(()) => {
+                debug!(watcher_index = index, "Filesystem watcher task finished before shutdown");
+            }
+            Err(error) if error.is_cancelled() => {
+                debug!(watcher_index = index, "Filesystem watcher task cancelled during shutdown");
+            }
+            Err(error) => {
+                warn!(
+                    watcher_index = index,
+                    error = %error,
+                    "Filesystem watcher task exited unexpectedly during shutdown"
+                );
+            }
+        }
+    }
+
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Filesystem runtime handles not initialized".to_string())
@@ -580,7 +598,9 @@ impl IngestorNode for FilesystemNode {
 
         // Wait for shutdown signal instead of awaiting pending
         let mut shutdown_rx = shutdown_rx;
-        let _ = shutdown_rx.changed().await;
+        if shutdown_rx.changed().await.is_err() {
+            warn!("Filesystem watcher shutdown channel dropped before explicit shutdown");
+        }
 
         Ok(ScanReport {
             events_processed: 0,
@@ -600,8 +620,8 @@ impl IngestorNode for FilesystemNode {
 
         // Wait for all watcher tasks to finish
         let mut guard = self.watch_handles.lock().await;
-        for handle in guard.drain(..) {
-            let _ = handle.await;
+        for (index, handle) in guard.drain(..).enumerate() {
+            Self::log_watcher_shutdown_result(index, handle.await);
         }
 
         info!(
@@ -666,25 +686,39 @@ impl ExplorationProvider for FilesystemNode {
 
 /// Estimate the number of inotify watches needed for a directory tree.
 /// Each subdirectory requires one watch when using `RecursiveMode::Recursive`.
-fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
-    fn count_dirs(dir: &Path, depth: usize, max_depth: Option<usize>) -> usize {
+fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> NodeResult<usize> {
+    fn count_dirs(dir: &Path, depth: usize, max_depth: Option<usize>) -> NodeResult<usize> {
         if max_depth.is_some_and(|m| depth >= m) {
-            return 0;
+            return Ok(0);
         }
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return 0;
-        };
+
+        let entries = std::fs::read_dir(dir).map_err(|error| {
+            SinexError::io("Failed to enumerate watch directory while estimating watch budget")
+                .with_std_error(&error)
+                .with_path(dir.display())
+        })?;
+
         let mut count = 0;
-        for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type()
-                && ft.is_dir()
-            {
-                count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                SinexError::io("Failed to read watch directory entry while estimating watch budget")
+                    .with_std_error(&error)
+                    .with_path(dir.display())
+            })?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type().map_err(|error| {
+                SinexError::io("Failed to inspect watch directory entry while estimating watch budget")
+                    .with_std_error(&error)
+                    .with_path(entry_path.display())
+            })?;
+            if file_type.is_dir() {
+                count += 1 + count_dirs(&entry_path, depth + 1, max_depth)?;
             }
         }
-        count
+        Ok(count)
     }
-    1 + count_dirs(path, 0, max_depth)
+
+    Ok(1 + count_dirs(path, 0, max_depth)?)
 }
 
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
@@ -697,7 +731,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     })?;
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
-    let estimated = estimate_watch_count(&canonical, ctx.max_depth);
+    let estimated = estimate_watch_count(&canonical, ctx.max_depth)?;
     let use_poll_watcher = estimated > ctx.max_watches;
     let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
     if use_poll_watcher {
@@ -1237,6 +1271,9 @@ mod tests {
     use xtask::sandbox::prelude::*;
     use xtask::sandbox::sinex_test;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
         let mut config = FilesystemConfig::default();
@@ -1295,6 +1332,72 @@ mod tests {
                 .and_then(serde_json::Value::as_u64)
                 .is_some_and(|count| count == 1)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn estimate_watch_count_counts_nested_directories() -> TestResult<()> {
+        let temp_root = tempdir()?;
+        std::fs::create_dir_all(temp_root.path().join("a/b"))?;
+        std::fs::create_dir_all(temp_root.path().join("c"))?;
+
+        let count = estimate_watch_count(temp_root.path(), None)?;
+        assert_eq!(count, 4, "root + three nested directories should need four watches");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn estimate_watch_count_rejects_unreadable_subdirectories() -> TestResult<()> {
+        let temp_root = tempdir()?;
+        let unreadable = temp_root.path().join("private");
+        std::fs::create_dir_all(&unreadable)?;
+
+        let original_permissions = std::fs::metadata(&unreadable)?.permissions();
+        let mut restricted_permissions = original_permissions.clone();
+        restricted_permissions.set_mode(0o000);
+        std::fs::set_permissions(&unreadable, restricted_permissions)?;
+
+        let error = estimate_watch_count(temp_root.path(), None)
+            .expect_err("unreadable directory should fail watch estimation honestly");
+
+        std::fs::set_permissions(&unreadable, original_permissions)?;
+
+        let error_text = error.to_string();
+        assert!(
+            error_text.contains("estimating watch budget"),
+            "unexpected error: {error_text}"
+        );
+        assert!(
+            error_text.contains("private"),
+            "error should retain the unreadable directory path: {error_text}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_clean_exit() -> TestResult<()> {
+        let handle = tokio::spawn(async {});
+        FilesystemNode::log_watcher_shutdown_result(0, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_cancelled_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        FilesystemNode::log_watcher_shutdown_result(1, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_panicked_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("filesystem watcher panic");
+        });
+        FilesystemNode::log_watcher_shutdown_result(2, handle.await);
         Ok(())
     }
 

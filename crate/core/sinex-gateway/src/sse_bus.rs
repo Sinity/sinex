@@ -292,8 +292,11 @@ impl SubscriptionBus {
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => {
-                        if *shutdown.borrow() {
+                    shutdown_result = shutdown.changed() => {
+                        if shutdown_result.is_err() {
+                            warn!("SSE bus shutdown channel dropped before explicit shutdown");
+                        }
+                        if shutdown_result.is_err() || *shutdown.borrow() {
                             if !id_buffer.is_empty() {
                                 self.flush_batch(&mut id_buffer, &pool).await;
                             }
@@ -309,8 +312,11 @@ impl SubscriptionBus {
                 tokio::select! {
                     biased;
 
-                    _ = shutdown.changed() => {
-                        if *shutdown.borrow() {
+                    shutdown_result = shutdown.changed() => {
+                        if shutdown_result.is_err() {
+                            warn!("SSE bus shutdown channel dropped before explicit shutdown");
+                        }
+                        if shutdown_result.is_err() || *shutdown.borrow() {
                             if !id_buffer.is_empty() {
                                 self.flush_batch(&mut id_buffer, &pool).await;
                             }

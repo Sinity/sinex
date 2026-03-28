@@ -138,8 +138,12 @@ impl BatchAddProcess {
     }
 
     async fn shutdown(&mut self) {
-        let _ = self.child.start_kill();
-        let _ = self.child.wait().await;
+        if let Err(error) = self.child.start_kill() {
+            warn!(error = %error, "Failed to signal git-annex batch add process shutdown");
+        }
+        if let Err(error) = self.child.wait().await {
+            warn!(error = %error, "Failed to wait for git-annex batch add process shutdown");
+        }
     }
 }
 

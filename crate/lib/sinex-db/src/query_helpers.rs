@@ -15,6 +15,17 @@ pub const EXPONENTIAL_BASE: f64 = 2.0;
 // Re-export db_error for consumers expecting it in query_helpers
 pub use crate::db_error;
 
+fn rollback_failure(
+    original_error: SinexError,
+    rollback_error: impl std::fmt::Display,
+    operation: &'static str,
+) -> SinexError {
+    SinexError::database("Failed to rollback transaction after operation error")
+        .with_source(rollback_error.to_string())
+        .with_context("original_error", original_error.to_string())
+        .with_operation(operation)
+}
+
 /// Configuration for transaction retry behavior
 #[derive(Debug, Clone, Copy)]
 pub struct RetryConfig {
@@ -93,10 +104,11 @@ where
             }
             Err(e) if is_retryable_db_error(&e) && attempts < config.max_attempts => {
                 if let Err(rollback_err) = tx.rollback().await {
-                    warn!(
-                        "Failed to rollback transaction (attempt {}/{}): {}",
-                        attempts, config.max_attempts, rollback_err
-                    );
+                    return Err(rollback_failure(
+                        e,
+                        rollback_err,
+                        "with_retry_transaction_idempotent",
+                    ));
                 }
                 warn!(
                     "Retryable database error (attempt {}/{}): {}",
@@ -106,8 +118,12 @@ where
                 delay = std::cmp::min(delay.mul_f64(config.exponential_base), config.max_delay);
             }
             Err(e) => {
-                let _ = tx.rollback().await;
-                return Err(e);
+                return Err(match tx.rollback().await {
+                    Ok(()) => e,
+                    Err(rollback_err) => {
+                        rollback_failure(e, rollback_err, "with_retry_transaction_idempotent")
+                    }
+                });
             }
         }
     }
@@ -147,8 +163,10 @@ where
             Ok(result)
         }
         Err(e) => {
-            let _ = tx.rollback().await;
-            Err(e)
+            Err(match tx.rollback().await {
+                Ok(()) => e,
+                Err(rollback_err) => rollback_failure(e, rollback_err, "with_transaction"),
+            })
         }
     }
 }
@@ -180,4 +198,28 @@ where
         .fetch_one(executor)
         .await
         .map_err(|e| db_error(e, "count rows"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rollback_failure;
+    use xtask::sandbox::prelude::*;
+
+    // Inline because these exercise the private rollback-error composition helper directly.
+
+    #[sinex_test]
+    async fn rollback_failure_preserves_original_error_context() -> TestResult<()> {
+        let error = rollback_failure(
+            sinex_primitives::SinexError::validation("original failure"),
+            "rollback broke too",
+            "with_transaction",
+        );
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Failed to rollback transaction after operation error"));
+        assert!(rendered.contains("rollback broke too"));
+        assert!(rendered.contains("original failure"));
+        assert!(rendered.contains("with_transaction"));
+        Ok(())
+    }
 }

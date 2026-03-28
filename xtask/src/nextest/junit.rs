@@ -5,7 +5,7 @@
 //! includes `<system-out>` for ALL tests. This module parses the JUnit XML after a
 //! test run to back-fill output for passing tests into the history database.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use quick_xml::escape::unescape;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -79,13 +79,34 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                         current_classname = None;
                         current_failure_message = None;
                         current_failure_type = None;
-                        for attr in e.attributes().flatten() {
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|error| {
+                                eyre!(
+                                    "malformed JUnit testcase attribute at position {}: {error}",
+                                    reader.error_position()
+                                )
+                            })?;
                             match attr.key.as_ref() {
                                 b"name" => {
-                                    current_test_name = String::from_utf8(attr.value.to_vec()).ok();
+                                    current_test_name = Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                        |error| {
+                                            eyre!(
+                                                "JUnit testcase name is not valid UTF-8 at position {}: {error}",
+                                                reader.error_position()
+                                            )
+                                        },
+                                    )?);
                                 }
                                 b"classname" => {
-                                    current_classname = String::from_utf8(attr.value.to_vec()).ok();
+                                    current_classname =
+                                        Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                            |error| {
+                                                eyre!(
+                                                    "JUnit testcase classname is not valid UTF-8 at position {}: {error}",
+                                                    reader.error_position()
+                                                )
+                                            },
+                                        )?);
                                 }
                                 _ => {}
                             }
@@ -97,15 +118,35 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                     }
                     b"failure" => {
                         // Extract message and type attributes from <failure>
-                        for attr in e.attributes().flatten() {
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|error| {
+                                eyre!(
+                                    "malformed JUnit failure attribute at position {}: {error}",
+                                    reader.error_position()
+                                )
+                            })?;
                             match attr.key.as_ref() {
                                 b"message" => {
                                     current_failure_message =
-                                        String::from_utf8(attr.value.to_vec()).ok();
+                                        Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                            |error| {
+                                                eyre!(
+                                                    "JUnit failure message is not valid UTF-8 at position {}: {error}",
+                                                    reader.error_position()
+                                                )
+                                            },
+                                        )?);
                                 }
                                 b"type" => {
                                     current_failure_type =
-                                        String::from_utf8(attr.value.to_vec()).ok();
+                                        Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                            |error| {
+                                                eyre!(
+                                                    "JUnit failure type is not valid UTF-8 at position {}: {error}",
+                                                    reader.error_position()
+                                                )
+                                            },
+                                        )?);
                                 }
                                 _ => {}
                             }
@@ -155,10 +196,34 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                 if e.name().as_ref() == b"testcase" {
                     let mut name = None;
                     let mut classname = None;
-                    for attr in e.attributes().flatten() {
+                    for attr in e.attributes() {
+                        let attr = attr.map_err(|error| {
+                            eyre!(
+                                "malformed self-closing JUnit testcase attribute at position {}: {error}",
+                                reader.error_position()
+                            )
+                        })?;
                         match attr.key.as_ref() {
-                            b"name" => name = String::from_utf8(attr.value.to_vec()).ok(),
-                            b"classname" => classname = String::from_utf8(attr.value.to_vec()).ok(),
+                            b"name" => {
+                                name = Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                    |error| {
+                                        eyre!(
+                                            "JUnit testcase name is not valid UTF-8 at position {}: {error}",
+                                            reader.error_position()
+                                        )
+                                    },
+                                )?);
+                            }
+                            b"classname" => {
+                                classname = Some(String::from_utf8(attr.value.to_vec()).map_err(
+                                    |error| {
+                                        eyre!(
+                                            "JUnit testcase classname is not valid UTF-8 at position {}: {error}",
+                                            reader.error_position()
+                                        )
+                                    },
+                                )?);
+                            }
                             _ => {}
                         }
                     }
@@ -176,25 +241,39 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                 }
             }
             Ok(Event::Text(e)) => {
-                if in_system_out
-                    && let Ok(raw) = std::str::from_utf8(&e)
-                    && let Ok(text) = unescape(raw)
-                {
+                if in_system_out {
+                    let raw = std::str::from_utf8(&e).map_err(|error| {
+                        eyre!(
+                            "JUnit system-out text is not valid UTF-8 at position {}: {error}",
+                            reader.error_position()
+                        )
+                    })?;
+                    let text = unescape(raw).map_err(|error| {
+                        eyre!(
+                            "JUnit system-out text contains invalid escape sequences at position {}: {error}",
+                            reader.error_position()
+                        )
+                    })?;
                     system_out_buf.push_str(&text);
                 }
             }
             Ok(Event::CData(e)) => {
-                if in_system_out && let Ok(text) = std::str::from_utf8(&e) {
+                if in_system_out {
+                    let text = std::str::from_utf8(&e).map_err(|error| {
+                        eyre!(
+                            "JUnit system-out CDATA is not valid UTF-8 at position {}: {error}",
+                            reader.error_position()
+                        )
+                    })?;
                     system_out_buf.push_str(text);
                 }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                eprintln!(
-                    "⚠️  JUnit XML parse error at position {}: {e}",
+                return Err(eyre!(
+                    "JUnit XML parse error at position {}: {e}",
                     reader.error_position()
-                );
-                break;
+                ));
             }
             _ => {}
         }
@@ -255,11 +334,10 @@ pub fn parse_junit_summary(path: &Path) -> Result<JunitSummary> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                eprintln!(
-                    "⚠️  JUnit XML summary parse error at position {}: {e}",
+                return Err(eyre!(
+                    "JUnit XML summary parse error at position {}: {e}",
                     reader.error_position()
-                );
-                break;
+                ));
             }
             _ => {}
         }
@@ -410,6 +488,31 @@ test result: FAILED
     async fn test_missing_file_returns_error() -> TestResult<()> {
         let result = parse_junit_outputs(Path::new("/nonexistent/junit.xml"));
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_malformed_xml_returns_error() -> TestResult<()> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+    <testsuite>
+        <testcase name="broken">
+            <system-out>unterminated
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
+
+        let error = parse_junit_outputs(f.path()).expect_err("malformed XML must fail honestly");
+        assert!(error.to_string().contains("JUnit XML parse error"));
+
+        let summary_error =
+            parse_junit_summary(f.path()).expect_err("malformed XML summary must fail honestly");
+        assert!(summary_error
+            .to_string()
+            .contains("JUnit XML summary parse error"));
         Ok(())
     }
 

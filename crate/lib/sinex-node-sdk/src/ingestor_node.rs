@@ -26,7 +26,18 @@ use crate::{
 use sinex_primitives::SanitizedPath;
 use std::sync::Arc;
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{info, warn};
+
+fn signal_shutdown_channel(tx: watch::Sender<bool>, node_name: &str) -> bool {
+    if tx.send(true).is_err() {
+        warn!(
+            node = node_name,
+            "Ingestor shutdown receiver was already dropped before graceful shutdown"
+        );
+        return false;
+    }
+    true
+}
 
 /// Adapter state around user state with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,7 +349,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
     async fn shutdown(&mut self) -> NodeResult<()> {
         if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
+            signal_shutdown_channel(tx, self.ingestor.name());
         }
         self.ingestor.shutdown(&self.state.user_state).await?;
         self.save_state(true).await?;
@@ -386,5 +397,32 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
     fn export_data(&self, path: &SanitizedPath, format: ExportFormat) -> NodeResult<()> {
         self.ingestor
             .export_data(&self.state.user_state, path, format)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these cover a private shutdown-signaling helper.
+    use super::signal_shutdown_channel;
+    use tokio::sync::watch;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = watch::channel(false);
+        drop(rx);
+
+        assert!(!signal_shutdown_channel(tx, "test-ingestor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
+        let (tx, mut rx) = watch::channel(false);
+
+        assert!(signal_shutdown_channel(tx, "test-ingestor"));
+        rx.changed().await?;
+        assert!(*rx.borrow());
+        Ok(())
     }
 }

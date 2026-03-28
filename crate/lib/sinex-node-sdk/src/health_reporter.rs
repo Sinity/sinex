@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Instant;
+use tracing::warn;
 
 static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -193,21 +194,32 @@ impl HealthReporter {
         self.calculate_status()
     }
 
+    fn read_last_status(&self) -> ProcessStatus {
+        let guard = self.last_status.read().unwrap_or_else(|poisoned| {
+            warn!("Health reporter status lock poisoned during read; recovering");
+            poisoned.into_inner()
+        });
+        *guard
+    }
+
+    fn write_last_status(&self, status: ProcessStatus) {
+        let mut guard = self.last_status.write().unwrap_or_else(|poisoned| {
+            warn!("Health reporter status lock poisoned during write; recovering");
+            poisoned.into_inner()
+        });
+        *guard = status;
+    }
+
     /// Check current health and emit status event if changed
     ///
     /// Returns the current status after checking.
-    #[allow(clippy::expect_used)] // RwLock poison means prior panic — propagating is correct
     pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
         let new_status = self.calculate_status();
 
         // Read current status and determine if emission is needed.
         // Guard must be dropped before the await to keep the future Send.
         let (should_emit, old_status, reason) = {
-            let last_status_guard = self
-                .last_status
-                .read()
-                .expect("health reporter status lock poisoned");
-            let old_status = *last_status_guard;
+            let old_status = self.read_last_status();
 
             if new_status == old_status {
                 (false, old_status, String::new())
@@ -238,11 +250,7 @@ impl HealthReporter {
                 .map_err(|e| SinexError::service(format!("Failed to emit health status: {e}")))?;
 
             // Update stored status after successful emission
-            let mut last_status_guard = self
-                .last_status
-                .write()
-                .expect("health reporter status lock poisoned");
-            *last_status_guard = new_status;
+            self.write_last_status(new_status);
         }
 
         Ok(new_status)
@@ -252,5 +260,56 @@ impl HealthReporter {
     #[must_use]
     pub fn metrics(&self) -> &Arc<HealthMetrics> {
         &self.metrics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    fn poison_lock<T: Send + Sync + 'static>(lock: Arc<RwLock<T>>, value: T) {
+        let result = std::thread::spawn(move || {
+            let mut guard = lock.write().expect("test lock should poison cleanly");
+            *guard = value;
+            panic!("poison lock for regression coverage");
+        })
+        .join();
+        assert!(result.is_err(), "poisoning thread should panic");
+    }
+
+    #[sinex_test]
+    async fn check_and_emit_recovers_from_poisoned_last_status_read() -> xtask::sandbox::TestResult<()> {
+        let reporter = HealthReporter::new(
+            "test-component".to_string(),
+            Arc::new(SelfObserver::disabled()),
+            HealthThresholds::default(),
+        );
+        poison_lock(Arc::clone(&reporter.last_status), ProcessStatus::Healthy);
+
+        reporter.record_error(&SinexError::processing("boom"));
+        let status = reporter.check_and_emit().await?;
+
+        assert_eq!(status, ProcessStatus::Failed);
+        assert_eq!(reporter.read_last_status(), ProcessStatus::Failed);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_and_emit_recovers_from_poisoned_last_status_write() -> xtask::sandbox::TestResult<()> {
+        let reporter = HealthReporter::new(
+            "test-component".to_string(),
+            Arc::new(SelfObserver::disabled()),
+            HealthThresholds::default(),
+        );
+
+        reporter.record_error(&SinexError::processing("boom"));
+        poison_lock(Arc::clone(&reporter.last_status), ProcessStatus::Healthy);
+
+        let status = reporter.check_and_emit().await?;
+
+        assert_eq!(status, ProcessStatus::Failed);
+        assert_eq!(reporter.read_last_status(), ProcessStatus::Failed);
+        Ok(())
     }
 }

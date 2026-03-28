@@ -561,7 +561,7 @@ fn dlq_requeue_target(
                 .and_then(|value| value.as_str())
                 .map(ToOwned::to_owned)
         })
-        .or_else(|| dlq_event_id(subject, headers, payload).ok().flatten());
+        .or_else(|| dlq_subject_event_id(subject));
 
     let original_nats_msg_id = envelope
         .get("nats_msg_id")
@@ -579,7 +579,9 @@ fn dlq_requeue_target(
 
 #[cfg(test)]
 mod tests {
-    use super::{combine_retry_counts, dlq_event_id, dlq_payload_event_id};
+    use super::{
+        combine_retry_counts, dlq_event_id, dlq_payload_event_id, dlq_requeue_target,
+    };
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -653,6 +655,57 @@ mod tests {
             error
                 .to_string()
                 .contains("Failed to parse DLQ payload while extracting event ID")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_requeue_target_uses_subject_event_id_fallback() -> TestResult<()> {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Original-Subject", "events.raw.shell.command");
+
+        let payload = serde_json::json!({
+            "original_payload": {
+                "command": "ls"
+            }
+        });
+
+        let target = dlq_requeue_target(
+            &headers,
+            "events.dlq.source.00000000-0000-7000-8000-000000000042",
+            &serde_json::to_vec(&payload)?,
+        )?;
+        assert_eq!(
+            target.event_id.as_deref(),
+            Some("00000000-0000-7000-8000-000000000042")
+        );
+        assert_eq!(
+            target.original_nats_msg_id.as_deref(),
+            Some("00000000-0000-7000-8000-000000000042")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_requeue_target_preserves_envelope_event_id_without_reparse() -> TestResult<()> {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Original-Subject", "events.raw.shell.command");
+
+        let payload = serde_json::json!({
+            "event_id": "00000000-0000-7000-8000-000000000099",
+            "original_payload": {
+                "command": "pwd"
+            }
+        });
+
+        let target = dlq_requeue_target(
+            &headers,
+            "events.dlq.source.ignored-subject-id",
+            &serde_json::to_vec(&payload)?,
+        )?;
+        assert_eq!(
+            target.event_id.as_deref(),
+            Some("00000000-0000-7000-8000-000000000099")
         );
         Ok(())
     }

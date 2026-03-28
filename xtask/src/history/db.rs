@@ -33,6 +33,14 @@ const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
 const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
 const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 
+fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("{reason}: {}", path.display())),
+    }
+}
+
 fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
     match current_dir {
         Ok(path) => path.display().to_string(),
@@ -243,7 +251,7 @@ impl HistoryDb {
                 "⚠️  History database at {} is empty (0 bytes), recreating",
                 path.display()
             );
-            let _ = std::fs::remove_file(path);
+            remove_history_artifact(path, "failed to remove empty history database before recreation")?;
         }
 
         let conn = Connection::open(path).with_context(|| {
@@ -269,12 +277,18 @@ impl HistoryDb {
                 "⚠️  History database at {} failed integrity check, recreating",
                 path.display()
             );
-            let _ = std::fs::remove_file(path);
+            remove_history_artifact(path, "failed to remove corrupt history database before recreation")?;
             // Remove WAL and SHM files too
             let wal_path = path.with_extension("db-wal");
             let shm_path = path.with_extension("db-shm");
-            let _ = std::fs::remove_file(&wal_path);
-            let _ = std::fs::remove_file(&shm_path);
+            remove_history_artifact(
+                &wal_path,
+                "failed to remove corrupt history database WAL before recreation",
+            )?;
+            remove_history_artifact(
+                &shm_path,
+                "failed to remove corrupt history database SHM before recreation",
+            )?;
             let conn = Connection::open(path).with_context(|| {
                 format!("failed to recreate history database: {}", path.display())
             })?;
@@ -3692,6 +3706,8 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
 
@@ -3740,6 +3756,34 @@ mod tests {
         let stats = db.get_stats("test", 7)?;
         assert_eq!(stats.total, 1);
         assert_eq!(stats.successes, 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_history_db_open_surfaces_empty_db_cleanup_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-empty-cleanup-failure.db");
+        std::fs::write(&db_path, [])?;
+
+        let original_mode = std::fs::metadata(dir.path())?.permissions().mode();
+        let mut read_only = std::fs::metadata(dir.path())?.permissions();
+        read_only.set_mode(0o555);
+        std::fs::set_permissions(dir.path(), read_only)?;
+
+        let result = HistoryDb::open(&db_path);
+
+        let mut restore = std::fs::metadata(dir.path())?.permissions();
+        restore.set_mode(original_mode);
+        std::fs::set_permissions(dir.path(), restore)?;
+
+        let error = match result {
+            Ok(_) => panic!("empty history DB cleanup failure must surface"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to remove empty history database before recreation"));
+        assert!(message.contains(db_path.display().to_string().as_str()));
         Ok(())
     }
 

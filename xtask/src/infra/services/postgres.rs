@@ -72,6 +72,11 @@ fn format_command_output(output: &std::process::Output) -> String {
     }
 }
 
+fn utf8_path<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
+    path.to_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("{label} must be valid UTF-8: {}", path.display()))
+}
+
 impl PostgresManager {
     #[must_use]
     pub fn new(config: PostgresConfig) -> Self {
@@ -171,21 +176,7 @@ impl PostgresManager {
 
         let log_path = self.config.logs_dir.join("postgres.log");
 
-        let mut pg_ctl = self.pg_command("pg_ctl");
-        pg_ctl.args([
-            "-D",
-            self.config
-                .data_dir
-                .to_str()
-                .expect("data dir must be valid UTF-8"),
-            "start",
-            "-w",
-        ]);
-        pg_ctl.arg("-l").arg(&log_path).arg("-o").arg(format!(
-            "-k {} -p {}",
-            self.config.run_dir.display(),
-            self.config.port
-        ));
+        let mut pg_ctl = self.pg_ctl_start_command(&log_path)?;
 
         if verbose {
             let status = pg_ctl
@@ -247,17 +238,7 @@ impl PostgresManager {
             println!("Stopping PostgreSQL...");
         }
 
-        self.pg_command("pg_ctl")
-            .args([
-                "-D",
-                self.config
-                    .data_dir
-                    .to_str()
-                    .expect("data dir must be valid UTF-8"),
-                "stop",
-                "-m",
-                "fast",
-            ])
+        self.pg_ctl_stop_command()
             .status()
             .context("pg_ctl stop failed")?;
 
@@ -294,21 +275,7 @@ impl PostgresManager {
 
     /// Check if PostgreSQL is accepting connections via pg_isready.
     pub fn accepting_connections_probe(&self) -> Result<bool> {
-        pg_isready_probe(
-            self.pg_command("pg_isready")
-            .args([
-                "-h",
-                self.config
-                    .run_dir
-                    .to_str()
-                    .expect("run dir must be valid UTF-8"),
-            ])
-            .arg("-p")
-            .arg(self.config.port.to_string())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output(),
-        )
+        pg_isready_probe(self.pg_isready_command().output())
     }
 
     /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
@@ -347,19 +314,7 @@ impl PostgresManager {
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
         let output = self
-            .pg_command("psql")
-            .args([
-                "-h",
-                self.config
-                    .run_dir
-                    .to_str()
-                    .expect("run dir must be valid UTF-8"),
-            ])
-            .arg("-p")
-            .arg(self.config.port.to_string())
-            .args(["-U", user])
-            .args(["-d", db])
-            .args(["-tAc", sql])
+            .psql_command(user, db, sql)
             .output()
             .context("Failed to run psql")?;
 
@@ -426,6 +381,55 @@ impl PostgresManager {
         }
     }
 
+    fn pg_ctl_start_command(&self, log_path: &Path) -> Result<Command> {
+        let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
+        let mut pg_ctl = self.pg_command("pg_ctl");
+        pg_ctl
+            .arg("-D")
+            .arg(&self.config.data_dir)
+            .arg("start")
+            .arg("-w")
+            .arg("-l")
+            .arg(log_path)
+            .arg("-o")
+            .arg(format!("-k {run_dir} -p {}", self.config.port));
+        Ok(pg_ctl)
+    }
+
+    fn pg_ctl_stop_command(&self) -> Command {
+        let mut pg_ctl = self.pg_command("pg_ctl");
+        pg_ctl
+            .arg("-D")
+            .arg(&self.config.data_dir)
+            .arg("stop")
+            .arg("-m")
+            .arg("fast");
+        pg_ctl
+    }
+
+    fn pg_isready_command(&self) -> Command {
+        let mut cmd = self.pg_command("pg_isready");
+        cmd.arg("-h")
+            .arg(&self.config.run_dir)
+            .arg("-p")
+            .arg(self.config.port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        cmd
+    }
+
+    fn psql_command(&self, user: &str, db: &str, sql: &str) -> Command {
+        let mut cmd = self.pg_command("psql");
+        cmd.arg("-h")
+            .arg(&self.config.run_dir)
+            .arg("-p")
+            .arg(self.config.port.to_string())
+            .args(["-U", user])
+            .args(["-d", db])
+            .args(["-tAc", sql]);
+        cmd
+    }
+
     fn postmaster_pid_state(&self) -> Result<PostmasterPidState> {
         let pid_file = self.config.data_dir.join("postmaster.pid");
         let Some(pid) = read_postmaster_pid(&pid_file)? else {
@@ -462,9 +466,11 @@ impl PostgresManager {
         Ok(())
     }
 
-    fn render_runtime_config(&self) -> String {
-        format!(
-            "{MANAGED_CONFIG_BEGIN}
+    fn render_runtime_config(&self) -> Result<String> {
+        let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
+        let logs_dir = utf8_path(&self.config.logs_dir, "postgres logs dir")?;
+        Ok(format!(
+"{MANAGED_CONFIG_BEGIN}
 unix_socket_directories = '{}'
 listen_addresses = ''
 port = {}
@@ -477,19 +483,19 @@ logging_collector = on
 log_directory = '{}'
 log_filename = 'postgres.log'
 {MANAGED_CONFIG_END}",
-            self.config.run_dir.display(),
+            run_dir,
             self.config.port,
             POSTGRES_MAX_WORKER_PROCESSES,
             TIMESCALEDB_MAX_BACKGROUND_WORKERS,
-            self.config.logs_dir.display()
-        )
+            logs_dir
+        ))
     }
 
     fn ensure_runtime_config(&self) -> Result<()> {
         let conf_path = self.config.data_dir.join("postgresql.conf");
         let existing = fs::read_to_string(&conf_path)
             .wrap_err_with(|| format!("failed to read {}", conf_path.display()))?;
-        let managed_block = self.render_runtime_config();
+        let managed_block = self.render_runtime_config()?;
 
         let updated = if let Some(start) = existing.find(MANAGED_CONFIG_BEGIN) {
             let end = existing
@@ -551,6 +557,10 @@ fn pg_isready_probe(output: std::io::Result<std::process::Output>) -> Result<boo
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
         PostgresManager::new(PostgresConfig {
@@ -741,6 +751,85 @@ mod tests {
             POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             POSTGRES_WORKER_PROCESS_HEADROOM
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_pg_commands_preserve_non_utf8_paths() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let data_dir = PathBuf::from(OsString::from_vec(b"/tmp/pg-data-\xff".to_vec()));
+        let run_dir = PathBuf::from(OsString::from_vec(b"/tmp/pg-run-\xfe".to_vec()));
+        let manager = PostgresManager::new(PostgresConfig {
+            port: 55432,
+            data_dir: data_dir.clone(),
+            run_dir: run_dir.clone(),
+            logs_dir: temp.path().join("logs"),
+            database: "sinex".to_string(),
+            superuser: "postgres".to_string(),
+            app_user: "sinex".to_string(),
+        });
+
+        let stop_args: Vec<OsString> = manager
+            .pg_ctl_stop_command()
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect();
+        assert!(stop_args.iter().any(|arg| arg == data_dir.as_os_str()));
+
+        let ready_args: Vec<OsString> = manager
+            .pg_isready_command()
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect();
+        assert!(ready_args.iter().any(|arg| arg == run_dir.as_os_str()));
+
+        let psql_args: Vec<OsString> = manager
+            .psql_command("postgres", "sinex", "SELECT 1")
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect();
+        assert!(psql_args.iter().any(|arg| arg == run_dir.as_os_str()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_pg_runtime_config_rejects_non_utf8_run_dir() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = PostgresManager::new(PostgresConfig {
+            port: 55432,
+            data_dir: temp.path().join("data"),
+            run_dir: PathBuf::from(OsString::from_vec(b"/tmp/pg-run-\xfe".to_vec())),
+            logs_dir: temp.path().join("logs"),
+            database: "sinex".to_string(),
+            superuser: "postgres".to_string(),
+            app_user: "sinex".to_string(),
+        });
+
+        let error = manager.render_runtime_config().unwrap_err();
+        assert!(format!("{error:#}").contains("postgres run dir must be valid UTF-8"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_pg_ctl_start_command_rejects_non_utf8_run_dir() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = PostgresManager::new(PostgresConfig {
+            port: 55432,
+            data_dir: temp.path().join("data"),
+            run_dir: PathBuf::from(OsString::from_vec(b"/tmp/pg-run-\xfe".to_vec())),
+            logs_dir: temp.path().join("logs"),
+            database: "sinex".to_string(),
+            superuser: "postgres".to_string(),
+            app_user: "sinex".to_string(),
+        });
+
+        let error = manager
+            .pg_ctl_start_command(&temp.path().join("postgres.log"))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("postgres run dir must be valid UTF-8"));
         Ok(())
     }
 }
