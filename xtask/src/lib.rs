@@ -115,6 +115,78 @@ impl GlobalOpts {
     }
 }
 
+pub(crate) fn parse_positive_u64_env_or_default(
+    var_name: &str,
+    default: u64,
+    purpose: &str,
+) -> u64 {
+    match std::env::var(var_name) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                tracing::warn!(
+                    env_var = var_name,
+                    value = %raw,
+                    purpose,
+                    default,
+                    "ignoring non-positive environment override"
+                );
+                default
+            }
+            Err(error) => {
+                tracing::warn!(
+                    env_var = var_name,
+                    value = %raw,
+                    purpose,
+                    default,
+                    error = %error,
+                    "ignoring invalid environment override"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            tracing::warn!(
+                env_var = var_name,
+                purpose,
+                default,
+                "ignoring non-unicode environment override"
+            );
+            default
+        }
+    }
+}
+
+pub(crate) fn parse_one_shot_i64_env(var_name: &str, purpose: &str) -> Option<i64> {
+    let raw = match std::env::var(var_name) {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            tracing::warn!(env_var = var_name, purpose, "ignoring non-unicode one-shot environment value");
+            None
+        }
+    };
+
+    unsafe {
+        std::env::remove_var(var_name);
+    }
+
+    raw.and_then(|raw| match raw.parse::<i64>() {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(
+                env_var = var_name,
+                purpose,
+                value = %raw,
+                error = %error,
+                "ignoring invalid one-shot environment value"
+            );
+            None
+        }
+    })
+}
+
 /// Categorized command help text, rendered by the custom help_template.
 ///
 /// Subcommands are hidden from clap's auto-generated list and presented here
@@ -340,14 +412,7 @@ pub async fn run_cli() -> Result<()> {
             std::env::remove_var("XTASK_JOB_DIR");
         }
     }
-    let claimed_bg_job = std::env::var("XTASK_BG_JOB_ID")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok());
-    if claimed_bg_job.is_some() {
-        unsafe {
-            std::env::remove_var("XTASK_BG_JOB_ID");
-        }
-    }
+    let claimed_bg_job = parse_one_shot_i64_env("XTASK_BG_JOB_ID", "background job claim");
 
     // Handle --list-commands before normal dispatch
     if cli.global.list_commands {
@@ -405,16 +470,8 @@ pub async fn run_cli() -> Result<()> {
     if let Ok(db) = history_db.as_ref() {
         db.warn_if_synthetic(&config().history_db_path());
     }
-    let claimed_bg_invocation = std::env::var("XTASK_BG_INVOCATION_ID")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok());
-    if claimed_bg_invocation.is_some() {
-        // One-shot handoff: prevent nested xtask subprocesses (spawned by tests)
-        // from inheriting and accidentally claiming the same invocation row.
-        unsafe {
-            std::env::remove_var("XTASK_BG_INVOCATION_ID");
-        }
-    }
+    let claimed_bg_invocation =
+        parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
     let invocation_id = if command_name != "completions" && command_name != "status" {
         if let Some(bg_id) = claimed_bg_invocation {
             match history_db.as_ref() {
@@ -835,4 +892,108 @@ fn list_commands(format: OutputFormat) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    pub(crate) struct EnvGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        pub(crate) fn set(key: &'static str, value: Option<std::ffi::OsString>) -> Self {
+            let original = std::env::var_os(key);
+            match value {
+                Some(value) => unsafe {
+                    std::env::set_var(key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(key);
+                },
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
+    #[sinex_test]
+    async fn parse_positive_u64_env_or_default_rejects_invalid_values() -> TestResult<()> {
+        let _guard = EnvGuard::set("SINEX_TEST_TIMEOUT", Some("not-a-number".into()));
+
+        assert_eq!(
+            parse_positive_u64_env_or_default("SINEX_TEST_TIMEOUT", 42, "test timeout"),
+            42
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_positive_u64_env_or_default_rejects_zero() -> TestResult<()> {
+        let _guard = EnvGuard::set("SINEX_TEST_TIMEOUT", Some("0".into()));
+
+        assert_eq!(
+            parse_positive_u64_env_or_default("SINEX_TEST_TIMEOUT", 42, "test timeout"),
+            42
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_one_shot_i64_env_returns_value_and_clears_env() -> TestResult<()> {
+        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some("123".into()));
+
+        assert_eq!(
+            parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
+            Some(123)
+        );
+        assert!(
+            std::env::var_os("SINEX_TEST_CLAIM").is_none(),
+            "one-shot env var must be removed after claim"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_one_shot_i64_env_rejects_invalid_values_and_clears_env() -> TestResult<()> {
+        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some("abc".into()));
+
+        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert!(
+            std::env::var_os("SINEX_TEST_CLAIM").is_none(),
+            "invalid one-shot env var must still be removed"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn parse_one_shot_i64_env_rejects_non_unicode_and_clears_env() -> TestResult<()> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
+
+        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert!(
+            std::env::var_os("SINEX_TEST_CLAIM").is_none(),
+            "non-unicode one-shot env var must still be removed"
+        );
+        Ok(())
+    }
 }
