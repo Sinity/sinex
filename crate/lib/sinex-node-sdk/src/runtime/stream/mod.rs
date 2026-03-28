@@ -1696,25 +1696,51 @@ impl<T: Node + 'static> NodeRunner<T> {
         let shutdown_result = worker.shutdown().await;
         drop(worker);
 
-        let events_emitted = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
+        let forwarder_result = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
 
-        match (scan_result, shutdown_result) {
-            (Ok(report), Ok(())) => Ok(DispatchedScanOutcome {
+        match (scan_result, shutdown_result, forwarder_result) {
+            (Ok(report), Ok(()), Ok(events_emitted)) => Ok(DispatchedScanOutcome {
                 report,
                 events_emitted,
             }),
-            (Err(error), Ok(())) => Err(FailedDispatchedScanOutcome {
+            (Err(error), Ok(()), Ok(events_emitted)) => Err(FailedDispatchedScanOutcome {
                 error,
                 events_emitted,
             }),
-            (Ok(_), Err(error)) => Err(FailedDispatchedScanOutcome {
+            (Ok(_), Err(error), Ok(events_emitted)) => Err(FailedDispatchedScanOutcome {
                 error,
                 events_emitted,
             }),
-            (Err(scan_error), Err(shutdown_error)) => Err(FailedDispatchedScanOutcome {
-                error: scan_error.with_context("shutdown_error", shutdown_error.to_string()),
-                events_emitted,
+            (Err(scan_error), Err(shutdown_error), Ok(events_emitted)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: scan_error.with_context("shutdown_error", shutdown_error.to_string()),
+                    events_emitted,
+                })
+            }
+            (Ok(_), Ok(()), Err(forwarder_error)) => Err(forwarder_error),
+            (Err(scan_error), Ok(()), Err(forwarder_error)) => Err(FailedDispatchedScanOutcome {
+                error: scan_error
+                    .with_context("replay_forwarder_error", forwarder_error.error.to_string()),
+                events_emitted: forwarder_error.events_emitted,
             }),
+            (Ok(_), Err(shutdown_error), Err(forwarder_error)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: shutdown_error
+                        .with_context("replay_forwarder_error", forwarder_error.error.to_string()),
+                    events_emitted: forwarder_error.events_emitted,
+                })
+            }
+            (Err(scan_error), Err(shutdown_error), Err(forwarder_error)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: scan_error
+                        .with_context("shutdown_error", shutdown_error.to_string())
+                        .with_context(
+                            "replay_forwarder_error",
+                            forwarder_error.error.to_string(),
+                        ),
+                    events_emitted: forwarder_error.events_emitted,
+                })
+            }
         }
     }
 
@@ -1788,17 +1814,19 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn finish_replay_forwarder(
         forwarder_handle: tokio::task::JoinHandle<NodeResult<()>>,
         emitted_counter: Arc<AtomicU64>,
-    ) -> u64 {
+    ) -> Result<u64, FailedDispatchedScanOutcome> {
+        let events_emitted = emitted_counter.load(Ordering::SeqCst);
         match forwarder_handle.await {
-            Ok(Ok(())) => emitted_counter.load(Ordering::SeqCst),
-            Ok(Err(error)) => {
-                warn!(error = %error, "Replay forwarder failed");
-                emitted_counter.load(Ordering::SeqCst)
-            }
-            Err(join_error) => {
-                warn!(error = %join_error, "Replay forwarder join failed");
-                emitted_counter.load(Ordering::SeqCst)
-            }
+            Ok(Ok(())) => Ok(events_emitted),
+            Ok(Err(error)) => Err(FailedDispatchedScanOutcome {
+                error,
+                events_emitted,
+            }),
+            Err(join_error) => Err(FailedDispatchedScanOutcome {
+                error: SinexError::processing("Replay forwarder join failed".to_string())
+                    .with_std_error(&join_error),
+                events_emitted,
+            }),
         }
     }
 
@@ -2716,6 +2744,47 @@ mod tests {
         assert!(text.contains("Failed to serialize scan acknowledgement"));
         assert!(text.contains("test-node"));
         assert!(text.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
+        let emitted_counter = Arc::new(AtomicU64::new(7));
+        let handle = tokio::spawn(async {
+            Err(SinexError::processing(
+                "replay forwarder target channel closed".to_string(),
+            ))
+        });
+
+        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder failures must fail the dispatched scan honestly");
+
+        assert_eq!(outcome.events_emitted, 7);
+        assert!(
+            outcome
+                .error
+                .to_string()
+                .contains("replay forwarder target channel closed")
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
+        let emitted_counter = Arc::new(AtomicU64::new(3));
+        let handle: tokio::task::JoinHandle<NodeResult<()>> = tokio::spawn(async move {
+            panic!("forwarder panic");
+        });
+
+        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder panics must fail the dispatched scan honestly");
+
+        assert_eq!(outcome.events_emitted, 3);
+        assert!(outcome.error.to_string().contains("Replay forwarder join failed"));
         Ok(())
     }
 
