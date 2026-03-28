@@ -69,19 +69,76 @@ pub fn resolve_database_url() -> NodeResult<String> {
     })
 }
 
-fn env_string_with_fallback(names: &[&str]) -> Option<String> {
+pub(crate) fn env_string_with_fallback(names: &[&str]) -> NodeResult<Option<String>> {
     for name in names {
-        if let Ok(value) = std::env::var(name) {
-            return Some(value);
+        match std::env::var(name) {
+            Ok(value) => return Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(SinexError::configuration(format!(
+                    "Environment variable '{name}' is not valid UTF-8"
+                )));
+            }
         }
     }
-    None
+    Ok(None)
 }
 
 pub fn resolve_nats_url() -> NodeResult<String> {
-    env_string_with_fallback(&["SINEX_NATS_URL"]).ok_or_else(|| {
+    env_string_with_fallback(&["SINEX_NATS_URL"])?.ok_or_else(|| {
         SinexError::configuration(
             "NATS URL environment variable not set (SINEX_NATS_URL)".to_string(),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_nats_url;
+    use std::ffi::OsString;
+    use std::sync::LazyLock;
+    use xtask::sandbox::sinex_test;
+
+    static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    fn restore_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+
+    #[sinex_test]
+    async fn resolve_nats_url_reports_missing_variable() -> xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let previous = std::env::var_os("SINEX_NATS_URL");
+        unsafe { std::env::remove_var("SINEX_NATS_URL") };
+
+        let error = resolve_nats_url().expect_err("missing NATS URL should surface");
+
+        restore_var("SINEX_NATS_URL", previous);
+
+        assert!(error.to_string().contains("SINEX_NATS_URL"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn resolve_nats_url_rejects_non_unicode_override() -> xtask::sandbox::TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().await;
+        let previous = std::env::var_os("SINEX_NATS_URL");
+        unsafe {
+            std::env::set_var("SINEX_NATS_URL", OsString::from_vec(vec![0x66, 0x6f, 0x80]))
+        };
+
+        let error = resolve_nats_url().expect_err("non-unicode NATS URL should surface");
+
+        restore_var("SINEX_NATS_URL", previous);
+
+        assert!(error.to_string().contains("not valid UTF-8"));
+        Ok(())
+    }
 }

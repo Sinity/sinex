@@ -128,7 +128,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     ];
 
     for (var_name, description, required) in required_vars {
-        if let Ok(value) = std::env::var(var_name) {
+        if let Some(value) = super::env_string_with_fallback(&[var_name])? {
             // Redact sensitive values
             let display_value = if var_name.contains("PASSWORD") || var_name.contains("SECRET") {
                 "***".to_string()
@@ -179,7 +179,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     }
 
     for (var_name, description) in optional_vars {
-        if let Ok(value) = std::env::var(var_name) {
+        if let Some(value) = super::env_string_with_fallback(&[var_name])? {
             let display_value = value.clone();
 
             env_vars.insert(

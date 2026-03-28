@@ -59,6 +59,9 @@ impl SinexEnvironment {
     pub fn current() -> Result<Self> {
         match env::var("SINEX_ENVIRONMENT") {
             Ok(name) => Self::new(&name),
+            Err(env::VarError::NotUnicode(_)) => Err(SinexError::configuration(
+                "SINEX_ENVIRONMENT must be valid UTF-8",
+            )),
             Err(_) if allow_default_environment() => {
                 warn!(
                     "SINEX_ENVIRONMENT not set, defaulting to '{}'",
@@ -509,8 +512,8 @@ impl SinexEnvironment {
 
 impl Default for SinexEnvironment {
     fn default() -> Self {
-        Self::current().unwrap_or_else(|_| {
-            warn!("Failed to get current environment, using dev");
+        Self::current().unwrap_or_else(|error| {
+            warn!(%error, "Failed to get current environment, using dev");
             Self {
                 name: "dev".to_string(),
             }
@@ -614,7 +617,19 @@ mod tests {
     // Small inline tests are used here because the helpers are private
     // synchronization internals that would otherwise need extra visibility.
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::LazyLock;
     use xtask::sandbox::sinex_test;
+
+    static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    fn restore_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
 
     #[sinex_test]
     async fn clone_environment_override_recovers_poisoned_lock() -> xtask::sandbox::TestResult<()> {
@@ -647,6 +662,26 @@ mod tests {
         let restored = clone_environment_override(&lock).expect("restored override should survive poison");
         assert_eq!(restored.name, "prod");
         assert!(previous.is_none(), "restore should consume previous override value");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn current_environment_rejects_non_unicode_override() -> xtask::sandbox::TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().await;
+        let previous = std::env::var_os("SINEX_ENVIRONMENT");
+        unsafe {
+            std::env::set_var("SINEX_ENVIRONMENT", OsString::from_vec(vec![0x64, 0x65, 0x80]))
+        };
+
+        let error = SinexEnvironment::current()
+            .expect_err("non-unicode SINEX_ENVIRONMENT should surface");
+
+        restore_var("SINEX_ENVIRONMENT", previous);
+
+        assert!(error.to_string().contains("must be valid UTF-8"));
         Ok(())
     }
 }
