@@ -768,9 +768,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         nats_client: &async_nats::Client,
         reply: Option<async_nats::Subject>,
         ack: &NodeScanAck,
-    ) {
+    ) -> NodeResult<()> {
         let Some(reply) = reply else {
-            return;
+            return Ok(());
         };
 
         let payload = match encode_control_message(
@@ -787,26 +787,27 @@ impl<T: Node + 'static> NodeRunner<T> {
                     error = %error,
                     "Failed to encode scan acknowledgement"
                 );
-                return;
+                return Err(error);
             }
         };
 
-        if let Err(error) = nats_client.publish(reply.clone(), payload.into()).await {
-            warn!(
-                operation_id = %ack.operation_id,
-                node = %ack.node_name,
-                subject = %reply,
-                error = %error,
-                "Failed to publish scan acknowledgement"
-            );
-        }
+        nats_client
+            .publish(reply.clone(), payload.into())
+            .await
+            .map_err(|error| {
+                SinexError::messaging("Failed to publish scan acknowledgement")
+                    .with_context("operation_id", ack.operation_id.to_string())
+                    .with_context("node", ack.node_name.clone())
+                    .with_context("subject", reply.to_string())
+                    .with_std_error(&error)
+            })
     }
 
     async fn publish_scan_progress(
         nats_client: &async_nats::Client,
         subject: String,
         progress: &NodeScanProgress,
-    ) {
+    ) -> NodeResult<()> {
         let payload = match encode_control_message(
             "scan progress update",
             progress.operation_id,
@@ -821,19 +822,20 @@ impl<T: Node + 'static> NodeRunner<T> {
                     error = %error,
                     "Failed to encode scan progress update"
                 );
-                return;
+                return Err(error);
             }
         };
 
-        if let Err(error) = nats_client.publish(subject.clone(), payload.into()).await {
-            warn!(
-                operation_id = %progress.operation_id,
-                node = %progress.node_name,
-                subject = %subject,
-                error = %error,
-                "Failed to publish scan progress update"
-            );
-        }
+        nats_client
+            .publish(subject.clone(), payload.into())
+            .await
+            .map_err(|error| {
+                SinexError::messaging("Failed to publish scan progress update")
+                    .with_context("operation_id", progress.operation_id.to_string())
+                    .with_context("node", progress.node_name.clone())
+                    .with_context("subject", subject)
+                    .with_std_error(&error)
+            })
     }
 
     #[cfg(feature = "db")]
@@ -1448,13 +1450,29 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 accepted: false,
                                 error: Some(format!("Failed to deserialize command: {err}")),
                             };
-                            Self::publish_scan_ack(&nats_client, Some(reply), &nack).await;
+                            if let Err(error) =
+                                Self::publish_scan_ack(&nats_client, Some(reply), &nack).await
+                            {
+                                warn!(
+                                    node = %node_name,
+                                    error = %error,
+                                    "Failed to publish malformed-command rejection"
+                                );
+                            }
                         }
                         continue;
                     }
                 };
 
                 let operation_id = command.operation_id;
+                let Some(reply) = msg.reply.clone() else {
+                    warn!(
+                        operation_id = %operation_id,
+                        node = %node_name,
+                        "Ignoring scan command without reply subject"
+                    );
+                    continue;
+                };
 
                 if node_type != NodeType::Ingestor {
                     let ack = NodeScanAck {
@@ -1465,7 +1483,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
                         )),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1478,7 +1505,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' does not support historical scans (supports_historical = false)"
                         )),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1492,7 +1528,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .to_string(),
                         ),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1503,7 +1548,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("Node was started without a replay worker factory".to_string()),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 };
 
@@ -1514,7 +1568,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("A scan is already in progress on this node".to_string()),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1524,7 +1587,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                     accepted: true,
                     error: None,
                 };
-                Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                if let Err(error) =
+                    Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                {
+                    error!(
+                        operation_id = %operation_id,
+                        node = %node_name,
+                        error = %error,
+                        "Failed to publish scan acceptance; aborting dispatched scan"
+                    );
+                    active_scan.store(false, Ordering::SeqCst);
+                    continue;
+                }
 
                 info!(
                     operation_id = %operation_id,
@@ -1543,6 +1617,15 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let scan_command = command.clone();
 
                 tokio::spawn(async move {
+                    struct ActiveScanGuard(Arc<AtomicBool>);
+
+                    impl Drop for ActiveScanGuard {
+                        fn drop(&mut self) {
+                            self.0.store(false, Ordering::SeqCst);
+                        }
+                    }
+
+                    let _active_scan_guard = ActiveScanGuard(scan_active.clone());
                     let progress_subject = scan_env
                         .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
@@ -1554,12 +1637,21 @@ impl<T: Node + 'static> NodeRunner<T> {
                         final_report: None,
                         error: None,
                     };
-                    Self::publish_scan_progress(
+                    if let Err(error) = Self::publish_scan_progress(
                         &scan_client,
                         progress_subject.clone(),
                         &start_progress,
                     )
-                    .await;
+                    .await
+                    {
+                        error!(
+                            operation_id = %operation_id,
+                            node = %scan_node_name,
+                            error = %error,
+                            "Failed to publish initial scan progress; aborting dispatched scan"
+                        );
+                        return;
+                    }
 
                     let scan_outcome = Self::execute_dispatched_scan(
                         factory,
@@ -1606,10 +1698,17 @@ impl<T: Node + 'static> NodeRunner<T> {
                         }
                     };
 
-                    Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
-                        .await;
-
-                    scan_active.store(false, Ordering::SeqCst);
+                    if let Err(error) =
+                        Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                            .await
+                    {
+                        error!(
+                            operation_id = %operation_id,
+                            node = %scan_node_name,
+                            error = %error,
+                            "Failed to publish final scan progress"
+                        );
+                    }
                 });
             }
 
@@ -2744,6 +2843,66 @@ mod tests {
         assert!(text.contains("Failed to serialize scan acknowledgement"));
         assert!(text.contains("test-node"));
         assert!(text.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn publish_scan_ack_reports_nats_failures(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let client = ctx.nats_client();
+
+        let operation_id = Uuid::now_v7();
+        let ack = NodeScanAck {
+            operation_id,
+            node_name: "test-node".to_string(),
+            accepted: true,
+            error: Some("x".repeat(2_000_000)),
+        };
+
+        let error = NodeRunner::<RuntimeTestNode>::publish_scan_ack(
+            &client,
+            Some("sinex.test.reply".into()),
+            &ack,
+        )
+        .await
+        .expect_err("oversized control payloads must fail scan acknowledgements honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to publish scan acknowledgement"));
+        assert!(message.contains("sinex.test.reply"));
+        assert!(message.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn publish_scan_progress_reports_nats_failures(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let client = ctx.nats_client();
+
+        let operation_id = Uuid::now_v7();
+        let progress = NodeScanProgress {
+            operation_id,
+            node_name: "test-node".to_string(),
+            events_processed: 1,
+            events_emitted: 2,
+            final_report: None,
+            error: Some("x".repeat(2_000_000)),
+        };
+
+        let error = NodeRunner::<RuntimeTestNode>::publish_scan_progress(
+            &client,
+            "sinex.test.progress".to_string(),
+            &progress,
+        )
+        .await
+        .expect_err("oversized control payloads must fail scan progress honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to publish scan progress update"));
+        assert!(message.contains("sinex.test.progress"));
+        assert!(message.contains(&operation_id.to_string()));
         Ok(())
     }
 
