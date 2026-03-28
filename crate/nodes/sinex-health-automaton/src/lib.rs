@@ -19,6 +19,7 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
 use std::str::FromStr;
+use tracing::warn;
 
 /// Configuration for the health aggregator
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,10 +97,35 @@ impl HealthAggregatorConfig {
             &mut config.enable_component_health_reports,
         );
 
-        if let Ok(value) = std::env::var("SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS")
-            && let Ok(intervals) = serde_json::from_str::<HashMap<String, u64>>(&value)
-        {
-            config.component_check_intervals = intervals;
+        match std::env::var("SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS") {
+            Ok(value) => match serde_json::from_str::<HashMap<String, u64>>(&value) {
+                Ok(intervals) => match validate_component_intervals(intervals) {
+                    Ok(validated) => config.component_check_intervals = validated,
+                    Err(error) => {
+                        warn!(
+                            env = "SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS",
+                            value = %value,
+                            %error,
+                            "Invalid component check interval override; using default"
+                        );
+                    }
+                },
+                Err(error) => {
+                    warn!(
+                        env = "SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS",
+                        value = %value,
+                        %error,
+                        "Invalid component check interval override; using default"
+                    );
+                }
+            },
+            Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                warn!(
+                    env = "SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS",
+                    "Component check interval override is not valid UTF-8; using default"
+                );
+            }
         }
 
         config
@@ -109,12 +135,44 @@ impl HealthAggregatorConfig {
 fn apply_env_override<T>(key: &str, target: &mut T)
 where
     T: FromStr,
+    T::Err: std::fmt::Display,
 {
-    if let Ok(value) = std::env::var(key)
-        && let Ok(parsed) = value.parse::<T>()
-    {
-        *target = parsed;
+    match std::env::var(key) {
+        Ok(value) => match value.parse::<T>() {
+            Ok(parsed) => *target = parsed,
+            Err(error) => {
+                warn!(
+                    env = key,
+                    value = %value,
+                    %error,
+                    "Invalid health automaton env override; using default"
+                );
+            }
+        },
+        Err(std::env::VarError::NotPresent) => {}
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                env = key,
+                "Health automaton env override is not valid UTF-8; using default"
+            );
+        }
     }
+}
+
+fn validate_component_intervals(
+    intervals: HashMap<String, u64>,
+) -> Result<HashMap<String, u64>, String> {
+    for (component, interval) in &intervals {
+        if component.trim().is_empty() {
+            return Err("component interval override contains an empty component name".to_string());
+        }
+        if *interval == 0 {
+            return Err(format!(
+                "component interval override for '{component}' must be positive"
+            ));
+        }
+    }
+    Ok(intervals)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -153,10 +211,22 @@ pub enum ComponentHealthStatus {
 }
 
 impl ComponentHealthStatus {
-    fn from_input(status: Option<&str>) -> Self {
-        status
-            .and_then(|s| Self::from_str(s).ok())
-            .unwrap_or(Self::Unknown)
+    fn parse_field(input: &JsonValue, field: &str) -> Result<Self, NodeLogicError> {
+        let value = input.get(field).ok_or_else(|| {
+            NodeLogicError::InputParsing(format!(
+                "health status payload is missing required field '{field}'"
+            ))
+        })?;
+        let status = value.as_str().ok_or_else(|| {
+            NodeLogicError::InputParsing(format!(
+                "health status field '{field}' must be a string"
+            ))
+        })?;
+        Self::from_str(status).map_err(|()| {
+            NodeLogicError::InputParsing(format!(
+                "health status field '{field}' has invalid value '{status}'"
+            ))
+        })
     }
 }
 
@@ -215,18 +285,20 @@ impl ScopeReconcilerNode for HealthAggregator {
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         let now = context.ts_orig.unwrap_or_else(Timestamp::now);
-        let component = scope_key.to_string();
+        let component = parse_component_name(&input)?.to_string();
+        if component != scope_key {
+            return Err(NodeLogicError::InputParsing(format!(
+                "health status scope key '{scope_key}' does not match payload component '{component}'"
+            )));
+        }
 
         // Ensure state has config
         if state.config.aggregation_window_seconds == 0 {
             state.config = self.config.clone();
         }
 
-        let previous_status = ComponentHealthStatus::from_input(
-            input.get("previous_status").and_then(|v| v.as_str()),
-        );
-        let current_status =
-            ComponentHealthStatus::from_input(input.get("current_status").and_then(|v| v.as_str()));
+        let previous_status = ComponentHealthStatus::parse_field(&input, "previous_status")?;
+        let current_status = ComponentHealthStatus::parse_field(&input, "current_status")?;
 
         // Check for periodic system-wide report
         let mut periodic_reports = Vec::new();
@@ -476,3 +548,20 @@ impl HealthAggregator {
 
 /// Node type alias for use with `node_entrypoint!`.
 pub type HealthAggregatorNode = ScopeReconcilerNodeAdapter<HealthAggregator>;
+
+fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
+    let component = input.get("component").ok_or_else(|| {
+        NodeLogicError::InputParsing(
+            "health status payload is missing required field 'component'".to_string(),
+        )
+    })?;
+    let component = component.as_str().ok_or_else(|| {
+        NodeLogicError::InputParsing("health status field 'component' must be a string".to_string())
+    })?;
+    if component.trim().is_empty() {
+        return Err(NodeLogicError::InputParsing(
+            "health status field 'component' must not be empty".to_string(),
+        ));
+    }
+    Ok(component)
+}

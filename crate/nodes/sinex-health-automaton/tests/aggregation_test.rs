@@ -575,6 +575,66 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
     Ok(())
 }
 
+#[sinex_test]
+async fn health_aggregator_rejects_invalid_status_values(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "component": "service-a",
+        "previous_status": "healthy",
+        "current_status": "mystery-state",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("invalid health statuses must fail honestly");
+
+    assert!(error.to_string().contains("current_status"));
+    assert!(error.to_string().contains("mystery-state"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_missing_component(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("missing component names must fail honestly");
+
+    assert!(error.to_string().contains("missing required field 'component'"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_non_string_component(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "component": 42,
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("non-string component names must fail honestly");
+
+    assert!(error.to_string().contains("field 'component' must be a string"));
+    Ok(())
+}
+
 // ── Scope Reconciler Output Metadata ────────────────────────────────────
 
 #[sinex_test]
