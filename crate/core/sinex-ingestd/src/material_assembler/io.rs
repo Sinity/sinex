@@ -70,16 +70,7 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
             continue;
         }
 
-        let Some(material_id) = (match parse_material_state_folder(&path) {
-            Ok(material_id) => material_id,
-            Err(error) => {
-                warn!(path = ?path, error = %error, "Skipping assembler state folder");
-                continue;
-            }
-        }) else {
-            warn!(path = ?path, "Skipping assembler state folder with non-UUID name");
-            continue;
-        };
+        let material_id = parse_material_state_folder(&path)?;
 
         if let Some(state) = restore_state_params(assembler, material_id, &path).await? {
             assembler.insert_state_handle(material_id, state).await;
@@ -90,7 +81,7 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
     Ok(())
 }
 
-fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Option<Uuid>> {
+fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
     let folder_name = path.file_name().ok_or_else(|| {
         SinexError::invalid_state(format!(
             "Assembler state folder {} is missing a file name",
@@ -105,7 +96,12 @@ fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Option<U
         ))
     })?;
 
-    Ok(Uuid::from_str(folder_name).ok())
+    Uuid::from_str(folder_name).map_err(|error| {
+        SinexError::invalid_state("Assembler state folder has invalid material id")
+            .with_context("path", path.display().to_string())
+            .with_context("folder_name", folder_name.to_string())
+            .with_std_error(&error)
+    })
 }
 
 async fn restore_state_params(
@@ -398,22 +394,29 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
             continue;
         }
 
-        let Some(offset) = buf_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .and_then(|stem| stem.parse::<i64>().ok())
-        else {
-            warn!(
-                path = %buf_path.display(),
-                "Skipping buffered slice with invalid filename"
-            );
-            continue;
-        };
+        let offset = parse_buffered_slice_offset(&buf_path)?;
 
         buffered_slices.insert(offset, buf_path);
     }
 
     Ok(buffered_slices)
+}
+
+fn parse_buffered_slice_offset(path: &std::path::Path) -> IngestdResult<i64> {
+    let stem = path.file_stem().ok_or_else(|| {
+        SinexError::invalid_state("Buffered slice is missing a file stem")
+            .with_context("path", path.display().to_string())
+    })?;
+    let stem = stem.to_str().ok_or_else(|| {
+        SinexError::invalid_state("Buffered slice file name is not valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    stem.parse::<i64>().map_err(|error| {
+        SinexError::invalid_state("Buffered slice file name has invalid offset")
+            .with_context("path", path.display().to_string())
+            .with_context("file_stem", stem.to_string())
+            .with_std_error(&error)
+    })
 }
 
 async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> IngestdResult<i64> {
@@ -1171,17 +1174,19 @@ mod tests {
 
         let parsed = parse_material_state_folder(&path)?;
 
-        assert_eq!(parsed, Some(material_id));
+        assert_eq!(parsed, material_id);
         Ok(())
     }
 
     #[sinex_test]
-    async fn parse_material_state_folder_skips_non_uuid_name() -> TestResult<()> {
+    async fn parse_material_state_folder_rejects_non_uuid_name() -> TestResult<()> {
         let path = std::path::Path::new("/tmp").join("notes");
 
-        let parsed = parse_material_state_folder(&path)?;
+        let error = parse_material_state_folder(&path)
+            .expect_err("non-UUID material state folders must surface explicit errors");
 
-        assert!(parsed.is_none());
+        assert!(error.to_string().contains("invalid material id"));
+        assert!(error.to_string().contains("notes"));
         Ok(())
     }
 
@@ -1210,6 +1215,38 @@ mod tests {
             .expect_err("invalid WAL started_at must fail honestly");
         assert!(error.to_string().contains("Invalid started_at"));
         assert!(error.to_string().contains("restored WAL state"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_rejects_invalid_buffered_slice_filename(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(material_dir.join(BUFFER_DIR_NAME)).await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+
+        tokio::fs::write(material_dir.join(BUFFER_DIR_NAME).join("bad-offset.slice"), b"slice")
+            .await?;
+
+        let error = restore_state(&assembler)
+            .await
+            .expect_err("invalid buffered slice filenames must fail restore honestly");
+
+        assert!(error.to_string().contains("invalid offset"));
+        assert!(error.to_string().contains("bad-offset"));
         Ok(())
     }
 
