@@ -335,11 +335,14 @@ impl JetStreamEventConsumer {
                 error!("Failed to ack message: {}", e);
             }
         } else {
-            let _ = msg
+            if let Err(error) = msg
                 .ack_with(async_nats::jetstream::AckKind::Nak(Some(
                     Duration::from_secs(5),
                 )))
-                .await;
+                .await
+            {
+                error!("Failed to NAK provisional handler failure: {}", error);
+            }
         }
     }
 
@@ -420,11 +423,14 @@ impl JetStreamEventConsumer {
                     error!("Failed to ack confirmation: {}", e);
                 }
             } else {
-                let _ = msg
+                if let Err(error) = msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(
                         Duration::from_secs(5),
                     )))
-                    .await;
+                    .await
+                {
+                    error!("Failed to NAK confirmed handler failure: {}", error);
+                }
             }
         } else {
             // Confirmation arrived before the provisional event was buffered
