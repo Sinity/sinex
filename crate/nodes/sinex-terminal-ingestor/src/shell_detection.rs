@@ -6,7 +6,7 @@
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, sync::RwLock};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Cache for command existence checks to avoid repeated `which::which()` calls
 static COMMAND_CACHE: std::sync::LazyLock<RwLock<HashMap<String, bool>>> =
@@ -121,7 +121,7 @@ pub struct ShellCapabilities {
 /// Detect the current shell environment
 pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::SinexError> {
     // Get shell from environment
-    let shell_env = env::var("SHELL").unwrap_or_default();
+    let shell_env = read_optional_env_var("SHELL", "detecting current shell").unwrap_or_default();
     let shell_type = detect_shell_type(&shell_env);
 
     // Detect capabilities
@@ -132,12 +132,11 @@ pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::SinexError> {
     let parent_pid = get_parent_pid();
 
     // Get session ID from environment
-    let session_id = env::var("SINEX_SESSION_ID")
-        .ok()
-        .or_else(|| env::var("TERM_SESSION_ID").ok());
+    let session_id = read_optional_env_var("SINEX_SESSION_ID", "detecting shell session id")
+        .or_else(|| read_optional_env_var("TERM_SESSION_ID", "detecting terminal session id"));
 
     // Get terminal info
-    let terminal = env::var("TERM").ok();
+    let terminal = read_optional_env_var("TERM", "detecting terminal type");
 
     // Build shell info
     let shell_info = ShellInfo {
@@ -198,12 +197,35 @@ pub fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     }
 }
 
+fn read_cached_command_exists(
+    cmd: &str,
+    cache: &RwLock<HashMap<String, bool>>,
+) -> Option<bool> {
+    match cache.read() {
+        Ok(cache) => cache.get(cmd).copied(),
+        Err(poisoned) => {
+            warn!(command = cmd, "Command cache read lock poisoned; recovering");
+            poisoned.into_inner().get(cmd).copied()
+        }
+    }
+}
+
+fn write_cached_command_exists(cmd: &str, exists: bool, cache: &RwLock<HashMap<String, bool>>) {
+    match cache.write() {
+        Ok(mut cache) => {
+            cache.insert(cmd.to_string(), exists);
+        }
+        Err(poisoned) => {
+            warn!(command = cmd, "Command cache write lock poisoned; recovering");
+            poisoned.into_inner().insert(cmd.to_string(), exists);
+        }
+    }
+}
+
 /// Check if a command exists in PATH with caching
 fn check_command_exists(cmd: &str) -> bool {
     // Check cache first (read lock)
-    if let Ok(cache) = COMMAND_CACHE.read()
-        && let Some(&exists) = cache.get(cmd)
-    {
+    if let Some(exists) = read_cached_command_exists(cmd, &COMMAND_CACHE) {
         return exists;
     }
 
@@ -211,16 +233,24 @@ fn check_command_exists(cmd: &str) -> bool {
     let exists = which::which(cmd).is_ok();
 
     // Update cache (write lock)
-    if let Ok(mut cache) = COMMAND_CACHE.write() {
-        cache.insert(cmd.to_string(), exists);
-    }
+    write_cached_command_exists(cmd, exists, &COMMAND_CACHE);
 
     exists
 }
 
 /// Get shell version
 fn get_shell_version(shell_type: &ShellType) -> Option<String> {
-    get_shell_version_impl(shell_type).ok()
+    match get_shell_version_impl(shell_type) {
+        Ok(version) => Some(version),
+        Err(error) => {
+            warn!(
+                shell = shell_type.name(),
+                %error,
+                "Failed to determine shell version"
+            );
+            None
+        }
+    }
 }
 
 /// Helper function that uses ? operator for cleaner error handling
@@ -232,11 +262,71 @@ fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
         _ => "--version",
     };
 
-    let output = Command::new(shell_type.name()).arg(version_flag).output()?;
+    let output = Command::new(shell_type.name())
+        .arg(version_flag)
+        .output()
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to execute {} {}: {error}",
+                    shell_type.name(),
+                    version_flag
+                ),
+            )
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else {
+            stdout
+        };
+        let message = if detail.is_empty() {
+            format!(
+                "failed to determine {} version: command exited with {}",
+                shell_type.name(),
+                output.status
+            )
+        } else {
+            format!(
+                "failed to determine {} version: command exited with {}: {}",
+                shell_type.name(),
+                output.status,
+                detail
+            )
+        };
+        return Err(std::io::Error::other(message));
+    }
 
     let stdout = String::from_utf8(output.stdout).map_err(std::io::Error::other)?;
-    let version = stdout.lines().next().unwrap_or("").to_string();
+    let version = stdout
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "failed to determine {} version: command produced empty stdout",
+                shell_type.name()
+            ))
+        })?;
     Ok(version)
+}
+
+fn read_optional_env_var(var: &str, context: &str) -> Option<String> {
+    match env::var(var) {
+        Ok(value) => Some(value),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                context,
+                "Environment variable is not valid UTF-8; ignoring value"
+            );
+            None
+        }
+    }
 }
 
 /// Get parent process ID using sysinfo crate for cross-platform compatibility
@@ -254,4 +344,115 @@ fn get_parent_pid() -> Option<u32> {
 /// Helper function to get home directory as `Utf8PathBuf`
 fn get_home_dir() -> Option<Utf8PathBuf> {
     dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because this covers local env/cache/version failure semantics.
+    use super::{
+        ShellType, get_shell_version, get_shell_version_impl, read_cached_command_exists,
+        read_optional_env_var, write_cached_command_exists,
+    };
+    use std::sync::RwLock;
+    use xtask::sandbox::sinex_serial_test;
+
+    struct ScopedEnvGuard {
+        keys: Vec<(String, Option<String>)>,
+    }
+
+    impl ScopedEnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            let previous = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                .collect();
+            Self { keys: previous }
+        }
+
+        fn set(&mut self, key: &str, value: &str) {
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn read_optional_env_var_returns_none_without_value() -> xtask::sandbox::TestResult<()> {
+        let _env = ScopedEnvGuard::new(&["SINEX_UNUSED_OPTIONAL_ENV"]);
+        assert_eq!(
+            read_optional_env_var("SINEX_UNUSED_OPTIONAL_ENV", "test context"),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn get_shell_version_impl_rejects_unknown_shell() {
+        let error = get_shell_version_impl(&ShellType::Unknown(
+            "__sinex_nonexistent_shell__".to_string(),
+        ))
+        .expect_err("unknown shell should fail");
+        assert!(
+            error.to_string().contains("__sinex_nonexistent_shell__"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn get_shell_version_surfaces_failure_as_none() {
+        assert_eq!(
+            get_shell_version(&ShellType::Unknown("__sinex_nonexistent_shell__".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn read_cached_command_exists_recovers_from_poisoned_cache() {
+        let poisoned_lock = RwLock::new(std::collections::HashMap::new());
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = poisoned_lock.write().expect("lock available");
+            panic!("poison command cache");
+        });
+
+        assert_eq!(read_cached_command_exists("sh", &poisoned_lock), None);
+    }
+
+    #[test]
+    fn write_cached_command_exists_recovers_from_poisoned_cache() {
+        let poisoned_lock = RwLock::new(std::collections::HashMap::new());
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = poisoned_lock.write().expect("lock available");
+            panic!("poison command cache");
+        });
+
+        write_cached_command_exists("sh", true, &poisoned_lock);
+        let cache = match poisoned_lock.into_inner() {
+            Ok(cache) => cache,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert_eq!(cache.get("sh"), Some(&true));
+    }
+
+    #[sinex_serial_test]
+    async fn session_id_falls_back_to_term_session_id() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_SESSION_ID", "TERM_SESSION_ID"]);
+        env.set("TERM_SESSION_ID", "term-session");
+
+        let session_id = read_optional_env_var("SINEX_SESSION_ID", "test context")
+            .or_else(|| read_optional_env_var("TERM_SESSION_ID", "test context"));
+
+        assert_eq!(session_id.as_deref(), Some("term-session"));
+        Ok(())
+    }
 }
