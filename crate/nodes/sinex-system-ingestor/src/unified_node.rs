@@ -214,6 +214,10 @@ impl Default for SystemNode {
 }
 
 impl SystemNode {
+    fn watcher_last_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
+        handle.and_then(|watcher| watcher.health().last_error)
+    }
+
     /// Create a new unified system node
     #[must_use]
     pub fn new() -> Self {
@@ -645,17 +649,24 @@ impl SystemNode {
             .create_dbus_watcher(self.config.dbus_config.clone())
             .await?;
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("dbus").with_material(material);
+        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "D-Bus watcher terminated");
             }
         });
-        Ok(WatcherHandle::running(
-            "dbus",
-            task,
-            Some(forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(forwarder))?;
+        Ok(handle)
     }
 
     async fn spawn_unified_journal_task(
@@ -679,8 +690,9 @@ impl SystemNode {
                 self.dlq_publisher(),
             )
             .await?;
-
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("unified_journal").with_material(material);
+        let health = handle.health_tracker();
         let systemd_tx_opt = if self.config.systemd_enabled {
             Some(systemd_tx)
         } else {
@@ -692,6 +704,14 @@ impl SystemNode {
                 .start_streaming_with_systemd(journal_tx, systemd_tx_opt, watcher_material)
                 .await
             {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "Unified journal watcher terminated");
             }
         });
@@ -703,12 +723,9 @@ impl SystemNode {
             log_forwarder_join_result("systemd", systemd_result);
         });
 
-        Ok(WatcherHandle::running(
-            "unified_journal",
-            task,
-            Some(combined_forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(combined_forwarder))?;
+        Ok(handle)
     }
 
     async fn spawn_udev_task(
@@ -720,17 +737,24 @@ impl SystemNode {
         let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
         let mut watcher = self.factory.create_udev_watcher(true).await?;
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("udev").with_material(material);
+        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "udev watcher terminated");
             }
         });
-        Ok(WatcherHandle::running(
-            "udev",
-            task,
-            Some(forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(forwarder))?;
+        Ok(handle)
     }
 
     /// Perform historical scan on system sources
@@ -1052,7 +1076,7 @@ impl IngestorNode for SystemNode {
         .iter()
         .filter(|&&active| active)
         .count() as u64;
-        let healthy = connected_sources > 0 || active_sources == 0;
+        let healthy = active_sources == 0 || connected_sources == active_sources;
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -1063,12 +1087,20 @@ impl IngestorNode for SystemNode {
                 "journal_active": self.journal_connected(),
                 "udev_active": self.udev_connected(),
                 "systemd_active": self.systemd_connected(),
+                "dbus_error": Self::watcher_last_error(self.dbus_watcher.as_ref()),
+                "journal_error": Self::watcher_last_error(self.unified_journal_watcher.as_ref()),
+                "udev_error": Self::watcher_last_error(self.udev_watcher.as_ref()),
+                "systemd_error": Self::watcher_last_error(self.unified_journal_watcher.as_ref()),
             }),
         );
         let description = if active_sources == 0 {
             "System Source (all watchers disabled)".to_string()
         } else if connected_sources == 0 {
             format!("System Source ({active_sources} enabled watcher(s), none connected)")
+        } else if connected_sources < active_sources {
+            format!(
+                "System Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
+            )
         } else {
             format!(
                 "System Source ({connected_sources}/{active_sources} watcher(s) connected)"
@@ -1355,6 +1387,10 @@ mod tests {
                 "journal_active": false,
                 "udev_active": false,
                 "systemd_active": false,
+                "dbus_error": null,
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
             }))
         );
         Ok(())
@@ -1392,7 +1428,8 @@ mod tests {
         let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
 
         assert!(source.is_connected);
-        assert!(source.healthy);
+        assert!(!source.healthy);
+        assert!(source.description.contains("degraded"));
         assert_eq!(
             source
                 .metadata
@@ -1407,6 +1444,58 @@ mod tests {
                 "journal_active": false,
                 "udev_active": false,
                 "systemd_active": false,
+                "dbus_error": null,
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_is_healthy_when_all_enabled_watchers_are_connected() -> TestResult<()>
+    {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: true,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        node.dbus_watcher = Some(WatcherHandle::running("dbus", task, None, None));
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert!(source.is_connected);
+        assert!(source.healthy);
+        assert!(source.description.contains("1/1 watcher(s) connected"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_surfaces_watcher_errors() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        let dbus = WatcherHandle::<WatcherMaterialContext>::initialized("dbus");
+        dbus.record_error("dbus stream failed".to_string());
+        node.dbus_watcher = Some(dbus);
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": false,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+                "dbus_error": "dbus stream failed",
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
             }))
         );
         Ok(())
