@@ -218,6 +218,24 @@ impl SystemNode {
         handle.and_then(|watcher| watcher.health().last_error)
     }
 
+    fn collapse_shutdown_errors(mut errors: Vec<(String, SinexError)>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (step, error) = errors.remove(0);
+        let mut combined = error.with_context("shutdown_step", step);
+        for (index, (step, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(format!("additional_shutdown_step_{}", index + 1), step)
+                .with_context(
+                    format!("additional_shutdown_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
+    }
+
     /// Create a new unified system node
     #[must_use]
     pub fn new() -> Self {
@@ -501,32 +519,47 @@ impl SystemNode {
     }
 
     /// Abort and drop any active watcher handles.
-    async fn shutdown_watchers(&mut self) {
+    async fn shutdown_watchers(&mut self) -> NodeResult<()> {
+        let mut shutdown_errors = Vec::new();
         if let Some(handle) = self.dbus_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("dbus watcher".to_string(), error));
+            }
         }
         if let Some(handle) = self.unified_journal_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("unified journal watcher".to_string(), error));
+            }
         }
         if let Some(handle) = self.udev_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("udev watcher".to_string(), error));
+            }
         }
 
         if let Some(material) = self.node_material.take()
-            && let Err(err) = material.finalize("system-watcher shutdown").await
+            && let Err(error) = material.finalize("system-watcher shutdown").await
         {
-            warn!(error = %err, "Failed to finalize system node material");
+            shutdown_errors.push(("system node material".to_string(), error));
         }
+
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
-    async fn finalize_watcher_handle(&self, mut handle: WatcherHandle<WatcherMaterialContext>) {
+    async fn finalize_watcher_handle(
+        &self,
+        mut handle: WatcherHandle<WatcherMaterialContext>,
+    ) -> NodeResult<()> {
+        let mut shutdown_errors = Vec::new();
         if let Some(material) = handle.take_material()
-            && let Err(err) = material.finalize("system-watcher shutdown").await
+            && let Err(error) = material.finalize("system-watcher shutdown").await
         {
-            warn!(error = %err, "Failed to finalize system watcher material");
+            shutdown_errors.push(("watcher material".to_string(), error));
         }
-        // Handle shutdown is automatic via Drop, but we call it explicitly for cleaner async shutdown
-        handle.shutdown().await;
+        if let Err(error) = handle.shutdown().await {
+            shutdown_errors.push(("watcher task".to_string(), error));
+        }
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
     /// Start continuous system monitoring
@@ -579,7 +612,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.dbus_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("dbus").await?;
@@ -603,7 +636,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.unified_journal_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("unified_journal").await?;
@@ -627,7 +660,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.udev_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("udev").await?;
@@ -1007,7 +1040,7 @@ impl IngestorNode for SystemNode {
             }
         }
 
-        self.shutdown_watchers().await;
+        self.shutdown_watchers().await?;
         let finished_at = Timestamp::now();
 
         Ok(ScanReport {
@@ -1023,8 +1056,7 @@ impl IngestorNode for SystemNode {
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
-        self.shutdown_watchers().await;
-        Ok(())
+        self.shutdown_watchers().await
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -1183,17 +1215,23 @@ impl SystemNode {
         match watcher_type {
             "dbus" => {
                 if let Some(h) = self.dbus_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("dbus watcher shutdown should stay explicit in tests");
                 }
             }
             "unified_journal" => {
                 if let Some(h) = self.unified_journal_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("journal watcher shutdown should stay explicit in tests");
                 }
             }
             "udev" => {
                 if let Some(h) = self.udev_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("udev watcher shutdown should stay explicit in tests");
                 }
             }
             _ => panic!("Unknown watcher: {watcher_type}"),

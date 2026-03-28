@@ -36,7 +36,10 @@
 //! println!("Active: {}, Last error: {:?}", health.active, health.last_error);
 //!
 //! // Shutdown (automatically aborts tasks on drop)
-//! handle.shutdown().await;
+//! # async fn demo() -> sinex_primitives::Result<()> {
+//! handle.shutdown().await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::sync::{Arc, RwLock};
@@ -91,27 +94,42 @@ pub struct WatcherHandle<M = ()> {
 }
 
 impl<M> WatcherHandle<M> {
-    fn log_shutdown_join_result(
+    fn shutdown_join_result(
         watcher_name: &'static str,
         task_name: &str,
         result: Result<(), JoinError>,
-    ) {
+    ) -> SinexResult<()> {
         match result {
             Ok(()) => {
                 debug!(watcher = watcher_name, task = task_name, "Watcher task finished before shutdown");
+                Ok(())
             }
             Err(join_error) if join_error.is_cancelled() => {
                 debug!(watcher = watcher_name, task = task_name, "Watcher task aborted during shutdown");
+                Ok(())
             }
             Err(join_error) => {
-                warn!(
-                    watcher = watcher_name,
-                    task = task_name,
-                    error = %join_error,
-                    "Watcher task exited unexpectedly during shutdown"
-                );
+                Err(SinexError::processing("Watcher task failed during shutdown")
+                    .with_context("watcher_name", watcher_name)
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", join_error.to_string()))
             }
         }
+    }
+
+    fn collapse_shutdown_errors(mut errors: Vec<SinexError>) -> SinexResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let mut error = errors.remove(0);
+        for (index, extra) in errors.into_iter().enumerate() {
+            error = error.with_context(
+                format!("additional_shutdown_error_{}", index + 1),
+                extra.to_string(),
+            );
+        }
+        Err(error)
     }
 
     fn recover_health_read(&self) -> WatcherHealth {
@@ -286,30 +304,41 @@ impl<M> WatcherHandle<M> {
     ///
     /// This is also automatically called on `Drop`, but calling explicitly
     /// allows for proper async cleanup of material contexts and awaiting task completion.
-    pub async fn shutdown(mut self) {
-        self.abort_tasks_async().await;
+    pub async fn shutdown(mut self) -> SinexResult<()> {
+        let shutdown_result = self.abort_tasks_async().await;
         self.state = WatcherState::Stopped;
         self.with_health_write(|health| {
             health.active = false;
         });
         // Material context cleanup should be handled by caller if needed
         // since we can't await in Drop
+        shutdown_result
     }
 
     /// Abort any running tasks and wait for them to finish.
-    async fn abort_tasks_async(&mut self) {
+    async fn abort_tasks_async(&mut self) -> SinexResult<()> {
         let watcher_name = self.name;
+        let mut errors = Vec::new();
         match &mut self.state {
             WatcherState::Running { task, forwarder } => {
                 task.abort();
-                Self::log_shutdown_join_result(watcher_name, "watcher task", task.await);
+                if let Err(error) =
+                    Self::shutdown_join_result(watcher_name, "watcher task", task.await)
+                {
+                    errors.push(error);
+                }
                 if let Some(fwd) = forwarder.take() {
                     fwd.abort();
-                    Self::log_shutdown_join_result(watcher_name, "watcher forwarder", fwd.await);
+                    if let Err(error) =
+                        Self::shutdown_join_result(watcher_name, "watcher forwarder", fwd.await)
+                    {
+                        errors.push(error);
+                    }
                 }
             }
             WatcherState::Initialized | WatcherState::Stopped => {}
         }
+        Self::collapse_shutdown_errors(errors)
     }
 
     /// Synchronous abort for Drop (best-effort).

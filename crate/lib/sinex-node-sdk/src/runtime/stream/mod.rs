@@ -656,22 +656,70 @@ impl<T: Node + 'static> NodeRunner<T> {
         true
     }
 
-    fn log_shutdown_join_result(task_name: &str, result: Result<(), tokio::task::JoinError>) {
+    fn shutdown_join_result(
+        task_name: &str,
+        result: Result<(), tokio::task::JoinError>,
+    ) -> NodeResult<()> {
         match result {
             Ok(()) => {
                 debug!(task = task_name, "Task finished before shutdown cleanup");
+                Ok(())
             }
             Err(join_error) if join_error.is_cancelled() => {
                 debug!(task = task_name, "Task aborted during shutdown cleanup");
+                Ok(())
             }
             Err(join_error) => {
-                warn!(
-                    task = task_name,
-                    error = %join_error,
-                    "Task exited unexpectedly during shutdown cleanup"
-                );
+                Err(SinexError::processing("Task failed during shutdown")
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", join_error.to_string()))
             }
         }
+    }
+
+    fn leadership_release_result(instance_id: &str, result: NodeResult<()>) -> NodeResult<()> {
+        result.map_err(|error| error.with_context("instance_id", instance_id.to_string()))
+    }
+
+    fn event_batcher_shutdown_result(
+        result: Result<NodeResult<()>, tokio::task::JoinError>,
+    ) -> NodeResult<()> {
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error),
+            Err(join_error) => Err(
+                SinexError::processing("Event batcher failed during shutdown")
+                    .with_context("join_error", join_error.to_string()),
+            ),
+        }
+    }
+
+    fn push_shutdown_error(
+        errors: &mut Vec<(String, SinexError)>,
+        step: impl Into<String>,
+        result: NodeResult<()>,
+    ) {
+        if let Err(error) = result {
+            errors.push((step.into(), error));
+        }
+    }
+
+    fn collapse_shutdown_errors(mut errors: Vec<(String, SinexError)>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (step, error) = errors.remove(0);
+        let mut combined = error.with_context("shutdown_step", step);
+        for (index, (step, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(format!("additional_shutdown_step_{}", index + 1), step)
+                .with_context(
+                    format!("additional_shutdown_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
     }
 
     fn build_instance_id(host: &str) -> String {
@@ -1304,18 +1352,22 @@ impl<T: Node + 'static> NodeRunner<T> {
         };
 
         Self::signal_shutdown_channel(heartbeat_shutdown_tx, "heartbeat");
-        if let Err(error) = heartbeat_handle.await {
-            warn!(error = %error, "Failed to join heartbeat task");
-        }
+        let heartbeat_result = Self::shutdown_join_result("heartbeat", heartbeat_handle.await);
 
         systemd_notify::stop_watchdog(watchdog_handle, "sinex-node").await;
         systemd_notify::notify_stopping("sinex-node");
 
         let shutdown_result = self.shutdown().await;
 
+        let mut terminal_errors = Vec::new();
+        Self::push_shutdown_error(&mut terminal_errors, "service", service_result);
+        Self::push_shutdown_error(&mut terminal_errors, "heartbeat", heartbeat_result);
+        Self::push_shutdown_error(&mut terminal_errors, "shutdown", shutdown_result);
+        let terminal_result = Self::collapse_shutdown_errors(terminal_errors);
+
         #[cfg(feature = "db")]
         if let Some(pool) = runtime.handles().db_pool().cloned() {
-            let terminal = if service_result.is_ok() && shutdown_result.is_ok() {
+            let terminal = if terminal_result.is_ok() {
                 NodeState::Stopped
             } else {
                 NodeState::Failed
@@ -1323,14 +1375,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             Self::update_registered_run_status(&pool, runtime.service_info(), terminal).await;
         }
 
-        match (service_result, shutdown_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(service_error), Ok(())) => Err(service_error),
-            (Ok(()), Err(shutdown_error)) => Err(shutdown_error),
-            (Err(service_error), Err(shutdown_error)) => {
-                Err(service_error.with_context("shutdown_error", shutdown_error.to_string()))
-            }
-        }
+        terminal_result
     }
 
     /// Start the NATS command listener for node-dispatch replay.
@@ -2484,47 +2529,89 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         info!("Shutting down stream node runner");
 
-        Self::abort_task(
-            &mut self.schema_listener_handle,
+        let mut shutdown_errors = Vec::new();
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
             "schema broadcast listener",
-        )
-        .await;
-        Self::abort_task(&mut self.command_listener_handle, "command listener").await;
-        self.shutdown_leader_state().await;
-        self.shutdown_event_batcher().await;
-        Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
-        Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
+            Self::abort_task(
+                &mut self.schema_listener_handle,
+                "schema broadcast listener",
+            )
+            .await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "command listener",
+            Self::abort_task(&mut self.command_listener_handle, "command listener").await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "coordination",
+            self.shutdown_leader_state().await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "event batcher",
+            self.shutdown_event_batcher().await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "automaton consumer",
+            Self::abort_task(&mut self.consumer_handle, "automaton consumer").await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "checkpoint cleanup",
+            Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await,
+        );
+        Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
 
-        self.node.shutdown().await
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
-    async fn abort_task(handle: &mut Option<tokio::task::JoinHandle<()>>, name: &str) {
+    async fn abort_task(
+        handle: &mut Option<tokio::task::JoinHandle<()>>,
+        name: &str,
+    ) -> NodeResult<()> {
         if let Some(h) = handle.take() {
             h.abort();
-            Self::log_shutdown_join_result(name, h.await);
+            Self::shutdown_join_result(name, h.await)
+        } else {
+            Ok(())
         }
     }
 
-    async fn shutdown_leader_state(&mut self) {
+    async fn shutdown_leader_state(&mut self) -> NodeResult<()> {
         if let Some(state) = self.leader_state.take() {
+            let mut shutdown_errors = Vec::new();
             state.heartbeat_handle.abort();
-            Self::log_shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await);
-            if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
-                warn!(error = %err, "Failed to release leadership on shutdown");
-            }
+            Self::push_shutdown_error(
+                &mut shutdown_errors,
+                "coordination heartbeat",
+                Self::shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await),
+            );
+            Self::push_shutdown_error(
+                &mut shutdown_errors,
+                "coordination leadership release",
+                Self::leadership_release_result(
+                    &state.instance_id,
+                    state.kv_client.release_leadership(&state.instance_id).await,
+                ),
+            );
+            Self::collapse_shutdown_errors(shutdown_errors)
+        } else {
+            Ok(())
         }
     }
 
-    async fn shutdown_event_batcher(&mut self) {
+    async fn shutdown_event_batcher(&mut self) -> NodeResult<()> {
         if let Some(shutdown_tx) = self.event_batcher_shutdown.take() {
             Self::signal_shutdown_channel(shutdown_tx, "event batcher");
         }
         if let Some(handle) = self.event_batcher_handle.take() {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => error!(error = %err, "Event batcher failed during shutdown"),
-                Err(join_err) => error!(error = %join_err, "Failed to join event batcher task"),
-            }
+            Self::event_batcher_shutdown_result(handle.await)
+        } else {
+            Ok(())
         }
     }
 }
@@ -2736,6 +2823,55 @@ mod tests {
 
         assert!(NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
         rx.await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("runtime panic");
+        });
+
+        let error = NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+            .expect_err("panicked runtime tasks must fail shutdown honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("Task failed during shutdown"));
+        assert!(message.contains("runtime-task"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
+        let handle = tokio::spawn(async move {
+            panic!("batcher panic");
+            #[allow(unreachable_code)]
+            Ok::<(), SinexError>(())
+        });
+
+        let error = NodeRunner::<RuntimeTestNode>::event_batcher_shutdown_result(handle.await)
+            .expect_err("panicked batcher tasks must fail shutdown honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("Event batcher failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<()> {
+        let error = NodeRunner::<RuntimeTestNode>::collapse_shutdown_errors(vec![
+            (
+                "heartbeat".to_string(),
+                SinexError::processing("primary shutdown failure"),
+            ),
+            (
+                "event batcher".to_string(),
+                SinexError::processing("secondary shutdown failure"),
+            ),
+        ])
+        .expect_err("multiple shutdown failures must stay visible");
+        let message = format!("{error:#}");
+        assert!(message.contains("primary shutdown failure"));
+        assert!(message.contains("event batcher"));
+        assert!(message.contains("secondary shutdown failure"));
         Ok(())
     }
 }
