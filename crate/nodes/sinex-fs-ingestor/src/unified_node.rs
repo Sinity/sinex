@@ -332,6 +332,24 @@ impl FilesystemNode {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
+    fn log_watcher_shutdown_result(index: usize, result: Result<(), tokio::task::JoinError>) {
+        match result {
+            Ok(()) => {
+                debug!(watcher_index = index, "Filesystem watcher task finished before shutdown");
+            }
+            Err(error) if error.is_cancelled() => {
+                debug!(watcher_index = index, "Filesystem watcher task cancelled during shutdown");
+            }
+            Err(error) => {
+                warn!(
+                    watcher_index = index,
+                    error = %error,
+                    "Filesystem watcher task exited unexpectedly during shutdown"
+                );
+            }
+        }
+    }
+
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Filesystem runtime handles not initialized".to_string())
@@ -580,7 +598,9 @@ impl IngestorNode for FilesystemNode {
 
         // Wait for shutdown signal instead of awaiting pending
         let mut shutdown_rx = shutdown_rx;
-        let _ = shutdown_rx.changed().await;
+        if shutdown_rx.changed().await.is_err() {
+            warn!("Filesystem watcher shutdown channel dropped before explicit shutdown");
+        }
 
         Ok(ScanReport {
             events_processed: 0,
@@ -600,8 +620,8 @@ impl IngestorNode for FilesystemNode {
 
         // Wait for all watcher tasks to finish
         let mut guard = self.watch_handles.lock().await;
-        for handle in guard.drain(..) {
-            let _ = handle.await;
+        for (index, handle) in guard.drain(..).enumerate() {
+            Self::log_watcher_shutdown_result(index, handle.await);
         }
 
         info!(
@@ -1295,6 +1315,32 @@ mod tests {
                 .and_then(serde_json::Value::as_u64)
                 .is_some_and(|count| count == 1)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_clean_exit() -> TestResult<()> {
+        let handle = tokio::spawn(async {});
+        FilesystemNode::log_watcher_shutdown_result(0, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_cancelled_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        FilesystemNode::log_watcher_shutdown_result(1, handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_accepts_panicked_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("filesystem watcher panic");
+        });
+        FilesystemNode::log_watcher_shutdown_result(2, handle.await);
         Ok(())
     }
 
