@@ -18,6 +18,17 @@ pub use sinex_primitives::rpc::dlq::{
     DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
 
+fn parse_retry_count_header(headers: Option<&async_nats::HeaderMap>) -> Result<u32> {
+    let Some(value) = headers.and_then(|headers| headers.get("Retry-Count")) else {
+        return Ok(0);
+    };
+
+    value
+        .as_str()
+        .parse::<u32>()
+        .map_err(|error| eyre!("Retry-Count header is invalid: {} ({error})", value))
+}
+
 /// Handle DLQ list request - returns statistics about DLQ
 pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let nats_client = services
@@ -91,12 +102,7 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
     while count < peek_params.limit {
         match messages.next().await {
             Some(Ok(msg)) => {
-                let retry_count = msg
-                    .headers
-                    .as_ref()
-                    .and_then(|h| h.get("Retry-Count"))
-                    .and_then(|v| v.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
+                let retry_count = parse_retry_count_header(msg.headers.as_ref())?;
 
                 let original_subject = msg
                     .headers
@@ -133,6 +139,31 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
 
     let response = DlqPeekResponse { messages: previews };
     Ok(serde_json::to_value(response)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_retry_count_header;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
+        assert_eq!(parse_retry_count_header(None)?, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_retry_count_header_rejects_invalid_value() -> TestResult<()> {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Retry-Count", "not-a-number");
+
+        let error = parse_retry_count_header(Some(&headers))
+            .expect_err("invalid Retry-Count header should fail honestly");
+
+        assert!(error.to_string().contains("Retry-Count header is invalid"));
+        assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
 }
 
 /// Handle DLQ requeue request - move messages back to main stream

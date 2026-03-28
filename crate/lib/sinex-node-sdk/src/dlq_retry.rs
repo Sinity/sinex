@@ -136,7 +136,7 @@ impl DlqRetryHandler {
                     if self.handle_dlq_message(&js, &msg).await? {
                         result.retried += 1;
                     } else {
-                        if dlq_retry_attempts(&msg) >= self.config.max_retries {
+                        if dlq_retry_attempts(&msg)? >= self.config.max_retries {
                             result.permanently_failed += 1;
                         }
                     }
@@ -245,7 +245,7 @@ impl DlqRetryHandler {
         js: &jetstream::Context,
         msg: &jetstream::Message,
     ) -> NodeResult<bool> {
-        let retry_count = dlq_retry_attempts(msg);
+        let retry_count = dlq_retry_attempts(msg)?;
 
         if retry_count >= self.config.max_retries {
             let subject = &msg.subject;
@@ -323,7 +323,7 @@ impl DlqRetryHandler {
         stream: &jetstream::stream::Stream,
         message: &async_nats::jetstream::message::StreamMessage,
     ) -> NodeResult<()> {
-        let retry_count = dlq_stored_retry_count(&message.headers);
+        let retry_count = dlq_stored_retry_count(&message.headers)?;
         let target = dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
 
         let mut headers = async_nats::HeaderMap::new();
@@ -399,22 +399,31 @@ struct DlqRequeueTarget {
     event_id: Option<String>,
 }
 
-fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> u32 {
-    headers
-        .get("Retry-Count")
-        .and_then(|value| value.as_str().parse::<u32>().ok())
-        .unwrap_or(0)
+fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> NodeResult<u32> {
+    let Some(value) = headers.get("Retry-Count") else {
+        return Ok(0);
+    };
+
+    value.as_str().parse::<u32>().map_err(|error| {
+        SinexError::processing("DLQ Retry-Count header is invalid".to_string())
+            .with_context("header", "Retry-Count")
+            .with_context("value", value.to_string())
+            .with_std_error(&error)
+    })
 }
 
-fn dlq_retry_attempts(msg: &jetstream::Message) -> u32 {
-    let header_retry = msg.headers.as_ref().map_or(0, dlq_stored_retry_count);
+fn dlq_retry_attempts(msg: &jetstream::Message) -> NodeResult<u32> {
+    let header_retry = match msg.headers.as_ref() {
+        Some(headers) => dlq_stored_retry_count(headers)?,
+        None => 0,
+    };
     let delivery_retry = msg
         .info()
         .ok()
         .map(|info| info.delivered.saturating_sub(1))
         .and_then(|delivered| u32::try_from(delivered).ok())
         .unwrap_or(0);
-    header_retry.max(delivery_retry)
+    Ok(header_retry.max(delivery_retry))
 }
 
 fn dlq_event_id(subject: &str, headers: &async_nats::HeaderMap, payload: &[u8]) -> Option<String> {
