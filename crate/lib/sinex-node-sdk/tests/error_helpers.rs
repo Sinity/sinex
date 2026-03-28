@@ -1,8 +1,9 @@
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::error_helpers::{
-    io_error_with_context, json_error_with_context, processing_error, processing_error_fmt,
-    utf8_error_with_context,
+    io_error_with_context, json_error_with_context, parse_config_value, parse_typed_config,
+    processing_error, processing_error_fmt, utf8_error_with_context,
 };
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use xtask::sandbox::prelude::*;
 
@@ -134,5 +135,40 @@ async fn error_display_and_debug_include_context() -> TestResult<()> {
     let debug_str = format!("{error:?}");
     assert!(debug_str.contains("Processing"));
     assert!(debug_str.contains("Test error message"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn parse_config_value_rejects_invalid_types() -> TestResult<()> {
+    let source = HashMap::from([(
+        "enabled".to_string(),
+        serde_json::Value::String("yes".to_string()),
+    )]);
+
+    let error = parse_config_value::<bool, _>("enabled", &source)
+        .expect_err("invalid config type should fail honestly");
+    let message = error.to_string();
+
+    assert!(message.contains("enabled"));
+    assert!(message.contains("bool"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn parse_typed_config_rejects_invalid_sections() -> TestResult<()> {
+    #[derive(Debug, serde::Deserialize)]
+    struct ExampleConfig {
+        #[serde(rename = "enabled")]
+        _enabled: bool,
+    }
+
+    let source = HashMap::from([("example".to_string(), serde_json::json!(true))]);
+
+    let error = parse_typed_config::<ExampleConfig, _>("example", &source)
+        .expect_err("invalid typed config should fail honestly");
+    let message = error.to_string();
+
+    assert!(message.contains("example"));
+    assert!(message.contains("ExampleConfig"));
     Ok(())
 }

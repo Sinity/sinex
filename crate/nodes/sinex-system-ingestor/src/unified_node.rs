@@ -6,7 +6,7 @@
 use crate::common::{
     Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport, TimeHorizon, info, instrument,
 };
-use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
+use sinex_node_sdk::error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config};
 use sinex_node_sdk::runtime::stream::{EventEmitter, NodeRuntimeState};
 
 // System-specific event payloads
@@ -264,34 +264,39 @@ impl SystemNode {
         Ok(Arc::new(context))
     }
 
-    fn apply_config_overrides(config: &mut SystemConfig, runtime: &NodeRuntimeState) {
-        if let Some(overrides) = parse_typed_config::<SystemConfig, _>("system", runtime) {
+    fn apply_config_overrides<S: ConfigAccessor>(
+        config: &mut SystemConfig,
+        source: &S,
+    ) -> NodeResult<()> {
+        if let Some(overrides) = parse_typed_config::<SystemConfig, _>("system", source)? {
             *config = overrides;
         }
 
-        if let Some(enabled) = parse_config_value::<bool, _>("dbus_enabled", runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("dbus_enabled", source)? {
             config.dbus_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool, _>("journal_enabled", runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("journal_enabled", source)? {
             config.journal_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool, _>("udev_enabled", runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("udev_enabled", source)? {
             config.udev_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool, _>("systemd_enabled", runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("systemd_enabled", source)? {
             config.systemd_enabled = enabled;
         }
 
-        if let Some(buses) = parse_config_value::<DbusBusScope, _>("dbus_buses", runtime) {
+        if let Some(buses) = parse_config_value::<DbusBusScope, _>("dbus_buses", source)? {
             config.dbus_buses = buses;
         }
 
-        if let Some(timeout) = parse_config_value::<Seconds, _>("journal_timeout_secs", runtime) {
+        if let Some(timeout) = parse_config_value::<Seconds, _>("journal_timeout_secs", source)? {
             config.journal_timeout_secs = timeout;
         }
+
+        Ok(())
     }
 
     /// Take a snapshot of current system state
@@ -753,7 +758,7 @@ impl IngestorNode for SystemNode {
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        Self::apply_config_overrides(&mut config, runtime);
+        Self::apply_config_overrides(&mut config, runtime)?;
         self.config = config;
 
         let publisher: Arc<NatsPublisher> = match runtime.transport() {
@@ -1060,6 +1065,7 @@ mod tests {
     use super::*;
     use crate::material_context::MaterialContext;
     use crate::watcher_factory::{JournalWatcherTrait, SystemWatcher};
+    use serde_json::json;
     use sinex_db::models::{OffsetKind, Provenance};
     use sinex_primitives::JsonValue;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1180,6 +1186,20 @@ mod tests {
         assert_eq!(dbus_count.load(Ordering::SeqCst), 2);
         assert!(node.is_dbus_watcher_active());
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_config_overrides_reject_invalid_bool_types() -> TestResult<()> {
+        let mut config = SystemConfig::default();
+        let overrides = HashMap::from([("dbus_enabled".to_string(), json!("yes"))]);
+
+        let error = SystemNode::apply_config_overrides(&mut config, &overrides)
+            .expect_err("invalid override types should fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("dbus_enabled"));
+        assert!(message.contains("bool"));
         Ok(())
     }
 }

@@ -5,10 +5,10 @@
 
 // Use local facade for common types
 use crate::common::{
-    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry,
-    NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
-    SourceState, TimeHorizon, error, info, instrument, parse_config_value, parse_typed_config,
-    warn,
+    ActivityEntry, Checkpoint, ConfigAccessor, CoverageAnalysis, Deserialize, HashMap,
+    IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport,
+    Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument,
+    parse_config_value, parse_typed_config, warn,
 };
 
 use crate::{
@@ -467,6 +467,64 @@ impl Default for DesktopNode {
     }
 }
 
+impl DesktopNode {
+    fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
+        raw.parse::<WindowManagerType>().map_err(|error| {
+            SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
+        })
+    }
+
+    fn parse_bool_env_override(var_name: &str, raw: &str) -> NodeResult<bool> {
+        raw.parse::<bool>().map_err(|error| {
+            SinexError::processing(format!("Invalid {var_name} value `{raw}`: {error}"))
+        })
+    }
+
+    fn apply_config_overrides<S: ConfigAccessor>(
+        config: &mut DesktopConfig,
+        source: &S,
+    ) -> NodeResult<()> {
+        if let Some(context_config) = parse_typed_config::<DesktopConfig, _>("desktop", source)? {
+            *config = context_config;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool, _>("clipboard_enabled", source)? {
+            config.clipboard_enabled = enabled;
+        }
+        if let Some(enabled) = parse_config_value::<bool, _>("window_manager_enabled", source)? {
+            config.window_manager_enabled = enabled;
+        }
+        if let Some(wm_type_str) = parse_config_value::<String, _>("window_manager_type", source)? {
+            config.window_manager_type = Self::parse_window_manager_type_override(&wm_type_str)?;
+        }
+        if let Some(interval) =
+            parse_config_value::<Seconds, _>("clipboard_poll_interval_secs", source)?
+        {
+            config.clipboard_poll_interval_secs = interval;
+        }
+        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", source)? {
+            config.require_hyprland = require_hyprland;
+        }
+        if let Some(path) = parse_config_value::<String, _>("activitywatch_db_path", source)? {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
+
+        Ok(())
+    }
+
+    fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
+        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
+            config.require_hyprland =
+                Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
+        }
+        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
+            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
+        }
+
+        Ok(())
+    }
+}
+
 impl IngestorNode for DesktopNode {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;
@@ -502,41 +560,8 @@ impl IngestorNode for DesktopNode {
             "Initializing desktop node"
         );
 
-        // Apply config overrides logic
-        if let Some(context_config) = parse_typed_config::<DesktopConfig, _>("desktop", runtime) {
-            config = context_config;
-        }
-
-        if let Some(enabled) = parse_config_value::<bool, _>("clipboard_enabled", runtime) {
-            config.clipboard_enabled = enabled;
-        }
-        if let Some(enabled) = parse_config_value::<bool, _>("window_manager_enabled", runtime) {
-            config.window_manager_enabled = enabled;
-        }
-        if let Some(wm_type_str) = parse_config_value::<String, _>("window_manager_type", runtime) {
-            if let Ok(wm_type) = wm_type_str.parse::<WindowManagerType>() {
-                config.window_manager_type = wm_type;
-            } else {
-                warn!("Invalid window manager type: {}", wm_type_str);
-            }
-        }
-        if let Some(interval) =
-            parse_config_value::<Seconds, _>("clipboard_poll_interval_secs", runtime)
-        {
-            config.clipboard_poll_interval_secs = interval;
-        }
-        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", runtime) {
-            config.require_hyprland = require_hyprland;
-        }
-        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
-            config.require_hyprland = val.parse().unwrap_or(false);
-        }
-        if let Some(path) = parse_config_value::<String, _>("activitywatch_db_path", runtime) {
-            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
-        }
-        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
-            config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
-        }
+        Self::apply_config_overrides(&mut config, runtime)?;
+        Self::apply_env_overrides(&mut config)?;
 
         info!(
             clipboard_enabled = config.clipboard_enabled,
@@ -913,6 +938,33 @@ mod tests {
             DesktopNode::historical_activitywatch_start_row(&state, &Checkpoint::None),
             42
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_config_overrides_reject_invalid_window_manager_type()
+    -> xtask::sandbox::TestResult<()> {
+        let mut config = DesktopConfig::default();
+        let overrides = HashMap::from([("window_manager_type".to_string(), json!("sway"))]);
+
+        let error = DesktopNode::apply_config_overrides(&mut config, &overrides)
+            .expect_err("invalid window manager overrides should fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("window manager type"));
+        assert!(message.contains("sway"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_env_override_rejects_invalid_require_hyprland_value()
+    -> xtask::sandbox::TestResult<()> {
+        let error = DesktopNode::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", "maybe")
+            .expect_err("invalid env bool should fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_DESKTOP_REQUIRE_HYPRLAND"));
+        assert!(message.contains("maybe"));
         Ok(())
     }
 }
