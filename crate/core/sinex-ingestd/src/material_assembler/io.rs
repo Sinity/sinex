@@ -27,7 +27,7 @@ use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
@@ -462,9 +462,28 @@ async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> Inges
             SinexError::io(format!("Failed to stat buffered slice {}", path.display()))
                 .with_source(e)
         })?;
-        total += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+        let slice_bytes = buffered_slice_file_len_bytes(path, metadata.len())?;
+        total = checked_buffered_slice_total(total, slice_bytes, path)?;
     }
     Ok(total)
+}
+
+fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> IngestdResult<i64> {
+    i64::try_from(len).map_err(|error| {
+        SinexError::processing("buffered slice length exceeds i64 range")
+            .with_context("path", path.display().to_string())
+            .with_context("slice_len_bytes", len.to_string())
+            .with_std_error(&error)
+    })
+}
+
+fn checked_buffered_slice_total(total: i64, slice_bytes: i64, path: &Path) -> IngestdResult<i64> {
+    total.checked_add(slice_bytes).ok_or_else(|| {
+        SinexError::processing("buffered slice byte total overflowed")
+            .with_context("path", path.display().to_string())
+            .with_context("current_total_bytes", total.to_string())
+            .with_context("slice_len_bytes", slice_bytes.to_string())
+    })
 }
 
 async fn prune_stale_buffered_slices(
@@ -1038,6 +1057,28 @@ mod tests {
             temp_path.exists(),
             "annex import should preserve the staging file until cleanup succeeds"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_slice_file_len_bytes_rejects_unrepresentable_lengths() -> TestResult<()> {
+        let error = buffered_slice_file_len_bytes(Path::new("/tmp/oversized-slice"), u64::MAX)
+            .expect_err("oversized buffered slices must fail honestly");
+
+        assert!(error
+            .to_string()
+            .contains("buffered slice length exceeds i64 range"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn checked_buffered_slice_total_rejects_overflow() -> TestResult<()> {
+        let error = checked_buffered_slice_total(i64::MAX, 1, Path::new("/tmp/overflow-slice"))
+            .expect_err("buffered slice byte totals must not silently overflow");
+
+        assert!(error
+            .to_string()
+            .contains("buffered slice byte total overflowed"));
         Ok(())
     }
 

@@ -278,6 +278,7 @@ impl MaterialAssembler {
             state_root.clone(),
             disk_threshold_percent,
         ));
+        let max_material_size_bytes = encode_max_material_size_bytes(max_material_size_bytes)?;
 
         Ok(Self {
             js,
@@ -296,8 +297,7 @@ impl MaterialAssembler {
             stats: Arc::new(AssemblyStats::default()),
             disk_monitor,
             max_buffered_slices,
-            max_material_size_bytes: i64::try_from(max_material_size_bytes)
-                .unwrap_or(i64::MAX),
+            max_material_size_bytes,
             slice_arrival_timeout: std::time::Duration::from_secs(slice_timeout_secs),
             orphaned_file_age_threshold: std::time::Duration::from_secs(orphan_threshold_secs),
         })
@@ -1043,6 +1043,14 @@ impl MaterialAssembler {
     }
 }
 
+fn encode_max_material_size_bytes(max_material_size_bytes: u64) -> IngestdResult<i64> {
+    i64::try_from(max_material_size_bytes).map_err(|error| {
+        SinexError::validation("max_material_size_bytes exceeds i64 range")
+            .with_context("max_material_size_bytes", max_material_size_bytes.to_string())
+            .with_std_error(&error)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     // Inline because this exercises private orphan-state cleanup paths.
@@ -1186,6 +1194,45 @@ mod tests {
 
         assert!(error.to_string().contains("timed out waiting"));
         assert!(tasks.is_empty(), "timed out tasks should be aborted and drained");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn assembler_rejects_unrepresentable_max_material_size(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("oversized-config-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+        let state_dir = tempfile::tempdir()?;
+
+        let error = match MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            u64::MAX,
+            300,
+            3_600,
+            90,
+        ) {
+            Ok(_) => panic!("oversized material limits must fail honestly"),
+            Err(error) => error,
+        };
+
+        assert!(error
+            .to_string()
+            .contains("max_material_size_bytes exceeds i64 range"));
         Ok(())
     }
 }
