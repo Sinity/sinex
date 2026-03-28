@@ -109,10 +109,7 @@ impl Default for TerminalConfig {
         ];
 
         // Allow polling interval override via environment variable
-        let polling_interval_secs = std::env::var(ENV_POLLING_INTERVAL)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .map_or(DEFAULT_POLLING_INTERVAL, Seconds::from_secs);
+        let polling_interval_secs = default_polling_interval();
 
         Self {
             history_sources: default_sources,
@@ -207,6 +204,55 @@ enum HistorySourceMode {
     FishSqlite,
     AtuinSqlite,
     ConfiguredError(String),
+}
+
+fn default_polling_interval() -> Seconds {
+    match std::env::var(ENV_POLLING_INTERVAL) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(seconds) => Seconds::from_secs(seconds),
+            Err(error) => {
+                warn!(
+                    env = ENV_POLLING_INTERVAL,
+                    value = %raw,
+                    %error,
+                    "Invalid terminal polling interval override; using default"
+                );
+                DEFAULT_POLLING_INTERVAL
+            }
+        },
+        Err(std::env::VarError::NotPresent) => DEFAULT_POLLING_INTERVAL,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                env = ENV_POLLING_INTERVAL,
+                "Terminal polling interval override is not valid UTF-8; using default"
+            );
+            DEFAULT_POLLING_INTERVAL
+        }
+    }
+}
+
+fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {
+    match source.shell.to_lowercase().as_str() {
+        "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
+            HistorySourceMode::FishSqlite
+        }
+        "fish" => HistorySourceMode::ConfiguredError(format!(
+            "configured Fish history source {} is not SQLite-backed; native Fish YAML history is not supported",
+            source.path
+        )),
+        "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
+            Ok(()) => HistorySourceMode::AtuinSqlite,
+            Err(error) => HistorySourceMode::ConfiguredError(format!(
+                "configured Atuin history source {} is unusable: {error}",
+                source.path
+            )),
+        },
+        "elvish" => HistorySourceMode::ConfiguredError(format!(
+            "configured Elvish history source {} uses Elvish's native database format, which is not supported",
+            source.path
+        )),
+        _ => HistorySourceMode::Text,
+    }
 }
 
 #[derive(Clone)]
@@ -759,6 +805,15 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn history_file_size(&self) -> NodeResult<u64> {
+        fs::metadata(&self.path).await.map(|metadata| metadata.len()).map_err(|error| {
+            SinexError::io("failed to stat terminal history source")
+                .with_context("shell", self.shell.clone())
+                .with_context("path", self.path.to_string())
+                .with_std_error(&error)
+        })
+    }
+
     async fn persist_state(
         &self,
         offset_bytes: u64,
@@ -809,10 +864,17 @@ impl HistoryWatcherContext {
                 let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
                 let mut recent_hashes = state.recent_hashes;
                 let poll_started_at = Instant::now();
-                let file_size = fs::metadata(&self.path)
-                    .await
-                    .map(|metadata| metadata.len())
-                    .unwrap_or_default();
+                let file_size = match self.history_file_size().await {
+                    Ok(size) => size,
+                    Err(error) => {
+                        self.record_poll(poll_started_at, 0, 0);
+                        return self.failed_outcome(
+                            "stat_history_file",
+                            error,
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                        );
+                    }
+                };
                 match import_sqlite_history_lenient(
                     sqlite_row_id,
                     historical_end_time,
@@ -893,10 +955,17 @@ impl HistoryWatcherContext {
                 let mut sqlite_row_id = state.sqlite_row_id.unwrap_or(0);
                 let recent_hashes = state.recent_hashes;
                 let poll_started_at = Instant::now();
-                let file_size = fs::metadata(&self.path)
-                    .await
-                    .map(|metadata| metadata.len())
-                    .unwrap_or_default();
+                let file_size = match self.history_file_size().await {
+                    Ok(size) => size,
+                    Err(error) => {
+                        self.record_poll(poll_started_at, 0, 0);
+                        return self.failed_outcome(
+                            "stat_history_file",
+                            error,
+                            Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                        );
+                    }
+                };
                 match import_sqlite_history_lenient(
                     sqlite_row_id,
                     historical_end_time,
@@ -1139,7 +1208,18 @@ impl HistoryWatcherContext {
                 }
             }
             HistorySourceMode::ConfiguredError(error) => {
-                let state = state_override.unwrap_or_default();
+                let state = match self.resolve_state(state_override).await {
+                    Ok(state) => state,
+                    Err(load_error) => {
+                        return self.failed_outcome(
+                            "load_history_state",
+                            format!(
+                                "failed to restore terminal state for misconfigured source: {load_error}"
+                            ),
+                            HistoryState::default(),
+                        );
+                    }
+                };
                 self.failed_outcome("configure_history_source", error.clone(), state)
             }
         }
@@ -1532,10 +1612,15 @@ impl HistoryWatcherContext {
         use crate::fish_history;
 
         let poll_started_at = Instant::now();
-        let file_size = fs::metadata(&self.path)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or_default();
+        let file_size = match self.history_file_size().await {
+            Ok(size) => size,
+            Err(error) => {
+                self.record_error("stat_history_file", &error.to_string());
+                warn!("Fish history watcher unable to stat {}: {}", self.path, error);
+                self.record_poll(poll_started_at, 0, 0);
+                return 0;
+            }
+        };
 
         let processed = match import_sqlite_history_lenient(
             *sqlite_row_id,
@@ -1616,10 +1701,15 @@ impl HistoryWatcherContext {
         use crate::atuin_history;
 
         let poll_started_at = Instant::now();
-        let file_size = fs::metadata(&self.path)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or_default();
+        let file_size = match self.history_file_size().await {
+            Ok(size) => size,
+            Err(error) => {
+                self.record_error("stat_history_file", &error.to_string());
+                warn!("Atuin history watcher unable to stat {}: {}", self.path, error);
+                self.record_poll(poll_started_at, 0, 0);
+                return 0;
+            }
+        };
 
         let processed = match import_sqlite_history_lenient(
             *sqlite_row_id,
@@ -1929,27 +2019,40 @@ enum TextHistoryLine<'a> {
         command: &'a str,
         timestamp: Option<Timestamp>,
     },
+    MalformedMetadata {
+        kind: &'static str,
+        raw_line: &'a str,
+    },
 }
 
 fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a> {
     if shell == "bash"
-        && let Some(timestamp) = line
-            .strip_prefix('#')
-            .and_then(|raw| raw.parse::<i64>().ok())
-            .and_then(Timestamp::from_unix_timestamp)
+        && let Some(raw) = line.strip_prefix('#')
+        && raw.chars().all(|ch| ch.is_ascii_digit())
     {
-        return TextHistoryLine::TimestampMarker(timestamp);
+        return match raw.parse::<i64>().ok().and_then(Timestamp::from_unix_timestamp) {
+            Some(timestamp) => TextHistoryLine::TimestampMarker(timestamp),
+            None => TextHistoryLine::MalformedMetadata {
+                kind: "bash timestamp marker",
+                raw_line: line,
+            },
+        };
     }
 
     if shell == "zsh"
         && let Some(history) = line.strip_prefix(": ")
         && let Some((timestamp, remainder)) = history.split_once(':')
-        && let Ok(timestamp) = timestamp.parse::<i64>()
         && let Some((_, command)) = remainder.split_once(';')
     {
-        return TextHistoryLine::Command {
-            command,
-            timestamp: Timestamp::from_unix_timestamp(timestamp),
+        return match timestamp.parse::<i64>().ok().and_then(Timestamp::from_unix_timestamp) {
+            Some(timestamp) => TextHistoryLine::Command {
+                command,
+                timestamp: Some(timestamp),
+            },
+            None => TextHistoryLine::MalformedMetadata {
+                kind: "zsh extended history timestamp",
+                raw_line: line,
+            },
         };
     }
 
@@ -1983,6 +2086,13 @@ async fn process_text_history_line(
             .await?;
             Ok(true)
         }
+        TextHistoryLine::MalformedMetadata { kind, raw_line } => Err(
+            SinexError::processing("malformed terminal history metadata line")
+                .with_context("shell", ctx.shell.clone())
+                .with_context("path", ctx.path.to_string())
+                .with_context("metadata_kind", kind.to_string())
+                .with_context("line_preview", raw_line.chars().take(120).collect::<String>()),
+        ),
     }
 }
 
@@ -2246,27 +2356,7 @@ impl TerminalNode {
                 .clone()
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
-            let source_mode = match source.shell.to_lowercase().as_str() {
-                "fish" if crate::fish_history::is_fish_sqlite_history(&source.path) => {
-                    HistorySourceMode::FishSqlite
-                }
-                "fish" => HistorySourceMode::ConfiguredError(format!(
-                    "configured Fish history source {} is not SQLite-backed; native Fish YAML history is not supported",
-                    source.path
-                )),
-                "atuin" => match crate::atuin_history::ensure_atuin_sqlite_history(&source.path) {
-                    Ok(()) => HistorySourceMode::AtuinSqlite,
-                    Err(error) => HistorySourceMode::ConfiguredError(format!(
-                        "configured Atuin history source {} is unusable: {error}",
-                        source.path
-                    )),
-                },
-                "elvish" => HistorySourceMode::ConfiguredError(format!(
-                    "configured Elvish history source {} uses Elvish's native database format, which is not supported",
-                    source.path
-                )),
-                _ => HistorySourceMode::Text,
-            };
+            let source_mode = classify_history_source(source);
 
             contexts.push(HistoryWatcherContext {
                 acquisition,
@@ -2553,18 +2643,58 @@ impl IngestorNode for TerminalNode {
 
 impl ExplorationProvider for TerminalNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
-        Ok(SourceState {
-            is_connected: true,
-            healthy: true,
-            description: format!(
-                "Monitoring {} history sources",
+        let mut usable_sources = 0usize;
+        let mut configured_failures = Vec::new();
+        for source in &self.config.history_sources {
+            match classify_history_source(source) {
+                HistorySourceMode::ConfiguredError(error) => {
+                    configured_failures.push(json!({
+                        "shell": source.shell,
+                        "path": source.path,
+                        "error": error,
+                    }));
+                }
+                _ => {
+                    usable_sources = usable_sources.saturating_add(1);
+                }
+            }
+        }
+
+        let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
+        let healthy = configured_failures.is_empty() && processing_errors == 0;
+        let description = if configured_failures.is_empty() {
+            format!(
+                "Monitoring {} terminal history sources",
                 self.config.history_sources.len()
-            ),
+            )
+        } else if usable_sources > 0 {
+            format!(
+                "Monitoring {usable_sources} usable terminal history sources ({} misconfigured)",
+                configured_failures.len()
+            )
+        } else {
+            format!(
+                "No usable terminal history sources configured ({} misconfigured)",
+                configured_failures.len()
+            )
+        };
+
+        let mut metadata = self.metrics.metadata();
+        metadata.insert("usable_sources".to_string(), json!(usable_sources));
+        metadata.insert(
+            "misconfigured_sources".to_string(),
+            json!(configured_failures),
+        );
+
+        Ok(SourceState {
+            is_connected: usable_sources > 0,
+            healthy,
+            description,
             last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
             total_items: Some(self.config.history_sources.len() as u64),
-            metadata: self.metrics.metadata(),
+            metadata,
         })
     }
 
@@ -2635,6 +2765,22 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn terminal_config_default_ignores_invalid_polling_interval_override() -> TestResult<()> {
+        let previous = std::env::var(ENV_POLLING_INTERVAL).ok();
+        unsafe { std::env::set_var(ENV_POLLING_INTERVAL, "not-a-number") };
+
+        let config = TerminalConfig::default();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var(ENV_POLLING_INTERVAL, value) },
+            None => unsafe { std::env::remove_var(ENV_POLLING_INTERVAL) },
+        }
+
+        assert_eq!(config.polling_interval_secs, DEFAULT_POLLING_INTERVAL);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn parse_text_history_line_preserves_shell_timestamps() -> TestResult<()> {
         match parse_text_history_line("bash", "#1710877544") {
             TextHistoryLine::TimestampMarker(timestamp) => {
@@ -2646,6 +2792,11 @@ mod tests {
             TextHistoryLine::Command { .. } => {
                 return Err(color_eyre::eyre::eyre!(
                     "bash marker parsed as command"
+                ));
+            }
+            TextHistoryLine::MalformedMetadata { .. } => {
+                return Err(color_eyre::eyre::eyre!(
+                    "bash marker parsed as malformed metadata"
                 ));
             }
         }
@@ -2663,6 +2814,11 @@ mod tests {
                     "zsh extended history parsed as marker"
                 ));
             }
+            TextHistoryLine::MalformedMetadata { .. } => {
+                return Err(color_eyre::eyre::eyre!(
+                    "zsh extended history parsed as malformed metadata"
+                ));
+            }
         }
 
         match parse_text_history_line("bash", "echo plain") {
@@ -2673,6 +2829,42 @@ mod tests {
             TextHistoryLine::TimestampMarker(_) => {
                 return Err(color_eyre::eyre::eyre!(
                     "plain history line parsed as marker"
+                ));
+            }
+            TextHistoryLine::MalformedMetadata { .. } => {
+                return Err(color_eyre::eyre::eyre!(
+                    "plain history line parsed as malformed metadata"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_text_history_line_rejects_malformed_shell_metadata() -> TestResult<()> {
+        match parse_text_history_line("bash", "#999999999999999999999999") {
+            TextHistoryLine::MalformedMetadata { kind, raw_line } => {
+                assert_eq!(kind, "bash timestamp marker");
+                assert_eq!(raw_line, "#999999999999999999999999");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected malformed bash metadata, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        match parse_text_history_line("zsh", ": nope:0;echo hello") {
+            TextHistoryLine::MalformedMetadata { kind, raw_line } => {
+                assert_eq!(kind, "zsh extended history timestamp");
+                assert_eq!(raw_line, ": nope:0;echo hello");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected malformed zsh metadata, got {:?}",
+                    std::mem::discriminant(&other)
                 ));
             }
         }
@@ -3358,6 +3550,75 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scan_historical_preserves_local_state_for_configured_error_sources(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-preserve-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let invalid_db = temp_dir.path().join("history.db");
+        tokio::fs::write(&invalid_db, "not a sqlite database").await?;
+        let invalid_db = Utf8PathBuf::from_path_buf(invalid_db).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Atuin temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: invalid_db.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let state_path = node
+            .build_history_contexts(shutdown_rx)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+
+        let expected_state = HistoryState {
+            sqlite_row_id: Some(41),
+            recent_hashes: VecDeque::from([11, 17]),
+            ..HistoryState::default()
+        };
+        tokio::fs::write(&state_path, serde_json::to_vec(&expected_state)?).await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        let restored = TerminalNode::checkpoint_state_for_source(
+            &report.final_checkpoint,
+            &format!("atuin:{invalid_db}"),
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing preserved checkpoint state"))?;
+        assert_eq!(restored.sqlite_row_id, expected_state.sqlite_row_id);
+        assert_eq!(restored.recent_hashes, expected_state.recent_hashes);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn scan_historical_reports_invalid_incoming_checkpoint_per_target(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -3764,6 +4025,57 @@ mod tests {
         let (report, incoming) = node_task.await??;
 
         assert_eq!(report.final_checkpoint, incoming);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_source_state_marks_misconfigured_sources_unhealthy() -> TestResult<()> {
+        let invalid_db = Utf8PathBuf::from("/tmp/definitely-missing-atuin.db");
+        let node = TerminalNode::with_config(TerminalConfig {
+            history_sources: vec![
+                HistorySourceConfig {
+                    path: Utf8PathBuf::from("/tmp/.bash_history"),
+                    shell: "bash".to_string(),
+                },
+                HistorySourceConfig {
+                    path: invalid_db.clone(),
+                    shell: "atuin".to_string(),
+                },
+            ],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        });
+
+        let state = ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected, "bash source should keep node connected");
+        assert!(!state.healthy, "misconfigured sources must degrade health");
+        assert!(
+            state.description.contains("misconfigured"),
+            "description should reflect bad source state: {}",
+            state.description
+        );
+        assert_eq!(state.total_items, Some(2));
+
+        let usable_sources = state
+            .metadata
+            .get("usable_sources")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| color_eyre::eyre::eyre!("usable_sources missing"))?;
+        assert_eq!(usable_sources, 1);
+
+        let misconfigured = state
+            .metadata
+            .get("misconfigured_sources")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| color_eyre::eyre::eyre!("misconfigured_sources missing"))?;
+        assert_eq!(misconfigured.len(), 1);
+        assert!(
+            misconfigured[0]["error"]
+                .as_str()
+                .is_some_and(|error: &str| error.contains("configured Atuin history source")),
+            "unexpected misconfigured source payload: {misconfigured:?}"
+        );
+
         Ok(())
     }
 
