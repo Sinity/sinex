@@ -572,6 +572,7 @@ impl JetStreamConsumer {
                 max_age: Duration::from_hours(720), // 30 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
+                allow_direct: true,
                 ..Default::default()
             })
             .await
@@ -1580,6 +1581,10 @@ impl JetStreamConsumer {
         };
         let dlq_publish_msg_id =
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
+        let original_event_id = original_payload
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
 
         let dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id.unwrap_or_else(|| "unknown".to_string()),
@@ -1593,6 +1598,11 @@ impl JetStreamConsumer {
         })?;
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", dlq_publish_msg_id.as_str());
+        headers.insert("Original-Subject", msg.subject.as_str());
+        headers.insert("Retry-Count", "0");
+        if let Some(event_id) = original_event_id.as_deref() {
+            headers.insert("Event-Id", event_id);
+        }
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;

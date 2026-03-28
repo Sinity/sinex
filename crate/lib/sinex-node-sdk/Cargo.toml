@@ -53,6 +53,8 @@ workspace = true
 workspace = true
 [dependencies.serde_json]
 workspace = true
+[dependencies.base64]
+workspace = true
 [dependencies.jsonschema]
 workspace = true
 [dependencies.sqlx]
