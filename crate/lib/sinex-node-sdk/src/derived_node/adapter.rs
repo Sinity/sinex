@@ -1481,19 +1481,27 @@ where
     N: DerivedNodeImpl,
 {
     fn get_source_state(&self) -> NodeResult<crate::exploration::SourceState> {
+        let runtime_initialized = self.runtime.is_some();
+        let node_name = self.node.name();
+        let node_model = self.node.node_model();
+        let description = if runtime_initialized {
+            format!("{node_name} derived node ({node_model})")
+        } else {
+            format!("{node_name} derived node ({node_model}, runtime not initialized)")
+        };
+
         Ok(crate::exploration::SourceState {
-            is_connected: true,
-            healthy: true,
-            description: format!(
-                "{} derived node ({})",
-                self.node.name(),
-                self.node.node_model()
-            ),
+            is_connected: runtime_initialized,
+            healthy: runtime_initialized,
+            description,
             last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
-            metadata: HashMap::new(),
+            metadata: HashMap::from([
+                ("runtime_initialized".to_string(), serde_json::json!(runtime_initialized)),
+                ("node_model".to_string(), serde_json::json!(node_model)),
+            ]),
         })
     }
 
@@ -1537,13 +1545,56 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
+    use super::DerivedNodeAdapter;
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
+    use crate::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerWrapper};
+    use crate::exploration::ExplorationProvider;
+    use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
     #[cfg(feature = "messaging")]
     use crate::self_observation::SelfObservationError;
+    use serde::{Deserialize, Serialize};
+    use sinex_primitives::JsonValue;
+    use sinex_primitives::privacy::ProcessingContext;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
+
+    #[derive(Default, Serialize, Deserialize)]
+    struct TestDerivedState;
+
+    struct TestDerivedNode;
+
+    impl TransducerNode for TestDerivedNode {
+        type State = TestDerivedState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "derived-adapter-test"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "test.input"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "test.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            _state: &mut Self::State,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(None)
+        }
+    }
 
     #[sinex_test]
     async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
@@ -1571,6 +1622,25 @@ mod tests {
             "test-derived",
             "invalidation.errors",
             &SelfObservationError::Publish("boom".to_string()),
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn derived_source_state_is_unhealthy_before_runtime_initialization() -> TestResult<()> {
+        let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+
+        let state = ExplorationProvider::get_source_state(&adapter)?;
+
+        assert!(!state.is_connected);
+        assert!(!state.healthy);
+        assert!(state.description.contains("runtime not initialized"));
+        assert_eq!(
+            state
+                .metadata
+                .get("runtime_initialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
         );
         Ok(())
     }
