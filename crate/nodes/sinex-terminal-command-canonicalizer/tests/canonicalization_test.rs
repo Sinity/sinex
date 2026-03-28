@@ -7,7 +7,7 @@ use sinex_node_sdk::TransducerNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
-use sinex_primitives::temporal::{Timestamp, now};
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use xtask::sandbox::prelude::*;
@@ -26,6 +26,14 @@ fn make_context(source: &str, event_type: &str) -> DerivedTriggerContext {
     }
 }
 
+fn kitty_input(command: &str) -> JsonValue {
+    serde_json::json!({
+        "command": command,
+        "kitty_window_id": "1",
+        "kitty_tab_id": "1"
+    })
+}
+
 // ── Source Filtering ────────────────────────────────────────────────────
 
 #[sinex_test]
@@ -34,7 +42,7 @@ async fn test_accepts_shell_kitty_source() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": "ls -la"});
+    let input = kitty_input("ls -la");
     let result = canon.process(&mut state, input, &ctx).await.unwrap();
 
     assert!(result.is_some(), "shell.kitty should be accepted");
@@ -48,11 +56,26 @@ async fn test_accepts_shell_atuin_source() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.atuin", "command.executed");
 
-    let input = serde_json::json!({"command": "git status"});
+    let input = serde_json::json!({
+        "command_string": "git status",
+        "cwd": "/home/user/project",
+        "exit_code": 0,
+        "duration_ns": 1_500_000_000u64,
+        "atuin_history_id": "hist-001",
+        "atuin_session_id": "sess-001",
+        "timestamp": 1_735_000_000,
+        "ts_start_orig": "2025-01-15T10:29:58.500Z",
+        "ts_end_orig": "2025-01-15T10:30:00Z",
+        "hostname": "test-host"
+    });
     let result = canon.process(&mut state, input, &ctx).await.unwrap();
 
     assert!(result.is_some(), "shell.atuin should be accepted");
-    assert_eq!(result.unwrap().payload.command, "git status");
+    let payload = result.unwrap().payload;
+    assert_eq!(payload.command, "git status");
+    assert_eq!(payload.working_directory, "/home/user/project");
+    assert_eq!(payload.duration_ms, 1500);
+    assert_eq!(payload.session_id, "sess-001");
     Ok(())
 }
 
@@ -132,7 +155,7 @@ async fn test_empty_command_returns_none() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": ""});
+    let input = kitty_input("");
     let result = canon.process(&mut state, input, &ctx).await.unwrap();
 
     assert!(result.is_none(), "empty command should be skipped");
@@ -145,7 +168,7 @@ async fn test_whitespace_only_command_returns_none() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": "   \t  "});
+    let input = kitty_input("   \t  ");
     let result = canon.process(&mut state, input, &ctx).await.unwrap();
 
     assert!(
@@ -156,15 +179,21 @@ async fn test_whitespace_only_command_returns_none() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_missing_command_field_returns_none() -> TestResult<()> {
+async fn test_missing_command_field_errors() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"working_directory": "/tmp"});
-    let result = canon.process(&mut state, input, &ctx).await.unwrap();
+    let input = serde_json::json!({"working_directory": "/tmp", "kitty_window_id": "1", "kitty_tab_id": "1"});
+    let error = canon
+        .process(&mut state, input, &ctx)
+        .await
+        .expect_err("missing required command should fail honestly");
 
-    assert!(result.is_none(), "missing command field should be skipped");
+    assert!(
+        error.to_string().contains("failed to parse shell.kitty command.executed payload"),
+        "unexpected error: {error}"
+    );
     Ok(())
 }
 
@@ -174,7 +203,7 @@ async fn test_missing_command_field_returns_none() -> TestResult<()> {
 async fn test_extracts_all_fields() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.history.bash", "command.executed");
 
     let input = serde_json::json!({
         "command": "cargo build",
@@ -208,7 +237,7 @@ async fn test_extracts_all_fields() -> TestResult<()> {
 async fn test_defaults_for_missing_optional_fields() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.history.bash", "command.executed");
 
     let input = serde_json::json!({"command": "pwd"});
     let result = canon
@@ -236,7 +265,7 @@ async fn test_defaults_for_missing_optional_fields() -> TestResult<()> {
 async fn test_exit_code_nonzero() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.history.bash", "command.executed");
 
     let input = serde_json::json!({"command": "false", "exit_code": 1});
     let result = canon
@@ -256,7 +285,7 @@ async fn test_exit_code_nonzero() -> TestResult<()> {
 async fn test_exit_code_signal_killed() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.history.bash", "command.executed");
 
     let input = serde_json::json!({"command": "sleep 100", "exit_code": 137});
     let result = canon
@@ -275,14 +304,22 @@ async fn test_exit_code_signal_killed() -> TestResult<()> {
 // ── Timestamp Handling ──────────────────────────────────────────────────
 
 #[sinex_test]
-async fn test_end_time_rfc3339_parsing() -> TestResult<()> {
+async fn test_atuin_timestamps_are_preserved() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.atuin", "command.executed");
 
     let input = serde_json::json!({
-        "command": "date",
-        "end_time": "2025-01-15T10:30:00Z"
+        "command_string": "date",
+        "cwd": "/tmp",
+        "exit_code": 0,
+        "duration_ns": 1_500_000_000u64,
+        "atuin_history_id": "hist-001",
+        "atuin_session_id": "sess-001",
+        "timestamp": 1_735_000_000,
+        "ts_start_orig": "2025-01-15T10:29:58.500Z",
+        "ts_end_orig": "2025-01-15T10:30:00Z",
+        "hostname": "test-host"
     });
     let result = canon
         .process(&mut state, input, &ctx)
@@ -290,31 +327,79 @@ async fn test_end_time_rfc3339_parsing() -> TestResult<()> {
         .unwrap()
         .expect("should produce output");
 
-    let parsed = sinex_primitives::temporal::parse_rfc3339("2025-01-15T10:30:00Z").unwrap();
-    assert_eq!(result.payload.end_time, parsed);
+    let start = sinex_primitives::temporal::parse_rfc3339("2025-01-15T10:29:58.500Z").unwrap();
+    let end = sinex_primitives::temporal::parse_rfc3339("2025-01-15T10:30:00Z").unwrap();
+    assert_eq!(result.payload.start_time, start);
+    assert_eq!(result.payload.end_time, end);
+    assert_eq!(result.payload.duration_ms, 1500);
     Ok(())
 }
 
 #[sinex_test]
-async fn test_end_time_fallback_on_invalid_rfc3339() -> TestResult<()> {
+async fn test_invalid_atuin_payload_shape_errors() -> TestResult<()> {
     let mut canon = TerminalCommandCanonicalizer::new();
     let mut state = ();
-    let before = now();
-    let ctx = make_context("shell.kitty", "command.executed");
+    let ctx = make_context("shell.atuin", "command.executed");
 
     let input = serde_json::json!({
         "command": "date",
-        "end_time": "not-a-timestamp"
+        "working_directory": "/tmp",
+        "exit_code": 0,
+        "duration_ms": 1000
     });
-    let result = canon
+    let error = canon
         .process(&mut state, input, &ctx)
         .await
-        .unwrap()
-        .expect("should produce output");
+        .expect_err("old generic shape should not be accepted for shell.atuin");
 
     assert!(
-        result.payload.end_time >= before,
-        "fallback should be >= test start time"
+        error.to_string().contains("failed to parse shell.atuin command.executed payload"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_history_optional_field_type_errors() -> TestResult<()> {
+    let mut canon = TerminalCommandCanonicalizer::new();
+    let mut state = ();
+    let ctx = make_context("shell.history.bash", "command.executed");
+
+    let input = serde_json::json!({
+        "command": "echo hello",
+        "working_directory": 42,
+    });
+    let error = canon
+        .process(&mut state, input, &ctx)
+        .await
+        .expect_err("malformed optional fields should fail honestly");
+
+    assert!(
+        error.to_string().contains("failed to parse shell.history.bash command.executed payload"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_non_string_command_field_errors() -> TestResult<()> {
+    let mut canon = TerminalCommandCanonicalizer::new();
+    let mut state = ();
+    let ctx = make_context("shell.kitty", "command.executed");
+
+    let input = serde_json::json!({
+        "command": 42,
+        "kitty_window_id": "1",
+        "kitty_tab_id": "1"
+    });
+    let error = canon
+        .process(&mut state, input, &ctx)
+        .await
+        .expect_err("non-string commands should fail honestly");
+
+    assert!(
+        error.to_string().contains("failed to parse shell.kitty command.executed payload"),
+        "unexpected error: {error}"
     );
     Ok(())
 }
@@ -328,7 +413,7 @@ async fn test_source_events_contains_context_event_id() -> TestResult<()> {
     let ctx = make_context("shell.kitty", "command.executed");
     let expected_id = ctx.trigger_uuid().to_string();
 
-    let input = serde_json::json!({"command": "whoami"});
+    let input = kitty_input("whoami");
     let result = canon
         .process(&mut state, input, &ctx)
         .await
@@ -346,7 +431,7 @@ async fn test_enrichment_history_starts_empty() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": "test"});
+    let input = kitty_input("test");
     let result = canon
         .process(&mut state, input, &ctx)
         .await
@@ -365,7 +450,7 @@ async fn test_transducer_temporal_policy_is_inherit_parent() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": "echo hello"});
+    let input = kitty_input("echo hello");
     let result = canon
         .process(&mut state, input, &ctx)
         .await
@@ -386,7 +471,7 @@ async fn test_transducer_ts_orig_inherits_from_context() -> TestResult<()> {
     let ctx = make_context("shell.kitty", "command.executed");
     let expected_ts = ctx.ts_orig.unwrap();
 
-    let input = serde_json::json!({"command": "ls"});
+    let input = kitty_input("ls");
     let result = canon
         .process(&mut state, input, &ctx)
         .await
@@ -403,7 +488,7 @@ async fn test_transducer_single_source_event_id() -> TestResult<()> {
     let mut state = ();
     let ctx = make_context("shell.kitty", "command.executed");
 
-    let input = serde_json::json!({"command": "pwd"});
+    let input = kitty_input("pwd");
     let result = canon
         .process(&mut state, input, &ctx)
         .await
