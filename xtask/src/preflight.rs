@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::tools::{ToolInfo, ToolManager};
 
@@ -90,6 +91,16 @@ fn cache_path() -> std::path::PathBuf {
 
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
+
+fn unix_timestamp_secs(now: SystemTime, context: &str) -> Result<u64> {
+    now.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .wrap_err_with(|| format!("{context}: system clock is before the unix epoch"))
+}
+
+fn current_unix_timestamp_secs(context: &str) -> Result<u64> {
+    unix_timestamp_secs(SystemTime::now(), context)
+}
 
 fn compiled_contracts_hash() -> &'static str {
     match option_env!("SINEX_XTASK_BUILD_CONTRACTS_HASH") {
@@ -182,10 +193,7 @@ impl PreflightCache {
 
     /// Build a fresh cache entry using the current state.
     fn current() -> Result<Self> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = current_unix_timestamp_secs("failed to build current preflight cache entry")?;
 
         Ok(Self {
             timestamp_secs: now,
@@ -203,10 +211,7 @@ impl PreflightCache {
     /// - Contracts hash matches current files
     /// - Git HEAD hasn't changed
     fn is_valid(&self, ttl_secs: u64) -> Result<bool> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = current_unix_timestamp_secs("failed to validate preflight cache age")?;
 
         let age = now.saturating_sub(self.timestamp_secs);
         if age >= ttl_secs {
@@ -1289,6 +1294,16 @@ mod tests {
         let error = write_state_file_atomically(&path, "value").unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("failed to create preflight state directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_unix_timestamp_secs_rejects_pre_epoch_clock() -> TestResult<()> {
+        let before_epoch = UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("pre-epoch timestamp");
+        let error = unix_timestamp_secs(before_epoch, "test clock").unwrap_err();
+        assert!(format!("{error:#}").contains("test clock: system clock is before the unix epoch"));
         Ok(())
     }
 

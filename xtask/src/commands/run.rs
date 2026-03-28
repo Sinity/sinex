@@ -23,6 +23,18 @@ use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
 
+fn unix_timestamp_secs(now: std::time::SystemTime, context: &str) -> Result<u64> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .with_context(|| format!("{context}: system clock is before the unix epoch"))
+}
+
+fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u128> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_micros())
+        .with_context(|| format!("{context}: system clock is before the unix epoch"))
+}
+
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
 /// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
 fn is_node_package(name: &str) -> bool {
@@ -78,10 +90,10 @@ impl DevJournal {
             .append(true)
             .open(path)
             .with_context(|| format!("open dev journal at {}", path.display()))?;
-        let boot_ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let boot_ts = unix_timestamp_secs(
+            std::time::SystemTime::now(),
+            "failed to derive dev journal boot timestamp",
+        )?;
         let boot_id = format!("dev-{boot_ts}");
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -107,10 +119,16 @@ impl DevJournal {
     }
 
     fn write_entry(&self, unit: &str, pid: u32, message: &str) {
-        let ts_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        let ts_us = match unix_timestamp_micros(
+            std::time::SystemTime::now(),
+            "failed to derive dev journal entry timestamp",
+        ) {
+            Ok(ts_us) => ts_us,
+            Err(error) => {
+                eprintln!("[run] {error:#}");
+                return;
+            }
+        };
         // journald --output=json format consumed by unified_journal_watcher.rs
         let entry = serde_json::json!({
             "_SYSTEMD_UNIT": format!("{unit}.service"),
@@ -1364,6 +1382,26 @@ mod tests {
             .validate_flag_compatibility(&ctx)
             .expect_err("watch+journal must be rejected");
         assert!(err.to_string().contains("--logs and --dev-journal are incompatible with --watch"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_unix_timestamp_helpers_reject_pre_epoch_clock() -> ::xtask::sandbox::TestResult<()>
+    {
+        let before_epoch = std::time::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("pre-epoch timestamp");
+
+        let secs_error =
+            unix_timestamp_secs(before_epoch, "boot timestamp").expect_err("pre-epoch secs");
+        assert!(format!("{secs_error:#}")
+            .contains("boot timestamp: system clock is before the unix epoch"));
+
+        let micros_error =
+            unix_timestamp_micros(before_epoch, "entry timestamp").expect_err("pre-epoch micros");
+        assert!(format!("{micros_error:#}")
+            .contains("entry timestamp: system clock is before the unix epoch"));
+
         Ok(())
     }
 
