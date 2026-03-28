@@ -62,6 +62,13 @@ fn load_flaky_tests(ctx: &CommandContext, limit: usize) -> (Vec<(String, String,
     }
 }
 
+fn nextest_history<'a>(
+    ctx: &CommandContext,
+    db: &'a crate::history::HistoryDb,
+) -> Option<(&'a crate::history::HistoryDb, i64)> {
+    ctx.invocation_id().map(|invocation_id| (db, invocation_id))
+}
+
 /// Test command configuration
 ///
 /// Bare `xtask test` runs nextest (the common case). Specialized workflows
@@ -652,10 +659,7 @@ impl XtaskCommand for TestCommand {
 
         // Execute! Use the cached HistoryDb from CommandContext instead of
         // opening a second connection.
-        let stats = match ctx.try_with_history_db(|db| {
-            let invocation_id = ctx.invocation_id().unwrap_or(0);
-            runner.execute(Some((db, invocation_id)))
-        }) {
+        let stats = match ctx.try_with_history_db(|db| runner.execute(nextest_history(ctx, db))) {
             Some(result) => result?,
             None => runner.execute(None)?,
         };
@@ -803,6 +807,38 @@ mod tests {
         let issue = issue.expect("query failure should surface");
         assert!(issue.contains("Failed to read flaky-test history"));
         assert!(issue.contains(&db_path.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nextest_history_skips_recording_without_invocation()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let ctx = test_context(db_path);
+
+        assert!(super::nextest_history(&ctx, &db).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nextest_history_preserves_real_invocation_id()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            Some(42),
+            "test",
+            db_path,
+        );
+
+        let (_db, invocation_id) =
+            super::nextest_history(&ctx, &db).expect("history should keep the real invocation id");
+        assert_eq!(invocation_id, 42);
         Ok(())
     }
 }
