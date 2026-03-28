@@ -30,9 +30,10 @@ pub struct ResourceStatus {
 impl ResourceStatus {
     /// Capture current system resource status.
     pub fn capture() -> Result<Self> {
-        // S7 fix: when /proc/meminfo is unreadable (non-Linux), assume ample memory
-        // so callers don't emit spurious low-memory warnings.
-        let (available_kb, total_kb) = memory_info().unwrap_or((u64::MAX, u64::MAX));
+        // When /proc/meminfo is absent (non-Linux), assume ample memory so callers
+        // don't emit spurious low-memory warnings. Read/parse failures should still
+        // surface honestly instead of fabricating values.
+        let (available_kb, total_kb) = memory_info()?.unwrap_or((u64::MAX, u64::MAX));
         let load = load_1min()?;
         let cpu_count = num_cpus::get();
 
@@ -97,31 +98,50 @@ impl ResourceStatus {
 
 /// Read memory information from /proc/meminfo.
 ///
-/// Returns `Some((available_kb, total_kb))`, or `None` if /proc/meminfo is
-/// unreadable (non-Linux or restricted environments). Callers that receive
-/// `None` should assume ample memory to avoid spurious low-memory warnings (S7 fix).
-fn memory_info() -> Option<(u64, u64)> {
-    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
+/// Returns `Ok(Some((available_kb, total_kb)))`, or `Ok(None)` if /proc/meminfo is
+/// absent (non-Linux). Read and parse failures are returned explicitly so callers
+/// can surface honest diagnostics instead of fabricating resource values.
+fn memory_info() -> Result<Option<(u64, u64)>> {
+    let content = match std::fs::read_to_string("/proc/meminfo") {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(eyre!(error).wrap_err("failed to read /proc/meminfo"));
+        }
+    };
 
-    let mut available = 0u64;
-    let mut total = 0u64;
+    parse_memory_info(&content).map(Some)
+}
+
+fn parse_memory_info(content: &str) -> Result<(u64, u64)> {
+    let mut available = None;
+    let mut total = None;
+
+    fn parse_meminfo_kb(content: &str, line: &str, field: &str) -> Result<u64> {
+        let size_str = line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| eyre!("/proc/meminfo entry {field} was missing its numeric value"))?;
+
+        size_str.parse::<u64>().map_err(|error| {
+            eyre!(error).wrap_err(format!(
+                "failed to parse /proc/meminfo entry {field}: {content}"
+            ))
+        })
+    }
 
     for line in content.lines() {
         if line.starts_with("MemAvailable:") {
-            if let Some(size_str) = line.split_whitespace().nth(1)
-                && let Ok(size) = size_str.parse::<u64>()
-            {
-                available = size;
-            }
-        } else if line.starts_with("MemTotal:")
-            && let Some(size_str) = line.split_whitespace().nth(1)
-            && let Ok(size) = size_str.parse::<u64>()
-        {
-            total = size;
+            available = Some(parse_meminfo_kb(content, line, "MemAvailable")?);
+        } else if line.starts_with("MemTotal:") {
+            total = Some(parse_meminfo_kb(content, line, "MemTotal")?);
         }
     }
 
-    Some((available, total))
+    let available = available.ok_or_else(|| eyre!("/proc/meminfo is missing MemAvailable"))?;
+    let total = total.ok_or_else(|| eyre!("/proc/meminfo is missing MemTotal"))?;
+
+    Ok((available, total))
 }
 
 /// Read 1-minute load average from /proc/loadavg.
@@ -216,6 +236,22 @@ mod tests {
         let error = parse_load_1min("").unwrap_err();
         let rendered = format!("{error:#}");
         assert!(rendered.contains("/proc/loadavg did not contain a 1-minute load value"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_memory_info_rejects_missing_memavailable() -> TestResult<()> {
+        let error = parse_memory_info("MemTotal: 1024 kB\n").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("/proc/meminfo is missing MemAvailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_memory_info_rejects_invalid_memtotal() -> TestResult<()> {
+        let error = parse_memory_info("MemAvailable: 512 kB\nMemTotal: no\n").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to parse /proc/meminfo entry MemTotal"));
         Ok(())
     }
 }
