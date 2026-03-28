@@ -170,6 +170,62 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn parse_optional_field<T>(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        cursor: &str,
+    ) -> NodeResult<Option<T>>
+    where
+        T: std::str::FromStr,
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
+        let Some(raw) = entry.get(field).and_then(serde_json::Value::as_str) else {
+            return Ok(None);
+        };
+        raw.parse::<T>().map(Some).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has invalid {field}"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("field", field.to_string())
+            .with_context("value", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn parse_journal_timestamp_us(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        cursor: &str,
+    ) -> NodeResult<u64> {
+        let raw = entry
+            .get("__REALTIME_TIMESTAMP")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Journal entry {cursor} is missing __REALTIME_TIMESTAMP"
+                ))
+                .with_context("cursor", cursor.to_string())
+            })?;
+        raw.parse::<u64>().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has invalid __REALTIME_TIMESTAMP"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn journal_timestamp_from_micros(timestamp_us: u64, cursor: &str) -> NodeResult<Timestamp> {
+        Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000).ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has out-of-range __REALTIME_TIMESTAMP"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+        })
+    }
+
     fn parse_realtime_timestamp_us(
         entry: &serde_json::Value,
         unit_name: &str,
@@ -760,13 +816,7 @@ impl UnifiedJournalWatcher {
             .and_then(|v| v.as_str())
             .ok_or_else(|| sinex_node_sdk::SinexError::processing("Missing cursor".to_string()))?;
 
-        let timestamp_us = obj
-            .get("__REALTIME_TIMESTAMP")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<i64>().ok())
-            .ok_or_else(|| {
-                sinex_node_sdk::SinexError::processing("Missing timestamp".to_string())
-            })?;
+        let timestamp_us = Self::parse_journal_timestamp_us(obj, cursor)?;
 
         let message = obj
             .get("MESSAGE")
@@ -779,13 +829,7 @@ impl UnifiedJournalWatcher {
             })
             .unwrap_or_default();
 
-        // Parse timestamp
-        let timestamp: Timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
-                .unwrap_or_else(Timestamp::now)
-        } else {
-            sinex_primitives::temporal::now()
-        };
+        let timestamp = Self::journal_timestamp_from_micros(timestamp_us, cursor)?;
 
         // Extract optional fields
         let hostname = obj
@@ -800,18 +844,9 @@ impl UnifiedJournalWatcher {
             .get("SYSLOG_IDENTIFIER")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        let pid = obj
-            .get("_PID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
-        let uid = obj
-            .get("_UID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
-        let gid = obj
-            .get("_GID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
+        let pid = Self::parse_optional_field(obj, "_PID", cursor)?;
+        let uid = Self::parse_optional_field(obj, "_UID", cursor)?;
+        let gid = Self::parse_optional_field(obj, "_GID", cursor)?;
         let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
             privacy::engine()
                 .process(s, ProcessingContext::Command)
@@ -822,10 +857,7 @@ impl UnifiedJournalWatcher {
             .get("_EXE")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        let priority = obj
-            .get("PRIORITY")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
+        let priority = Self::parse_optional_field(obj, "PRIORITY", cursor)?;
         let facility = obj
             .get("SYSLOG_FACILITY")
             .and_then(|v| v.as_str())
@@ -884,9 +916,18 @@ impl UnifiedJournalWatcher {
             }
         }
 
+        let timestamp_us_i64 = i64::try_from(timestamp_us).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has out-of-range microsecond timestamp"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+            .with_source(error)
+        })?;
+
         let payload = JournalEntryPayload {
             cursor: cursor.to_string(),
-            timestamp_us,
+            timestamp_us: timestamp_us_i64,
             timestamp,
             hostname,
             unit,
@@ -909,7 +950,7 @@ impl UnifiedJournalWatcher {
         let mut event = Event::new(
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
-                timestamp_us: Microseconds::from_micros(payload.timestamp_us),
+                timestamp_us: Microseconds::from_micros(timestamp_us_i64),
                 timestamp: payload.timestamp,
                 hostname: payload.hostname,
                 unit: payload.unit,
@@ -1312,6 +1353,69 @@ mod tests {
 
     fn test_material() -> WatcherMaterialContext {
         Arc::new(TestMaterialContext)
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "not-a-timestamp",
+        });
+
+        let error = watcher
+            .parse_journal_entry(&entry, &material)
+            .expect_err("invalid journal timestamps must fail honestly");
+
+        assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
+        assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_rejects_invalid_pid(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "not-a-pid",
+        });
+
+        let error = watcher
+            .parse_journal_entry(&entry, &material)
+            .expect_err("invalid journal pid must fail honestly");
+
+        assert!(error.to_string().contains("invalid _PID"));
+        assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_preserves_journal_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "123",
+        });
+
+        let event = watcher
+            .parse_journal_entry(&entry, &material)?
+            .expect("valid journal entry should produce an event");
+
+        let expected =
+            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
     }
 
     #[sinex_test]
