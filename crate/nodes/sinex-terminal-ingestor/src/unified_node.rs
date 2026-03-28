@@ -2182,6 +2182,23 @@ async fn emit_prepared_fish_entry(
 ) -> NodeResult<()> {
     let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
     let material_bytes = final_command.as_bytes().to_vec();
+    let timestamp = match entry.when {
+        Some(raw_timestamp) => {
+            let Some(timestamp) = Timestamp::from_unix_timestamp(raw_timestamp) else {
+                warn!(
+                    row_id = entry.row_id,
+                    timestamp = raw_timestamp,
+                    "Rejecting Fish row with invalid timestamp"
+                );
+                return Err(
+                    SinexError::validation(format!("Fish row {} has invalid timestamp", entry.row_id))
+                        .with_context("timestamp", raw_timestamp.to_string()),
+                );
+            };
+            Some(timestamp)
+        }
+        None => None,
+    };
 
     record_processed_command_for_test(ctx, &final_command).await;
 
@@ -2194,7 +2211,7 @@ async fn emit_prepared_fish_entry(
 
     let payload = HistoryCommandImportedPayload {
         command: final_command,
-        timestamp: entry.when.and_then(Timestamp::from_unix_timestamp),
+        timestamp,
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
         line_number: Some(payload_line_number(ctx, line_number)?),
@@ -3776,6 +3793,88 @@ mod tests {
 
         let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
         assert!(next.is_err(), "invalid Atuin row should not emit an event");
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emit_prepared_fish_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-fish-invalid-timestamp")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let work_dir = tempfile::tempdir()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/fish/fish_history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "fish".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/fish/fish_history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::FishSqlite,
+            initial_state_override: None,
+        };
+
+        let entry = crate::fish_history::FishHistoryEntry {
+            row_id: 42,
+            command: "echo 'hello from fish'".to_string(),
+            when: Some(i64::MAX),
+        };
+
+        let error = emit_prepared_fish_entry(&watcher_ctx, &entry, entry.command.clone())
+            .await
+            .expect_err("invalid Fish row should fail loudly");
+        assert!(
+            error.to_string().contains("invalid timestamp"),
+            "unexpected error: {error}"
+        );
+
+        let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
+        assert!(next.is_err(), "invalid Fish row should not emit an event");
 
         ingest_handle.stop().await?;
         Ok(())
