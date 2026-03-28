@@ -30,6 +30,20 @@ use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{debug, info, warn};
 
+fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &str) -> bool {
+    match ready_tx {
+        Some(tx) => {
+            if tx.send(()).is_err() {
+                warn!(component, "Readiness receiver dropped before ready signal");
+                false
+            } else {
+                true
+            }
+        }
+        None => true,
+    }
+}
+
 /// Assembly statistics for observability
 #[derive(Debug, Default)]
 struct AssemblyStats {
@@ -629,9 +643,7 @@ impl MaterialAssembler {
         );
 
         // Signal readiness: streams bootstrapped, WAL restored, consumers about to start.
-        if let Some(tx) = ready_tx {
-            let _ = tx.send(());
-        }
+        signal_ready(ready_tx, "material-assembler");
 
         let mut consumers = MaterialConsumerHandles {
             begin: pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
@@ -918,7 +930,7 @@ impl MaterialAssembler {
 #[cfg(test)]
 mod tests {
     // Inline because this exercises private orphan-state cleanup paths.
-    use super::MaterialAssembler;
+    use super::{MaterialAssembler, signal_ready};
     use crate::MaterialReadySet;
     use camino::Utf8PathBuf;
     use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
@@ -989,6 +1001,15 @@ mod tests {
             .await
             .expect_err("non-utf8 state directory names must fail honestly");
         assert!(error.to_string().contains("not valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ready_signal_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        drop(rx);
+
+        assert!(!signal_ready(Some(tx), "material-assembler"));
         Ok(())
     }
 }

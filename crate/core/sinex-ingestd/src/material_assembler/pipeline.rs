@@ -298,16 +298,17 @@ pub(super) fn spawn_slices_consumer(
                     }
                 };
 
-                let material_id = parse_slice_material_id(message.subject.as_str());
-
-                let Ok(material_id) = material_id else {
-                    warn!(
-                        subject = %message.subject,
-                        error = %material_id.unwrap_err(),
-                        "Rejecting malformed slice message subject"
-                    );
-                    ack_with_warning(&message, "slice_subject_invalid", None).await;
-                    continue;
+                let material_id = match parse_slice_material_id(message.subject.as_str()) {
+                    Ok(material_id) => material_id,
+                    Err(error) => {
+                        warn!(
+                            subject = %message.subject,
+                            error = %error,
+                            "Rejecting malformed slice message subject"
+                        );
+                        ack_with_warning(&message, "slice_subject_invalid", None).await;
+                        continue;
+                    }
                 };
 
                 let offset = match parse_slice_offset(message.subject.as_str(), message.headers.as_ref()) {
