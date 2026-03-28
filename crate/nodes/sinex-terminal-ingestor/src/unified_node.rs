@@ -1310,9 +1310,17 @@ impl HistoryWatcherContext {
         #[cfg(unix)]
         let current_inode = {
             use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(self.path.as_std_path())
-                .ok()
-                .map(|m| m.ino())
+            match std::fs::metadata(self.path.as_std_path()) {
+                Ok(metadata) => Some(metadata.ino()),
+                Err(error) => {
+                    warn!(
+                        path = %self.path,
+                        error = %error,
+                        "Failed to read history file metadata while persisting watcher state"
+                    );
+                    None
+                }
+            }
         };
 
         let state = HistoryState {
@@ -2684,7 +2692,7 @@ impl IngestorNode for TerminalNode {
             )
             .with_context(
                 "failed_targets",
-                serde_json::to_string(&failed_targets).unwrap_or_default(),
+                format!("{failed_targets:?}"),
             ));
         }
 
@@ -3917,6 +3925,10 @@ mod tests {
             error.to_string().contains("no usable history sources"),
             "unexpected error: {error}"
         );
+        assert!(
+            error.to_string().contains("atuin:"),
+            "failed target context should remain visible: {error}"
+        );
 
         Ok(())
     }
@@ -3962,6 +3974,10 @@ mod tests {
         assert!(
             error.to_string().contains("no usable history sources"),
             "unexpected error: {error}"
+        );
+        assert!(
+            error.to_string().contains("fish:"),
+            "failed target context should remain visible: {error}"
         );
 
         Ok(())

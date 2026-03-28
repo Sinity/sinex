@@ -1204,7 +1204,7 @@ async fn execute_tether(
                 "[{}] {} {}",
                 console::style(event.sequence).cyan(),
                 console::style(&event.subject).green(),
-                serde_json::to_string(&event.payload).unwrap_or_default()
+                event.payload
             );
         } else {
             println!("{}", serde_json::to_string(&event)?);
