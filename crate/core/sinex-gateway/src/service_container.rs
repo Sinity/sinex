@@ -49,11 +49,11 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 impl ServiceContainer {
     /// Create a service container from a database URL (test convenience).
     ///
-    /// Builds a default `GatewayConfig` with the given URL. For production use,
-    /// prefer `new()` with a full `GatewayConfig` loaded from the environment.
+    /// Loads the normal environment-backed gateway configuration, then forces the
+    /// provided database URL on top. For production use, prefer `new()` with a full
+    /// `GatewayConfig` loaded by the process entrypoint.
     pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
-        let mut config = GatewayConfig::default();
-        config.database_url = database_url.into();
+        let config = GatewayConfig::load_with_database_url(database_url.into())?;
         Self::new(&config).await
     }
 
@@ -284,12 +284,30 @@ impl ServiceContainer {
     pub async fn health_report(&self) -> GatewayHealthReport {
         // Database ping — use the content pool (shared system pool).
         // Bounded by a 5-second timeout so a stalled DB doesn't hang the health endpoint.
-        let db_ok = tokio::time::timeout(
-            Duration::from_secs(5),
-            sqlx::query("SELECT 1").execute(self.pool()),
-        )
-        .await
-        .is_ok_and(|r| r.is_ok());
+        let db_start = std::time::Instant::now();
+        let (db_ok, db_latency_ms, db_detail) =
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                sqlx::query("SELECT 1").execute(self.pool()),
+            )
+            .await
+            {
+                Ok(Ok(_)) => (
+                    true,
+                    Some(db_start.elapsed().as_millis() as u64),
+                    "ok".to_string(),
+                ),
+                Ok(Err(error)) => (
+                    false,
+                    Some(db_start.elapsed().as_millis() as u64),
+                    format!("Database ping failed: {error}"),
+                ),
+                Err(_timeout) => (
+                    false,
+                    Some(5_000),
+                    "Database ping timed out (>5s)".to_string(),
+                ),
+            };
 
         let nats = self.probe_nats_active().await;
         let replay = self.replay_control_status();
@@ -321,6 +339,8 @@ impl ServiceContainer {
         GatewayHealthReport {
             status,
             db_ok,
+            db_latency_ms,
+            db_detail,
             nats,
             replay,
             healthy,
@@ -348,6 +368,10 @@ pub struct GatewayHealthReport {
     pub status: GatewayHealthStatus,
     /// Database is reachable
     pub db_ok: bool,
+    /// Database ping latency in milliseconds.
+    pub db_latency_ms: Option<u64>,
+    /// Human-readable database probe detail or error message.
+    pub db_detail: String,
     /// NATS active probe result
     pub nats: NatsHealthProbe,
     /// Replay control bus status

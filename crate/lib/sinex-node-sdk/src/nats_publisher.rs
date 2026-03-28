@@ -1,6 +1,6 @@
 //! NATS `JetStream` event publisher
 
-use crate::NodeResult;
+use crate::{NodeResult, error_helpers::env_parse_with_default};
 use serde::Serialize;
 use sinex_primitives::{
     JsonValue,
@@ -52,10 +52,11 @@ impl NatsPublisher {
     #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
-        let concurrency = std::env::var("SINEX_PUBLISH_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_PUBLISH_CONCURRENCY);
+        let concurrency = env_parse_with_default(
+            "SINEX_PUBLISH_CONCURRENCY",
+            DEFAULT_PUBLISH_CONCURRENCY,
+            "nats publisher concurrency",
+        );
         Self {
             nats_client,
             env,
@@ -352,7 +353,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_publish_payload, wait_for_publish_ack};
+    use super::{DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, wait_for_publish_ack};
     use sinex_primitives::{DynamicPayload, Id, Uuid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
@@ -388,6 +389,30 @@ mod tests {
         assert_eq!(value["id"], event_id);
         assert!(value["payload"].is_object());
         assert_eq!(value["payload"]["nested"]["a"], 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_publish_concurrency_override_falls_back_to_default(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let previous = std::env::var("SINEX_PUBLISH_CONCURRENCY").ok();
+        unsafe { std::env::set_var("SINEX_PUBLISH_CONCURRENCY", "bogus") };
+
+        let publisher = NatsPublisher::new(ctx.nats_client());
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("SINEX_PUBLISH_CONCURRENCY", value),
+                None => std::env::remove_var("SINEX_PUBLISH_CONCURRENCY"),
+            }
+        }
+
+        assert_eq!(
+            publisher.publish_semaphore.available_permits(),
+            DEFAULT_PUBLISH_CONCURRENCY
+        );
         Ok(())
     }
 }

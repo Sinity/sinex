@@ -217,15 +217,22 @@ impl EventValidator {
     pub fn validate_event(&self, event: &sinex_db::models::Event<JsonValue>) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate(event) {
-                Ok(()) => {
-                    // Carry the schema_id that matched so callers can persist it.
-                    // get_schema_id is an in-memory lookup — no I/O.
-                    let schema_id = self
-                        .inner
-                        .get_schema_id(&event.source, &event.event_type)
-                        .unwrap_or_else(Uuid::nil);
-                    ValidationResult::Valid { schema_id }
-                }
+                Ok(()) => match self.inner.validate_payload_for(
+                    event.source.as_ref(),
+                    event.event_type.as_ref(),
+                    &event.payload,
+                ) {
+                    SchemaValidationOutcome::Valid { schema_id } => ValidationResult::Valid {
+                        schema_id,
+                    },
+                    SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
+                    SchemaValidationOutcome::SchemaNotFound { schema_id } => {
+                        ValidationResult::SchemaNotFound { schema_id }
+                    }
+                    SchemaValidationOutcome::Invalid { errors } => ValidationResult::Invalid {
+                        errors,
+                    },
+                },
                 Err(err) => ValidationResult::Invalid {
                     errors: vec![err.to_string()],
                 },
@@ -341,5 +348,33 @@ impl ValidationResult {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_primitives::Id;
+    use sinex_primitives::events::{DynamicPayload, SourceMaterial};
+    use xtask::sandbox::sinex_test;
+
+    fn event_without_registered_schema() -> sinex_db::models::Event<JsonValue> {
+        DynamicPayload::new("validator-test", "validator.test", json!({ "ok": true }))
+            .from_material(Id::<SourceMaterial>::new())
+            .build()
+            .expect("test event should build")
+    }
+
+    #[sinex_test]
+    async fn validate_event_preserves_no_schema_result() -> xtask::sandbox::TestResult<()> {
+        let validator = EventValidator::new(true);
+        let result = validator.validate_event(&event_without_registered_schema());
+
+        assert!(
+            matches!(result, ValidationResult::NoSchema),
+            "validate_event must not fabricate a nil schema UUID when no schema is registered: {result:?}"
+        );
+        Ok(())
     }
 }

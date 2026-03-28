@@ -19,6 +19,8 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
     let GatewayHealthReport {
         status,
         db_ok,
+        db_latency_ms,
+        db_detail,
         nats,
         replay,
         healthy,
@@ -39,8 +41,8 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                     HealthStatus::Unhealthy
                 },
                 connected: db_ok,
-                latency_ms: None,
-                detail: None,
+                latency_ms: db_latency_ms.map(|value| value as f64),
+                detail: (!db_detail.trim().is_empty()).then_some(db_detail),
             },
             nats: system_component_health(
                 nats.connected,
@@ -97,6 +99,8 @@ mod tests {
         let response = system_health_response(GatewayHealthReport {
             status: GatewayHealthStatus::Degraded,
             db_ok: true,
+            db_latency_ms: Some(7),
+            db_detail: "ok".to_string(),
             nats: NatsHealthProbe {
                 connected: false,
                 latency_ms: Some(42),
@@ -114,6 +118,8 @@ mod tests {
 
         assert_eq!(response.status, HealthStatus::Degraded);
         assert!(response.components.database.connected);
+        assert_eq!(response.components.database.latency_ms, Some(7.0));
+        assert_eq!(response.components.database.detail.as_deref(), Some("ok"));
         assert_eq!(response.components.nats.status, HealthStatus::Unhealthy);
         assert_eq!(response.components.nats.latency_ms, Some(42.0));
         assert_eq!(

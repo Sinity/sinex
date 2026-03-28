@@ -2,6 +2,7 @@
 
 use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
+use crate::config::env_bool_optional;
 use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -50,11 +51,16 @@ enum ReplayAction {
     Cancel,
 }
 
-fn allow_test_actors() -> bool {
-    cfg!(test)
-        || std::env::var("SINEX_ALLOW_TEST_ACTORS")
-            .ok()
-            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+fn allow_test_actors_in_runtime(is_test_runtime: bool) -> Result<bool> {
+    if is_test_runtime {
+        return Ok(true);
+    }
+
+    Ok(env_bool_optional("SINEX_ALLOW_TEST_ACTORS")?.unwrap_or(false))
+}
+
+fn allow_test_actors() -> Result<bool> {
+    allow_test_actors_in_runtime(cfg!(test))
 }
 
 fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
@@ -93,7 +99,7 @@ fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
         ));
     }
 
-    if role == "test" && !allow_test_actors() {
+    if role == "test" && !allow_test_actors()? {
         return Err(eyre!(
             "Test actors are disabled in this environment (set SINEX_ALLOW_TEST_ACTORS=1 to enable)"
         ));
@@ -1989,7 +1995,7 @@ mod tests {
     use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
     use sinex_primitives::{DynamicPayload, Id, Uuid};
     use tokio::time::sleep;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{EnvGuard, sinex_test};
 
     fn sample_scope() -> ReplayScope {
         ReplayScope {
@@ -3476,6 +3482,21 @@ mod tests {
         assert!(validate_actor_for_action("system:internal", ReplayAction::Plan).is_ok());
         assert!(validate_actor_for_action("operator:ops-team", ReplayAction::Plan).is_ok());
         assert!(validate_actor_for_action("test:unit-test", ReplayAction::Plan).is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_test_actor_flag_rejects_invalid_boolean(_ctx: TestContext) -> Result<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_ALLOW_TEST_ACTORS", "certainly");
+
+        let error = allow_test_actors_in_runtime(false)
+            .expect_err("invalid replay actor toggle should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_ALLOW_TEST_ACTORS")
+        );
         Ok(())
     }
 

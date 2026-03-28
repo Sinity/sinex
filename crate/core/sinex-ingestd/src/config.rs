@@ -485,6 +485,73 @@ where
     }
 }
 
+fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
+    use sinex_primitives::validation::validate_path;
+
+    match std::env::var(name) {
+        Ok(path) => match validate_path(&path) {
+            Ok(validated) => Some(validated),
+            Err(error) => {
+                warn!(
+                    env = name,
+                    value = %path,
+                    %error,
+                    "Invalid path override for {context}; ignoring override"
+                );
+                None
+            }
+        },
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                env = name,
+                "Path override for {context} is not valid UTF-8; ignoring override"
+            );
+            None
+        }
+        Err(std::env::VarError::NotPresent) => None,
+    }
+}
+
+fn default_path_base_dir() -> Utf8PathBuf {
+    match dirs::cache_dir() {
+        Some(path) => match Utf8PathBuf::from_path_buf(path) {
+            Ok(path) => path,
+            Err(path) => {
+                warn!(
+                    path = %path.display(),
+                    "Cache directory path is not valid UTF-8; falling back to /tmp"
+                );
+                Utf8PathBuf::from("/tmp")
+            }
+        },
+        None => {
+            warn!("Cache directory unavailable; falling back to /tmp");
+            Utf8PathBuf::from("/tmp")
+        }
+    }
+}
+
+fn validated_path_or_fallback(
+    candidate: Utf8PathBuf,
+    fallback: Utf8PathBuf,
+    context: &str,
+) -> Utf8PathBuf {
+    use sinex_primitives::validation::validate_path;
+
+    match validate_path(candidate.as_str()) {
+        Ok(validated) => validated,
+        Err(error) => {
+            warn!(
+                path = %candidate,
+                fallback = %fallback,
+                %error,
+                "Derived default path for {context} is invalid; using fallback"
+            );
+            fallback
+        }
+    }
+}
+
 impl Default for IngestdConfig {
     fn default() -> Self {
         let env = environment();
@@ -541,30 +608,30 @@ fn default_database_url() -> String {
 
 /// Default work directory for ingestd with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
-    use sinex_primitives::validation::validate_path;
-
-    if let Ok(path) = std::env::var("SINEX_INGESTD_WORK_DIR")
-        && let Ok(validated) = validate_path(&path)
-    {
+    if let Some(validated) = env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir") {
         return validated;
     }
 
     let env = environment();
-    let base_dir = dirs::cache_dir()
-        .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
-        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
-
-    let work_dir = env.work_directory(base_dir.join("sinex").join("ingestd"));
-
-    // Validate the default path
-    match validate_path(work_dir.to_str().unwrap_or("/tmp/sinex/ingestd")) {
-        Ok(validated) => validated,
-        Err(_) => {
-            // Fallback to a safe default if validation fails
-            Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex/ingestd"))
-                .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
-        }
-    }
+    let work_dir = Utf8PathBuf::from_path_buf(
+        env.work_directory(default_path_base_dir().join("sinex").join("ingestd")),
+    )
+    .unwrap_or_else(|path| {
+        warn!(
+            path = %path.display(),
+            "Derived ingestd work directory is not valid UTF-8; using fallback"
+        );
+        Utf8PathBuf::from("/tmp/sinex/ingestd")
+    });
+    let fallback = Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex/ingestd"))
+        .unwrap_or_else(|path| {
+            warn!(
+                path = %path.display(),
+                "Fallback ingestd work directory is not valid UTF-8; using literal /tmp path"
+            );
+            Utf8PathBuf::from("/tmp/sinex/ingestd")
+        });
+    validated_path_or_fallback(work_dir, fallback, "ingestd work dir")
 }
 
 fn default_pool_acquire_timeout_secs() -> u64 {
@@ -642,23 +709,21 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn default_annex_repo_path() -> Utf8PathBuf {
-    use sinex_primitives::validation::validate_path;
-
-    if let Ok(path) = std::env::var("SINEX_ANNEX_PATH")
-        && let Ok(validated) = validate_path(&path)
-    {
+    if let Some(validated) = env_validated_path("SINEX_ANNEX_PATH", "annex repository path") {
         return validated;
     }
 
     let annex = default_work_dir().join("annex");
-    validate_path(annex.as_str()).unwrap_or(annex)
+    validated_path_or_fallback(annex, Utf8PathBuf::from("/tmp/sinex/ingestd/annex"), "annex repository path")
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {
-    use sinex_primitives::validation::validate_path;
-
     let state_dir = default_work_dir().join("assembler_state");
-    validate_path(state_dir.as_str()).unwrap_or(state_dir)
+    validated_path_or_fallback(
+        state_dir,
+        Utf8PathBuf::from("/tmp/sinex/ingestd/assembler_state"),
+        "assembler state directory",
+    )
 }
 
 fn validate_annex_path(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
@@ -777,16 +842,18 @@ fn default_max_material_size_bytes() -> Bytes {
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
-    use sinex_primitives::validation::validate_path;
-
-    if let Ok(path) = std::env::var("SINEX_INGESTD_GITOPS_WORK_DIR")
-        && let Ok(validated) = validate_path(&path)
+    if let Some(validated) =
+        env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")
     {
         return validated;
     }
 
     let gitops = default_work_dir().join("gitops");
-    validate_path(gitops.as_str()).unwrap_or(gitops)
+    validated_path_or_fallback(
+        gitops,
+        Utf8PathBuf::from("/tmp/sinex/ingestd/gitops"),
+        "gitops work directory",
+    )
 }
 
 fn default_schema_reload_interval_secs() -> u64 {
@@ -795,4 +862,98 @@ fn default_schema_reload_interval_secs() -> u64 {
 
 fn default_stats_log_interval_secs() -> u64 {
     60 // 1 minute
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_annex_repo_path, default_gitops_work_dir, default_work_dir, default_path_base_dir,
+        env_validated_path,
+    };
+    use camino::Utf8PathBuf;
+    use sinex_primitives::environment::environment;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    use xtask::sandbox::sinex_serial_test;
+
+    struct ScopedEnvGuard {
+        keys: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl ScopedEnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            let previous = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                .collect();
+            Self { keys: previous }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(&key, value) },
+                    None => unsafe { std::env::remove_var(&key) },
+                }
+            }
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_INGESTD_WORK_DIR", "XDG_CACHE_HOME"]);
+        env.set("SINEX_INGESTD_WORK_DIR", "../../etc");
+        env.set("XDG_CACHE_HOME", "/tmp/sinex-ingestd-config-cache");
+
+        let expected = Utf8PathBuf::from_path_buf(
+            environment().work_directory(default_path_base_dir().join("sinex").join("ingestd")),
+        )
+        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"));
+
+        assert_eq!(default_work_dir(), expected);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&[
+            "SINEX_INGESTD_WORK_DIR",
+            "SINEX_ANNEX_PATH",
+            "SINEX_INGESTD_GITOPS_WORK_DIR",
+        ]);
+        env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-config-root");
+        env.set("SINEX_ANNEX_PATH", "../../bad-annex");
+        env.set("SINEX_INGESTD_GITOPS_WORK_DIR", "../../bad-gitops");
+
+        assert_eq!(
+            default_annex_repo_path(),
+            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/annex")
+        );
+        assert_eq!(
+            default_gitops_work_dir(),
+            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/gitops")
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn env_validated_path_rejects_non_utf8_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_CONFIG_PATH_OVERRIDE"]);
+        env.set(
+            "SINEX_CONFIG_PATH_OVERRIDE",
+            OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x70, 0x80]),
+        );
+
+        assert_eq!(env_validated_path("SINEX_CONFIG_PATH_OVERRIDE", "test"), None);
+        Ok(())
+    }
 }

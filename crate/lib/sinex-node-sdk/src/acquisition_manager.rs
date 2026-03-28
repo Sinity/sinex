@@ -5,6 +5,7 @@
 //! with rotation, hashing, and NATS publishing.
 
 use crate::runtime::stream::NodeHandles;
+use crate::error_helpers::env_nonempty_string_optional;
 use crate::{NodeResult, SinexError};
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
@@ -265,10 +266,9 @@ impl AcquisitionManager {
         namespace: Option<String>,
     ) -> Self {
         let env = environment().clone();
-        let work_dir = std::env::var("SINEX_WORK_DIR")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(PathBuf::from);
+        let work_dir =
+            env_nonempty_string_optional("SINEX_WORK_DIR", "acquisition manager work dir")
+                .map(PathBuf::from);
 
         Self {
             nats_client,

@@ -81,7 +81,7 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let malicious_request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
@@ -130,7 +130,7 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
@@ -172,7 +172,7 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
@@ -213,7 +213,7 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "ping",
@@ -254,7 +254,7 @@ async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) ->
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "ping",
@@ -297,7 +297,7 @@ async fn native_messaging_surfaces_invalid_capabilities_config(ctx: TestContext)
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
@@ -340,7 +340,7 @@ async fn native_messaging_surfaces_invalid_extension_role_config(
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let config = NativeMessagingConfig::from_env();
+    let config = NativeMessagingConfig::from_env()?;
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",

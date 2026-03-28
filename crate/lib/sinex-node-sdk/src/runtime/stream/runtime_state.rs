@@ -112,13 +112,6 @@ impl NodeRuntimeState {
     }
 
     #[must_use]
-    pub fn config_value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.raw_config
-            .get(key)
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-    }
-
-    #[must_use]
     pub fn raw_config_value(&self, key: &str) -> Option<&Value> {
         self.raw_config.get(key)
     }

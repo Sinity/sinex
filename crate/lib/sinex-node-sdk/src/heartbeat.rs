@@ -6,6 +6,7 @@
 //! by the health aggregator automaton.
 
 use crate::runtime::stream::NodeRuntimeState;
+use crate::error_helpers::env_parse_with_default;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::NodeName;
@@ -29,17 +30,18 @@ const DEFAULT_DEGRADED_THRESHOLD: usize = 10;
 const DEFAULT_FAILED_THRESHOLD: usize = 50;
 
 fn get_degraded_threshold() -> usize {
-    std::env::var("SINEX_HEARTBEAT_DEGRADED_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_DEGRADED_THRESHOLD)
+    env_usize_with_default(
+        "SINEX_HEARTBEAT_DEGRADED_THRESHOLD",
+        DEFAULT_DEGRADED_THRESHOLD,
+    )
 }
 
 fn get_failed_threshold() -> usize {
-    std::env::var("SINEX_HEARTBEAT_FAILED_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_FAILED_THRESHOLD)
+    env_usize_with_default("SINEX_HEARTBEAT_FAILED_THRESHOLD", DEFAULT_FAILED_THRESHOLD)
+}
+
+fn env_usize_with_default(var: &str, default: usize) -> usize {
+    env_parse_with_default(var, default, "heartbeat")
 }
 
 /// Heartbeat metrics and status

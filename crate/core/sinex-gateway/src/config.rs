@@ -2,7 +2,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use sinex_db::PoolConfig;
+use sinex_db::{PoolConfig, resolve_effective_database_url};
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::nats::NatsConnectionConfig;
@@ -287,14 +287,43 @@ impl Default for GatewayConfig {
 }
 
 impl GatewayConfig {
-    /// Load configuration from defaults and environment variables.
-    pub fn load() -> Result<Self, SinexError> {
+    fn load_with_optional_database_url(database_url: Option<String>) -> Result<Self, SinexError> {
         let mut config = Self {
             nats: NatsConnectionConfig::from_env(),
             ..Self::default()
         };
         config.apply_gateway_env_overrides()?;
         config.apply_manual_env_overrides()?;
+        if let Some(url) = database_url {
+            config.database_url = url;
+        }
+        Ok(config)
+    }
+
+    /// Load configuration from defaults and environment variables.
+    pub fn load() -> Result<Self, SinexError> {
+        let mut config = Self::load_with_optional_database_url(None)?;
+        if config.database_url.trim().is_empty() {
+            return Err(SinexError::configuration(
+                "Database URL not provided — set DATABASE_URL or pass --database-url",
+            ));
+        }
+        config.database_url = resolve_effective_database_url(&config.database_url)?;
+        Ok(config)
+    }
+
+    /// Load defaults and environment overrides, then force a specific database URL.
+    ///
+    /// This is used by tests and helper binaries that need the normal runtime wiring
+    /// (NATS, TLS, annex, auth) but provide the database URL out-of-band.
+    pub fn load_with_database_url(database_url: impl Into<String>) -> Result<Self, SinexError> {
+        let mut config = Self::load_with_optional_database_url(Some(database_url.into()))?;
+        if config.database_url.trim().is_empty() {
+            return Err(SinexError::configuration(
+                "Database URL not provided — set DATABASE_URL or pass --database-url",
+            ));
+        }
+        config.database_url = resolve_effective_database_url(&config.database_url)?;
         Ok(config)
     }
 
@@ -556,12 +585,26 @@ impl GatewayConfig {
     }
 }
 
-fn env_var_optional(name: &str) -> Result<Option<String>, SinexError> {
+pub(crate) fn env_var_optional(name: &str) -> Result<Option<String>, SinexError> {
     match std::env::var(name) {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
             "Environment variable {name} is not valid UTF-8"
+        ))),
+    }
+}
+
+pub(crate) fn env_bool_optional(name: &str) -> Result<Option<bool>, SinexError> {
+    let Some(raw) = env_var_optional(name)? else {
+        return Ok(None);
+    };
+
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        _ => Err(SinexError::configuration(format!(
+            "Environment variable {name} has invalid boolean value `{raw}`"
         ))),
     }
 }
@@ -614,15 +657,5 @@ fn env_usize_override(name: &str, current: usize) -> Result<usize, SinexError> {
 }
 
 fn env_bool_override(name: &str, current: bool) -> Result<bool, SinexError> {
-    let Some(raw) = env_var_optional(name)? else {
-        return Ok(current);
-    };
-
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(SinexError::configuration(format!(
-            "Environment variable {name} has invalid boolean value `{raw}`"
-        ))),
-    }
+    Ok(env_bool_optional(name)?.unwrap_or(current))
 }

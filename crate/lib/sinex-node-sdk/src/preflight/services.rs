@@ -38,8 +38,7 @@ pub struct SystemdServiceDetails {
 }
 
 impl SystemdServiceDetails {
-    #[must_use]
-    pub fn from_show_output(output: &str) -> Self {
+    pub fn from_show_output(output: &str) -> NodeResult<Self> {
         let mut active_state = None;
         let mut sub_state = None;
         let mut load_state = None;
@@ -55,20 +54,29 @@ impl SystemdServiceDetails {
                     "LoadState" => load_state = Some(value.to_string()),
                     "Type" => unit_type = Some(value.to_string()),
                     "NotifyAccess" => notify_access = Some(value.to_string()),
-                    "WatchdogUSec" => watchdog_usec = value.parse::<u64>().ok(),
+                    "WatchdogUSec" => {
+                        watchdog_usec = Some(value.parse::<u64>().map_err(|error| {
+                            SinexError::processing(
+                                "Failed to parse systemd WatchdogUSec".to_string(),
+                            )
+                            .with_context("field", "WatchdogUSec")
+                            .with_context("value", value.to_string())
+                            .with_std_error(&error)
+                        })?);
+                    }
                     _ => {}
                 }
             }
         }
 
-        Self {
+        Ok(Self {
             active_state: active_state.unwrap_or_else(|| "unknown".to_string()),
             sub_state: sub_state.unwrap_or_else(|| "unknown".to_string()),
             load_state: load_state.unwrap_or_else(|| "unknown".to_string()),
             unit_type,
             notify_access,
             watchdog_usec,
-        }
+        })
     }
 
     #[must_use]
@@ -584,9 +592,7 @@ pub async fn inspect_systemd_service(service_name: &str) -> NodeResult<SystemdSe
         )));
     }
 
-    Ok(SystemdServiceDetails::from_show_output(&String::from_utf8_lossy(
-        &status_output.stdout,
-    )))
+    SystemdServiceDetails::from_show_output(&String::from_utf8_lossy(&status_output.stdout))
 }
 
 async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Value> {
@@ -851,8 +857,31 @@ fn redact_password(url: &str) -> String {
 mod tests {
     // Small inline tests are justified here because they exercise private
     // preflight helpers without widening the service-verification API surface.
-    use super::discover_unit_files_in_path;
+    use super::{SystemdServiceDetails, discover_unit_files_in_path};
     use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn systemd_service_details_reject_invalid_watchdog_usec() -> TestResult<()> {
+        let error = SystemdServiceDetails::from_show_output(
+            "ActiveState=active\nSubState=running\nLoadState=loaded\nWatchdogUSec=not-a-number\n",
+        )
+        .expect_err("invalid WatchdogUSec should fail honestly");
+
+        assert!(error.to_string().contains("WatchdogUSec"));
+        assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_service_details_parse_watchdog_usec_when_valid() -> TestResult<()> {
+        let details = SystemdServiceDetails::from_show_output(
+            "ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=60000000\n",
+        )?;
+
+        assert_eq!(details.watchdog_usec, Some(60_000_000));
+        assert_eq!(details.unit_type.as_deref(), Some("notify"));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn discover_unit_files_in_path_reports_non_directory_paths() -> TestResult<()> {

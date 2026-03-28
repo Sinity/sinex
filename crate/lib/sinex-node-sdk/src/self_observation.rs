@@ -31,6 +31,7 @@
 //! ```
 
 use async_nats::Client as NatsClient;
+use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
 use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
@@ -93,13 +94,16 @@ impl SelfObserverConfig {
     /// Create configuration from environment variables
     #[must_use]
     pub fn from_env(component: &str) -> Self {
-        let enabled = std::env::var("SINEX_SELF_OBSERVATION_ENABLED")
-            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
-
-        let min_interval_secs = std::env::var("SINEX_SELF_OBSERVATION_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
+        let enabled = env_bool_with_default(
+            "SINEX_SELF_OBSERVATION_ENABLED",
+            true,
+            "self-observation",
+        );
+        let min_interval_secs = env_parse_with_default(
+            "SINEX_SELF_OBSERVATION_INTERVAL_SECS",
+            1_u64,
+            "self-observation",
+        );
 
         Self {
             component: component.to_string(),

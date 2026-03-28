@@ -18,6 +18,10 @@ impl EnvGuard {
     fn set(&mut self, key: &str, value: &str) {
         unsafe { std::env::set_var(key, value) };
     }
+
+    fn remove(&mut self, key: &str) {
+        unsafe { std::env::remove_var(key) };
+    }
 }
 
 impl Drop for EnvGuard {
@@ -44,6 +48,30 @@ async fn gateway_config_load_namespaces_database_url_from_env() -> TestResult<()
 }
 
 #[sinex_test]
+async fn gateway_config_load_requires_database_url() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    env.remove("DATABASE_URL");
+
+    let error = GatewayConfig::load().expect_err("missing database url should fail gateway config load");
+    let message = error.to_string();
+
+    assert!(message.contains("Database URL not provided"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn gateway_config_load_rejects_malformed_database_url() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    env.set("DATABASE_URL", "not-a-database-url");
+
+    let error = GatewayConfig::load().expect_err("malformed database url should fail gateway config load");
+    let message = error.to_string();
+
+    assert!(message.contains("failed to parse DATABASE_URL"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn gateway_cli_database_override_uses_effective_database_url() -> TestResult<()> {
     let config = GatewayConfig::default().with_cli_overrides(
         Some("postgresql://gateway-cli/sinex".to_string()),
@@ -64,5 +92,19 @@ async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()
 
     assert!(message.contains("SINEX_GATEWAY_MAX_CONCURRENCY"));
     assert!(message.contains("many"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["SINEX_NATS_URL", "SINEX_GATEWAY_ANNEX_PATH"]);
+    env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");
+    env.set("SINEX_GATEWAY_ANNEX_PATH", "/tmp/sinex-annex-test");
+
+    let config = GatewayConfig::load_with_database_url("postgresql://gateway-helper/sinex")?;
+
+    assert_eq!(config.database_url, "postgresql://gateway-helper/sinex");
+    assert_eq!(config.nats.url, "nats://127.0.0.1:4555");
+    assert_eq!(config.annex_path, "/tmp/sinex-annex-test");
     Ok(())
 }

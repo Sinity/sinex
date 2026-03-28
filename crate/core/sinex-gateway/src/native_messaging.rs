@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
 use crate::config::GatewayConfig;
+use crate::config::env_var_optional;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -156,20 +157,19 @@ fn secrets_match(expected: &str, provided: &str) -> bool {
 
 impl NativeMessagingConfig {
     /// Load configuration from environment variables.
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self::from_raw(
-            std::env::var(TRUSTED_EXTENSION_ENV).ok(),
-            std::env::var(TRUSTED_HOSTS_ENV).ok(),
-            std::env::var(PROTOCOL_VERSION_ENV).ok(),
-            std::env::var(CAPABILITIES_ENV).ok(),
-            std::env::var(EXTENSION_ROLES_ENV).ok(),
+    pub fn from_env() -> Result<Self> {
+        Ok(Self::from_raw(
+            env_var_optional(TRUSTED_EXTENSION_ENV)?,
+            env_var_optional(TRUSTED_HOSTS_ENV)?,
+            env_var_optional(PROTOCOL_VERSION_ENV)?,
+            env_var_optional(CAPABILITIES_ENV)?,
+            env_var_optional(EXTENSION_ROLES_ENV)?,
             env_positive_usize_with_default(MAX_MESSAGE_SIZE_ENV, DEFAULT_MAX_MESSAGE_SIZE_BYTES),
             std::time::Duration::from_secs(env_positive_u64_with_default(
                 READ_TIMEOUT_ENV,
                 DEFAULT_READ_TIMEOUT_SECS,
             )),
-        )
+        ))
     }
 
     #[must_use]
@@ -789,7 +789,7 @@ mod tests {
             r#"{"ext-read":"readonly","ext-write":"write","ext-admin":"admin"}"#,
         );
 
-        let config = NativeMessagingConfig::from_env();
+        let config = NativeMessagingConfig::from_env()?;
 
         assert_eq!(
             config.resolve_extension_role(Some("ext-read"))?,
@@ -811,7 +811,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set(EXTENSION_ROLES_ENV, r#"{"ext-write":"superuser"}"#);
 
-        let config = NativeMessagingConfig::from_env();
+        let config = NativeMessagingConfig::from_env()?;
 
         let error = config
             .resolve_extension_role(Some("ext-write"))
@@ -828,7 +828,7 @@ mod tests {
             r#"{"ext-1":{"allowed_methods":"system.health","rate_limit_per_minute":null,"allowed_event_types":null}}"#,
         );
 
-        let config = NativeMessagingConfig::from_env();
+        let config = NativeMessagingConfig::from_env()?;
         let message = NativeMessage {
             msg_type: "rpc".to_string(),
             method: Some("system.health".to_string()),
@@ -853,7 +853,7 @@ mod tests {
         env.set(MAX_MESSAGE_SIZE_ENV, "2048");
         env.set(READ_TIMEOUT_ENV, "12");
 
-        let config = NativeMessagingConfig::from_env();
+        let config = NativeMessagingConfig::from_env()?;
 
         assert_eq!(config.max_message_size, 2048);
         assert_eq!(config.read_timeout, std::time::Duration::from_secs(12));
@@ -866,12 +866,31 @@ mod tests {
         env.set(MAX_MESSAGE_SIZE_ENV, "0");
         env.set(READ_TIMEOUT_ENV, "forever");
 
-        let config = NativeMessagingConfig::from_env();
+        let config = NativeMessagingConfig::from_env()?;
 
         assert_eq!(config.max_message_size, DEFAULT_MAX_MESSAGE_SIZE_BYTES);
         assert_eq!(
             config.read_timeout,
             std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS)
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn native_messaging_env_rejects_non_utf8_trusted_extensions() -> TestResult<()> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut env = EnvGuard::new();
+        env.set(TRUSTED_EXTENSION_ENV, OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
+
+        let error = NativeMessagingConfig::from_env()
+            .expect_err("non-UTF-8 native messaging env should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("Environment variable SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS is not valid UTF-8")
         );
         Ok(())
     }

@@ -601,7 +601,7 @@ impl MaterialAssembler {
         state_handle: Arc<Mutex<super::state::AssemblerState>>,
         pending_behavior: PendingEndBehavior,
     ) -> IngestdResult<()> {
-        use super::state::build_finalize_metadata;
+        use super::state::{build_finalize_metadata, parse_material_ended_at};
 
         let (final_state, assembled_bytes, slice_count, computed_hash, end, ended_at) = {
             let mut state = state_handle.lock().await;
@@ -622,8 +622,38 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = Timestamp::parse_rfc3339(&end_preview.ended_at)
-                .unwrap_or_else(|_| Timestamp::now());
+            let ended_at = match parse_material_ended_at(
+                material_id,
+                &end_preview.ended_at,
+                "pending_end",
+            ) {
+                Ok(ended_at) => ended_at,
+                Err(error) => {
+                    let context = serde_json::json!({
+                        "ended_at": end_preview.ended_at,
+                        "expected_bytes": end_preview.total_size_bytes,
+                        "expected_slices": end_preview.total_slices,
+                        "assembled_bytes": state.expected_offset,
+                        "slice_count": state.slice_count,
+                        "buffered_offsets": state.buffered_slices.keys().copied().collect::<Vec<_>>(),
+                        "error": error.to_string(),
+                    });
+                    state.phase = AssemblyPhase::Finalizing;
+                    drop(state);
+                    self.route_material_error(
+                        material_id,
+                        "material_end_timestamp_invalid",
+                        context,
+                    )
+                    .await;
+                    self.finalize_failed_material_claimed(
+                        material_id,
+                        "material_end_timestamp_invalid",
+                    )
+                    .await;
+                    return Ok(());
+                }
+            };
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;
@@ -1019,6 +1049,8 @@ mod tests {
     use sinex_db::repositories::{DbPoolExt, source_materials::status};
     use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
     use std::sync::Arc;
+    use tokio::time::timeout;
+    use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;
 
     async fn test_assembler(
@@ -1127,6 +1159,71 @@ mod tests {
             .await?
             .expect("material should exist");
         assert_eq!(material.status.as_str(), status::COMPLETED);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn try_finalize_pending_end_routes_invalid_end_timestamp_to_dlq(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::from_uuid(material_id);
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://invalid-ended-at"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.material_kind = "test".to_string();
+        state.source_identifier = "test://invalid-ended-at".to_string();
+        state.phase = AssemblyPhase::Accumulating;
+        state.expected_offset = 4;
+        state.slice_count = 1;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: "not-a-timestamp".to_string(),
+            content_hash: blake3::hash(b"data").to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: 4,
+            metadata: json!({}),
+        });
+        let state_handle = assembler.insert_state_handle(material_id, state).await;
+
+        assembler
+            .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+            .await?;
+
+        let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+        let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
+        assert_eq!(payload["error"], "material_end_timestamp_invalid");
+        assert_eq!(payload["material_id"], material_id.to_string());
+        assert_eq!(payload["context"]["ended_at"], "not-a-timestamp");
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+        assert_eq!(material.status.as_str(), status::FAILED);
+        assert!(
+            !assembler.assembler_state.contains_key(&material_id),
+            "invalid end timestamp should clean up assembler state instead of retrying forever"
+        );
+
         Ok(())
     }
 

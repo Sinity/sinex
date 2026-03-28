@@ -74,6 +74,12 @@ struct ClipboardHistoryEntry {
     copy_count: u32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ActiveWindowContext {
+    source_app: Option<String>,
+    window_title: Option<String>,
+}
+
 /// Clipboard watcher with Stage-as-You-Go capture
 pub struct ClipboardWatcher {
     poll_interval: Duration,
@@ -200,74 +206,150 @@ impl ClipboardWatcher {
         path_utils::extract_file_paths(content)
     }
 
-    /// Get active window application name
-    async fn get_active_window_app(&self) -> Option<String> {
-        // Try Hyprland first with timeout
-        if let Ok(Ok(output)) = tokio::time::timeout(
-            CLIPBOARD_COMMAND_TIMEOUT,
-            Command::new("hyprctl")
-                .args(["activewindow", "-j"])
-                .output(),
-        )
-        .await
-            && output.status.success()
-            && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        {
-            return json
-                .get("class")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string);
+    fn parse_optional_nonempty_json_string(
+        json: &serde_json::Value,
+        field: &str,
+    ) -> NodeResult<Option<String>> {
+        match json.get(field) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(value)) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(trimmed.to_string()))
+                }
+            }
+            Some(other) => Err(SinexError::processing(format!(
+                "Hyprland active window field '{field}' must be a string, got {other}"
+            ))),
         }
-
-        // Try xdotool for X11 with timeout
-        if let Ok(Ok(output)) = tokio::time::timeout(
-            CLIPBOARD_COMMAND_TIMEOUT,
-            Command::new("xdotool")
-                .args(["getactivewindow", "getwindowclassname"])
-                .output(),
-        )
-        .await
-            && output.status.success()
-        {
-            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-        }
-
-        None
     }
 
-    /// Get active window title
-    async fn get_active_window_title(&self) -> Option<String> {
-        // Try Hyprland first with timeout
-        if let Ok(Ok(output)) = tokio::time::timeout(
+    fn parse_hyprland_active_window(stdout: &[u8]) -> NodeResult<ActiveWindowContext> {
+        let json = serde_json::from_slice::<serde_json::Value>(stdout).map_err(|error| {
+            SinexError::processing("Failed to parse hyprctl activewindow JSON")
+                .with_source(error)
+        })?;
+
+        Ok(ActiveWindowContext {
+            source_app: Self::parse_optional_nonempty_json_string(&json, "class")?,
+            window_title: Self::parse_optional_nonempty_json_string(&json, "title")?,
+        })
+    }
+
+    fn parse_x11_active_window_field(stdout: &[u8], field: &str) -> NodeResult<Option<String>> {
+        let value = std::str::from_utf8(stdout).map_err(|error| {
+            SinexError::processing(format!(
+                "Failed to parse xdotool active window {field} output as UTF-8"
+            ))
+            .with_source(error)
+        })?;
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(trimmed.to_string()))
+        }
+    }
+
+    async fn query_hyprland_active_window(&self) -> NodeResult<Option<ActiveWindowContext>> {
+        let output = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("hyprctl")
                 .args(["activewindow", "-j"])
                 .output(),
         )
         .await
-            && output.status.success()
-            && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        {
-            return json
-                .get("title")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string);
+        .map_err(|_| {
+            SinexError::processing(format!(
+                "Timed out querying active Hyprland window after {:?}",
+                CLIPBOARD_COMMAND_TIMEOUT
+            ))
+        })?
+        .map_err(|error| {
+            SinexError::processing("Failed to execute hyprctl activewindow probe")
+                .with_source(error)
+        })?;
+
+        if !output.status.success() {
+            return Ok(None);
         }
 
-        // Try xdotool for X11 with timeout
-        if let Ok(Ok(output)) = tokio::time::timeout(
+        let context = Self::parse_hyprland_active_window(&output.stdout)?;
+        if context.source_app.is_none() && context.window_title.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(context))
+        }
+    }
+
+    async fn query_x11_active_window_field(
+        &self,
+        args: &[&str],
+        field: &str,
+    ) -> NodeResult<Option<String>> {
+        let output = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
-            Command::new("xdotool")
-                .args(["getactivewindow", "getwindowname"])
-                .output(),
+            Command::new("xdotool").args(args).output(),
         )
         .await
-            && output.status.success()
-        {
-            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        .map_err(|_| {
+            SinexError::processing(format!(
+                "Timed out querying active X11 window {field} after {:?}",
+                CLIPBOARD_COMMAND_TIMEOUT
+            ))
+        })?
+        .map_err(|error| {
+            SinexError::processing(format!("Failed to execute xdotool {field} probe"))
+                .with_source(error)
+        })?;
+
+        if !output.status.success() {
+            return Ok(None);
         }
 
-        None
+        Self::parse_x11_active_window_field(&output.stdout, field)
+    }
+
+    async fn get_active_window_context(&self) -> ActiveWindowContext {
+        match self.query_hyprland_active_window().await {
+            Ok(Some(context)) => return context,
+            Ok(None) => {}
+            Err(error) => debug!(error = %error, "Failed to query Hyprland active window context"),
+        }
+
+        let source_app = match self
+            .query_x11_active_window_field(
+                &["getactivewindow", "getwindowclassname"],
+                "class",
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                debug!(error = %error, "Failed to query X11 active window class");
+                None
+            }
+        };
+        let window_title = match self
+            .query_x11_active_window_field(
+                &["getactivewindow", "getwindowname"],
+                "title",
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                debug!(error = %error, "Failed to query X11 active window title");
+                None
+            }
+        };
+
+        ActiveWindowContext {
+            source_app,
+            window_title,
+        }
     }
 
     /// Find original hash for deduplication
@@ -515,8 +597,7 @@ impl ClipboardWatcher {
             let hash = self.calculate_hash(&validated_text);
             let size_bytes = validated_text.len();
             let (content_type, text_preview, file_paths) = self.analyze_content(&validated_text);
-            let source_app = self.get_active_window_app().await;
-            let window_title = self.get_active_window_title().await;
+            let active_window = self.get_active_window_context().await;
             let timestamp = Timestamp::now();
 
             Some(ClipboardContent {
@@ -526,8 +607,8 @@ impl ClipboardWatcher {
                 content_type,
                 text_preview,
                 file_paths,
-                source_app,
-                window_title,
+                source_app: active_window.source_app,
+                window_title: active_window.window_title,
                 _timestamp: timestamp,
             })
         } else {
@@ -847,6 +928,45 @@ mod tests {
             .store_clipboard_source_material(&content, "primary")
             .await?;
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_hyprland_active_window_extracts_context() -> TestResult<()> {
+        let context = ClipboardWatcher::parse_hyprland_active_window(
+            br#"{ "class": "Firefox", "title": "Docs" }"#,
+        )?;
+
+        assert_eq!(context.source_app.as_deref(), Some("Firefox"));
+        assert_eq!(context.window_title.as_deref(), Some("Docs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_hyprland_active_window_rejects_non_string_fields() -> TestResult<()> {
+        let error = ClipboardWatcher::parse_hyprland_active_window(
+            br#"{ "class": 42, "title": "Docs" }"#,
+        )
+        .expect_err("non-string active window class must fail honestly");
+
+        assert!(error.to_string().contains("field 'class' must be a string"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_x11_active_window_field_rejects_invalid_utf8() -> TestResult<()> {
+        let error = ClipboardWatcher::parse_x11_active_window_field(&[0xFF], "title")
+            .expect_err("invalid UTF-8 window titles must fail honestly");
+
+        assert!(error.to_string().contains("active window title output as UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_x11_active_window_field_trims_empty_output_to_none() -> TestResult<()> {
+        let value = ClipboardWatcher::parse_x11_active_window_field(b"   \n", "class")?;
+
+        assert!(value.is_none());
         Ok(())
     }
 }
