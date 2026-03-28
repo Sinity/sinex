@@ -1209,10 +1209,7 @@ where
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
     } else {
-        let origins: Vec<HeaderValue> = cors_origins
-            .iter()
-            .filter_map(|o| HeaderValue::from_str(o).ok())
-            .collect();
+        let origins = parse_cors_origin_values(cors_origins);
         CorsLayer::new()
             .allow_origin(origins)
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
@@ -1248,6 +1245,23 @@ where
         )
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
+}
+
+fn parse_cors_origin_values(cors_origins: &[String]) -> Vec<HeaderValue> {
+    cors_origins
+        .iter()
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                warn!(
+                    origin = %origin,
+                    %error,
+                    "Ignoring invalid CORS origin override"
+                );
+                None
+            }
+        })
+        .collect()
 }
 
 async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
@@ -1692,6 +1706,28 @@ mod tests {
                     .into_inner(),
             );
         apply_rpc_layers(base, &limits, &[])
+    }
+
+    #[test]
+    fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones() {
+        let origins = parse_cors_origin_values(&[
+            "http://localhost:3000".to_string(),
+            "bad\norigin".to_string(),
+            "https://example.com".to_string(),
+        ]);
+
+        let parsed: Vec<_> = origins
+            .iter()
+            .map(|origin| origin.to_str().expect("valid header value"))
+            .collect();
+
+        assert_eq!(parsed, vec!["http://localhost:3000", "https://example.com"]);
+    }
+
+    #[test]
+    fn parse_cors_origin_values_rejects_all_invalid_entries() {
+        let origins = parse_cors_origin_values(&["bad\norigin".to_string(), "\u{7f}".to_string()]);
+        assert!(origins.is_empty());
     }
 
     async fn spawn_router(router: Router) -> (SocketAddr, JoinHandle<()>) {
