@@ -981,7 +981,8 @@ impl IngestorNode for DesktopNode {
         .iter()
         .filter(|&&active| active)
         .count() as u64;
-        let healthy = connected_sources > 0 || active_sources == 0;
+        let healthy = active_sources > 0 && connected_sources == active_sources;
+        let is_connected = active_sources > 0 && connected_sources > 0;
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -996,6 +997,10 @@ impl IngestorNode for DesktopNode {
             "Desktop Source (all watchers disabled)".to_string()
         } else if connected_sources == 0 {
             format!("Desktop Source ({active_sources} enabled watcher(s), none connected)")
+        } else if connected_sources < active_sources {
+            format!(
+                "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
+            )
         } else {
             format!(
                 "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)"
@@ -1012,7 +1017,7 @@ impl IngestorNode for DesktopNode {
             healthy,
             recent_activity,
             metadata,
-            is_connected: connected_sources > 0 || active_sources == 0,
+            is_connected,
             lag_seconds: None,
         })
     }
@@ -1235,7 +1240,8 @@ mod tests {
         let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
 
         assert!(source.is_connected);
-        assert!(source.healthy);
+        assert!(!source.healthy);
+        assert!(source.description.contains("degraded"));
         assert_eq!(
             source
                 .metadata
@@ -1249,6 +1255,35 @@ mod tests {
                 "clipboard_active": true,
                 "window_manager_active": false,
             }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_marks_disabled_configuration_unhealthy()
+    -> xtask::sandbox::TestResult<()> {
+        let mut node = DesktopNode::new();
+        node.config.clipboard_enabled = false;
+        node.config.window_manager_enabled = false;
+
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert!(source.description.contains("all watchers disabled"));
+        assert_eq!(
+            source
+                .metadata
+                .get("enabled_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
         );
         Ok(())
     }
