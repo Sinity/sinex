@@ -769,6 +769,74 @@ async fn batch_insert_rejects_intra_batch_synthesis_cycles(ctx: TestContext) -> 
 }
 
 #[sinex_test]
+async fn batch_insert_rejects_cross_chunk_intra_batch_synthesis_cycles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("batch-cross-chunk-cycle-material"))
+        .await?;
+    let source = EventSource::new("batch-cross-chunk-cycle-test")?;
+    let event_type = EventType::new("batch.cross_chunk_cycle")?;
+    let first_id = Id::<Event<serde_json::Value>>::new();
+    let second_id = Id::<Event<serde_json::Value>>::new();
+
+    let mut events = Vec::new();
+    for index in 0..49 {
+        let event = DynamicPayload::new(
+            source.clone(),
+            event_type.clone(),
+            json!({ "filler": index }),
+        )
+        .from_material(material_id)
+        .build()?;
+        events.push(event);
+    }
+
+    let mut first = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "first" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*second_id.as_uuid())])?
+    .build()?;
+    first.id = Some(first_id);
+    events.push(first);
+
+    let mut second = DynamicPayload::new(source.clone(), event_type.clone(), json!({ "cycle": "second" }))
+        .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
+        .build()?;
+    second.id = Some(second_id);
+    events.push(second);
+
+    assert_eq!(events.len(), 51, "test must span the 50-row chunk boundary");
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_batch(events)
+        .await
+        .expect_err("cross-chunk intra-batch synthesis cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in synthesis provenance within batch"),
+        "unexpected error: {error}"
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(&source, Pagination::new(Some(100), None))
+        .await?;
+    assert!(
+        stored.is_empty(),
+        "failed cross-chunk synthesis batch must not partially commit"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()> {
     let operation_id = Uuid::now_v7();
     let old_event_1 = Uuid::now_v7();
