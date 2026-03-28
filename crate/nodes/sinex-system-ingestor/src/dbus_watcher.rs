@@ -521,6 +521,8 @@ impl DbusWatcher {
         config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let sender = Self::require_message_field(sender.clone(), "sender")?;
+
         // Extract specialized events based on interface
         if config.extract_notifications
             && interface == "org.freedesktop.Notifications"
@@ -535,16 +537,13 @@ impl DbusWatcher {
             && interface.starts_with("org.mpris.MediaPlayer2")
             && member == "PropertiesChanged"
         {
-            let player = sender
-                .as_deref()
-                .and_then(|s| s.split('.').next_back())
-                .ok_or_else(|| {
-                    sinex_node_sdk::SinexError::validation(
-                        "MPRIS PropertiesChanged signal is missing sender".to_string(),
-                    )
-                })?;
+            let player = sender.split('.').next_back().ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(
+                    "MPRIS PropertiesChanged signal is missing sender".to_string(),
+                )
+            })?;
 
-            let payload = Self::parse_mpris_properties(args, player, sender, timestamp)?
+            let payload = Self::parse_mpris_properties(args, player, &sender, timestamp)?
                 .ok_or_else(|| {
                     sinex_node_sdk::SinexError::validation(
                         "MPRIS PropertiesChanged signal did not contain changed properties"
@@ -669,7 +668,7 @@ impl DbusWatcher {
         let event = Event::new(
             DbusSignalPayload {
                 bus: parse_bus_type(bus_type),
-                sender: sender.as_deref().unwrap_or_default().to_string(),
+                sender,
                 path: path.to_string(),
                 interface: interface.to_string(),
                 signal: member.to_string(),
@@ -699,11 +698,13 @@ impl DbusWatcher {
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let sender = Self::require_message_field(sender.clone(), "sender")?;
+        let destination = Self::require_message_field(destination.clone(), "destination")?;
         let event = Event::new(
             DbusMethodCalledPayload {
                 bus: parse_bus_type(bus_type),
-                sender: sender.as_deref().unwrap_or_default().to_string(),
-                destination: destination.as_deref().unwrap_or_default().to_string(),
+                sender,
+                destination,
                 path: path.to_string(),
                 interface: interface.to_string(),
                 method: member.to_string(),
@@ -1016,7 +1017,7 @@ impl DbusWatcher {
     fn parse_mpris_properties(
         args: &serde_json::Value,
         player: &str,
-        sender: &Option<String>,
+        sender: &str,
         timestamp: Timestamp,
     ) -> NodeResult<Option<DbusMediaStateChangedPayload>> {
         let arg_array = args.as_array().ok_or_else(|| {
@@ -1105,12 +1106,12 @@ impl DbusWatcher {
     /// Create default media payload
     fn default_media_payload(
         player: &str,
-        sender: &Option<String>,
+        sender: &str,
         timestamp: Timestamp,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),
-            player_instance: sender.as_deref().unwrap_or_default().to_string(),
+            player_instance: sender.to_string(),
             status: PlaybackStatus::Stopped,
             track_id: None,
             title: None,
@@ -1209,7 +1210,7 @@ mod tests {
         let error = DbusWatcher::parse_mpris_properties(
             &args,
             "player",
-            &Some("org.mpris.MediaPlayer2.spotify".to_string()),
+            "org.mpris.MediaPlayer2.spotify",
             Timestamp::now(),
         )
         .expect_err("invalid playback statuses should fail honestly");
@@ -1230,7 +1231,7 @@ mod tests {
         let payload = DbusWatcher::parse_mpris_properties(
             &args,
             "spotify",
-            &Some("org.mpris.MediaPlayer2.spotify".to_string()),
+            "org.mpris.MediaPlayer2.spotify",
             Timestamp::now(),
         )?
         .expect("valid payload should parse");
