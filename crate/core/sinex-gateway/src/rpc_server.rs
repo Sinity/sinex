@@ -1402,7 +1402,7 @@ pub async fn spawn(
             warn!("RPC server background-task shutdown receiver was already dropped");
         }
 
-        RpcServer::wait_for_background_tasks(metrics_task, cleanup_task, sse_bus_task).await;
+        RpcServer::wait_for_background_tasks(metrics_task, cleanup_task, sse_bus_task).await?;
 
         info!("RPC server shutdown complete");
         Ok(())
@@ -1642,43 +1642,82 @@ impl RpcServer {
         metrics_task: Option<JoinHandle<()>>,
         cleanup_task: Option<JoinHandle<()>>,
         sse_bus_task: Option<JoinHandle<()>>,
-    ) {
-        let shutdown_timeout = std::time::Duration::from_secs(30);
+    ) -> color_eyre::eyre::Result<()> {
+        Self::wait_for_background_tasks_with_timeout(
+            metrics_task,
+            cleanup_task,
+            sse_bus_task,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+    }
+
+    async fn wait_for_background_tasks_with_timeout(
+        metrics_task: Option<JoinHandle<()>>,
+        cleanup_task: Option<JoinHandle<()>>,
+        sse_bus_task: Option<JoinHandle<()>>,
+        shutdown_timeout: Duration,
+    ) -> color_eyre::eyre::Result<()> {
+        let mut errors = Vec::new();
+
+        async fn await_background_task(
+            task: JoinHandle<()>,
+            task_name: &'static str,
+            shutdown_timeout: Duration,
+        ) -> color_eyre::eyre::Result<()> {
+            match tokio::time::timeout(shutdown_timeout, task).await {
+                Ok(Ok(())) => {
+                    info!(task = task_name, "Background task shut down successfully");
+                    Ok(())
+                }
+                Ok(Err(error)) => Err(eyre!(
+                    "{task_name} join failed during shutdown: {error}"
+                )),
+                Err(_) => Err(eyre!(
+                    "{task_name} did not shut down within {shutdown_timeout:?}"
+                )),
+            }
+        }
 
         if let Some(task) = metrics_task {
             info!("Awaiting metrics emission task shutdown...");
-            match tokio::time::timeout(shutdown_timeout, task).await {
-                Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
-                Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
-                Err(_) => warn!(
-                    "Metrics emission task did not shut down within {:?}",
-                    shutdown_timeout
-                ),
+            if let Err(error) =
+                await_background_task(task, "Metrics emission task", shutdown_timeout).await
+            {
+                warn!(?error, "Metrics emission task shutdown failed");
+                errors.push(error);
             }
         }
 
         if let Some(task) = cleanup_task {
             info!("Awaiting rate limiter cleanup task shutdown...");
-            match tokio::time::timeout(shutdown_timeout, task).await {
-                Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
-                Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
-                Err(_) => warn!(
-                    "Rate limiter cleanup task did not shut down within {:?}",
-                    shutdown_timeout
-                ),
+            if let Err(error) =
+                await_background_task(task, "Rate limiter cleanup task", shutdown_timeout).await
+            {
+                warn!(?error, "Rate limiter cleanup task shutdown failed");
+                errors.push(error);
             }
         }
 
         if let Some(task) = sse_bus_task {
             info!("Awaiting SSE subscription bus shutdown...");
-            match tokio::time::timeout(shutdown_timeout, task).await {
-                Ok(Ok(())) => info!("SSE subscription bus shut down successfully"),
-                Ok(Err(e)) => warn!(?e, "SSE subscription bus exited with error"),
-                Err(_) => warn!(
-                    "SSE subscription bus did not shut down within {:?}",
-                    shutdown_timeout
-                ),
+            if let Err(error) =
+                await_background_task(task, "SSE subscription bus", shutdown_timeout).await
+            {
+                warn!(?error, "SSE subscription bus shutdown failed");
+                errors.push(error);
             }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let combined = errors
+                .into_iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(eyre!("Background task shutdown failed: {combined}"))
         }
     }
 }
@@ -1884,6 +1923,27 @@ mod tests {
         );
 
         handle.abort();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_background_tasks_rejects_join_failures() -> TestResult<()> {
+        let failing = tokio::spawn(async move {
+            panic!("metrics task panicked");
+        });
+
+        let error = RpcServer::wait_for_background_tasks_with_timeout(
+            Some(failing),
+            None,
+            None,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("background task join failure must fail shutdown honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("Background task shutdown failed"));
+        assert!(message.contains("Metrics emission task"));
         Ok(())
     }
 
