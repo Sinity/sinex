@@ -439,6 +439,135 @@ async fn tombstone_cancel_rejects_expired_operation_and_keeps_expired_state(
 }
 
 #[sinex_test]
+async fn tombstone_cancel_rejects_invalid_created_at_metadata(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let source = "test.lifecycle.tombstone.cancel-invalid-created-at";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare invalid created_at cancel",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "cancel with corrupt metadata",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(scope, '{created_at}', to_jsonb($2::text), false)
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "not-a-timestamp"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_tombstone_cancel(
+        ctx.pool(),
+        json!({
+            "operation_id": created.operation.operation_id,
+            "reason": "operator requested stop",
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("invalid created_at should fail honestly");
+    assert!(error.to_string().contains("invalid created_at"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_status_rejects_invalid_created_at_during_expiry(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let source = "test.lifecycle.tombstone.expiry-invalid-created-at";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare invalid created_at expiry",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "expire with corrupt metadata",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(
+                jsonb_set(scope, '{created_at}', to_jsonb($2::text), false),
+                '{expires_at}',
+                to_jsonb($3::text),
+                false
+            )
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "not-a-timestamp",
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_tombstone_status(
+        ctx.pool(),
+        json!({ "operation_id": created.operation.operation_id }),
+        &auth,
+    )
+    .await
+    .expect_err("invalid created_at should fail honestly during expiry reconciliation");
+    assert!(error.to_string().contains("invalid created_at"));
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn tombstone_list_state_filter_applies_before_limit(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.list";
