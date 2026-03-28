@@ -332,6 +332,14 @@ impl FilesystemNode {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
+    fn active_watcher_count(&self) -> Option<usize> {
+        match self.watch_handles.try_lock() {
+            Ok(guard) if guard.is_empty() => None,
+            Ok(guard) => Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
+            Err(_) => None,
+        }
+    }
+
     fn watcher_shutdown_result(
         index: usize,
         result: Result<(), tokio::task::JoinError>,
@@ -642,25 +650,39 @@ impl IngestorNode for FilesystemNode {
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         let watched_paths = self.config.watch_paths.len();
-        let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
         let dropped_events = self.dropped_event_count();
-        let healthy = processing_errors == 0;
+        let active_watchers = self.active_watcher_count();
+        let healthy = watched_paths > 0 && active_watchers.is_none_or(|count| count == watched_paths);
+        let is_connected = watched_paths > 0 && active_watchers.is_none_or(|count| count > 0);
         let description = if watched_paths == 0 {
             "No filesystem watch paths configured".to_string()
+        } else if let Some(active_watchers) = active_watchers {
+            if active_watchers == 0 {
+                format!(
+                    "Filesystem monitoring stopped ({watched_paths} configured path(s), no active watchers)"
+                )
+            } else if active_watchers < watched_paths {
+                format!(
+                    "Filesystem monitoring degraded ({active_watchers}/{watched_paths} watcher(s) running)"
+                )
+            } else {
+                format!("Monitoring {watched_paths} filesystem paths")
+            }
         } else if healthy {
             format!("Monitoring {watched_paths} filesystem paths")
         } else {
-            format!(
-                "Monitoring {watched_paths} filesystem paths with {processing_errors} processing error(s)"
-            )
+            format!("Filesystem monitoring unavailable for {watched_paths} configured path(s)")
         };
 
         let mut metadata = self.metrics.metadata();
         metadata.insert("watched_paths".to_string(), serde_json::json!(watched_paths));
         metadata.insert("dropped_events".to_string(), serde_json::json!(dropped_events));
+        if let Some(active_watchers) = active_watchers {
+            metadata.insert("active_watchers".to_string(), serde_json::json!(active_watchers));
+        }
 
         Ok(SourceState {
-            is_connected: watched_paths > 0,
+            is_connected,
             healthy,
             description,
             last_updated: Timestamp::now(),
@@ -1327,14 +1349,15 @@ mod tests {
         let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
 
         assert!(!state.is_connected);
-        assert!(state.healthy);
+        assert!(!state.healthy);
         assert_eq!(state.total_items, Some(0));
         assert!(state.description.contains("No filesystem watch paths configured"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn filesystem_source_state_surfaces_processing_errors() -> TestResult<()> {
+    async fn filesystem_source_state_does_not_stay_unhealthy_after_transient_processing_error(
+    ) -> TestResult<()> {
         let node = FilesystemNode::with_config(FilesystemConfig {
             watch_paths: vec!["/tmp".to_string()],
             ..FilesystemConfig::default()
@@ -1343,7 +1366,10 @@ mod tests {
 
         let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
         assert!(state.is_connected);
-        assert!(!state.healthy);
+        assert!(
+            state.healthy,
+            "transient cumulative processing errors must not poison filesystem source health forever"
+        );
         assert!(
             state
                 .metadata
@@ -1351,6 +1377,45 @@ mod tests {
                 .and_then(serde_json::Value::as_u64)
                 .is_some_and(|count| count == 1)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_marks_finished_watchers_unhealthy() -> TestResult<()> {
+        let node = FilesystemNode::with_config(FilesystemConfig {
+            watch_paths: vec!["/tmp/a".to_string(), "/tmp/b".to_string()],
+            ..FilesystemConfig::default()
+        });
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }));
+            guard.push(tokio::spawn(async {}));
+        }
+        tokio::task::yield_now().await;
+
+        let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected, "one active watcher should keep the source connected");
+        assert!(!state.healthy, "finished watcher handles must degrade filesystem source health");
+        assert!(
+            state.description.contains("degraded"),
+            "description should reflect degraded watcher state: {}",
+            state.description
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("active_watchers")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+
+        let mut guard = node.watch_handles.lock().await;
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
         Ok(())
     }
 
