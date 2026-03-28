@@ -2494,12 +2494,12 @@ impl TerminalNode {
         Ok(contexts)
     }
 
-    fn checkpoint_state_for_source(
+    fn incoming_checkpoint_state_for_source(
         checkpoint: &Checkpoint,
         key: &str,
-    ) -> NodeResult<Option<HistoryState>> {
+    ) -> NodeResult<IncomingHistoryCheckpointState> {
         let position = match checkpoint {
-            Checkpoint::None => return Ok(None),
+            Checkpoint::None => return Ok(IncomingHistoryCheckpointState::MissingCheckpoint),
             Checkpoint::External { position, .. } => position,
             _ => {
                 return Err(
@@ -2521,6 +2521,22 @@ impl TerminalNode {
             .cloned()
             .map(|state| Self::validate_checkpoint_state(key, state))
             .transpose()
+            .map(|state| match state {
+                Some(state) => IncomingHistoryCheckpointState::State(state),
+                None => IncomingHistoryCheckpointState::MissingSource,
+            })
+    }
+
+    #[cfg(test)]
+    fn checkpoint_state_for_source(
+        checkpoint: &Checkpoint,
+        key: &str,
+    ) -> NodeResult<Option<HistoryState>> {
+        match Self::incoming_checkpoint_state_for_source(checkpoint, key)? {
+            IncomingHistoryCheckpointState::MissingCheckpoint
+            | IncomingHistoryCheckpointState::MissingSource => Ok(None),
+            IncomingHistoryCheckpointState::State(state) => Ok(Some(state)),
+        }
     }
 
     fn checkpoint_from_states(states: HashMap<String, HistoryState>) -> NodeResult<Checkpoint> {
@@ -2554,9 +2570,10 @@ impl TerminalNode {
         warnings: &mut Vec<String>,
     ) -> NodeResult<HistoryState> {
         let checkpoint_key = context.checkpoint_key();
-        match Self::checkpoint_state_for_source(from, &checkpoint_key) {
-            Ok(Some(state)) => Ok(state),
-            Ok(None) => context
+        match Self::incoming_checkpoint_state_for_source(from, &checkpoint_key) {
+            Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
+            Ok(IncomingHistoryCheckpointState::MissingSource) => Ok(context.empty_state()),
+            Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => context
                 .load_state()
                 .await?
                 .map(|state| context.validate_state(state))
@@ -2582,6 +2599,12 @@ impl Default for TerminalNode {
     fn default() -> Self {
         Self::new()
     }
+}
+
+enum IncomingHistoryCheckpointState {
+    MissingCheckpoint,
+    MissingSource,
+    State(HistoryState),
 }
 
 impl IngestorNode for TerminalNode {
@@ -2676,9 +2699,16 @@ impl IngestorNode for TerminalNode {
 
         for ctx in contexts {
             let checkpoint_key = ctx.checkpoint_key();
-            let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
-                Ok(Some(state)) => Some(state),
-                Ok(None) => None,
+            let state_override = match Self::incoming_checkpoint_state_for_source(&from, &checkpoint_key) {
+                Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
+                Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
+                    if matches!(ctx.source_mode, HistorySourceMode::ConfiguredError(_)) {
+                        None
+                    } else {
+                        Some(ctx.empty_state())
+                    }
+                }
+                Ok(IncomingHistoryCheckpointState::MissingSource) => Some(ctx.empty_state()),
                 Err(error) => {
                     warnings.push(ctx.strict_warning(format!(
                         "incoming checkpoint state is unusable for historical replay: {error}"
@@ -2762,8 +2792,15 @@ impl IngestorNode for TerminalNode {
                         .await?,
                 );
             } else {
-                let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
-                    Ok(state) => state,
+                let state_override = match Self::incoming_checkpoint_state_for_source(
+                    &from,
+                    &checkpoint_key,
+                ) {
+                    Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
+                    Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
+                    Ok(IncomingHistoryCheckpointState::MissingSource) => {
+                        Some(watch_ctx.empty_state())
+                    }
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
                             "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -2818,8 +2855,17 @@ impl IngestorNode for TerminalNode {
         drop(guard);
         for (watch_ctx, handle) in monitored_contexts.iter().zip(handles) {
             let checkpoint_key = watch_ctx.checkpoint_key();
-            let fallback_state = Self::checkpoint_state_for_source(&from, &checkpoint_key)?
-                .unwrap_or_else(|| watch_ctx.empty_state());
+            let fallback_state = match Self::incoming_checkpoint_state_for_source(&from, &checkpoint_key)?
+            {
+                IncomingHistoryCheckpointState::State(state) => state,
+                IncomingHistoryCheckpointState::MissingSource => watch_ctx.empty_state(),
+                IncomingHistoryCheckpointState::MissingCheckpoint => watch_ctx
+                    .load_state()
+                    .await?
+                    .map(|state| watch_ctx.validate_state(state))
+                    .transpose()?
+                    .unwrap_or_else(|| watch_ctx.empty_state()),
+            };
             match handle.await {
                 Ok(Ok(())) => {
                     successful_targets.push(checkpoint_key.clone());
@@ -4084,6 +4130,102 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scan_historical_ignores_stale_local_state_when_checkpoint_missing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-ignore-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "hist-1",
+                1_700_100_000_i64,
+                "echo replay me",
+                "/realm/project/sinex",
+                0_i64,
+                1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let state_path = node
+            .build_history_contexts(shutdown_rx)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec(&HistoryState {
+                sqlite_row_id: Some(41),
+                recent_hashes: VecDeque::from([7, 11]),
+                ..HistoryState::default()
+            })?,
+        )
+        .await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 1);
+        let restored = TerminalNode::checkpoint_state_for_source(
+            &report.final_checkpoint,
+            &format!("atuin:{history_path}"),
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing replay checkpoint state"))?;
+        assert_eq!(restored.sqlite_row_id, Some(1));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn scan_historical_reports_invalid_incoming_checkpoint_per_target(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -4594,6 +4736,87 @@ mod tests {
             TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
                 .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
         assert_eq!(final_state.sqlite_row_id, Some(42));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_preserves_local_state_when_checkpoint_missing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-preserve-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let checkpoint_key = format!("atuin:{history_path}");
+        let state_path = node
+            .build_history_contexts(tokio::sync::watch::channel(false).1)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should expose a state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec_pretty(&HistoryState {
+                sqlite_row_id: Some(7),
+                recent_hashes: VecDeque::from([13, 17]),
+                ..HistoryState::default()
+            })?,
+        )
+        .await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let final_state =
+            TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
+        assert_eq!(final_state.sqlite_row_id, Some(7));
+        assert_eq!(final_state.recent_hashes, VecDeque::from([13, 17]));
         Ok(())
     }
 
