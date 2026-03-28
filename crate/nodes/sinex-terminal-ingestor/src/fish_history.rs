@@ -38,7 +38,7 @@ pub fn read_fish_history(
         Ok(FishHistoryEntry {
             row_id: row.get(0)?,
             command: row.get(1)?,
-            when: row.get::<_, Option<i64>>(2).ok().flatten(),
+            when: row.get(2)?,
         })
     }
 

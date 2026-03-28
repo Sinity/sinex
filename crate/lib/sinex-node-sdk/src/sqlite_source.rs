@@ -7,7 +7,6 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::{Timestamp, Uuid};
 use std::path::Path;
 use std::{error::Error, fmt, future::Future};
-use tracing::warn;
 
 fn open_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
     let conn =
@@ -185,16 +184,19 @@ where
 
     while let Some(row) = rows.next()? {
         let row_id = row.get::<_, i64>(0)?;
-        last_row_id = last_row_id.max(row_id);
         match map(row) {
-            Ok(item) => items.push(item),
+            Ok(item) => {
+                last_row_id = last_row_id.max(row_id);
+                items.push(item);
+            }
             Err(error) => {
-                warn!(
-                    sqlite_path = %path,
-                    row_id,
-                    error = %error,
-                    "Skipping malformed SQLite history row"
-                );
+                return Err(rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Null,
+                    Box::new(std::io::Error::other(format!(
+                        "failed to map SQLite row {row_id} from {path}: {error}"
+                    ))),
+                ));
             }
         }
     }
