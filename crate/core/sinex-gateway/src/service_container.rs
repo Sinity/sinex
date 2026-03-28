@@ -12,7 +12,7 @@ use sinex_primitives::{
 use sinex_services::{ContentService, PkmService};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Container holding all service instances
 #[derive(Clone)]
@@ -45,6 +45,30 @@ pub enum GatewayHealthStatus {
 const REPLAY_CONTROL_CONNECT_ATTEMPTS: usize = 3;
 const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100);
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
+
+async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> Result<()> {
+    const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_secs(10 * 60);
+
+    match replay
+        .recover_stale_executing(STALE_EXECUTING_THRESHOLD)
+        .await
+    {
+        Ok(0) => Ok(()),
+        Ok(recovered) => {
+            info!(
+                recovered,
+                "Recovered stale executing replay operations on startup"
+            );
+            Ok(())
+        }
+        Err(error) => Err(
+            SinexError::service("Failed to recover stale replay operations on startup")
+                .with_operation("gateway.recover_stale_replay_operations")
+                .with_source(error.to_string())
+                .into(),
+        ),
+    }
+}
 
 impl ServiceContainer {
     /// Create a service container from a database URL (test convenience).
@@ -109,26 +133,7 @@ impl ServiceContainer {
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
 
-        // Recover any operations left in Executing state from a previous process crash.
-        const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_secs(10 * 60);
-        match replay
-            .recover_stale_executing(STALE_EXECUTING_THRESHOLD)
-            .await
-        {
-            Ok(0) => {}
-            Ok(n) => {
-                warn!(
-                    recovered = n,
-                    "Recovered stale executing replay operations on startup"
-                );
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "Failed to run startup recovery sweep for stale replay operations"
-                );
-            }
-        }
+        recover_stale_replay_operations(&replay).await?;
 
         let nats_config = config.nats_connection_config();
 
@@ -441,4 +446,35 @@ fn per_service_pool_config(
     config.max_connections = (base.max_connections / divisor).max(1);
     config.min_connections = (base.min_connections / divisor).min(config.max_connections);
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recover_stale_replay_operations;
+    use sqlx::postgres::PgPoolOptions;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn stale_replay_recovery_accepts_clean_state(ctx: TestContext) -> TestResult<()> {
+        let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());
+        recover_stale_replay_operations(&replay).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stale_replay_recovery_surfaces_startup_failures() -> TestResult<()> {
+        let pool = PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(10))
+            .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
+        let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(pool);
+
+        let error = recover_stale_replay_operations(&replay)
+            .await
+            .expect_err("startup recovery should fail honestly when the pool is unusable");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to recover stale replay operations on startup"));
+        assert!(message.contains("gateway.recover_stale_replay_operations"));
+        Ok(())
+    }
 }
