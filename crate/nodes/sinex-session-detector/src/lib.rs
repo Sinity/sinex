@@ -12,7 +12,7 @@ use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, Windowe
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::temporal::{Duration, Timestamp, now};
+use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::BTreeSet;
 use tracing::warn;
@@ -144,7 +144,7 @@ impl WindowedNode for SessionDetector {
         _input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> Result<(), NodeLogicError> {
-        let event_time = context.ts_orig.unwrap_or_else(now);
+        let event_time = context.require_ts_orig()?;
         let source = context.source.as_str().to_string();
 
         // Detect session gap using event timestamps (replay-correct).

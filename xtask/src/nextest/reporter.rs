@@ -1,4 +1,4 @@
-use color_eyre::eyre::{Result, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::{Emoji, style};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
@@ -29,38 +29,71 @@ struct RawMessage {
 }
 
 impl RawMessage {
-    fn into_message(self) -> Message {
+    fn require_name(name: Option<String>, msg_kind: &'static str) -> Result<String> {
+        name.ok_or_else(|| {
+            eyre!("nextest {msg_kind} message is missing required field 'name'")
+        })
+    }
+
+    fn require_test_count(test_count: Option<usize>) -> Result<usize> {
+        test_count.ok_or_else(|| {
+            eyre!("nextest suite-started message is missing required field 'test_count'")
+        })
+    }
+
+    fn require_suite_counts(
+        passed: Option<usize>,
+        failed: Option<usize>,
+        ignored: Option<usize>,
+    ) -> Result<(usize, usize, usize)> {
+        let passed = passed.ok_or_else(|| {
+            eyre!("nextest suite-finished message is missing required field 'passed'")
+        })?;
+        let failed = failed.ok_or_else(|| {
+            eyre!("nextest suite-finished message is missing required field 'failed'")
+        })?;
+        let ignored = ignored.ok_or_else(|| {
+            eyre!("nextest suite-finished message is missing required field 'ignored'")
+        })?;
+        Ok((passed, failed, ignored))
+    }
+
+    fn try_into_message(self) -> Result<Message> {
         match (self.msg_type.as_str(), self.event.as_str()) {
-            ("suite", "started") => Message::SuiteStarted(SuiteStarted {
-                test_count: self.test_count.unwrap_or(0),
-            }),
-            ("suite", "ok" | "failed") => Message::SuiteFinished(SuiteFinished {
-                passed: self.passed.unwrap_or(0),
-                failed: self.failed.unwrap_or(0),
-                ignored: self.ignored.unwrap_or(0),
-            }),
-            ("test", "started") => Message::TestStarted(TestStarted {
-                name: self.name.unwrap_or_default(),
-            }),
-            ("test", "ok") => Message::TestFinished(TestFinished {
-                name: self.name.unwrap_or_default(),
+            ("suite", "started") => Ok(Message::SuiteStarted(SuiteStarted {
+                test_count: Self::require_test_count(self.test_count)?,
+            })),
+            ("suite", "ok" | "failed") => {
+                let (passed, failed, ignored) =
+                    Self::require_suite_counts(self.passed, self.failed, self.ignored)?;
+                Ok(Message::SuiteFinished(SuiteFinished {
+                    passed,
+                    failed,
+                    ignored,
+                }))
+            }
+            ("test", "started") => Ok(Message::TestStarted(TestStarted {
+                name: Self::require_name(self.name, "test-started")?,
+            })),
+            ("test", "ok") => Ok(Message::TestFinished(TestFinished {
+                name: Self::require_name(self.name, "test-finished")?,
                 result: TestStatus::Pass.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Store output for ALL tests (not just failures)
-            }),
-            ("test", "failed") => Message::TestFinished(TestFinished {
-                name: self.name.unwrap_or_default(),
+            })),
+            ("test", "failed") => Ok(Message::TestFinished(TestFinished {
+                name: Self::require_name(self.name, "test-finished")?,
                 result: TestStatus::Fail.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Capture failure output from libtest-json-plus
-            }),
-            ("test", "ignored") => Message::TestFinished(TestFinished {
-                name: self.name.unwrap_or_default(),
+            })),
+            ("test", "ignored") => Ok(Message::TestFinished(TestFinished {
+                name: Self::require_name(self.name, "test-finished")?,
                 result: TestStatus::Skip.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: None,
-            }),
-            _ => Message::Other,
+            })),
+            _ => Ok(Message::Other),
         }
     }
 }
@@ -200,8 +233,9 @@ impl TestReporter {
         // Spawn stderr handler
         let pb_stderr = self.pb.clone();
         let interactive_stderr = self.interactive;
-        thread::spawn(move || {
-            for line in stderr.lines().map_while(Result::ok) {
+        let stderr_thread = thread::spawn(move || -> Result<()> {
+            for line_res in stderr.lines() {
+                let line = line_res.wrap_err("failed to read nextest stderr output")?;
                 // Print stderr (build output) above the progress bar
                 if interactive_stderr {
                     pb_stderr.println(style(line).yellow().dim().to_string());
@@ -209,6 +243,7 @@ impl TestReporter {
                     eprintln!("{line}");
                 }
             }
+            Ok(())
         });
 
         let mut stats = TestStats::default();
@@ -219,148 +254,153 @@ impl TestReporter {
         for line_res in stdout.lines() {
             let line = line_res?;
 
-            // Try to parse JSON line and convert to our message type
-            if let Ok(raw) = serde_json::from_str::<RawMessage>(&line) {
-                let msg = raw.into_message();
-                match msg {
-                    Message::SuiteStarted(s) => {
-                        suite_started = true;
-                        // Each test binary emits suite-started, so accumulate total
-                        let new_total = stats.total + s.test_count;
-                        self.pb.set_length(new_total as u64);
-                        stats.total = new_total;
-                        update_progress_snapshot(
-                            Some(stats.total),
-                            stats.passed,
-                            stats.failed,
-                            stats.ignored,
-                            None,
+            let raw = serde_json::from_str::<RawMessage>(&line)
+                .wrap_err_with(|| format!("failed to parse nextest stdout line: {line}"))?;
+            let msg = raw
+                .try_into_message()
+                .wrap_err_with(|| format!("invalid nextest stdout message: {line}"))?;
+            match msg {
+                Message::SuiteStarted(s) => {
+                    suite_started = true;
+                    // Each test binary emits suite-started, so accumulate total
+                    let new_total = stats.total + s.test_count;
+                    self.pb.set_length(new_total as u64);
+                    stats.total = new_total;
+                    update_progress_snapshot(
+                        Some(stats.total),
+                        stats.passed,
+                        stats.failed,
+                        stats.ignored,
+                        None,
+                    );
+                }
+                Message::SuiteFinished(s) => {
+                    suite_finished = true;
+                    suite_totals.passed += s.passed;
+                    suite_totals.failed += s.failed;
+                    suite_totals.ignored += s.ignored;
+                    suite_totals.total += s.passed + s.failed + s.ignored;
+
+                    // Each test binary emits suite-finished with its own counts.
+                    // Cross-validate: if nextest reports failures we missed via
+                    // streaming, log a warning so the discrepancy is visible.
+                    if suite_totals.failed > stats.failed {
+                        let msg = format!(
+                            "  ⚠ Suite reports {} failed but streaming saw {} — using suite totals as authoritative",
+                            suite_totals.failed, stats.failed
                         );
+                        self.emit_line(&msg);
                     }
-                    Message::SuiteFinished(s) => {
-                        suite_finished = true;
-                        suite_totals.passed += s.passed;
-                        suite_totals.failed += s.failed;
-                        suite_totals.ignored += s.ignored;
-                        suite_totals.total += s.passed + s.failed + s.ignored;
+                    // Log suite summary for diagnostics
+                    if self.human && (s.passed > 0 || s.ignored > 0) {
+                        let msg = format!(
+                            "  {} Suite complete: {} passed, {} failed, {} ignored",
+                            Emoji("📊", "-"),
+                            s.passed,
+                            s.failed,
+                            s.ignored
+                        );
+                        self.emit_line(&msg);
+                    }
+                }
+                Message::TestStarted(t) => {
+                    self.pb.set_message(format!("Running {}", t.name));
+                    if !self.human {
+                        eprintln!("  ▸ {}", t.name);
+                    }
+                }
+                Message::TestFinished(t) => {
+                    let duration = t.exec_time.unwrap_or(0.0);
 
-                        // Each test binary emits suite-finished with its own counts.
-                        // Cross-validate: if nextest reports failures we missed via
-                        // streaming, log a warning so the discrepancy is visible.
-                        if suite_totals.failed > stats.failed {
-                            let msg = format!(
-                                "  ⚠ Suite reports {} failed but streaming saw {} — using suite totals as authoritative",
-                                suite_totals.failed, stats.failed
-                            );
-                            self.emit_line(&msg);
-                        }
-                        // Log suite summary for diagnostics
-                        if self.human && (s.passed > 0 || s.ignored > 0) {
-                            let msg = format!(
-                                "  {} Suite complete: {} passed, {} failed, {} ignored",
-                                Emoji("📊", "-"),
-                                s.passed,
-                                s.failed,
-                                s.ignored
-                            );
-                            self.emit_line(&msg);
-                        }
-                    }
-                    Message::TestStarted(t) => {
-                        self.pb.set_message(format!("Running {}", t.name));
-                        if !self.human {
-                            eprintln!("  ▸ {}", t.name);
-                        }
-                    }
-                    Message::TestFinished(t) => {
-                        let duration = t.exec_time.unwrap_or(0.0);
-
-                        // Update stats and UI
-                        match t.result.as_str() {
-                            "passed" => {
-                                stats.passed += 1;
-                                self.pb.inc(1);
-                                // Show slow tests (>5s) even in normal mode
-                                if duration > 5.0 {
-                                    let msg = format!(
-                                        "  {} {} ({:.1}s)",
-                                        Emoji("⚡", "~"),
-                                        t.name,
-                                        duration
-                                    );
-                                    self.emit_line(&msg);
-                                }
-                            }
-                            "failed" => {
-                                stats.failed += 1;
-                                self.pb.inc(1);
-                                // Log failure immediately above bar
-                                let msg =
-                                    format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
+                    // Update stats and UI
+                    match t.result.as_str() {
+                        "passed" => {
+                            stats.passed += 1;
+                            self.pb.inc(1);
+                            // Show slow tests (>5s) even in normal mode
+                            if duration > 5.0 {
+                                let msg = format!(
+                                    "  {} {} ({:.1}s)",
+                                    Emoji("⚡", "~"),
+                                    t.name,
+                                    duration
+                                );
                                 self.emit_line(&msg);
                             }
-                            "ignored" => {
-                                stats.ignored += 1;
-                                self.pb.inc(1);
-                            }
-                            _ => {
-                                self.pb.inc(1);
-                            }
                         }
-
-                        if self.human && !self.interactive {
-                            let completed = stats.passed + stats.failed + stats.ignored;
-                            if completed == 1
-                                || completed % Self::LINE_PROGRESS_EVERY == 0
-                                || (stats.total > 0 && completed == stats.total)
-                                || t.result == "failed"
-                            {
-                                let total_display = if stats.total > 0 {
-                                    stats.total.to_string()
-                                } else {
-                                    "?".to_string()
-                                };
-                                eprintln!(
-                                    "  ▸ Progress: {completed}/{total_display} (passed {}, failed {}, ignored {})",
-                                    stats.passed, stats.failed, stats.ignored
-                                );
-                            }
+                        "failed" => {
+                            stats.failed += 1;
+                            self.pb.inc(1);
+                            // Log failure immediately above bar
+                            let msg =
+                                format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
+                            self.emit_line(&msg);
                         }
-
-                        update_progress_snapshot(
-                            Some(stats.total),
-                            stats.passed,
-                            stats.failed,
-                            stats.ignored,
-                            Some(&t.name),
-                        );
-
-                        // Record to DB (including failure output if available)
-                        if let Some((db, invocation_id)) = history {
-                            let output = t.output.as_deref();
-
-                            // Extract package from test name (e.g. "sinex_db::repo::test_name"
-                            // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
-                            let package = t.name.split("::").next().unwrap_or("unknown");
-
-                            // Log but don't fail — test recording shouldn't interrupt tests
-                            if let Err(e) = db.record_test_result(
-                                invocation_id,
-                                &t.name,
-                                package,
-                                &t.result,
-                                duration,
-                                output,
-                                "nextest",
-                            ) {
-                                eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
-                            }
+                        "ignored" => {
+                            stats.ignored += 1;
+                            self.pb.inc(1);
+                        }
+                        _ => {
+                            self.pb.inc(1);
                         }
                     }
-                    Message::Other => {}
+
+                    if self.human && !self.interactive {
+                        let completed = stats.passed + stats.failed + stats.ignored;
+                        if completed == 1
+                            || completed % Self::LINE_PROGRESS_EVERY == 0
+                            || (stats.total > 0 && completed == stats.total)
+                            || t.result == "failed"
+                        {
+                            let total_display = if stats.total > 0 {
+                                stats.total.to_string()
+                            } else {
+                                "?".to_string()
+                            };
+                            eprintln!(
+                                "  ▸ Progress: {completed}/{total_display} (passed {}, failed {}, ignored {})",
+                                stats.passed, stats.failed, stats.ignored
+                            );
+                        }
+                    }
+
+                    update_progress_snapshot(
+                        Some(stats.total),
+                        stats.passed,
+                        stats.failed,
+                        stats.ignored,
+                        Some(&t.name),
+                    );
+
+                    // Record to DB (including failure output if available)
+                    if let Some((db, invocation_id)) = history {
+                        let output = t.output.as_deref();
+
+                        // Extract package from test name (e.g. "sinex_db::repo::test_name"
+                        // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
+                        let package = t.name.split("::").next().unwrap_or("unknown");
+
+                        // Log but don't fail — test recording shouldn't interrupt tests
+                        if let Err(e) = db.record_test_result(
+                            invocation_id,
+                            &t.name,
+                            package,
+                            &t.result,
+                            duration,
+                            output,
+                            "nextest",
+                        ) {
+                            eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
+                        }
+                    }
                 }
+                Message::Other => {}
             }
         }
+
+        stderr_thread
+            .join()
+            .map_err(|panic| eyre!("nextest stderr reader thread panicked: {panic:?}"))??;
 
         if self.interactive {
             self.pb.finish_with_message("done");
@@ -428,5 +468,47 @@ mod tests {
         assert_eq!(stats.passed, 0);
         assert_eq!(stats.ignored, 0);
         assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn malformed_stdout_json_fails_honestly() {
+        let stdout = Cursor::new(
+            concat!(
+                "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
+                "not-json\n",
+            )
+            .as_bytes(),
+        );
+        let stderr = Cursor::new(Vec::<u8>::new());
+
+        let error = TestReporter::new(false)
+            .run(stdout, stderr, None)
+            .expect_err("malformed nextest stdout must fail honestly");
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to parse nextest stdout line: not-json"),
+            "malformed stdout line was not preserved in error report: {message}"
+        );
+    }
+
+    #[test]
+    fn missing_required_test_name_fails_honestly() {
+        let stdout = Cursor::new(
+            concat!(
+                "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
+                "{\"type\":\"test\",\"event\":\"ok\"}\n",
+            )
+            .as_bytes(),
+        );
+        let stderr = Cursor::new(Vec::<u8>::new());
+
+        let error = TestReporter::new(false)
+            .run(stdout, stderr, None)
+            .expect_err("missing nextest test name must fail honestly");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("nextest test-finished message is missing required field 'name'"),
+            "missing-field cause was not preserved in error chain: {message}"
+        );
     }
 }

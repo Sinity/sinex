@@ -89,24 +89,9 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
-        let home = dirs::home_dir()
-            .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
-            .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
-
-        let default_sources = vec![
-            HistorySourceConfig {
-                path: home.join(".bash_history"),
-                shell: "bash".to_string(),
-            },
-            HistorySourceConfig {
-                path: home.join(".zsh_history"),
-                shell: "zsh".to_string(),
-            },
-            HistorySourceConfig {
-                path: home.join(".local/share/atuin/history.db"),
-                shell: "atuin".to_string(),
-            },
-        ];
+        let home =
+            crate::shell_detection::utf8_home_dir("building default terminal history sources");
+        let default_sources = default_history_sources(home.as_ref());
 
         // Allow polling interval override via environment variable
         let polling_interval_secs = default_polling_interval();
@@ -117,6 +102,27 @@ impl Default for TerminalConfig {
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
+}
+
+fn default_history_sources(home: Option<&Utf8PathBuf>) -> Vec<HistorySourceConfig> {
+    let Some(home) = home else {
+        return Vec::new();
+    };
+
+    vec![
+        HistorySourceConfig {
+            path: home.join(".bash_history"),
+            shell: "bash".to_string(),
+        },
+        HistorySourceConfig {
+            path: home.join(".zsh_history"),
+            shell: "zsh".to_string(),
+        },
+        HistorySourceConfig {
+            path: home.join(".local/share/atuin/history.db"),
+            shell: "atuin".to_string(),
+        },
+    ]
 }
 
 impl TerminalConfig {
@@ -864,6 +870,19 @@ impl HistoryWatcherContext {
             .await
     }
 
+    fn history_state_temp_path(path: &std::path::Path, suffix: Uuid) -> std::path::PathBuf {
+        let mut file_name = path
+            .file_name()
+            .map_or_else(|| std::ffi::OsString::from("history_state"), std::ffi::OsStr::to_os_string);
+        file_name.push(".");
+        file_name.push(suffix.to_string());
+        file_name.push(".tmp");
+
+        path.parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(file_name)
+    }
+
     fn sqlite_history_state(sqlite_row_id: i64, recent_hashes: VecDeque<u64>) -> HistoryState {
         HistoryState {
             sqlite_row_id: Some(sqlite_row_id),
@@ -918,6 +937,7 @@ impl HistoryWatcherContext {
                     |from_row_id, end_time| {
                         crate::fish_history::read_fish_history(&self.path, from_row_id, end_time)
                     },
+                    |entry| entry.row_id,
                     |entry| {
                         let row_id = entry.row_id;
                         let prepared = match sqlite_row_id_to_line_number(self, row_id) {
@@ -1018,6 +1038,7 @@ impl HistoryWatcherContext {
                     |from_row_id, end_time| {
                         crate::atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
                     },
+                    |entry| entry.row_id,
                     |entry| {
                         let row_id = entry.row_id;
                         let prepared = match sqlite_row_id_to_line_number(self, row_id) {
@@ -1323,14 +1344,7 @@ impl HistoryWatcherContext {
                     );
                 }
 
-                let file_name = path.file_name().map_or_else(
-                    || std::borrow::Cow::Borrowed("history_state"),
-                    |name| name.to_string_lossy(),
-                );
-                let temp_path = path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .join(format!("{}.{}.tmp", file_name, Uuid::now_v7()));
+                let temp_path = Self::history_state_temp_path(path, Uuid::now_v7());
 
                 match fs::OpenOptions::new()
                     .create_new(true)
@@ -1705,6 +1719,7 @@ impl HistoryWatcherContext {
             *sqlite_row_id,
             None,
             |from_row_id, end_time| fish_history::read_fish_history(&self.path, from_row_id, end_time),
+            |entry| entry.row_id,
             |entry| {
                 let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
                     Ok(line_number) => prepare_command_for_capture(
@@ -1796,6 +1811,7 @@ impl HistoryWatcherContext {
             |from_row_id, end_time| {
                 atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
             },
+            |entry| entry.row_id,
             |entry| {
                 let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
                     Ok(line_number) => {
@@ -2182,6 +2198,23 @@ async fn emit_prepared_fish_entry(
 ) -> NodeResult<()> {
     let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
     let material_bytes = final_command.as_bytes().to_vec();
+    let timestamp = match entry.when {
+        Some(raw_timestamp) => {
+            let Some(timestamp) = Timestamp::from_unix_timestamp(raw_timestamp) else {
+                warn!(
+                    row_id = entry.row_id,
+                    timestamp = raw_timestamp,
+                    "Rejecting Fish row with invalid timestamp"
+                );
+                return Err(
+                    SinexError::validation(format!("Fish row {} has invalid timestamp", entry.row_id))
+                        .with_context("timestamp", raw_timestamp.to_string()),
+                );
+            };
+            Some(timestamp)
+        }
+        None => None,
+    };
 
     record_processed_command_for_test(ctx, &final_command).await;
 
@@ -2194,7 +2227,7 @@ async fn emit_prepared_fish_entry(
 
     let payload = HistoryCommandImportedPayload {
         command: final_command,
-        timestamp: entry.when.and_then(Timestamp::from_unix_timestamp),
+        timestamp,
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
         line_number: Some(payload_line_number(ctx, line_number)?),
@@ -2307,23 +2340,7 @@ pub struct TerminalNode {
 pub struct TerminalCheckpoint {}
 
 impl TerminalNode {
-    fn checkpoint_key_requires_sqlite_row_id(key: &str) -> bool {
-        if key.starts_with("atuin:") {
-            return true;
-        }
-
-        key.strip_prefix("fish:").is_some_and(|path| {
-            crate::fish_history::ensure_fish_sqlite_history(&Utf8PathBuf::from(path)).is_ok()
-        })
-    }
-
     fn validate_checkpoint_state(key: &str, state: HistoryState) -> NodeResult<HistoryState> {
-        if Self::checkpoint_key_requires_sqlite_row_id(key) && state.sqlite_row_id.is_none() {
-            return Err(SinexError::checkpoint(
-                "terminal history checkpoint missing sqlite_row_id for SQLite-backed source",
-            )
-            .with_context("source", key.to_string()));
-        }
         if let Some(sqlite_row_id) = state.sqlite_row_id
             && sqlite_row_id < 0
         {
@@ -2334,6 +2351,25 @@ impl TerminalNode {
             .with_context("sqlite_row_id", sqlite_row_id.to_string()));
         }
         Ok(state)
+    }
+
+    fn validate_checkpoint_state_for_source_mode(
+        key: &str,
+        state: HistoryState,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<HistoryState> {
+        if matches!(
+            source_mode,
+            HistorySourceMode::AtuinSqlite | HistorySourceMode::FishSqlite
+        ) && state.sqlite_row_id.is_none()
+        {
+            return Err(SinexError::checkpoint(
+                "terminal history checkpoint missing sqlite_row_id for SQLite-backed source",
+            )
+            .with_context("source", key.to_string()));
+        }
+
+        Self::validate_checkpoint_state(key, state)
     }
 
     #[must_use]
@@ -2358,6 +2394,21 @@ impl TerminalNode {
             metrics: TerminalMetrics::new(),
             runtime: None,
         }
+    }
+
+    fn collapse_shutdown_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let mut error = errors.remove(0);
+        for (index, extra) in errors.into_iter().enumerate() {
+            error = error.with_context(
+                format!("additional_shutdown_error_{}", index + 1),
+                extra.to_string(),
+            );
+        }
+        Err(error)
     }
 
     #[must_use]
@@ -2472,12 +2523,12 @@ impl TerminalNode {
         Ok(contexts)
     }
 
-    fn checkpoint_state_for_source(
+    fn incoming_checkpoint_state_for_source(
         checkpoint: &Checkpoint,
         key: &str,
-    ) -> NodeResult<Option<HistoryState>> {
+    ) -> NodeResult<IncomingHistoryCheckpointState> {
         let position = match checkpoint {
-            Checkpoint::None => return Ok(None),
+            Checkpoint::None => return Ok(IncomingHistoryCheckpointState::MissingCheckpoint),
             Checkpoint::External { position, .. } => position,
             _ => {
                 return Err(
@@ -2499,6 +2550,51 @@ impl TerminalNode {
             .cloned()
             .map(|state| Self::validate_checkpoint_state(key, state))
             .transpose()
+            .map(|state| match state {
+                Some(state) => IncomingHistoryCheckpointState::State(state),
+                None => IncomingHistoryCheckpointState::MissingSource,
+            })
+    }
+
+    fn incoming_checkpoint_state_for_source_mode(
+        checkpoint: &Checkpoint,
+        key: &str,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<IncomingHistoryCheckpointState> {
+        match Self::incoming_checkpoint_state_for_source(checkpoint, key)? {
+            IncomingHistoryCheckpointState::State(state) => Ok(IncomingHistoryCheckpointState::State(
+                Self::validate_checkpoint_state_for_source_mode(key, state, source_mode)?,
+            )),
+            IncomingHistoryCheckpointState::MissingCheckpoint => {
+                Ok(IncomingHistoryCheckpointState::MissingCheckpoint)
+            }
+            IncomingHistoryCheckpointState::MissingSource => Ok(IncomingHistoryCheckpointState::MissingSource),
+        }
+    }
+
+    #[cfg(test)]
+    fn checkpoint_state_for_source(
+        checkpoint: &Checkpoint,
+        key: &str,
+    ) -> NodeResult<Option<HistoryState>> {
+        match Self::incoming_checkpoint_state_for_source(checkpoint, key)? {
+            IncomingHistoryCheckpointState::MissingCheckpoint
+            | IncomingHistoryCheckpointState::MissingSource => Ok(None),
+            IncomingHistoryCheckpointState::State(state) => Ok(Some(state)),
+        }
+    }
+
+    #[cfg(test)]
+    fn checkpoint_state_for_source_mode(
+        checkpoint: &Checkpoint,
+        key: &str,
+        source_mode: &HistorySourceMode,
+    ) -> NodeResult<Option<HistoryState>> {
+        match Self::incoming_checkpoint_state_for_source_mode(checkpoint, key, source_mode)? {
+            IncomingHistoryCheckpointState::MissingCheckpoint
+            | IncomingHistoryCheckpointState::MissingSource => Ok(None),
+            IncomingHistoryCheckpointState::State(state) => Ok(Some(state)),
+        }
     }
 
     fn checkpoint_from_states(states: HashMap<String, HistoryState>) -> NodeResult<Checkpoint> {
@@ -2532,9 +2628,14 @@ impl TerminalNode {
         warnings: &mut Vec<String>,
     ) -> NodeResult<HistoryState> {
         let checkpoint_key = context.checkpoint_key();
-        match Self::checkpoint_state_for_source(from, &checkpoint_key) {
-            Ok(Some(state)) => Ok(state),
-            Ok(None) => context
+        match Self::incoming_checkpoint_state_for_source_mode(
+            from,
+            &checkpoint_key,
+            &context.source_mode,
+        ) {
+            Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
+            Ok(IncomingHistoryCheckpointState::MissingSource) => Ok(context.empty_state()),
+            Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => context
                 .load_state()
                 .await?
                 .map(|state| context.validate_state(state))
@@ -2560,6 +2661,12 @@ impl Default for TerminalNode {
     fn default() -> Self {
         Self::new()
     }
+}
+
+enum IncomingHistoryCheckpointState {
+    MissingCheckpoint,
+    MissingSource,
+    State(HistoryState),
 }
 
 impl IngestorNode for TerminalNode {
@@ -2654,9 +2761,20 @@ impl IngestorNode for TerminalNode {
 
         for ctx in contexts {
             let checkpoint_key = ctx.checkpoint_key();
-            let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
-                Ok(Some(state)) => Some(state),
-                Ok(None) => None,
+            let state_override = match Self::incoming_checkpoint_state_for_source_mode(
+                &from,
+                &checkpoint_key,
+                &ctx.source_mode,
+            ) {
+                Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
+                Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
+                    if matches!(ctx.source_mode, HistorySourceMode::ConfiguredError(_)) {
+                        None
+                    } else {
+                        Some(ctx.empty_state())
+                    }
+                }
+                Ok(IncomingHistoryCheckpointState::MissingSource) => Some(ctx.empty_state()),
                 Err(error) => {
                     warnings.push(ctx.strict_warning(format!(
                         "incoming checkpoint state is unusable for historical replay: {error}"
@@ -2679,7 +2797,10 @@ impl IngestorNode for TerminalNode {
                     })?;
                     checkpoint_states.insert(
                         checkpoint_key,
-                        preserved_state.unwrap_or_else(|| ctx.empty_state()),
+                        preserved_state
+                            .map(|state| ctx.validate_state(state))
+                            .transpose()?
+                            .unwrap_or_else(|| ctx.empty_state()),
                     );
                     continue;
                 }
@@ -2694,7 +2815,7 @@ impl IngestorNode for TerminalNode {
             } else {
                 successful_targets.push(checkpoint_key.clone());
             }
-            checkpoint_states.insert(checkpoint_key, outcome.state);
+            checkpoint_states.insert(checkpoint_key, ctx.validate_state(outcome.state)?);
         }
 
         Ok(ScanReport {
@@ -2740,8 +2861,16 @@ impl IngestorNode for TerminalNode {
                         .await?,
                 );
             } else {
-                let state_override = match Self::checkpoint_state_for_source(&from, &checkpoint_key) {
-                    Ok(state) => state,
+                let state_override = match Self::incoming_checkpoint_state_for_source_mode(
+                    &from,
+                    &checkpoint_key,
+                    &watch_ctx.source_mode,
+                ) {
+                    Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
+                    Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
+                    Ok(IncomingHistoryCheckpointState::MissingSource) => {
+                        Some(watch_ctx.empty_state())
+                    }
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
                             "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -2796,8 +2925,20 @@ impl IngestorNode for TerminalNode {
         drop(guard);
         for (watch_ctx, handle) in monitored_contexts.iter().zip(handles) {
             let checkpoint_key = watch_ctx.checkpoint_key();
-            let fallback_state = Self::checkpoint_state_for_source(&from, &checkpoint_key)?
-                .unwrap_or_else(|| watch_ctx.empty_state());
+            let fallback_state = match Self::incoming_checkpoint_state_for_source_mode(
+                &from,
+                &checkpoint_key,
+                &watch_ctx.source_mode,
+            )? {
+                IncomingHistoryCheckpointState::State(state) => state,
+                IncomingHistoryCheckpointState::MissingSource => watch_ctx.empty_state(),
+                IncomingHistoryCheckpointState::MissingCheckpoint => watch_ctx
+                    .load_state()
+                    .await?
+                    .map(|state| watch_ctx.validate_state(state))
+                    .transpose()?
+                    .unwrap_or_else(|| watch_ctx.empty_state()),
+            };
             match handle.await {
                 Ok(Ok(())) => {
                     successful_targets.push(checkpoint_key.clone());
@@ -2855,23 +2996,27 @@ impl IngestorNode for TerminalNode {
         let handles: Vec<_> = guard.drain(..).collect();
         drop(guard);
 
-        for handle in handles {
+        let mut shutdown_errors = Vec::new();
+        for (watcher_index, handle) in handles.into_iter().enumerate() {
             match handle.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    return Err(SinexError::processing(
+                    shutdown_errors.push(SinexError::processing(
                         "terminal watcher failed before shutdown completed",
                     )
+                    .with_context("watcher_index", watcher_index.to_string())
                     .with_source(error));
                 }
                 Err(error) => {
-                    return Err(SinexError::processing(
+                    shutdown_errors.push(SinexError::processing(
                         "terminal watcher task ended with join error during shutdown",
                     )
+                    .with_context("watcher_index", watcher_index.to_string())
                     .with_std_error(&error));
                 }
             }
         }
+        Self::collapse_shutdown_errors(shutdown_errors)?;
         info!("Terminal watcher shutdown complete");
         Ok(())
     }
@@ -2975,6 +3120,34 @@ mod tests {
         start_test_ingestd_with_config,
     };
 
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn history_state_temp_path_preserves_non_utf8_filenames() -> TestResult<()> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = std::path::PathBuf::from("/tmp").join(std::ffi::OsString::from_vec(vec![
+            b'h', b'i', b's', b't', 0xff, b'.', b's', b't', b'a', b't', b'e',
+        ]));
+        let suffix = Uuid::from_u128(0x1234);
+        let temp_path = HistoryWatcherContext::history_state_temp_path(&path, suffix);
+        let file_name = temp_path.file_name().expect("temp path file name");
+        let expected_prefix = [
+            b'h', b'i', b's', b't', 0xff, b'.', b's', b't', b'a', b't', b'e', b'.',
+        ];
+
+        assert!(
+            file_name.as_bytes().starts_with(&expected_prefix),
+            "unexpected temp file prefix: {:?}",
+            file_name
+        );
+        assert!(
+            file_name.as_bytes().ends_with(b".tmp"),
+            "unexpected temp file suffix: {:?}",
+            file_name
+        );
+        Ok(())
+    }
+
     #[sinex_test]
     async fn terminal_config_validation_allows_valid_configuration() -> TestResult<()> {
         let config = TerminalConfig {
@@ -3015,6 +3188,24 @@ mod tests {
         }
 
         assert_eq!(config.polling_interval_secs, DEFAULT_POLLING_INTERVAL);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_history_sources_do_not_fabricate_tmp_paths_without_home() -> TestResult<()> {
+        let sources = default_history_sources(None);
+        assert!(sources.is_empty(), "missing home should not fabricate fallback paths");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_history_sources_follow_home_directory() -> TestResult<()> {
+        let home = Utf8PathBuf::from("/home/tester");
+        let sources = default_history_sources(Some(&home));
+        assert_eq!(sources.len(), 3);
+        assert_eq!(sources[0].path, home.join(".bash_history"));
+        assert_eq!(sources[1].path, home.join(".zsh_history"));
+        assert_eq!(sources[2].path, home.join(".local/share/atuin/history.db"));
         Ok(())
     }
 
@@ -3372,7 +3563,11 @@ mod tests {
             "terminal history source progress",
         );
 
-        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, "atuin:/tmp/history.db")
+        let error = TerminalNode::checkpoint_state_for_source_mode(
+            &checkpoint,
+            "atuin:/tmp/history.db",
+            &HistorySourceMode::AtuinSqlite,
+        )
             .expect_err("sqlite-backed checkpoints must carry a row id");
 
         assert!(error.to_string().contains("missing sqlite_row_id"));
@@ -3448,7 +3643,11 @@ mod tests {
             "terminal history source progress",
         );
 
-        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, &source_key)
+        let error = TerminalNode::checkpoint_state_for_source_mode(
+            &checkpoint,
+            &source_key,
+            &HistorySourceMode::FishSqlite,
+        )
             .expect_err("SQLite-backed Fish checkpoints must carry a row id");
 
         assert!(error.to_string().contains("missing sqlite_row_id"));
@@ -3782,6 +3981,88 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn emit_prepared_fish_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-fish-invalid-timestamp")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let work_dir = tempfile::tempdir()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        for stream in [
+            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            env.nats_stream_name("SOURCE_MATERIAL_END"),
+        ] {
+            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+                .await?;
+        }
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/fish/fish_history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "fish".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/fish/fish_history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::FishSqlite,
+            initial_state_override: None,
+        };
+
+        let entry = crate::fish_history::FishHistoryEntry {
+            row_id: 42,
+            command: "echo 'hello from fish'".to_string(),
+            when: Some(i64::MAX),
+        };
+
+        let error = emit_prepared_fish_entry(&watcher_ctx, &entry, entry.command.clone())
+            .await
+            .expect_err("invalid Fish row should fail loudly");
+        assert!(
+            error.to_string().contains("invalid timestamp"),
+            "unexpected error: {error}"
+        );
+
+        let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
+        assert!(next.is_err(), "invalid Fish row should not emit an event");
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn process_atuin_entry_rejects_negative_row_id(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime { runtime, .. } =
@@ -3958,6 +4239,102 @@ mod tests {
         .ok_or_else(|| color_eyre::eyre::eyre!("missing preserved checkpoint state"))?;
         assert_eq!(restored.sqlite_row_id, expected_state.sqlite_row_id);
         assert_eq!(restored.recent_hashes, expected_state.recent_hashes);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_ignores_stale_local_state_when_checkpoint_missing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-ignore-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "hist-1",
+                1_700_100_000_i64,
+                "echo replay me",
+                "/realm/project/sinex",
+                0_i64,
+                1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let state_path = node
+            .build_history_contexts(shutdown_rx)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec(&HistoryState {
+                sqlite_row_id: Some(41),
+                recent_hashes: VecDeque::from([7, 11]),
+                ..HistoryState::default()
+            })?,
+        )
+        .await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 1);
+        let restored = TerminalNode::checkpoint_state_for_source(
+            &report.final_checkpoint,
+            &format!("atuin:{history_path}"),
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing replay checkpoint state"))?;
+        assert_eq!(restored.sqlite_row_id, Some(1));
         Ok(())
     }
 
@@ -4472,6 +4849,87 @@ mod tests {
             TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
                 .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
         assert_eq!(final_state.sqlite_row_id, Some(42));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_preserves_local_state_when_checkpoint_missing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-preserve-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let checkpoint_key = format!("atuin:{history_path}");
+        let state_path = node
+            .build_history_contexts(tokio::sync::watch::channel(false).1)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should expose a state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec_pretty(&HistoryState {
+                sqlite_row_id: Some(7),
+                recent_hashes: VecDeque::from([13, 17]),
+                ..HistoryState::default()
+            })?,
+        )
+        .await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let final_state =
+            TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
+        assert_eq!(final_state.sqlite_row_id, Some(7));
+        assert_eq!(final_state.recent_hashes, VecDeque::from([13, 17]));
         Ok(())
     }
 
@@ -5051,6 +5509,86 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn scan_history_once_from_state_does_not_advance_past_warned_sqlite_row(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let mut fix = make_watcher(&ctx, "sqlite-warning-checkpoint", 4096).await?;
+        fix.ctx.source_mode = HistorySourceMode::AtuinSqlite;
+        fix.ctx.shell = "atuin".to_string();
+
+        let history_path = fix.history_path.with_extension("sqlite");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "bad-row",
+                1_700_000_000_000_000_000_i64,
+                "echo broken",
+                "/tmp",
+                0_i64,
+                -1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "good-row",
+                1_700_000_000_000_000_100_i64,
+                "echo should-not-run-yet",
+                "/tmp",
+                0_i64,
+                1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+
+        fix.ctx.path = Utf8PathBuf::from_path_buf(history_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let outcome = fix
+            .ctx
+            .scan_history_once_from_state(Some(fix.ctx.empty_state()), None)
+            .await;
+        assert_eq!(outcome.processed, 0);
+        assert!(
+            outcome
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed to process Atuin row 1")),
+            "expected row warning, got {:?}",
+            outcome.warnings
+        );
+        assert_eq!(outcome.state.sqlite_row_id, Some(0));
+        assert!(
+            fix.commands.lock().await.is_empty(),
+            "rows after the warned row must not be emitted before the checkpoint advances"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
     /// Invariant: commands containing null bytes (\0) are rejected — they indicate
     /// binary data or corrupted history entries, not shell commands.
     #[sinex_test]
@@ -5325,6 +5863,37 @@ mod tests {
                 .to_string()
                 .contains("terminal watcher exploded before shutdown"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_waits_for_remaining_handles_after_failure() -> TestResult<()> {
+        let mut node = TerminalNode::default();
+        let start = Instant::now();
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async {
+                Err::<(), _>(SinexError::processing("first terminal watcher failed"))
+            }));
+            guard.push(tokio::spawn(async {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok::<(), SinexError>(())
+            }));
+        }
+
+        let error = node
+            .shutdown(&TerminalCheckpoint::default())
+            .await
+            .expect_err("shutdown should wait for all watcher handles before returning");
+        assert!(
+            start.elapsed() >= Duration::from_millis(25),
+            "shutdown returned before awaiting the later watcher handle",
+        );
+        assert!(
+            error.to_string().contains("first terminal watcher failed"),
+            "unexpected error: {error}",
         );
         Ok(())
     }

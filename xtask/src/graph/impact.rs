@@ -325,7 +325,7 @@ impl ImpactMetrics {
 /// expensive for very large workspaces. The result can be cached and reused.
 pub fn generate_report(graph: &crate::graph::workspace::WorkspaceGraph) -> Result<ImpactReport> {
     let workspace_packages: Vec<String> = graph
-        .workspace_packages()
+        .workspace_packages()?
         .into_iter()
         .map(|p| p.name().to_string())
         .collect();

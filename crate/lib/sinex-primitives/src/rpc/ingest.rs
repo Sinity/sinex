@@ -21,9 +21,8 @@ pub struct EventIngestRequest {
     pub event_type: String,
     /// Arbitrary JSON payload
     pub payload: Value,
-    /// Optional RFC 3339 original timestamp. Defaults to current time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ts_orig: Option<String>,
+    /// Explicit RFC 3339 original timestamp.
+    pub ts_orig: String,
     /// Optional host override. Defaults to gateway's machine identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,

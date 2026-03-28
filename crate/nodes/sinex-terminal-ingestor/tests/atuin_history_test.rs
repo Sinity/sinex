@@ -135,6 +135,22 @@ async fn test_read_atuin_history_respects_end_time_boundary() -> TestResult<()> 
 }
 
 #[sinex_test]
+async fn test_read_atuin_history_rejects_unrepresentable_end_time_filter() -> TestResult<()> {
+    let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
+    let history_path = create_test_atuin_history(&temp_dir)?;
+    let end_time = Timestamp::from_unix_timestamp_nanos(i128::from(i64::MAX) + 1)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid far-future timestamp"))?;
+
+    let error = read_atuin_history(&history_path, 0, Some(end_time))
+        .expect_err("far-future end_time filter should fail honestly");
+
+    assert!(error
+        .to_string()
+        .contains("outside SQLite i64 nanosecond range"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_get_max_row_id() -> TestResult<()> {
     let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
     let history_path = create_test_atuin_history(&temp_dir)?;

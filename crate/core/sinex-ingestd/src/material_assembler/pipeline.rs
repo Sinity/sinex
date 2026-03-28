@@ -25,8 +25,8 @@ async fn ack_with_warning(
     message: &jetstream::Message,
     reason: &'static str,
     material_id: Option<&Uuid>,
-) {
-    if let Err(error) = message.ack().await {
+) -> IngestdResult<()> {
+    message.ack().await.map_err(|error| {
         warn!(
             subject = %message.subject,
             material_id = ?material_id,
@@ -34,7 +34,12 @@ async fn ack_with_warning(
             reason,
             "Failed to ack material assembler message"
         );
-    }
+        SinexError::network("failed to ack material assembler message")
+            .with_context("subject", message.subject.to_string())
+            .with_context("reason", reason)
+            .with_context("material_id", material_id.map(Uuid::to_string).unwrap_or_default())
+            .with_source(error.to_string())
+    })
 }
 
 async fn nak_with_warning(
@@ -42,32 +47,25 @@ async fn nak_with_warning(
     delay: Option<std::time::Duration>,
     reason: &'static str,
     material_id: Option<&Uuid>,
-) {
-    if let Err(error) = message.ack_with(jetstream::AckKind::Nak(delay)).await {
-        warn!(
-            subject = %message.subject,
-            material_id = ?material_id,
-            error = %error,
-            reason,
-            retry_delay_ms = delay.map(|value| value.as_millis() as u64),
-            "Failed to NAK material assembler message"
-        );
-    }
-}
-
-/// Handles for the three material consumer tasks
-pub(super) struct MaterialConsumerHandles {
-    pub(crate) begin: JoinHandle<IngestdResult<()>>,
-    pub(crate) slices: JoinHandle<IngestdResult<()>>,
-    pub(crate) end: JoinHandle<IngestdResult<()>>,
-}
-
-impl Drop for MaterialConsumerHandles {
-    fn drop(&mut self) {
-        self.begin.abort();
-        self.slices.abort();
-        self.end.abort();
-    }
+) -> IngestdResult<()> {
+    message
+        .ack_with(jetstream::AckKind::Nak(delay))
+        .await
+        .map_err(|error| {
+            warn!(
+                subject = %message.subject,
+                material_id = ?material_id,
+                error = %error,
+                reason,
+                retry_delay_ms = delay.map(|value| value.as_millis() as u64),
+                "Failed to NAK material assembler message"
+            );
+            SinexError::network("failed to NAK material assembler message")
+                .with_context("subject", message.subject.to_string())
+                .with_context("reason", reason)
+                .with_context("material_id", material_id.map(Uuid::to_string).unwrap_or_default())
+                .with_source(error.to_string())
+        })
 }
 
 /// Bootstrap `JetStream` streams for materials
@@ -187,7 +185,7 @@ pub(super) fn spawn_begin_consumer(
                             "begin_processing_failed",
                             material_id.as_ref().ok(),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                     Err(panic) => {
@@ -216,14 +214,12 @@ pub(super) fn spawn_begin_consumer(
                             "begin_processing_panicked",
                             material_id.as_ref().ok(),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                 }
 
-                if let Err(e) = message.ack().await {
-                    warn!("Failed to ack begin message: {}", e);
-                }
+                ack_with_warning(&message, "begin_processed", material_id.as_ref().ok()).await?;
             }
         }
 
@@ -306,7 +302,7 @@ pub(super) fn spawn_slices_consumer(
                             error = %error,
                             "Rejecting malformed slice message subject"
                         );
-                        ack_with_warning(&message, "slice_subject_invalid", None).await;
+                        ack_with_warning(&message, "slice_subject_invalid", None).await?;
                         continue;
                     }
                 };
@@ -333,13 +329,12 @@ pub(super) fn spawn_slices_consumer(
                         assembler
                             .finalize_failed_material(material_id, "slice_offset_invalid")
                             .await;
-                        if let Err(ack_err) = message.ack().await {
-                            warn!(
-                                material_id = %material_id,
-                                error = %ack_err,
-                                "Failed to ack malformed slice message"
-                            );
-                        }
+                        ack_with_warning(
+                            &message,
+                            "slice_offset_invalid",
+                            Some(&material_id),
+                        )
+                        .await?;
                         continue;
                     }
                 };
@@ -373,7 +368,7 @@ pub(super) fn spawn_slices_consumer(
                             "slice_processing_failed",
                             Some(&material_id),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                     Err(panic) => {
@@ -399,14 +394,12 @@ pub(super) fn spawn_slices_consumer(
                             "slice_processing_panicked",
                             Some(&material_id),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                 }
 
-                if let Err(e) = message.ack().await {
-                    warn!("Failed to ack slice message: {}", e);
-                }
+                ack_with_warning(&message, "slice_processed", Some(&material_id)).await?;
             }
             // Permit automatically dropped here, releasing semaphore
         }
@@ -473,9 +466,7 @@ pub(super) fn spawn_end_consumer(
                     Ok(msg) => msg,
                     Err(e) => {
                         warn!("Failed to decode end message payload: {}", e);
-                        if let Err(ack_err) = message.ack().await {
-                            warn!("Failed to ack malformed end message: {}", ack_err);
-                        }
+                        ack_with_warning(&message, "end_payload_invalid", None).await?;
                         continue;
                     }
                 };
@@ -497,7 +488,7 @@ pub(super) fn spawn_end_consumer(
                             "end_processing_failed",
                             material_id.as_ref().ok(),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                     Err(panic) => {
@@ -526,14 +517,12 @@ pub(super) fn spawn_end_consumer(
                             "end_processing_panicked",
                             material_id.as_ref().ok(),
                         )
-                        .await;
+                        .await?;
                         continue;
                     }
                 }
 
-                if let Err(e) = message.ack().await {
-                    warn!("Failed to ack end message: {}", e);
-                }
+                ack_with_warning(&message, "end_processed", material_id.as_ref().ok()).await?;
             }
         }
 

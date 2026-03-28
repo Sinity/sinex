@@ -141,15 +141,50 @@ const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
-fn log_forwarder_join_result(task_name: &str, result: Result<(), JoinError>) {
+fn forwarder_join_result(task_name: &str, result: Result<(), JoinError>) -> NodeResult<()> {
     match result {
-        Ok(()) => {}
+        Ok(()) => Ok(()),
         Err(err) if err.is_cancelled() => {
             warn!(task = task_name, "System forwarder task was cancelled");
+            Ok(())
         }
         Err(err) => {
-            warn!(task = task_name, error = %err, "System forwarder task failed");
+            let error = if err.is_panic() {
+                SinexError::processing("system forwarder task failed")
+                    .with_context("task", task_name.to_string())
+                    .with_context("panic", panic_payload_message(err.into_panic()))
+            } else {
+                SinexError::processing("system forwarder task failed")
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", err.to_string())
+            };
+            Err(error)
         }
+    }
+}
+
+fn collapse_forwarder_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
+    if errors.is_empty() {
+        return Ok(());
+    }
+
+    let mut error = errors.remove(0);
+    for (index, extra) in errors.into_iter().enumerate() {
+        error = error.with_context(
+            format!("additional_forwarder_error_{}", index + 1),
+            extra.to_string(),
+        );
+    }
+    Err(error)
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else {
+        "non-string panic payload".to_string()
     }
 }
 
@@ -216,6 +251,24 @@ impl Default for SystemNode {
 impl SystemNode {
     fn watcher_last_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
         handle.and_then(|watcher| watcher.health().last_error)
+    }
+
+    fn collapse_shutdown_errors(mut errors: Vec<(String, SinexError)>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (step, error) = errors.remove(0);
+        let mut combined = error.with_context("shutdown_step", step);
+        for (index, (step, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(format!("additional_shutdown_step_{}", index + 1), step)
+                .with_context(
+                    format!("additional_shutdown_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
     }
 
     /// Create a new unified system node
@@ -501,32 +554,47 @@ impl SystemNode {
     }
 
     /// Abort and drop any active watcher handles.
-    async fn shutdown_watchers(&mut self) {
+    async fn shutdown_watchers(&mut self) -> NodeResult<()> {
+        let mut shutdown_errors = Vec::new();
         if let Some(handle) = self.dbus_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("dbus watcher".to_string(), error));
+            }
         }
         if let Some(handle) = self.unified_journal_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("unified journal watcher".to_string(), error));
+            }
         }
         if let Some(handle) = self.udev_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            if let Err(error) = self.finalize_watcher_handle(handle).await {
+                shutdown_errors.push(("udev watcher".to_string(), error));
+            }
         }
 
         if let Some(material) = self.node_material.take()
-            && let Err(err) = material.finalize("system-watcher shutdown").await
+            && let Err(error) = material.finalize("system-watcher shutdown").await
         {
-            warn!(error = %err, "Failed to finalize system node material");
+            shutdown_errors.push(("system node material".to_string(), error));
         }
+
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
-    async fn finalize_watcher_handle(&self, mut handle: WatcherHandle<WatcherMaterialContext>) {
+    async fn finalize_watcher_handle(
+        &self,
+        mut handle: WatcherHandle<WatcherMaterialContext>,
+    ) -> NodeResult<()> {
+        let mut shutdown_errors = Vec::new();
         if let Some(material) = handle.take_material()
-            && let Err(err) = material.finalize("system-watcher shutdown").await
+            && let Err(error) = material.finalize("system-watcher shutdown").await
         {
-            warn!(error = %err, "Failed to finalize system watcher material");
+            shutdown_errors.push(("watcher material".to_string(), error));
         }
-        // Handle shutdown is automatic via Drop, but we call it explicitly for cleaner async shutdown
-        handle.shutdown().await;
+        if let Err(error) = handle.shutdown().await {
+            shutdown_errors.push(("watcher task".to_string(), error));
+        }
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
     /// Start continuous system monitoring
@@ -579,7 +647,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.dbus_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("dbus").await?;
@@ -603,7 +671,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.unified_journal_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("unified_journal").await?;
@@ -627,7 +695,7 @@ impl SystemNode {
         }
 
         if let Some(handle) = self.udev_watcher.take() {
-            self.finalize_watcher_handle(handle).await;
+            self.finalize_watcher_handle(handle).await?;
         }
 
         let material = self.new_watcher_material("udev").await?;
@@ -719,8 +787,16 @@ impl SystemNode {
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
             let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-            log_forwarder_join_result("journal", journal_result);
-            log_forwarder_join_result("systemd", systemd_result);
+            let mut forwarder_errors = Vec::new();
+            if let Err(error) = forwarder_join_result("journal", journal_result) {
+                forwarder_errors.push(error);
+            }
+            if let Err(error) = forwarder_join_result("systemd", systemd_result) {
+                forwarder_errors.push(error);
+            }
+            if let Err(error) = collapse_forwarder_errors(forwarder_errors) {
+                panic!("{error}");
+            }
         });
 
         let mut handle = handle;
@@ -814,12 +890,22 @@ impl SystemNode {
         drop(systemd_tx_opt);
 
         let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-        log_forwarder_join_result("historical journal", journal_result);
-        log_forwarder_join_result("historical systemd", systemd_result);
+        let mut forwarder_errors = Vec::new();
+        if let Err(error) = forwarder_join_result("historical journal", journal_result) {
+            forwarder_errors.push(error);
+        }
+        if let Err(error) = forwarder_join_result("historical systemd", systemd_result) {
+            forwarder_errors.push(error);
+        }
 
-        material
+        if let Err(error) = material
             .finalize("system-unified-journal historical scan")
-            .await?;
+            .await
+        {
+            forwarder_errors.push(error);
+        }
+
+        collapse_forwarder_errors(forwarder_errors)?;
 
         Ok(count)
     }
@@ -1007,7 +1093,7 @@ impl IngestorNode for SystemNode {
             }
         }
 
-        self.shutdown_watchers().await;
+        self.shutdown_watchers().await?;
         let finished_at = Timestamp::now();
 
         Ok(ScanReport {
@@ -1023,8 +1109,7 @@ impl IngestorNode for SystemNode {
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
-        self.shutdown_watchers().await;
-        Ok(())
+        self.shutdown_watchers().await
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -1155,14 +1240,21 @@ where
             match event.to_json_event() {
                 Ok(json_event) => {
                     if let Err(err) = emitter.emit(json_event).await {
-                        warn!(error = %err, channel = channel_name, "Failed to emit forwarded event");
+                        panic!(
+                            "{}",
+                            SinexError::processing("Failed to emit forwarded event")
+                                .with_context("channel", channel_name.to_string())
+                                .with_source(err)
+                        );
                     }
                 }
                 Err(err) => {
-                    warn!(error = %err, channel = channel_name, "Failed to convert event to JSON");
-                    // We continue even if one event fails? Or abort?
-                    // Original likely logged and continued or used ?
-                    // Let's log and continue to avoid killing the stream for one bad event
+                    panic!(
+                        "{}",
+                        SinexError::processing("Failed to convert forwarded event to JSON")
+                            .with_context("channel", channel_name.to_string())
+                            .with_source(err)
+                    );
                 }
             }
         }
@@ -1183,17 +1275,23 @@ impl SystemNode {
         match watcher_type {
             "dbus" => {
                 if let Some(h) = self.dbus_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("dbus watcher shutdown should stay explicit in tests");
                 }
             }
             "unified_journal" => {
                 if let Some(h) = self.unified_journal_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("journal watcher shutdown should stay explicit in tests");
                 }
             }
             "udev" => {
                 if let Some(h) = self.udev_watcher.take() {
-                    let () = h.shutdown().await;
+                    h.shutdown()
+                        .await
+                        .expect("udev watcher shutdown should stay explicit in tests");
                 }
             }
             _ => panic!("Unknown watcher: {watcher_type}"),
@@ -1711,28 +1809,65 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
+    async fn forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
         let handle = tokio::spawn(async {});
-        log_forwarder_join_result("journal", handle.await);
+        forwarder_join_result("journal", handle.await)?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
+    async fn forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(30)).await;
         });
         handle.abort();
-        log_forwarder_join_result("journal", handle.await);
+        forwarder_join_result("journal", handle.await)?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_panicked_task() -> TestResult<()> {
+    async fn forwarder_join_result_rejects_panicked_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("journal forwarder panic");
         });
-        log_forwarder_join_result("journal", handle.await);
+        let error = forwarder_join_result("journal", handle.await)
+            .expect_err("panicked forwarders must fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("system forwarder task failed"));
+        assert!(message.contains("journal"));
+        assert!(message.contains("journal forwarder panic"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn spawn_forwarder_rejects_emission_failures() -> TestResult<()> {
+        let (emitter_tx, emitter_rx) = mpsc::channel(1);
+        drop(emitter_rx);
+        let emitter = EventEmitter::new(emitter_tx, false);
+
+        let (tx, rx) = mpsc::channel(1);
+        let handle = spawn_forwarder("system.test.forwarder", rx, emitter);
+
+        let event = DynamicPayload::new(
+            "system.test",
+            "system.test.forwarded",
+            serde_json::json!({ "ok": true }),
+        )
+        .from_material(Id::<SourceMaterial>::new())
+        .build()?;
+
+        tx.send(event)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!(error.to_string()))?;
+        drop(tx);
+
+        let error = forwarder_join_result("system.test.forwarder", handle.await)
+            .expect_err("forwarder emission failures must fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("system forwarder task failed"));
+        assert!(message.contains("system.test.forwarder"));
+        assert!(message.contains("Failed to emit forwarded event"));
+        assert!(message.contains("Event channel closed"));
         Ok(())
     }
 }

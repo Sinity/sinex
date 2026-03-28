@@ -9,7 +9,6 @@ pub use pipeline::*;
 pub use setup::*;
 
 use async_nats::jetstream::{Context as JetStreamContext, kv};
-use color_eyre::eyre::eyre;
 use color_eyre::eyre::Result;
 use std::sync::Arc;
 
@@ -27,15 +26,9 @@ pub async fn create_or_open_kv_store(
     js: &JetStreamContext,
     config: kv::Config,
 ) -> Result<kv::Store> {
-    let bucket = config.bucket.clone();
-    match js.create_key_value(config).await {
-        Ok(store) => Ok(store),
-        Err(create_err) => js.get_key_value(&bucket).await.map_err(|open_err| {
-            eyre!(
-                "failed to create or open JetStream KV bucket {bucket} (create: {create_err}, open: {open_err})"
-            )
-        }),
-    }
+    sinex_primitives::nats::create_or_open_kv_store(js, config)
+        .await
+        .map_err(Into::into)
 }
 
 #[cfg(test)]

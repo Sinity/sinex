@@ -236,7 +236,7 @@ impl FixCommand {
     fn all_workspace_packages() -> Result<Vec<String>> {
         let graph = WorkspaceGraph::new()?;
         Ok(graph
-            .workspace_packages()
+            .workspace_packages()?
             .into_iter()
             .map(|p| p.name().to_string())
             .collect())

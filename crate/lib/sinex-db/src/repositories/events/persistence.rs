@@ -266,6 +266,39 @@ fn detect_intra_batch_synthesis_cycle(
     None
 }
 
+fn ensure_batch_event_ids(events: &mut [Event<JsonValue>]) {
+    for event in events {
+        if event.id.is_none() {
+            event.id = Some(Id::<Event<JsonValue>>::new());
+        }
+    }
+}
+
+fn collect_synthesis_checks(
+    events: &[Event<JsonValue>],
+) -> DbResult<Vec<(Id<Event<JsonValue>>, Vec<EventId>)>> {
+    let mut synthesis_checks = Vec::new();
+
+    for event in events {
+        let Some(event_id) = event.id.as_ref() else {
+            return Err(db_error(
+                sqlx::Error::Protocol("batch insert event missing id".into()),
+                "insert batch",
+            ));
+        };
+
+        let (source_event_ids_raw, _, _, _, _, _) = extract_provenance(event)?;
+        if let Some(source_ids) = source_event_ids_raw.filter(|source_ids| !source_ids.is_empty()) {
+            synthesis_checks.push((
+                Id::<Event<JsonValue>>::from_uuid(*event_id.as_uuid()),
+                source_ids,
+            ));
+        }
+    }
+
+    Ok(synthesis_checks)
+}
+
 fn resolved_created_by_operation_id(event: &Event<JsonValue>) -> DbResult<Option<Uuid>> {
     let provenance_operation_id = event.provenance.operation_uuid();
 
@@ -943,10 +976,11 @@ impl<'a> EventRepository<'a> {
             }
             json_events.push(json_event);
         }
-        let events = json_events;
+        let mut events = json_events;
         if events.is_empty() {
             return Ok(Vec::new());
         }
+        ensure_batch_event_ids(&mut events);
 
         // For small batches, use the optimized single-transaction approach
         if events.len() <= 50 {
@@ -960,6 +994,7 @@ impl<'a> EventRepository<'a> {
         let mut results = Vec::with_capacity(events.len());
         let total_events = events.len();
         let mut processed = 0;
+        let synthesis_checks = collect_synthesis_checks(&events)?;
 
         let mut tx = self.pool.begin().await.map_err(|e| {
             db_error(
@@ -971,6 +1006,7 @@ impl<'a> EventRepository<'a> {
         })?;
 
         crate::query_helpers::set_repeatable_read(&mut tx).await?;
+        ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
         for chunk in events.chunks(chunk_size) {
             let mut chunk_results = self.insert_batch_unnest_in_tx(&mut tx, chunk.to_vec()).await?;
@@ -1042,16 +1078,8 @@ impl<'a> EventRepository<'a> {
             return Ok(vec![inserted]);
         }
 
-        // Ensure all events have IDs
-        for event in &mut events {
-            if event.id.is_none() {
-                event.id = Some(Id::<Event<JsonValue>>::new());
-            }
-        }
-
-        // Collect events needing synthesis cycle detection (populated during
-        // vector build, checked after transaction begins).
-        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<EventId>)> = Vec::new();
+        ensure_batch_event_ids(&mut events);
+        let synthesis_checks = collect_synthesis_checks(&events)?;
 
         let mut ids = Vec::with_capacity(events.len());
         let mut sources = Vec::with_capacity(events.len());
@@ -1098,17 +1126,6 @@ impl<'a> EventRepository<'a> {
                 offset_kind,
                 anchor_byte,
             ) = extract_provenance(event)?;
-
-            // Track events with synthesis provenance for cycle detection
-            #[allow(clippy::expect_used)] // id guaranteed set during batch preparation above
-            if let Some(ref source_ids) = source_event_ids_raw
-                && !source_ids.is_empty()
-            {
-                synthesis_checks.push((
-                    event.id.expect("event id set during batch preparation"),
-                    source_ids.clone(),
-                ));
-            }
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());

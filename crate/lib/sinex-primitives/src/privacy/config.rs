@@ -167,15 +167,16 @@ fn parse_strategy(s: &str) -> Option<Strategy> {
     }
 }
 
-/// Resolve the default config file path.
+/// Resolve the configured config file path.
 ///
 /// Checks `$SINEX_PRIVACY_CONFIG` first, then `$SINEX_STATE_DIR/privacy.toml`.
-fn default_config_path() -> Option<PathBuf> {
+///
+/// An explicit `SINEX_PRIVACY_CONFIG` path is always returned as-is so missing
+/// or unreadable files fail honestly instead of silently falling back to
+/// defaults.
+fn configured_config_path() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("SINEX_PRIVACY_CONFIG") {
-        let path = PathBuf::from(explicit);
-        if path.exists() {
-            return Some(path);
-        }
+        return Some(PathBuf::from(explicit));
     }
     if let Ok(state_dir) = std::env::var("SINEX_STATE_DIR") {
         let path = PathBuf::from(state_dir).join("privacy.toml");
@@ -183,7 +184,7 @@ fn default_config_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    std::option::Option::None
+    None
 }
 
 impl PrivacyConfig {
@@ -245,11 +246,10 @@ impl PrivacyConfig {
     /// | `SINEX_PRIVACY_KEY_FILE` | — | Path to 256-bit key file |
     /// | `SINEX_PRIVACY_KEY` | — | Hex key (dev only) |
     /// | `SINEX_PRIVACY_STATS` | `false` | Per-rule match counting |
-    #[must_use]
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, PrivacyConfigError> {
         // Start from file config if available, otherwise defaults
-        let mut config = match default_config_path() {
-            Some(path) => Self::from_file(&path).unwrap_or_default(),
+        let mut config = match configured_config_path() {
+            Some(path) => Self::from_file(&path)?,
             None => Self::default(),
         };
 
@@ -316,7 +316,7 @@ impl PrivacyConfig {
             config.track_stats = val.eq_ignore_ascii_case("true") || val == "1";
         }
 
-        config
+        Ok(config)
     }
 }
 
@@ -338,7 +338,19 @@ pub enum PrivacyConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::LazyLock;
     use xtask::sandbox::sinex_test;
+
+    static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    fn restore_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
 
     #[sinex_test]
     async fn default_config_round_trips_through_toml() -> ::xtask::sandbox::TestResult<()> {
@@ -493,6 +505,77 @@ hex = "abcd1234"
         let config: PrivacyConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.key.key_file.as_deref(), Some("/path/to/key"));
         assert_eq!(config.key.key_hex.as_deref(), Some("abcd1234"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_loads_explicit_file() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("privacy.toml");
+        std::fs::write(&path, "track_stats = true\n")?;
+
+        let old_privacy_config = std::env::var_os("SINEX_PRIVACY_CONFIG");
+        let old_state_dir = std::env::var_os("SINEX_STATE_DIR");
+        unsafe {
+            std::env::set_var("SINEX_PRIVACY_CONFIG", &path);
+            std::env::remove_var("SINEX_STATE_DIR");
+        }
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_CONFIG", old_privacy_config);
+        restore_var("SINEX_STATE_DIR", old_state_dir);
+
+        let config = result?;
+        assert!(config.track_stats);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_surfaces_missing_explicit_file() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let missing = PathBuf::from("/tmp/sinex-privacy-config-does-not-exist.toml");
+        let old_privacy_config = std::env::var_os("SINEX_PRIVACY_CONFIG");
+        let old_state_dir = std::env::var_os("SINEX_STATE_DIR");
+        unsafe {
+            std::env::set_var("SINEX_PRIVACY_CONFIG", &missing);
+            std::env::remove_var("SINEX_STATE_DIR");
+        }
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_CONFIG", old_privacy_config);
+        restore_var("SINEX_STATE_DIR", old_state_dir);
+
+        let error = result.expect_err("missing explicit privacy config must surface");
+        assert!(error.to_string().contains("failed to read privacy config"));
+        assert!(error.to_string().contains(missing.to_string_lossy().as_ref()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_surfaces_invalid_state_dir_config() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("privacy.toml");
+        std::fs::write(&path, "enabled = [[[invalid")?;
+
+        let old_privacy_config = std::env::var_os("SINEX_PRIVACY_CONFIG");
+        let old_state_dir = std::env::var_os("SINEX_STATE_DIR");
+        unsafe {
+            std::env::remove_var("SINEX_PRIVACY_CONFIG");
+            std::env::set_var("SINEX_STATE_DIR", dir.path());
+        }
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_CONFIG", old_privacy_config);
+        restore_var("SINEX_STATE_DIR", old_state_dir);
+
+        let error = result.expect_err("invalid state-dir privacy config must surface");
+        assert!(error.to_string().contains("failed to parse privacy config"));
+        assert!(error.to_string().contains(path.to_string_lossy().as_ref()));
         Ok(())
     }
 }

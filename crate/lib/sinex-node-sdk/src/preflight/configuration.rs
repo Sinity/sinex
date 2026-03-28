@@ -708,7 +708,7 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
 mod tests {
     // Small inline tests are justified here because they exercise private
     // helper behavior without widening the preflight API surface.
-    use super::collect_hyprland_runtime_sockets;
+    use super::{collect_hyprland_runtime_sockets, parse_systemd_version_line};
     use std::fs;
     use std::io;
     use xtask::sandbox::prelude::*;
@@ -751,6 +751,25 @@ mod tests {
         .map_err(color_eyre::eyre::Report::msg)?;
 
         assert_eq!(sockets, vec![instance_a.join(".socket2.sock")]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_version_line_rejects_empty_output() -> TestResult<()> {
+        let error = parse_systemd_version_line(b"\n\n")
+            .expect_err("empty systemctl version output must fail honestly");
+
+        assert!(error
+            .to_string()
+            .contains("systemctl --version returned empty output"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_version_line_uses_first_non_empty_line() -> TestResult<()> {
+        let version_line = parse_systemd_version_line(b"\n systemd 256 (256.7)\n+PAM\n")?;
+
+        assert_eq!(version_line, " systemd 256 (256.7)");
         Ok(())
     }
 }
@@ -842,13 +861,23 @@ async fn check_systemd_environment() -> NodeResult<Value> {
         ));
     }
 
-    let version_output = String::from_utf8_lossy(&systemd_version.stdout);
-    let version_line = version_output.lines().next().unwrap_or("unknown");
+    let version_line = parse_systemd_version_line(&systemd_version.stdout)?;
 
     Ok(json!({
         "available": true,
         "version": version_line
     }))
+}
+
+fn parse_systemd_version_line(stdout: &[u8]) -> NodeResult<String> {
+    let version_output = String::from_utf8_lossy(stdout);
+    version_output
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            SinexError::processing("systemctl --version returned empty output".to_string())
+        })
 }
 
 async fn check_nixos_environment() -> NodeResult<Value> {

@@ -86,7 +86,13 @@ impl SystemdMonitor {
         if service_path.exists() {
             for entry in std::fs::read_dir(&service_path)? {
                 let entry = entry?;
-                let name = entry.file_name().to_string_lossy().to_string();
+                let name = entry.file_name().into_string().map_err(|name| {
+                    eyre!(
+                        "Failed to decode systemd unit name as UTF-8 in '{}': {:?}",
+                        service_path.display(),
+                        name
+                    )
+                })?;
                 if name.ends_with(".service") {
                     services.push(name);
                 }
@@ -144,8 +150,18 @@ impl SystemdMonitor {
         if tasks_file.exists() {
             let contents = std::fs::read_to_string(&tasks_file)?;
             if let Some(first_line) = contents.lines().next()
-                && let Ok(pid) = first_line.trim().parse::<u32>()
             {
+                let first_line = first_line.trim();
+                if first_line.is_empty() {
+                    return Ok(None);
+                }
+                let pid = first_line.parse::<u32>().map_err(|error| {
+                    eyre!(
+                        "Failed to parse unit main PID from {}: '{}' ({error})",
+                        tasks_file.display(),
+                        first_line
+                    )
+                })?;
                 return Ok(Some(pid));
             }
         }
@@ -157,9 +173,18 @@ impl SystemdMonitor {
         let memory_file = unit_path.join("memory.current");
         if memory_file.exists() {
             let contents = std::fs::read_to_string(&memory_file)?;
-            if let Ok(bytes) = contents.trim().parse::<u64>() {
-                return Ok(Some(bytes));
+            let raw = contents.trim();
+            if raw.is_empty() {
+                return Ok(None);
             }
+            let bytes = raw.parse::<u64>().map_err(|error| {
+                eyre!(
+                    "Failed to parse unit memory usage from {}: '{}' ({error})",
+                    memory_file.display(),
+                    raw
+                )
+            })?;
+            return Ok(Some(bytes));
         }
         Ok(None)
     }
@@ -171,9 +196,21 @@ impl SystemdMonitor {
             let contents = std::fs::read_to_string(&cpu_file)?;
             for line in contents.lines() {
                 if line.starts_with("usage_usec")
-                    && let Some(value) = line.split_whitespace().nth(1)
-                    && let Ok(usecs) = value.parse::<u64>()
                 {
+                    let Some(value) = line.split_whitespace().nth(1) else {
+                        return Err(eyre!(
+                            "unit cpu.stat entry '{}' in {} is missing usage value",
+                            line,
+                            cpu_file.display()
+                        ));
+                    };
+                    let usecs = value.parse::<u64>().map_err(|error| {
+                        eyre!(
+                            "Failed to parse unit CPU usage from {}: '{}' ({error})",
+                            cpu_file.display(),
+                            value
+                        )
+                    })?;
                     return Ok(Some(Duration::from_micros(usecs)));
                 }
             }
@@ -424,10 +461,31 @@ impl SystemdChangeMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{JournalReader, forward_journal_entries};
+    use super::{JournalReader, SystemdMonitor, forward_journal_entries};
     use std::fs::OpenOptions;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
     use xtask::sandbox::sinex_test;
+
+    fn temp_path(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn write_unit_file(
+        unit_path: &Path,
+        file_name: &str,
+        contents: &[u8],
+    ) -> color_eyre::eyre::Result<()> {
+        std::fs::create_dir_all(unit_path)?;
+        std::fs::write(unit_path.join(file_name), contents)?;
+        Ok(())
+    }
 
     #[sinex_test]
     async fn forward_journal_entries_stops_when_receiver_drops() -> TestResult<()> {
@@ -503,6 +561,93 @@ mod tests {
 
         assert!(error.to_string().contains("Failed to read journal line 2"));
         assert_eq!(reader.last_position, 0);
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_monitor_rejects_invalid_cgroup_pid() -> TestResult<()> {
+        let temp_dir = temp_path("sinex-systemd-cgroup-pid");
+        let unit_path = temp_dir.join("broken.service");
+        write_unit_file(&unit_path, "cgroup.procs", b"abc\n")?;
+
+        let monitor = SystemdMonitor {
+            cgroup_base: temp_dir.clone(),
+        };
+
+        let error = monitor
+            .read_unit_main_pid(&unit_path)
+            .expect_err("invalid cgroup pid must fail honestly");
+
+        assert!(error.to_string().contains("Failed to parse unit main PID"));
+        assert!(error.to_string().contains("abc"));
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_monitor_rejects_invalid_memory_usage() -> TestResult<()> {
+        let temp_dir = temp_path("sinex-systemd-memory");
+        let unit_path = temp_dir.join("broken.service");
+        write_unit_file(&unit_path, "memory.current", b"nan\n")?;
+
+        let monitor = SystemdMonitor {
+            cgroup_base: temp_dir.clone(),
+        };
+
+        let error = monitor
+            .read_memory_usage(&unit_path)
+            .expect_err("invalid memory.current must fail honestly");
+
+        assert!(error.to_string().contains("Failed to parse unit memory usage"));
+        assert!(error.to_string().contains("nan"));
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_monitor_rejects_invalid_cpu_usage() -> TestResult<()> {
+        let temp_dir = temp_path("sinex-systemd-cpu");
+        let unit_path = temp_dir.join("broken.service");
+        write_unit_file(&unit_path, "cpu.stat", b"usage_usec nope\n")?;
+
+        let monitor = SystemdMonitor {
+            cgroup_base: temp_dir.clone(),
+        };
+
+        let error = monitor
+            .read_cpu_usage(&unit_path)
+            .expect_err("invalid cpu.stat usage_usec must fail honestly");
+
+        assert!(error.to_string().contains("Failed to parse unit CPU usage"));
+        assert!(error.to_string().contains("nope"));
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn systemd_monitor_rejects_non_utf8_unit_names() -> TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp_dir = temp_path("sinex-systemd-units");
+        let service_dir = temp_dir.join("system.slice");
+        std::fs::create_dir_all(&service_dir)?;
+        let invalid_name = std::ffi::OsString::from_vec(vec![
+            b's', b'i', b'n', b'e', b'x', b'-', 0xff, b'.', b's', b'e', b'r', b'v', b'i', b'c',
+            b'e',
+        ]);
+        std::fs::write(service_dir.join(invalid_name), [])?;
+
+        let monitor = SystemdMonitor {
+            cgroup_base: temp_dir.clone(),
+        };
+
+        let error = monitor
+            .list_service_units()
+            .expect_err("non-utf8 unit names must fail honestly");
+
+        assert!(error.to_string().contains("decode systemd unit name as UTF-8"));
         std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
     }

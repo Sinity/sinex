@@ -33,11 +33,15 @@ static ENGINE: OnceLock<PrivacyEngine> = OnceLock::new();
 /// Get the process-wide privacy engine.
 ///
 /// On first call, initializes from `PrivacyConfig::from_env()`.
-/// Panics only if built-in pattern compilation fails (build-time bug).
-#[allow(clippy::expect_used)] // Compile-time constant patterns
+///
+/// Panics if privacy configuration cannot be loaded or if built-in pattern
+/// compilation fails. Both are fatal: running with an invalid privacy policy
+/// would silently degrade redaction guarantees.
+#[allow(clippy::expect_used)] // Fatal invalid privacy policy / built-in patterns
 pub fn engine() -> &'static PrivacyEngine {
     ENGINE.get_or_init(|| {
-        let config = PrivacyConfig::from_env();
+        let config =
+            PrivacyConfig::from_env().expect("failed to load privacy configuration from environment");
         PrivacyEngine::new(config).expect("built-in privacy patterns must compile")
     })
 }

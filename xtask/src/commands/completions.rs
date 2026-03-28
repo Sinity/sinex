@@ -32,24 +32,16 @@ pub struct CompletionsCommand {
 }
 
 /// Workspace packages from cargo metadata (fast, no graph traversal needed)
-fn list_workspace_packages() -> Vec<String> {
+fn list_workspace_packages() -> Result<Vec<String>> {
     use std::process::Command;
 
     let out = Command::new("cargo")
         .args(["metadata", "--format-version=1", "--no-deps", "--quiet"])
         .output();
 
-    let packages = match out {
+    match out {
         Ok(output) => workspace_packages_from_metadata_output(&output),
         Err(error) => Err(color_eyre::eyre::eyre!("failed to invoke cargo metadata: {error}")),
-    };
-
-    match packages {
-        Ok(names) => names,
-        Err(error) => {
-            eprintln!("[xtask] failed to list workspace packages for completions: {error}");
-            Vec::new()
-        }
     }
 }
 
@@ -75,11 +67,13 @@ fn workspace_packages_from_metadata_output(output: &std::process::Output) -> Res
         .as_array()
         .ok_or_else(|| eyre!("cargo metadata JSON omitted packages array"))?;
 
-    let mut names: Vec<String> = packages
-        .iter()
-        .filter_map(|p| p["name"].as_str())
-        .map(String::from)
-        .collect();
+    let mut names = Vec::with_capacity(packages.len());
+    for (index, package) in packages.iter().enumerate() {
+        let name = package["name"]
+            .as_str()
+            .ok_or_else(|| eyre!("cargo metadata package entry {index} omitted string name"))?;
+        names.push(name.to_string());
+    }
     names.sort();
     Ok(names)
 }
@@ -161,7 +155,7 @@ impl CompletionsCommand {
                 generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout());
             }
             CompletionsSubcommand::ListPackages => {
-                for pkg in list_workspace_packages() {
+                for pkg in list_workspace_packages()? {
                     println!("{pkg}");
                 }
             }
@@ -289,6 +283,22 @@ mod tests {
             .expect_err("cargo metadata failure should surface");
         assert!(error.to_string().contains("exit code 2"));
         assert!(error.to_string().contains("metadata boom"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_packages_from_metadata_output_reports_missing_package_name()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: br#"{"packages":[{"version":"0.1.0"}]}"#.to_vec(),
+            stderr: Vec::new(),
+        };
+
+        let error = workspace_packages_from_metadata_output(&output)
+            .expect_err("metadata entries without names should surface");
+        assert!(error.to_string().contains("package entry 0"));
+        assert!(error.to_string().contains("name"));
         Ok(())
     }
 }

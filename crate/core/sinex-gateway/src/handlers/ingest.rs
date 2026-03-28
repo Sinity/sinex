@@ -80,6 +80,14 @@ async fn mark_events_ingest_material_failed(
 /// published event satisfies provenance/FK invariants, then publishes the
 /// full event envelope to JetStream on `events.raw.<source>.<event_type>`.
 pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) -> Result<Value> {
+    let Some(raw_ts_orig) = params
+        .get("ts_orig")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        color_eyre::eyre::bail!("`ts_orig` is required");
+    };
+
     let req: EventIngestRequest =
         serde_json::from_value(params).wrap_err("failed to parse events.ingest request")?;
 
@@ -89,19 +97,17 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
     if req.event_type.trim().is_empty() {
         color_eyre::eyre::bail!("`event_type` must not be empty");
     }
+    if raw_ts_orig.trim().is_empty() {
+        color_eyre::eyre::bail!("`ts_orig` must not be empty");
+    }
     if req.host.as_deref().is_some_and(|host| host.trim().is_empty()) {
         color_eyre::eyre::bail!("`host` must not be empty when provided");
     }
 
     let event_id = Uuid::now_v7();
     let material_id = Uuid::now_v7();
-    let ts_orig = req
-        .ts_orig
-        .as_deref()
-        .map(temporal::parse_rfc3339)
-        .transpose()
-        .wrap_err("invalid `ts_orig`; expected RFC3339 timestamp")?
-        .unwrap_or_else(temporal::now);
+    let ts_orig = temporal::parse_rfc3339(raw_ts_orig.trim())
+        .wrap_err("invalid `ts_orig`; expected RFC3339 timestamp")?;
     let gateway_host = sinex_primitives::events::builder::get_hostname().to_string();
     let event_host = req.host.unwrap_or_else(|| gateway_host.clone());
     let payload_size_bytes = serde_json::to_vec(&req.payload)

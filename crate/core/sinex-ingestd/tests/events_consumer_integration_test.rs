@@ -562,6 +562,71 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
+async fn jetstream_consumer_routes_missing_ts_orig_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = format!("missing-ts-orig-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
+
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    let event_id = Uuid::now_v7();
+    let source = format!("missing.ts.{suffix}");
+    let event_type = "timestamp.optional";
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": { "missing_ts_orig": true },
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let subject = environment().nats_subject_with_namespace(
+        Some(setup.namespace.as_str()),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    setup
+        .nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    setup.nats_client.flush().await?;
+
+    let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+        .await
+        .map_err(|_| eyre!("timed out waiting for missing-ts_orig DLQ entry"))?
+        .ok_or_else(|| eyre!("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    assert!(
+        entry["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("missing ts_orig"),
+        "DLQ error should mention missing ts_orig, got: {entry:?}"
+    );
+    assert!(
+        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        "events missing ts_orig must not persist"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
 async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("ackwait-{}", Uuid::now_v7().to_string().to_lowercase());

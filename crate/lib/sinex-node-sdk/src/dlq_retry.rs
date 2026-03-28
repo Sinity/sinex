@@ -263,35 +263,55 @@ impl DlqRetryHandler {
                 max_retries = self.config.max_retries,
                 "Message exceeded max retries, permanently failing"
             );
-            if let Err(e) = msg.ack().await {
-                error!("Failed to ack permanently failed message: {e}");
-            }
+            msg.ack().await.map_err(|error| {
+                Self::message_settlement_error(
+                    "failed to ack permanently failed DLQ message",
+                    msg.subject.as_str(),
+                    error,
+                )
+            })?;
             return Ok(false);
         }
 
         match self.retry_message(js, msg, retry_count).await {
             Ok(()) => {
-                if let Err(e) = msg.ack().await {
-                    error!("Failed to ack retried message: {e}");
-                }
+                msg.ack().await.map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to ack retried DLQ message",
+                        msg.subject.as_str(),
+                        error,
+                    )
+                })?;
                 Ok(true)
             }
             Err(e) => {
                 error!("Failed to retry message: {e}");
-                if let Err(nak_err) = msg
+                msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(
                         self.config.retry_delay,
                     )))
                     .await
-                {
-                    error!(
-                        error = %nak_err,
-                        "Failed to NAK DLQ message after retry failure"
-                    );
-                }
+                    .map_err(|nak_err| {
+                        Self::message_settlement_error(
+                            "failed to NAK DLQ message after retry failure",
+                            msg.subject.as_str(),
+                            nak_err,
+                        )
+                        .with_context("retry_error", e.to_string())
+                    })?;
                 Ok(false)
             }
         }
+    }
+
+    fn message_settlement_error(
+        operation: &'static str,
+        subject: &str,
+        error: impl std::fmt::Display,
+    ) -> SinexError {
+        SinexError::network(operation)
+            .with_context("subject", subject)
+            .with_source(error.to_string())
     }
 
     async fn retry_message(
@@ -581,6 +601,7 @@ fn dlq_requeue_target(
 mod tests {
     use super::{
         combine_retry_counts, dlq_event_id, dlq_payload_event_id, dlq_requeue_target,
+        DlqRetryHandler,
     };
     use xtask::sandbox::sinex_test;
 
@@ -707,6 +728,21 @@ mod tests {
             target.event_id.as_deref(),
             Some("00000000-0000-7000-8000-000000000099")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_message_settlement_error_preserves_subject_context() -> TestResult<()> {
+        let error = DlqRetryHandler::message_settlement_error(
+            "failed to ack retried DLQ message",
+            "events.dlq.test.subject",
+            "nats unavailable",
+        );
+
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to ack retried DLQ message"));
+        assert!(message.contains("events.dlq.test.subject"));
+        assert!(message.contains("nats unavailable"));
         Ok(())
     }
 }

@@ -6,6 +6,7 @@ use sinex_primitives::events::builder::Operation;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 
+use crate::NodeLogicError;
 use crate::NodeResult;
 use crate::SinexError;
 
@@ -51,6 +52,19 @@ impl DerivedTriggerContext {
     #[must_use]
     pub fn trigger_uuid(&self) -> Uuid {
         *self.trigger_event_id.as_uuid()
+    }
+
+    /// Require the trigger event to carry an original source timestamp.
+    pub fn require_ts_orig(&self) -> Result<Timestamp, NodeLogicError> {
+        self.ts_orig.ok_or_else(|| {
+            NodeLogicError::InputParsing(format!(
+                "derived-node trigger event {} is missing ts_orig (source={}, event_type={}, processing_mode={})",
+                self.trigger_event_id,
+                self.source,
+                self.event_type,
+                self.processing_mode
+            ))
+        })
     }
 
     /// Create a context for live processing of a new event.

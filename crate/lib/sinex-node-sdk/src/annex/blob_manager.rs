@@ -60,6 +60,29 @@ fn attach_verification_status_update_error(
     )
 }
 
+fn material_name_for_blob(blob: &Blob) -> String {
+    blob.original_filename
+        .as_deref()
+        .filter(|filename| !filename.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| blob.annex_key())
+}
+
+fn require_ingest_filename<'a>(
+    validated_path: &'a Utf8Path,
+    original_filename: Option<&'a str>,
+) -> NodeResult<&'a str> {
+    if let Some(filename) = original_filename.filter(|filename| !filename.trim().is_empty()) {
+        return Ok(filename);
+    }
+
+    validated_path.file_name().ok_or_else(|| {
+        SinexError::validation(format!(
+            "Blob ingestion requires a file name, but path has no final component: {validated_path}"
+        ))
+    })
+}
+
 #[derive(Debug)]
 pub struct BlobManager {
     annex: GitAnnex,
@@ -116,10 +139,7 @@ impl BlobManager {
             return Ok(Id::<SourceMaterial>::from_uuid(existing.id));
         }
 
-        let filename = blob
-            .original_filename
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
+        let filename = material_name_for_blob(blob);
 
         let mut material = if blob
             .mime_type
@@ -291,8 +311,7 @@ impl BlobManager {
             .await
             .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
 
-        let effective_filename =
-            original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
+        let effective_filename = require_ingest_filename(validated_path, original_filename)?;
 
         if let Some(existing) = self.check_dedup(&blake3_hash, effective_filename).await? {
             return Ok(existing);
@@ -707,9 +726,12 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        attach_verification_status_update_error, verification_status_persist_error,
+        attach_verification_status_update_error, material_name_for_blob, require_ingest_filename,
+        verification_status_persist_error,
     };
     use crate::SinexError;
+    use camino::Utf8Path;
+    use sinex_db::models::Blob;
     use sinex_primitives::domain::BlobVerificationStatus;
 
     // Inline because these cover private blob verification error helpers only.
@@ -747,6 +769,40 @@ mod tests {
         assert_eq!(
             combined.context_map().get("verification_status_update_error"),
             Some(&"Processing error: failed to persist blob verification status".to_string()),
+        );
+    }
+
+    #[test]
+    fn material_name_for_blob_uses_annex_key_when_filename_missing() {
+        let blob = Blob::builder()
+            .annex_backend("SHA256E".to_string())
+            .content_hash("deadbeef".to_string())
+            .size_bytes(42)
+            .build();
+
+        assert_eq!(material_name_for_blob(&blob), "SHA256E-s42--deadbeef");
+    }
+
+    #[test]
+    fn require_ingest_filename_prefers_explicit_filename() {
+        let path = Utf8Path::new("/tmp/example.txt");
+
+        let filename =
+            require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
+
+        assert_eq!(filename, "provided.txt");
+    }
+
+    #[test]
+    fn require_ingest_filename_rejects_paths_without_final_component() {
+        let error = require_ingest_filename(Utf8Path::new("/"), None)
+            .expect_err("paths without a filename must fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Blob ingestion requires a file name"),
+            "unexpected error: {error}"
         );
     }
 }
