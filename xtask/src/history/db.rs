@@ -1745,7 +1745,9 @@ impl HistoryDb {
             })?;
 
         for (id, output) in &rows {
-            let meta = parse_sandbox_meta(output);
+            let meta = parse_sandbox_meta(output).wrap_err_with(|| {
+                format!("failed to parse sandbox metadata for stored test result row {id}")
+            })?;
             if meta.slot_name.is_some() || meta.slot_wait_ms.is_some() {
                 update_stmt.execute(params![
                     meta.slot_name,
@@ -3741,13 +3743,19 @@ struct SandboxMeta {
     cleanup_ms: Option<i64>,
 }
 
+fn parse_sandbox_metric(field: &str, value: &str) -> Result<i64> {
+    value
+        .parse()
+        .wrap_err_with(|| format!("invalid sandbox metadata field {field}={value}"))
+}
+
 /// Parse sandbox slog events from test output to extract infrastructure metadata.
 ///
 /// Looks for `[sandbox:*] event=slot_acquired` lines and extracts:
 /// - `slot` → slot_name (e.g., "sinex_test_pool_13")
 /// - `duration_ms` → slot_wait_ms (total acquisition time including cleanup)
 /// - `clean_ms` → cleanup_ms (cleanup time for dirty slots, absent for clean slots)
-fn parse_sandbox_meta(output: &str) -> SandboxMeta {
+fn parse_sandbox_meta(output: &str) -> Result<SandboxMeta> {
     let mut meta = SandboxMeta::default();
 
     for line in output.lines() {
@@ -3760,9 +3768,9 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
             if let Some(val) = part.strip_prefix("slot=") {
                 meta.slot_name = Some(val.to_string());
             } else if let Some(val) = part.strip_prefix("duration_ms=") {
-                meta.slot_wait_ms = val.parse().ok();
+                meta.slot_wait_ms = Some(parse_sandbox_metric("duration_ms", val)?);
             } else if let Some(val) = part.strip_prefix("clean_ms=") {
-                meta.cleanup_ms = val.parse().ok();
+                meta.cleanup_ms = Some(parse_sandbox_metric("clean_ms", val)?);
             }
         }
 
@@ -3770,7 +3778,7 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
         break;
     }
 
-    meta
+    Ok(meta)
 }
 
 #[cfg(test)]
@@ -5000,7 +5008,7 @@ mod tests {
     async fn test_parse_sandbox_meta_slot_acquired() -> TestResult<()> {
         // Clean slot (no clean_ms field)
         let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_5 duration_ms=42 pid=12345 clean=true\ntest output here";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_5"));
         assert_eq!(meta.slot_wait_ms, Some(42));
         assert!(meta.cleanup_ms.is_none());
@@ -5011,7 +5019,7 @@ mod tests {
     async fn test_parse_sandbox_meta_dirty_slot() -> TestResult<()> {
         // Dirty slot with cleanup time
         let output = "some earlier output\n[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_13 duration_ms=381 clean_ms=352 pid=917199 clean=false\nmore output";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_13"));
         assert_eq!(meta.slot_wait_ms, Some(381));
         assert_eq!(meta.cleanup_ms, Some(352));
@@ -5021,10 +5029,18 @@ mod tests {
     #[sinex_test]
     async fn test_parse_sandbox_meta_no_slog_events() -> TestResult<()> {
         let output = "plain test output\nno sandbox events here";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert!(meta.slot_name.is_none());
         assert!(meta.slot_wait_ms.is_none());
         assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_rejects_invalid_duration() -> TestResult<()> {
+        let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_7 duration_ms=oops pid=12345";
+        let error = parse_sandbox_meta(output).unwrap_err();
+        assert!(format!("{error:#}").contains("invalid sandbox metadata field duration_ms=oops"));
         Ok(())
     }
 
