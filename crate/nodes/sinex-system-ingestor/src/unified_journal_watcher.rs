@@ -46,6 +46,9 @@ use crate::watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 /// Can be overridden via `SINEX_JOURNAL_MAX_LINE_BYTES` environment variable.
 const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
+/// Preview length for malformed or oversized journal lines in logs and DLQ payloads.
+const JOURNAL_LINE_PREVIEW_LIMIT: usize = 512;
+
 /// Required keys in a systemd journal cursor string.
 /// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
 const CURSOR_REQUIRED_KEYS: &[&str] = &["s", "i", "b", "m", "t", "x"];
@@ -354,20 +357,68 @@ impl UnifiedJournalWatcher {
         })
     }
 
+    fn journal_line_preview(line: &str) -> (String, bool) {
+        let preview: String = line.chars().take(JOURNAL_LINE_PREVIEW_LIMIT).collect();
+        let preview_truncated = line.chars().count() > JOURNAL_LINE_PREVIEW_LIMIT;
+        (preview, preview_truncated)
+    }
+
+    fn parse_oversized_line_metadata(
+        line: &str,
+    ) -> Result<(String, Option<String>), serde_json::Error> {
+        let entry: serde_json::Value = serde_json::from_str(line)?;
+        let cursor = entry
+            .get("__CURSOR")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let unit = entry
+            .get("_SYSTEMD_UNIT")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        Ok((cursor, unit))
+    }
+
+    fn require_sync_end_cursor(entries_count: u64, last_cursor: Option<String>) -> NodeResult<String> {
+        last_cursor.ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Historical journal import processed {entries_count} entries without a terminal cursor"
+            ))
+        })
+    }
+
+    fn record_malformed_journal_line(
+        &self,
+        phase: &'static str,
+        line: &str,
+        error: &serde_json::Error,
+    ) {
+        let (line_preview, line_preview_truncated) = Self::journal_line_preview(line);
+        let message = format!("Failed to parse journal {phase} line: {error}");
+        self.record_error(message);
+        warn!(
+            phase,
+            line_bytes = line.len(),
+            line_preview = %line_preview,
+            line_preview_truncated,
+            error = %error,
+            "Ignoring malformed journal line"
+        );
+    }
+
     async fn route_oversized_line_to_dlq(
         &self,
         material: &WatcherMaterialContext,
         line: &str,
         cursor: &str,
         unit: Option<&str>,
+        metadata_parse_error: Option<&str>,
     ) -> NodeResult<bool> {
         let Some(publisher) = self.dlq_publisher.as_ref() else {
             return Ok(false);
         };
 
-        let preview_limit = 512usize;
-        let preview: String = line.chars().take(preview_limit).collect();
-        let preview_truncated = line.chars().count() > preview_limit;
+        let (preview, preview_truncated) = Self::journal_line_preview(line);
         let event = Event::new_json(
             "system-watcher",
             "journal.line.rejected",
@@ -379,6 +430,7 @@ impl UnifiedJournalWatcher {
                 "journal_unit": unit,
                 "line_preview": preview,
                 "line_preview_truncated": preview_truncated,
+                "metadata_parse_error": metadata_parse_error,
             }),
             material.initial_provenance(),
         )
@@ -530,7 +582,8 @@ impl UnifiedJournalWatcher {
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to parse journal entry: {}", e);
+                        let raw_line = String::from_utf8_lossy(line);
+                        self.record_malformed_journal_line("historical", raw_line.as_ref(), &e);
                     }
                 }
             }
@@ -550,10 +603,11 @@ impl UnifiedJournalWatcher {
 
         // Send sync event
         if entries_count > 0 {
+            let end_cursor = Self::require_sync_end_cursor(entries_count, last_cursor)?;
             let sync_payload = JournalSyncPayload {
                 sync_type: JournalSyncType::InitialImport,
                 start_cursor: first_cursor,
-                end_cursor: last_cursor.unwrap_or_default(),
+                end_cursor,
                 entries_count,
                 time_start: None,
                 time_end: None,
@@ -686,26 +740,27 @@ impl UnifiedJournalWatcher {
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
                     if line.len() > self.max_line_bytes {
-                        // Extract cursor and unit name for DLQ metadata if possible
-                        let (cursor, unit) = line
-                            .trim()
-                            .parse::<serde_json::Value>()
-                            .ok()
-                            .and_then(|entry| {
-                                let cursor = entry
-                                    .get("__CURSOR")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-                                let unit = entry
-                                    .get("_SYSTEMD_UNIT")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-                                cursor.map(|c| (c, unit))
-                            })
-                            .unwrap_or_else(|| ("unknown".to_string(), None));
+                        let (cursor, unit, metadata_parse_error) =
+                            match Self::parse_oversized_line_metadata(line.trim()) {
+                                Ok((cursor, unit)) => (cursor, unit, None),
+                                Err(error) => {
+                                    self.record_malformed_journal_line(
+                                        "oversized",
+                                        line.trim(),
+                                        &error,
+                                    );
+                                    ("unknown".to_string(), None, Some(error.to_string()))
+                                }
+                            };
 
                         match self
-                            .route_oversized_line_to_dlq(material, &line, &cursor, unit.as_deref())
+                            .route_oversized_line_to_dlq(
+                                material,
+                                &line,
+                                &cursor,
+                                unit.as_deref(),
+                                metadata_parse_error.as_deref(),
+                            )
                             .await
                         {
                             Ok(true) => {
@@ -780,7 +835,7 @@ impl UnifiedJournalWatcher {
                                 }
                             }
                             Err(e) => {
-                                debug!("Failed to parse journal entry: {}", e);
+                                self.record_malformed_journal_line("follow", &line, &e);
                             }
                         }
                     }
@@ -1166,7 +1221,13 @@ impl UnifiedJournalWatcher {
         {
             // Create parent directory if needed
             if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
+                tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                    sinex_node_sdk::SinexError::processing(format!(
+                        "Failed to create cursor directory {}",
+                        parent
+                    ))
+                    .with_source(error)
+                })?;
             }
 
             atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
@@ -1207,13 +1268,14 @@ impl UnifiedJournalWatcher {
                     err
                 );
             }
+        } else {
+            self.record_event();
         }
         Ok(())
     }
 
     /// Update event tracking.
     /// Reserved for metrics and diagnostics integration.
-    #[allow(dead_code)]
     fn record_event(&self) {
         if let Ok(mut last_event) = self.last_event_time.lock() {
             *last_event = Some(Instant::now());
@@ -1223,7 +1285,6 @@ impl UnifiedJournalWatcher {
 
     /// Record an error.
     /// Reserved for metrics and diagnostics integration.
-    #[allow(dead_code)]
     fn record_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.lock() {
             *last_error = Some(error);
@@ -1459,6 +1520,87 @@ mod tests {
         let expected =
             Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
         assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_oversized_line_metadata_preserves_cursor_and_unit(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let (cursor, unit) = UnifiedJournalWatcher::parse_oversized_line_metadata(
+            r#"{"__CURSOR":"s=abc","_SYSTEMD_UNIT":"test.service"}"#,
+        )?;
+
+        assert_eq!(cursor, "s=abc");
+        assert_eq!(unit.as_deref(), Some("test.service"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_sync_end_cursor_rejects_missing_cursor_after_entries(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let error = UnifiedJournalWatcher::require_sync_end_cursor(3, None)
+            .expect_err("sync events must not fabricate an empty end cursor");
+
+        assert!(error
+            .to_string()
+            .contains("processed 3 entries without a terminal cursor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_cursor_reports_parent_directory_creation_failure(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let mut watcher = test_watcher();
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let blocker = runtime_dir.join("blocker");
+        std::fs::write(&blocker, b"not-a-directory")?;
+        watcher.journal_config.cursor_file =
+            Some(blocker.join("cursor.state").to_string_lossy().into_owned());
+        watcher
+            .pending_cursor
+            .lock()
+            .expect("pending cursor lock should not be poisoned")
+            .replace("s=abc".to_string());
+
+        let error = watcher
+            .flush_cursor()
+            .await
+            .expect_err("directory creation failures must surface honestly");
+
+        assert!(error
+            .to_string()
+            .contains("Failed to create cursor directory"));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_event_updates_health_snapshot(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let (tx, mut rx) = mpsc::channel(1);
+        let event = Event::new_json(
+            "system-watcher",
+            "journal.entry.written",
+            json!({"cursor": "s=abc"}),
+            material.initial_provenance(),
+        );
+
+        watcher.send_event(&tx, event, "test_send", &material).await?;
+        let _received = rx.recv().await.expect("event should reach the channel");
+
+        let snapshot = watcher.health_snapshot();
+        assert_eq!(snapshot.events_processed, 1);
+        assert!(snapshot.last_event.is_some());
         Ok(())
     }
 }

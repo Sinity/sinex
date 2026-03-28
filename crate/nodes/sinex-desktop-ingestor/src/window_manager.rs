@@ -80,6 +80,42 @@ fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node
     sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
 }
 
+fn collect_hyprland_candidates<I>(entries: I, hypr_dir: &Path) -> NodeResult<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = std::io::Result<PathBuf>>,
+{
+    let mut candidates = Vec::new();
+
+    for entry in entries {
+        let path = entry.map_err(|error| {
+            platform_error(
+                format!(
+                    "Cannot inspect Hyprland runtime entry under {}: {error}",
+                    hypr_dir.display()
+                ),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            )
+        })?;
+
+        let socket_path = path.join(".socket2.sock");
+        let has_socket = socket_path.try_exists().map_err(|error| {
+            platform_error(
+                format!(
+                    "Cannot probe Hyprland event socket {}: {error}",
+                    socket_path.display()
+                ),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            )
+        })?;
+
+        if has_socket {
+            candidates.push(path);
+        }
+    }
+
+    Ok(candidates)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HyprlandSocketPaths {
     event_socket: String,
@@ -127,10 +163,8 @@ fn select_hyprland_base_path(
         )
     })?;
 
-    let candidates: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|value| value.path()))
-        .filter(|path| path.join(".socket2.sock").exists())
-        .collect();
+    let candidates =
+        collect_hyprland_candidates(entries.map(|entry| entry.map(|value| value.path())), &hypr_dir)?;
 
     match candidates.as_slice() {
         [candidate] => Ok(candidate.clone()),
@@ -356,7 +390,7 @@ impl WindowManagerWatcher {
         &self,
         material_id: Uuid,
         payload_bytes: Vec<u8>,
-        mut event: Event<JsonValue>,
+        event: Event<JsonValue>,
     ) -> NodeResult<()> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(
@@ -1243,6 +1277,26 @@ mod tests {
                 .to_string()
                 .contains("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
         );
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_hyprland_candidates_rejects_entry_iteration_failures() -> TestResult<()> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-wm-{}", Uuid::now_v7()));
+        let hypr_dir = runtime_dir.join("hypr");
+        std::fs::create_dir_all(&hypr_dir)?;
+
+        let error = collect_hyprland_candidates(
+            vec![Err(std::io::Error::other("broken directory entry"))],
+            &hypr_dir,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Cannot inspect Hyprland runtime entry"));
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
