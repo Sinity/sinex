@@ -181,33 +181,46 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
     // Count files using a bounded recursive traversal
 
     // Simple directory traversal for estimation
-    fn count_files_recursive(path: &Path, depth: usize, max_depth: Option<usize>) -> usize {
+    fn count_files_recursive(path: &Path, depth: usize, max_depth: Option<usize>) -> Result<usize> {
         if let Some(max) = max_depth
             && depth >= max
         {
-            return 0;
+            return Ok(0);
         }
 
         let mut count = 0;
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.take(1000).flatten() {
-                // Limit for performance
-                let path = entry.path();
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_file() {
-                        count += 1;
-                    } else if metadata.is_dir()
-                        && let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path)
-                    {
-                        count += count_files_recursive(&utf8_path, depth + 1, max_depth);
-                    }
-                }
+        let entries = std::fs::read_dir(path).map_err(|error| {
+            SinexError::io("Failed to read directory while estimating watched file count")
+                .with_context("path", path.to_string())
+                .with_std_error(&error)
+        })?;
+        for entry in entries.take(1000) {
+            let entry = entry.map_err(|error| {
+                SinexError::io("Failed to enumerate directory entry while estimating watched file count")
+                    .with_context("path", path.to_string())
+                    .with_std_error(&error)
+            })?;
+            // Limit for performance
+            let child_path = entry.path();
+            let metadata = entry.metadata().map_err(|error| {
+                SinexError::io("Failed to read file metadata while estimating watched file count")
+                    .with_context("path", child_path.display().to_string())
+                    .with_std_error(&error)
+            })?;
+            if metadata.is_file() {
+                count += 1;
+            } else if metadata.is_dir() {
+                let utf8_path = camino::Utf8PathBuf::from_path_buf(child_path).map_err(|path| {
+                    SinexError::validation("Encountered non-UTF-8 path while estimating watched file count")
+                        .with_context("path", path.display().to_string())
+                })?;
+                count += count_files_recursive(&utf8_path, depth + 1, max_depth)?;
             }
         }
-        count
+        Ok(count)
     }
 
-    let count = count_files_recursive(path, 0, max_depth);
+    let count = count_files_recursive(path, 0, max_depth)?;
     Ok(count)
 }
 
