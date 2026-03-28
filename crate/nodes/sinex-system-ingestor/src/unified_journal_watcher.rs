@@ -34,7 +34,7 @@ use sinex_primitives::{
 };
 use std::collections::{HashMap, HashSet};
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -63,6 +63,16 @@ enum FollowExitReason {
     Shutdown,
     UnexpectedEof,
     ReadError,
+}
+
+struct StreamingActivityGuard {
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for StreamingActivityGuard {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
 }
 
 fn check_follow_exit_status(exit_reason: FollowExitReason, status: ExitStatus) -> NodeResult<()> {
@@ -259,6 +269,7 @@ pub struct UnifiedJournalWatcher {
     last_event_time: Arc<Mutex<Option<Instant>>>,
     event_count: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    streaming_active: Arc<AtomicBool>,
     child_process: Option<Child>,
     // Cursor batching state
     pending_cursor: Arc<Mutex<Option<String>>>,
@@ -270,6 +281,13 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn begin_streaming(&self) -> StreamingActivityGuard {
+        self.streaming_active.store(true, Ordering::Relaxed);
+        StreamingActivityGuard {
+            active: Arc::clone(&self.streaming_active),
+        }
+    }
+
     async fn load_last_cursor(cursor_file: &str) -> NodeResult<Option<String>> {
         match tokio::fs::read_to_string(cursor_file).await {
             Ok(contents) => {
@@ -497,6 +515,7 @@ impl UnifiedJournalWatcher {
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            streaming_active: Arc::new(AtomicBool::new(false)),
             child_process: None,
             pending_cursor: Arc::new(Mutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
@@ -623,15 +642,19 @@ impl UnifiedJournalWatcher {
         systemd_tx: Option<mpsc::Sender<Event<JsonValue>>>,
         material: WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let _activity = self.begin_streaming();
         info!("Starting unified journal monitoring");
 
         // Import historical entries if configured
-        if self.journal_config.import_on_startup
-            && let Err(e) = self
-                .import_historical(&journal_tx, &systemd_tx, &material)
+        if self.journal_config.import_on_startup {
+            self.import_historical(&journal_tx, &systemd_tx, &material)
                 .await
-        {
-            error!("Failed to import historical journal entries: {}", e);
+                .map_err(|error| {
+                    self.record_error(format!(
+                        "Failed to import historical journal entries: {error}"
+                    ));
+                    error.with_context("startup_phase", "historical_import".to_string())
+                })?;
         }
 
         // Follow journal if configured
@@ -700,10 +723,12 @@ impl UnifiedJournalWatcher {
             })?;
 
         if !output.status.success() {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
+            let error = sinex_node_sdk::SinexError::processing(format!(
                 "journalctl failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            )));
+            ));
+            self.record_error(error.to_string());
+            return Err(error);
         }
 
         let mut entries_count = 0u64;
@@ -1016,6 +1041,7 @@ impl UnifiedJournalWatcher {
                     }
                 }
                 Err(e) => {
+                    self.record_error(format!("Error reading journal output: {e}"));
                     error!("Error reading journal output: {}", e);
                     exit_reason = FollowExitReason::ReadError;
                     break;
@@ -1032,6 +1058,9 @@ impl UnifiedJournalWatcher {
                 Err(error) => {
                     warn!(error = %error, "Failed to wait for journal watcher process exit");
                     if !matches!(exit_reason, FollowExitReason::Shutdown) {
+                        self.record_error(format!(
+                            "Failed to wait for journal watcher process exit: {error}"
+                        ));
                         return Err(
                             SinexError::io("Failed to wait for journal watcher process exit")
                                 .with_source(error),
@@ -1529,7 +1558,8 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         };
 
         WatcherActivitySnapshot {
-            active: !self.cancel_token.is_cancelled(),
+            active: self.streaming_active.load(Ordering::Relaxed)
+                && !self.cancel_token.is_cancelled(),
             last_event,
             last_error,
             events_processed: self.event_count.load(Ordering::Relaxed),
@@ -1624,6 +1654,7 @@ mod tests {
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            streaming_active: Arc::new(AtomicBool::new(false)),
             child_process: None,
             pending_cursor: Arc::new(Mutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
@@ -2135,6 +2166,7 @@ mod tests {
     async fn send_event_updates_health_snapshot(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
+        watcher.streaming_active.store(true, Ordering::Relaxed);
         let material = test_material();
         let (tx, mut rx) = mpsc::channel(1);
         let event = Event::new_json(
@@ -2148,6 +2180,7 @@ mod tests {
         let _received = rx.recv().await.expect("event should reach the channel");
 
         let snapshot = watcher.health_snapshot();
+        assert!(snapshot.active);
         assert_eq!(snapshot.events_processed, 1);
         assert!(snapshot.last_event.is_some());
         Ok(())
@@ -2157,6 +2190,7 @@ mod tests {
     async fn send_event_rejects_closed_channel(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
+        watcher.streaming_active.store(true, Ordering::Relaxed);
         let material = test_material();
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
@@ -2178,6 +2212,60 @@ mod tests {
         let snapshot = watcher.health_snapshot();
         assert_eq!(snapshot.events_processed, 0);
         assert!(snapshot.last_error.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn health_snapshot_requires_live_streaming_activity(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+
+        watcher.streaming_active.store(true, Ordering::Relaxed);
+        assert!(
+            watcher.health_snapshot().active,
+            "streaming watcher should report active"
+        );
+
+        watcher.streaming_active.store(false, Ordering::Relaxed);
+        assert!(
+            !watcher.health_snapshot().active,
+            "stopped watcher must not stay active just because shutdown was not requested"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn start_streaming_surfaces_historical_import_failures(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let _path = EnvVarGuard::set("PATH", "");
+        let mut watcher = test_watcher();
+        watcher.journal_config.import_on_startup = true;
+        watcher.journal_config.follow = false;
+        let material = test_material();
+        let (journal_tx, _journal_rx) = mpsc::channel(1);
+
+        let error = watcher
+            .start_streaming(journal_tx, None, material)
+            .await
+            .expect_err("historical import failure must abort startup");
+
+        assert!(error.to_string().contains("Failed to run journalctl"));
+        assert!(error.to_string().contains("historical_import"));
+        let snapshot = watcher.health_snapshot();
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|value| value.contains("Failed to import historical journal entries"))
+        );
+        assert!(
+            !snapshot.active,
+            "failed startup must not leave the watcher marked active"
+        );
+
         Ok(())
     }
 
