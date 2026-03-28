@@ -17,7 +17,7 @@ use sinex_node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
 };
-use sinex_primitives::domain::{EventSource, NodeName};
+use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
@@ -1299,13 +1299,39 @@ impl ReplayExecutionEngine {
             return;
         }
 
+        let event_source = match EventSource::new(event_source.to_string()) {
+            Ok(source) => source,
+            Err(error) => {
+                warn!(
+                    operation_id = %operation_id,
+                    event_source,
+                    error = %error,
+                    "Skipping scope invalidation publish because archived event source is invalid"
+                );
+                return;
+            }
+        };
+
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
 
         for (event_type, scope_keys) in scope_metadata {
+            let event_type = match EventType::new(event_type.clone()) {
+                Ok(event_type) => event_type,
+                Err(error) => {
+                    warn!(
+                        operation_id = %operation_id,
+                        raw_event_type = %event_type,
+                        scope_count = scope_keys.len(),
+                        error = %error,
+                        "Skipping scope invalidation publish because archived event type is invalid"
+                    );
+                    continue;
+                }
+            };
             let invalidation = DerivedScopeInvalidation::archived(
                 cascade_ids.to_vec(),
-                event_source,
-                event_type.as_str(),
+                event_source.clone(),
+                event_type.clone(),
             )
             .with_operation(operation_id)
             .with_scope_keys(scope_keys.clone());
@@ -1319,7 +1345,7 @@ impl ReplayExecutionEngine {
                     {
                         warn!(
                             operation_id = %operation_id,
-                            event_type,
+                            event_type = %event_type,
                             scope_count = scope_keys.len(),
                             error = %e,
                             "Failed to publish scope invalidation"
@@ -1327,7 +1353,7 @@ impl ReplayExecutionEngine {
                     } else {
                         debug!(
                             operation_id = %operation_id,
-                            event_type,
+                            event_type = %event_type,
                             scope_count = scope_keys.len(),
                             "Published scope invalidation"
                         );

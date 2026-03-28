@@ -719,10 +719,8 @@ where
             // Build context for invalidation processing
             let context = DerivedTriggerContext {
                 trigger_event_id: Id::new(),
-                source: EventSource::new(&invalidation.event_source)
-                    .unwrap_or_else(|_| EventSource::from_static("unknown")),
-                event_type: EventType::new(&invalidation.event_type)
-                    .unwrap_or_else(|_| EventType::from_static("unknown")),
+                source: invalidation.event_source.clone(),
+                event_type: invalidation.event_type.clone(),
                 ts_orig: None,
                 ts_coided: Timestamp::now(),
                 processing_mode: sinex_primitives::domain::ProcessingMode::Replay,

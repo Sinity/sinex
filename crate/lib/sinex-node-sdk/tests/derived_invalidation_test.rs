@@ -19,7 +19,9 @@ use sinex_node_sdk::{
     CheckpointManager, EventTransport, NatsPublisher, NodeLogicError, ScopeReconcilerNode,
     ScopeReconcilerNodeAdapter, TransducerNode, WindowedNode,
 };
-use sinex_primitives::domain::{InvalidationAction, ProcessingMode, TriggerKind};
+use sinex_primitives::domain::{
+    EventSource, EventType, InvalidationAction, ProcessingMode, TriggerKind,
+};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
@@ -50,12 +52,16 @@ fn make_context() -> DerivedTriggerContext {
 #[sinex_test]
 async fn invalidation_signal_construction() -> TestResult<()> {
     let ids = vec![Uuid::now_v7(), Uuid::now_v7()];
-    let inv = DerivedScopeInvalidation::archived(ids.clone(), "fs-watcher", "file.created");
+    let inv = DerivedScopeInvalidation::archived(
+        ids.clone(),
+        EventSource::from_static("fs-watcher"),
+        EventType::from_static("file.created"),
+    );
 
     assert_eq!(inv.action, InvalidationAction::Archived);
     assert_eq!(inv.affected_event_ids.len(), 2);
-    assert_eq!(inv.event_source, "fs-watcher");
-    assert_eq!(inv.event_type, "file.created");
+    assert_eq!(inv.event_source.as_str(), "fs-watcher");
+    assert_eq!(inv.event_type.as_str(), "file.created");
     assert!(inv.operation_id.is_none());
     assert!(inv.affected_scope_keys.is_empty());
 
@@ -65,10 +71,13 @@ async fn invalidation_signal_construction() -> TestResult<()> {
 #[sinex_test]
 async fn invalidation_signal_with_operation_and_scopes() -> TestResult<()> {
     let op_id = Uuid::now_v7();
-    let inv =
-        DerivedScopeInvalidation::replaced(vec![Uuid::now_v7()], "analytics", "analytics.summary")
-            .with_operation(op_id)
-            .with_scope_keys(vec!["scope-a".into(), "scope-b".into()]);
+    let inv = DerivedScopeInvalidation::replaced(
+        vec![Uuid::now_v7()],
+        EventSource::from_static("analytics"),
+        EventType::from_static("analytics.summary"),
+    )
+    .with_operation(op_id)
+    .with_scope_keys(vec!["scope-a".into(), "scope-b".into()]);
 
     assert_eq!(inv.action, InvalidationAction::Replaced);
     assert_eq!(inv.operation_id, Some(op_id));
@@ -79,8 +88,11 @@ async fn invalidation_signal_with_operation_and_scopes() -> TestResult<()> {
 
 #[sinex_test]
 async fn invalidation_matches_input_filter() -> TestResult<()> {
-    let inv =
-        DerivedScopeInvalidation::archived(vec![Uuid::now_v7()], "analytics", "analytics.summary");
+    let inv = DerivedScopeInvalidation::archived(
+        vec![Uuid::now_v7()],
+        EventSource::from_static("analytics"),
+        EventType::from_static("analytics.summary"),
+    );
 
     assert!(inv.matches_input("analytics.summary"));
     assert!(!inv.matches_input("file.created"));
@@ -91,10 +103,36 @@ async fn invalidation_matches_input_filter() -> TestResult<()> {
 
 #[sinex_test]
 async fn invalidation_inserted_variant() -> TestResult<()> {
-    let inv =
-        DerivedScopeInvalidation::inserted(vec![Uuid::now_v7()], "fs-watcher", "file.created");
+    let inv = DerivedScopeInvalidation::inserted(
+        vec![Uuid::now_v7()],
+        EventSource::from_static("fs-watcher"),
+        EventType::from_static("file.created"),
+    );
     assert_eq!(inv.action, InvalidationAction::Inserted);
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn invalidation_signal_rejects_invalid_event_identity_on_deserialize() -> TestResult<()> {
+    let payload = serde_json::json!({
+        "affected_event_ids": [Uuid::now_v7()],
+        "action": "archived",
+        "operation_id": null,
+        "event_source": "bad source",
+        "event_type": "bad type",
+        "affected_scope_keys": [],
+    });
+
+    let error = serde_json::from_value::<DerivedScopeInvalidation>(payload)
+        .expect_err("invalid event identity must fail deserialization");
+
+    assert!(
+        error.to_string().contains("Event source")
+            || error.to_string().contains("Event type")
+            || error.to_string().contains("invalid"),
+        "unexpected error: {error}"
+    );
     Ok(())
 }
 
@@ -591,7 +629,11 @@ async fn windowed_recomputes_from_working_set() -> TestResult<()> {
 async fn invalidation_signal_serialization_roundtrip() -> TestResult<()> {
     let op_id = Uuid::now_v7();
     let ids = vec![Uuid::now_v7(), Uuid::now_v7()];
-    let inv = DerivedScopeInvalidation::archived(ids.clone(), "fs-watcher", "file.created")
+    let inv = DerivedScopeInvalidation::archived(
+        ids.clone(),
+        EventSource::from_static("fs-watcher"),
+        EventType::from_static("file.created"),
+    )
         .with_operation(op_id)
         .with_scope_keys(vec!["scope-a".into()]);
 
@@ -604,8 +646,8 @@ async fn invalidation_signal_serialization_roundtrip() -> TestResult<()> {
 
     assert_eq!(restored.action, InvalidationAction::Archived);
     assert_eq!(restored.affected_event_ids, ids);
-    assert_eq!(restored.event_source, "fs-watcher");
-    assert_eq!(restored.event_type, "file.created");
+    assert_eq!(restored.event_source.as_str(), "fs-watcher");
+    assert_eq!(restored.event_type.as_str(), "file.created");
     assert_eq!(restored.operation_id, Some(op_id));
     assert_eq!(restored.affected_scope_keys, vec!["scope-a"]);
 
@@ -824,9 +866,12 @@ async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestCon
         .first()
         .and_then(|event| event.id)
         .expect("paged input fixture should contain an id");
-    let invalidation =
-        DerivedScopeInvalidation::replaced(vec![*first_input_id.as_uuid()], "measurements", "measurement.taken")
-            .with_scope_keys(vec![scope_key.to_string()]);
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*first_input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
 
     let outputs = adapter.process_invalidation(&invalidation).await?;
     assert_eq!(outputs.len(), 1, "large scope should still recompute one aggregate");
@@ -897,8 +942,11 @@ async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> 
         .and_then(|event| event.id)
         .expect("inserted input should have id");
 
-    let invalidation =
-        DerivedScopeInvalidation::replaced(vec![*input_id.as_uuid()], "measurements", "measurement.taken");
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    );
 
     let bad_pool = PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(100))
