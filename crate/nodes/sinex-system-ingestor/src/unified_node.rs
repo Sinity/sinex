@@ -153,6 +153,13 @@ fn log_forwarder_join_result(task_name: &str, result: Result<(), JoinError>) {
     }
 }
 
+fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
+    match checkpoint {
+        Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
+        _ => None,
+    }
+}
+
 async fn finalize_material_after_scan_error(
     material: &WatcherMaterialContext,
     reason: &str,
@@ -884,16 +891,18 @@ impl IngestorNode for SystemNode {
         state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         let start_time = std::time::Instant::now();
 
         let snapshot = self.take_snapshot(state).await?;
         let source_count = snapshot.enabled_sources.len() as u64;
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: source_count,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_snapshot".to_string()],
             failed_targets: vec![],
@@ -910,6 +919,7 @@ impl IngestorNode for SystemNode {
     ) -> NodeResult<ScanReport> {
         let start_time = std::time::Instant::now();
         let emit_events = !args.dry_run;
+        let final_timestamp = until.end_time().unwrap_or_else(Timestamp::now);
 
         let events_processed = self
             .scan_historical_system_data(&from, &until, &args, emit_events)
@@ -918,14 +928,8 @@ impl IngestorNode for SystemNode {
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((
-                match &from {
-                    Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => Timestamp::now() - time::Duration::hours(1), // estimate
-                },
-                Timestamp::now(),
-            )),
+            final_checkpoint: Checkpoint::timestamp(final_timestamp, None),
+            time_range: checkpoint_timestamp(&from).map(|started_at| (started_at, final_timestamp)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_historical".to_string()],
             failed_targets: vec![],
@@ -939,6 +943,7 @@ impl IngestorNode for SystemNode {
         from: Checkpoint,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         self.start_continuous_monitoring(from).await?;
 
         // Periodic snapshot loop: updates `state.health` every 30 seconds.
@@ -979,12 +984,13 @@ impl IngestorNode for SystemNode {
         }
 
         self.shutdown_watchers().await;
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
@@ -1476,6 +1482,73 @@ mod tests {
             report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_historical_report_uses_requested_time_bounds() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let from_ts = Timestamp::now() - time::Duration::minutes(10);
+        let until_ts = from_ts + time::Duration::minutes(5);
+        let report = node
+            .scan_historical(
+                &mut SystemPersistentState::default(),
+                Checkpoint::timestamp(from_ts, None),
+                TimeHorizon::Historical { end_time: until_ts },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(until_ts, None)
+        );
+        assert_eq!(report.time_range, Some((from_ts, until_ts)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_reports_elapsed_time_window() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let (tx, _rx) = mpsc::channel(16);
+        node.set_emitter_override(EventEmitter::new(tx, true));
+        node.set_material_override(Arc::new(MockMaterialContext));
+
+        let state = SystemPersistentState::default();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        let (started_at, finished_at) = report
+            .time_range
+            .expect("continuous report should include an elapsed time window");
+        assert!(finished_at > started_at);
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(finished_at, None)
         );
         Ok(())
     }
