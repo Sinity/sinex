@@ -37,8 +37,9 @@ use uuid::Uuid;
 ///
 /// # Edge Cases
 ///
-/// - **Corrupt WAL entries**: If WAL replay encounters malformed or invalid envelope entries, it stops at the error
-///   and uses the partial state up to that point. This is logged but not fatal.
+/// - **Corrupt WAL entries**: If WAL replay encounters malformed or invalid envelope entries,
+///   the persisted state is treated as incompatible and cleaned up instead of resuming from a
+///   truncated replay.
 /// - **Terminal materials with incomplete state**: If a material is marked terminal in the
 ///   database but the WAL shows incomplete assembly (missing end or buffered slices), the
 ///   state is cleaned up as stale.
@@ -136,6 +137,7 @@ async fn restore_state_params(
     let mut max_seq: u64 = 0;
     let mut has_envelope_entries = false;
     let mut has_non_empty_lines = false;
+    let mut replay_corrupted = false;
 
     for (line_num, line) in content.lines().enumerate() {
         if line.is_empty() {
@@ -153,6 +155,7 @@ async fn restore_state_params(
                         line = line_num + 1,
                         "WAL entry re-serialization failed (stopping replay): {e}"
                     );
+                    replay_corrupted = true;
                     break;
                 }
             };
@@ -166,6 +169,7 @@ async fn restore_state_params(
                     computed_crc = computed_crc,
                     "WAL CRC mismatch — corruption detected, stopping replay"
                 );
+                replay_corrupted = true;
                 break;
             }
             if envelope.seq > max_seq {
@@ -179,8 +183,18 @@ async fn restore_state_params(
                 line = line_num + 1,
                 "WAL replay error — invalid envelope entry, stopping replay"
             );
+            replay_corrupted = true;
             break;
         }
+    }
+
+    if replay_corrupted {
+        warn!(
+            material_id = %material_id,
+            "WAL replay encountered corruption; cleaning up incompatible persisted state"
+        );
+        cleanup_state(assembler, material_id).await;
+        return Ok(None);
     }
 
     if !has_envelope_entries {
@@ -1247,6 +1261,52 @@ mod tests {
 
         assert!(error.to_string().contains("invalid offset"));
         assert!(error.to_string().contains("bad-offset"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_cleans_up_partial_replay_after_corrupt_wal_line(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        let wal_path = material_dir.join(WAL_FILE_NAME);
+        write_wal_entry(
+            &wal_path,
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+        tokio::fs::write(
+            &wal_path,
+            format!(
+                "{}{}\n",
+                tokio::fs::read_to_string(&wal_path).await?,
+                "{\"invalid\":"
+            ),
+        )
+        .await?;
+        tokio::fs::write(material_dir.join(TEMP_FILE_NAME), b"abc").await?;
+
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "corrupt replay state should be cleaned up instead of partially restored"
+        );
+        assert!(
+            assembler.assembler_state.is_empty(),
+            "no in-memory assembly should be restored from a corrupt WAL"
+        );
         Ok(())
     }
 
