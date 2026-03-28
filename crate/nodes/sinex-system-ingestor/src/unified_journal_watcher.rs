@@ -170,6 +170,48 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn parse_realtime_timestamp_us(
+        entry: &serde_json::Value,
+        unit_name: &str,
+    ) -> NodeResult<u64> {
+        let raw = entry["__REALTIME_TIMESTAMP"].as_str().ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} is missing __REALTIME_TIMESTAMP"
+            ))
+        })?;
+        raw.parse::<u64>().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} has invalid __REALTIME_TIMESTAMP"
+            ))
+            .with_context("unit_name", unit_name.to_string())
+            .with_context("timestamp_us", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn timestamp_from_micros(timestamp_us: u64, unit_name: &str) -> NodeResult<Timestamp> {
+        Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000).ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} has out-of-range __REALTIME_TIMESTAMP"
+            ))
+            .with_context("unit_name", unit_name.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+        })
+    }
+
+    fn serialize_systemd_event<T: serde::Serialize>(
+        mut event: Event<T>,
+        uuid: uuid::Uuid,
+        ts_orig: Timestamp,
+    ) -> NodeResult<Event<JsonValue>> {
+        event.id = Some(sinex_primitives::Id::from_uuid(uuid));
+        event.ts_orig = Some(ts_orig);
+        event.to_json_event().map_err(|error| {
+            sinex_node_sdk::SinexError::processing("Failed to serialize systemd journal entry")
+                .with_source(error)
+        })
+    }
+
     /// Create new unified journal watcher
     pub async fn new(
         journal_config: JournalConfig,
@@ -424,7 +466,7 @@ impl UnifiedJournalWatcher {
 
                         // Check if this is a systemd event and emit systemd-specific event
                         if self.systemd_enabled
-                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
+                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
                             && let Some(tx) = systemd_tx.as_ref()
                         {
                             self.send_event(tx, systemd_event, "systemd_batch", material)
@@ -669,7 +711,7 @@ impl UnifiedJournalWatcher {
                                 // Emit systemd event if applicable
                                 if self.systemd_enabled
                                     && let Some(systemd_event) =
-                                        self.parse_systemd_entry(&entry, material)
+                                        self.parse_systemd_entry(&entry, material)?
                                     && let Some(ref tx) = systemd_tx
                                 {
                                     self.send_event(
@@ -911,23 +953,20 @@ impl UnifiedJournalWatcher {
         &self,
         entry: &serde_json::Value,
         material: &WatcherMaterialContext,
-    ) -> Option<Event<JsonValue>> {
+    ) -> NodeResult<Option<Event<JsonValue>>> {
         let message = entry["MESSAGE"].as_str().unwrap_or("");
-        let unit_name = entry["_SYSTEMD_UNIT"].as_str()?;
+        let Some(unit_name) = entry["_SYSTEMD_UNIT"].as_str() else {
+            return Ok(None);
+        };
         let cursor = entry["__CURSOR"].as_str().unwrap_or("unknown");
 
         // Filter by tracked units if configured
         if !self.systemd_units.is_empty() && !self.systemd_units.contains(unit_name) {
-            return None;
+            return Ok(None);
         }
 
-        // Parse timestamp once
-        let timestamp_us = entry["__REALTIME_TIMESTAMP"]
-            .as_str()
-            .and_then(|t| t.parse::<u64>().ok())
-            .unwrap_or_else(|| {
-                (sinex_primitives::temporal::now().unix_timestamp_nanos() / 1000) as u64
-            });
+        let timestamp_us = Self::parse_realtime_timestamp_us(entry, unit_name)?;
+        let ts_orig = Self::timestamp_from_micros(timestamp_us, unit_name)?;
 
         // Helper to construct deterministic ID
         // timestamp (48 bits) | entropy (80 bits)
@@ -938,10 +977,10 @@ impl UnifiedJournalWatcher {
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
-        let ts_orig = Some(sinex_primitives::temporal::now());
-
         // Construct payload based on classified systemd event kind
-        let event_kind = classify_systemd_event(entry, message)?;
+        let Some(event_kind) = classify_systemd_event(entry, message) else {
+            return Ok(None);
+        };
         let event = match event_kind {
             SystemdEventKind::Started => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
@@ -949,7 +988,7 @@ impl UnifiedJournalWatcher {
                     .as_str()
                     .and_then(|s| s.parse::<u32>().ok())
                     .map(ProcessId::from_raw);
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitStartedPayload {
                         unit_name: unit_name.to_string(),
                         unit_type,
@@ -959,13 +998,11 @@ impl UnifiedJournalWatcher {
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Stopped => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitStoppedPayload {
                         unit_name: unit_name.to_string(),
                         unit_type,
@@ -975,82 +1012,56 @@ impl UnifiedJournalWatcher {
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Failed => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitFailedPayload {
                         unit_name: unit_name.to_string(),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Reloaded => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitReloadedPayload {
                         unit_name: Some(unit_name.to_string()),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Triggered => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdTimerTriggeredPayload {
                         unit_name: Some(unit_name.to_string()),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
         };
 
-        Some(event)
+        Ok(Some(event))
     }
 
     /// Calculate deterministic entropy from cursor and discriminator
@@ -1239,5 +1250,111 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
 
     fn cancellation_token(&self) -> &CancellationToken {
         &self.cancel_token
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::material_context::MaterialContext;
+    use async_trait::async_trait;
+    use sinex_primitives::events::Provenance;
+    use sinex_primitives::{Id, JsonValue};
+    use xtask::sandbox::prelude::*;
+
+    #[derive(Debug)]
+    struct TestMaterialContext;
+
+    #[async_trait]
+    impl MaterialContext for TestMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Ok(())
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
+    fn test_watcher() -> UnifiedJournalWatcher {
+        UnifiedJournalWatcher {
+            journal_config: JournalConfig::default(),
+            systemd_enabled: true,
+            systemd_units: HashSet::new(),
+            last_cursor: None,
+            max_line_bytes: DEFAULT_MAX_JOURNAL_LINE_BYTES,
+            cancel_token: CancellationToken::new(),
+            last_event_time: Arc::new(Mutex::new(None)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            last_error: Arc::new(Mutex::new(None)),
+            child_process: None,
+            pending_cursor: Arc::new(Mutex::new(None)),
+            cursor_save_count: Arc::new(AtomicU64::new(0)),
+            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            channel_drops: Arc::new(AtomicU64::new(0)),
+            dlq_publisher: None,
+        }
+    }
+
+    fn test_material() -> WatcherMaterialContext {
+        Arc::new(TestMaterialContext)
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "not-a-timestamp",
+        });
+
+        let error = watcher
+            .parse_systemd_entry(&entry, &material)
+            .expect_err("invalid systemd timestamps must fail honestly");
+
+        assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
+        assert!(error.to_string().contains("test.service"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_preserves_journal_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "123",
+        });
+
+        let event = watcher
+            .parse_systemd_entry(&entry, &material)?
+            .expect("matching systemd entry should produce an event");
+
+        let expected =
+            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
     }
 }
