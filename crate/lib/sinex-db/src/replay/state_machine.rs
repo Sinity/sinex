@@ -694,7 +694,7 @@ impl ReplayStateMachine {
         }
 
         // Cascade impact: expand from root IDs to find all downstream derived events
-        let cascade_impact = self.preview_cascade_impact(scope, window).await;
+        let cascade_impact = self.preview_cascade_impact(scope).await;
 
         let preview = serde_json::json!({
             "node_id": scope.node_id,
@@ -718,37 +718,70 @@ impl ReplayStateMachine {
         Ok(preview)
     }
 
+    async fn load_cascade_affected_nodes(
+        tx: &mut Transaction<'_, Postgres>,
+        derived_ids: &[Uuid],
+    ) -> Result<Vec<String>> {
+        if derived_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        sqlx::query!(
+            "SELECT DISTINCT source FROM core.events WHERE id = ANY($1::uuid[])",
+            derived_ids
+        )
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to load cascade affected nodes")
+                .with_source(error.to_string())
+                .with_context("derived_event_count", derived_ids.len().to_string())
+                .with_operation("preview_cascade_impact")
+        })
+        .map(|rows| rows.into_iter().map(|row| row.source).collect())
+    }
+
+    async fn load_cascade_affected_scopes(
+        tx: &mut Transaction<'_, Postgres>,
+        derived_ids: &[Uuid],
+    ) -> Result<Vec<(String, String)>> {
+        if derived_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        sqlx::query!(
+            "SELECT DISTINCT event_type, scope_key FROM core.events \
+             WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
+            derived_ids
+        )
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to load cascade affected scopes")
+                .with_source(error.to_string())
+                .with_context("derived_event_count", derived_ids.len().to_string())
+                .with_operation("preview_cascade_impact")
+        })
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|row| row.scope_key.map(|scope_key| (row.event_type, scope_key)))
+                .collect()
+        })
+    }
+
     /// Compute cascade impact for preview: how many derived events would be archived.
     ///
     /// Uses the same cascade expansion as real execution but in a read-only transaction
     /// that gets rolled back. Returns a JSON blob with cascade stats, or null on error
     /// (preview remains useful even without cascade data).
-    async fn preview_cascade_impact(
-        &self,
-        scope: &ReplayScope,
-        window: (Timestamp, Timestamp),
-    ) -> serde_json::Value {
-        // Gather root IDs (same query as execution)
-        let root_query_result: std::result::Result<Vec<Uuid>, SinexError> = async {
-            let mut builder =
-                Self::build_filter_query(scope, window, "SELECT id::uuid FROM core.events");
-            let rows: Vec<(Uuid,)> = builder
-                .build_query_as()
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| SinexError::database(format!("cascade root query: {e}")))?;
-            Ok(rows.into_iter().map(|(id,)| id).collect())
-        }
-        .await;
-
-        let root_ids = match root_query_result {
-            Ok(ids) if !ids.is_empty() => ids,
-            _ => return serde_json::Value::Null,
-        };
-
-        // Expand cascade in a transaction we'll roll back
+    async fn preview_cascade_impact(&self, scope: &ReplayScope) -> serde_json::Value {
         let cascade_result: std::result::Result<serde_json::Value, SinexError> = async {
             use crate::repositories::EventRepositoryTx;
+
+            let root_ids = self.collect_scope_root_ids(scope).await?;
+            if root_ids.is_empty() {
+                return Ok(serde_json::Value::Null);
+            }
 
             let mut tx = self
                 .pool
@@ -796,36 +829,9 @@ impl ReplayStateMachine {
             // repo_tx dropped — tx is free to use directly
 
             // Phase 2: query metadata for derived events
-            let affected_nodes: Vec<String> = if derived_ids.is_empty() {
-                Vec::new()
-            } else {
-                sqlx::query!(
-                    "SELECT DISTINCT source FROM core.events WHERE id = ANY($1::uuid[])",
-                    &derived_ids
-                )
-                .fetch_all(tx.as_mut())
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|r| r.source)
-                .collect()
-            };
-
-            let affected_scopes: Vec<(String, String)> = if derived_ids.is_empty() {
-                Vec::new()
-            } else {
-                sqlx::query!(
-                    "SELECT DISTINCT event_type, scope_key FROM core.events \
-                     WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
-                    &derived_ids
-                )
-                .fetch_all(tx.as_mut())
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|r| r.scope_key.map(|sk| (r.event_type, sk)))
-                .collect()
-            };
+            let affected_nodes = Self::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
+            let affected_scopes =
+                Self::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
             // Roll back — this is preview only, no persistent state change
             tx.rollback()
