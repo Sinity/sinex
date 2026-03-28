@@ -342,10 +342,11 @@ impl UdevWatcher {
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
         material.decorate_event(&mut event).await?;
-        if let Err(err) = tx.send(event).await {
-            warn!("Event channel closed while sending {}: {}", context, err);
-        }
-        Ok(())
+        tx.send(event).await.map_err(|err| {
+            sinex_node_sdk::SinexError::processing("udev event channel closed")
+                .with_context("context", context.to_string())
+                .with_std_error(&err)
+        })
     }
 
     /// Start streaming events
@@ -363,8 +364,48 @@ impl UdevWatcher {
 #[cfg(test)]
 mod tests {
     use super::UdevWatcher;
+    use crate::{WatcherMaterialContext, material_context::MaterialContext};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use sinex_db::models::{Event, Provenance};
+    use sinex_node_sdk::NodeResult;
+    use sinex_primitives::{Id, JsonValue};
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
+
+    #[derive(Debug)]
+    struct TestMaterialContext;
+
+    #[async_trait]
+    impl MaterialContext for TestMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Ok(())
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
+    fn test_material() -> WatcherMaterialContext {
+        Arc::new(TestMaterialContext)
+    }
 
     #[sinex_test]
     async fn get_device_properties_parses_uevent_file() -> TestResult<()> {
@@ -404,6 +445,27 @@ mod tests {
         assert!(error.to_string().contains("Failed to read uevent properties"));
         assert!(error.to_string().contains("uevent"));
         std::fs::remove_dir_all(&device_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_event_rejects_closed_channel() -> TestResult<()> {
+        let material = test_material();
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let event = Event::new_json(
+            "system-watcher",
+            "udev.device.other",
+            json!({"action": "change"}),
+            material.initial_provenance(),
+        );
+
+        let error = UdevWatcher::send_event(&tx, event, "test_closed_send", &material)
+            .await
+            .expect_err("closed udev event channels must fail honestly");
+
+        assert!(error.to_string().contains("udev event channel closed"));
+        assert!(error.to_string().contains("test_closed_send"));
         Ok(())
     }
 }

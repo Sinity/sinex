@@ -1454,18 +1454,24 @@ impl UnifiedJournalWatcher {
         material.decorate_event(&mut event).await?;
         if let Err(err) = tx.send(event).await {
             let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
-            // Rate-limit drop warnings: log at 1, 10, 100, 1000, then every 1000
+            let error_message = format!("system journal event channel closed while sending {context}: {err}");
+            self.record_error(error_message.clone());
             if drops == 1 || drops == 10 || drops == 100 || drops.is_multiple_of(1000) {
                 warn!(
-                    channel_drops = drops,
+                    send_failures = drops,
                     context = context,
-                    "Event channel backpressure: dropped event ({})",
-                    err
+                    error = %err,
+                    "System journal event channel closed"
                 );
             }
-        } else {
-            self.record_event();
+            return Err(
+                SinexError::processing("system journal event channel closed")
+                    .with_context("context", context.to_string())
+                    .with_context("detail", error_message)
+                    .with_std_error(&err),
+            );
         }
+        self.record_event();
         Ok(())
     }
 
@@ -2144,6 +2150,34 @@ mod tests {
         let snapshot = watcher.health_snapshot();
         assert_eq!(snapshot.events_processed, 1);
         assert!(snapshot.last_event.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_event_rejects_closed_channel(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let event = Event::new_json(
+            "system-watcher",
+            "journal.entry.written",
+            json!({"cursor": "s=closed"}),
+            material.initial_provenance(),
+        );
+
+        let error = watcher
+            .send_event(&tx, event, "test_closed_send", &material)
+            .await
+            .expect_err("closed journal event channels must fail honestly");
+
+        assert!(error.to_string().contains("system journal event channel closed"));
+        assert!(error.to_string().contains("test_closed_send"));
+
+        let snapshot = watcher.health_snapshot();
+        assert_eq!(snapshot.events_processed, 0);
+        assert!(snapshot.last_error.is_some());
         Ok(())
     }
 
