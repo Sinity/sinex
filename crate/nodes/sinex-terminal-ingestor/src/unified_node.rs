@@ -286,9 +286,11 @@ struct ShellMetrics {
     skipped_duplicate: u64,
     skipped_too_large: u64,
     last_poll_duration_ms: u64,
+    last_poll_at: Option<Timestamp>,
     last_history_size_bytes: u64,
     last_command_size_bytes: u64,
     last_command_line_number: Option<u64>,
+    last_error: Option<String>,
 }
 
 struct TerminalMetrics {
@@ -368,6 +370,7 @@ impl TerminalMetrics {
             let entry = shells.entry(shell.to_string()).or_default();
             entry.polls_completed = entry.polls_completed.saturating_add(1);
             entry.last_poll_duration_ms = duration_ms;
+            entry.last_poll_at = Some(Timestamp::now());
             entry.last_history_size_bytes = file_size;
         }
 
@@ -435,6 +438,7 @@ impl TerminalMetrics {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let entry = shells.entry(shell.to_string()).or_default();
             entry.processing_errors = entry.processing_errors.saturating_add(1);
+            entry.last_error = Some(format!("{stage}: {error}"));
         }
 
         self.push_activity(
@@ -3041,10 +3045,29 @@ impl ExplorationProvider for TerminalNode {
             }
         }
 
-        let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
-        let healthy = usable_sources > 0 && configured_failures.is_empty() && processing_errors == 0;
+        let active_watchers = match self.watch_handles.try_lock() {
+            Ok(guard) if guard.is_empty() => None,
+            Ok(guard) => Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
+            Err(_) => None,
+        };
+        let healthy = usable_sources > 0
+            && configured_failures.is_empty()
+            && active_watchers.is_none_or(|count| count == usable_sources);
+        let is_connected = usable_sources > 0 && active_watchers.is_none_or(|count| count > 0);
         let description = if self.config.history_sources.is_empty() {
             "No terminal history sources configured".to_string()
+        } else if let Some(active_watchers) = active_watchers {
+            if active_watchers == 0 {
+                format!(
+                    "Terminal history monitoring stopped ({usable_sources} usable source(s), no active watchers)"
+                )
+            } else if active_watchers < usable_sources {
+                format!(
+                    "Terminal history monitoring degraded ({active_watchers}/{usable_sources} watcher(s) running)"
+                )
+            } else {
+                format!("Monitoring {usable_sources} terminal history sources")
+            }
         } else if configured_failures.is_empty() {
             format!(
                 "Monitoring {} terminal history sources",
@@ -3068,9 +3091,12 @@ impl ExplorationProvider for TerminalNode {
             "misconfigured_sources".to_string(),
             json!(configured_failures),
         );
+        if let Some(active_watchers) = active_watchers {
+            metadata.insert("active_watchers".to_string(), json!(active_watchers));
+        }
 
         Ok(SourceState {
-            is_connected: usable_sources > 0,
+            is_connected,
             healthy,
             description,
             last_updated: Timestamp::now(),
@@ -5331,6 +5357,99 @@ mod tests {
             state.description
         );
         assert_eq!(state.total_items, Some(0));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_source_state_does_not_stay_unhealthy_after_transient_processing_error(
+    ) -> TestResult<()> {
+        let path = Utf8PathBuf::from("/tmp/.bash_history");
+        let node = TerminalNode::with_config(TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: path.clone(),
+                shell: "bash".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        });
+
+        node.metrics
+            .record_error("bash", &path, "read_history_segment", "temporary read failure");
+
+        let state = ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected, "usable sources should remain connected");
+        assert!(
+            state.healthy,
+            "transient cumulative errors must not poison terminal source health forever"
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("processing_errors")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        let shells = state
+            .metadata
+            .get("shells")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| color_eyre::eyre::eyre!("shells metadata missing"))?;
+        let last_error = shells
+            .get("bash")
+            .and_then(|shell| shell.get("last_error"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| color_eyre::eyre::eyre!("bash last_error missing"))?;
+        assert!(last_error.contains("read_history_segment"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_source_state_marks_finished_watchers_unhealthy() -> TestResult<()> {
+        let node = TerminalNode::with_config(TerminalConfig {
+            history_sources: vec![
+                HistorySourceConfig {
+                    path: Utf8PathBuf::from("/tmp/.bash_history"),
+                    shell: "bash".to_string(),
+                },
+                HistorySourceConfig {
+                    path: Utf8PathBuf::from("/tmp/.zsh_history"),
+                    shell: "zsh".to_string(),
+                },
+            ],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        });
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok::<(), SinexError>(())
+            }));
+            guard.push(tokio::spawn(async { Ok::<(), SinexError>(()) }));
+        }
+        tokio::task::yield_now().await;
+
+        let state = ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected, "one active watcher should keep the source connected");
+        assert!(!state.healthy, "finished watcher handles must degrade terminal source health");
+        assert!(
+            state.description.contains("degraded"),
+            "description should reflect degraded watcher state: {}",
+            state.description
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("active_watchers")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+
+        let mut guard = node.watch_handles.lock().await;
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
         Ok(())
     }
 
