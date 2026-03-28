@@ -3662,7 +3662,7 @@ pub struct ExerciseResultRow {
     pub step_count: i64,
 }
 
-fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
+pub(super) fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
     let started_at_str: String = row.get(7)?;
     let finished_at_str: Option<String> = row.get(8)?;
     let status_str: String = row.get(11)?;
