@@ -183,6 +183,24 @@ impl DesktopNode {
         }
     }
 
+    fn collapse_shutdown_errors(mut errors: Vec<(&'static str, SinexError)>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (step, error) = errors.remove(0);
+        let mut combined = error.with_context("shutdown_step", step);
+        for (index, (step, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(format!("additional_shutdown_step_{}", index + 1), step)
+                .with_context(
+                    format!("additional_shutdown_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
+    }
+
     fn is_platform_missing_error(err: &SinexError) -> bool {
         err.context_map()
             .get("error_class")
@@ -919,13 +937,18 @@ impl IngestorNode for DesktopNode {
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        let mut shutdown_errors = Vec::new();
         if let Some(handle) = self.clipboard_watcher.take() {
-            handle.shutdown().await;
+            if let Err(error) = handle.shutdown().await {
+                shutdown_errors.push(("clipboard watcher", error));
+            }
         }
         if let Some(handle) = self.window_manager_watcher.take() {
-            handle.shutdown().await;
+            if let Err(error) = handle.shutdown().await {
+                shutdown_errors.push(("window manager watcher", error));
+            }
         }
-        Ok(())
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
     // Impl ExplorationProvider via IngestorNode interface override

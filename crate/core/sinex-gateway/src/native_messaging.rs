@@ -108,7 +108,9 @@ impl RateLimiter {
 #[derive(Debug, Clone, Default)]
 pub struct NativeMessagingConfig {
     trusted_extensions: Vec<TrustedExtension>,
+    trusted_extensions_config_error: Option<String>,
     trusted_hosts: Vec<String>,
+    trusted_hosts_config_error: Option<String>,
     expected_protocol_version: Option<String>,
     /// Per-extension capability restrictions. Key: `extension_id`, Value: capabilities.
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
@@ -135,6 +137,21 @@ impl<T> Default for ParsedConfigMap<T> {
     fn default() -> Self {
         Self {
             values: std::collections::HashMap::new(),
+            error: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ParsedConfigList<T> {
+    values: Vec<T>,
+    error: Option<String>,
+}
+
+impl<T> Default for ParsedConfigList<T> {
+    fn default() -> Self {
+        Self {
+            values: Vec::new(),
             error: None,
         }
     }
@@ -195,10 +212,8 @@ impl NativeMessagingConfig {
         max_message_size: usize,
         read_timeout: std::time::Duration,
     ) -> Self {
-        let trusted_extensions = trusted_extensions_raw
-            .map(parse_trusted_entries)
-            .unwrap_or_default();
-        let trusted_hosts = trusted_hosts_raw.map(parse_csv_entries).unwrap_or_default();
+        let parsed_trusted_extensions = parse_trusted_entries(trusted_extensions_raw.as_deref());
+        let parsed_trusted_hosts = parse_csv_entries(trusted_hosts_raw.as_deref());
         let expected_protocol_version =
             expected_protocol_version_raw.and_then(|raw| normalize_optional_string(&raw));
         let parsed_capabilities = parse_capabilities(capabilities_raw.as_deref());
@@ -214,8 +229,10 @@ impl NativeMessagingConfig {
         let parsed_extension_roles = parse_extension_roles(extension_roles_raw.as_deref());
 
         Self {
-            trusted_extensions,
-            trusted_hosts,
+            trusted_extensions: parsed_trusted_extensions.values,
+            trusted_extensions_config_error: parsed_trusted_extensions.error,
+            trusted_hosts: parsed_trusted_hosts.values,
+            trusted_hosts_config_error: parsed_trusted_hosts.error,
             expected_protocol_version,
             capabilities: parsed_capabilities.values,
             capabilities_config_error: parsed_capabilities.error,
@@ -236,6 +253,12 @@ impl NativeMessagingConfig {
     }
 
     fn enforce_extension(&self, message: &NativeMessage) -> Result<()> {
+        if let Some(err) = &self.trusted_extensions_config_error {
+            return Err(eyre!(
+                "Invalid {TRUSTED_EXTENSION_ENV} configuration: {err}"
+            ));
+        }
+
         // Issue 138: Fail closed - require explicit allowlist
         if self.trusted_extensions.is_empty() {
             warn!(
@@ -404,6 +427,12 @@ impl NativeMessagingConfig {
     }
 
     fn enforce_host(&self, message: &NativeMessage) -> Result<()> {
+        if let Some(err) = &self.trusted_hosts_config_error {
+            return Err(eyre!(
+                "Invalid {TRUSTED_HOSTS_ENV} configuration: {err}"
+            ));
+        }
+
         if self.trusted_hosts.is_empty() {
             return Ok(());
         }
@@ -627,34 +656,72 @@ fn parse_extension_roles(
     }
 }
 
-fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
-    raw.split(',')
-        .filter_map(|entry| {
-            let entry = entry.trim();
-            if entry.is_empty() {
-                return None;
-            }
-            let (id, secret) = match entry.split_once('#') {
-                Some((id, secret)) => (id.trim(), Some(secret.trim().to_string())),
-                None => (entry, None),
+fn parse_trusted_entries(raw: Option<&str>) -> ParsedConfigList<TrustedExtension> {
+    let Some(raw) = raw else {
+        return ParsedConfigList::default();
+    };
+
+    let mut values = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    for entry in raw.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (id, secret) = match entry.split_once('#') {
+            Some((id, secret)) => (id.trim(), Some(secret.trim().to_string())),
+            None => (entry, None),
+        };
+        if id.is_empty() {
+            return ParsedConfigList {
+                values: Vec::new(),
+                error: Some(format!(
+                    "entry '{entry}' is missing an extension id before '#'"
+                )),
             };
-            if id.is_empty() {
-                return None;
-            }
-            Some(TrustedExtension {
-                id: id.to_string(),
-                secret: secret.filter(|s| !s.is_empty()),
-            })
-        })
-        .collect()
+        }
+        if !seen_ids.insert(id.to_string()) {
+            return ParsedConfigList {
+                values: Vec::new(),
+                error: Some(format!("duplicate trusted extension id '{id}'")),
+            };
+        }
+        values.push(TrustedExtension {
+            id: id.to_string(),
+            secret: secret.filter(|s| !s.is_empty()),
+        });
+    }
+
+    ParsedConfigList {
+        values,
+        error: None,
+    }
 }
 
-fn parse_csv_entries(raw: String) -> Vec<String> {
-    raw.split(',')
+fn parse_csv_entries(raw: Option<&str>) -> ParsedConfigList<String> {
+    let Some(raw) = raw else {
+        return ParsedConfigList::default();
+    };
+
+    let values = raw
+        .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
         .map(std::string::ToString::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+
+    if !raw.trim().is_empty() && values.is_empty() {
+        return ParsedConfigList {
+            values,
+            error: Some("no host entries could be parsed".to_string()),
+        };
+    }
+
+    ParsedConfigList {
+        values,
+        error: None,
+    }
 }
 
 #[cfg(test)]
@@ -684,7 +751,9 @@ mod tests {
                 id: "ext-1".to_string(),
                 secret: Some("topsecret".to_string()),
             }],
+            trusted_extensions_config_error: None,
             trusted_hosts: Vec::new(),
+            trusted_hosts_config_error: None,
             expected_protocol_version: None,
             capabilities: std::collections::HashMap::new(),
             capabilities_config_error: None,
@@ -728,7 +797,9 @@ mod tests {
                 id: "ext-1".to_string(),
                 secret: None,
             }],
+            trusted_extensions_config_error: None,
             trusted_hosts: Vec::new(),
+            trusted_hosts_config_error: None,
             expected_protocol_version: None,
             capabilities: caps,
             capabilities_config_error: None,
@@ -845,6 +916,57 @@ mod tests {
             .enforce_capabilities(&message)
             .expect_err("invalid capabilities config should be surfaced");
         assert!(error.to_string().contains(CAPABILITIES_ENV));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_trusted_extensions_env_entry_surfaces_parse_error() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(TRUSTED_EXTENSION_ENV, "#missing-id");
+
+        let config = NativeMessagingConfig::from_env()?;
+        let error = config
+            .enforce_extension(&trusted_message("anything"))
+            .expect_err("malformed trusted extension config should be surfaced");
+        assert!(error.to_string().contains(TRUSTED_EXTENSION_ENV));
+        assert!(error.to_string().contains("missing an extension id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn duplicate_trusted_extensions_env_entry_surfaces_parse_error() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(TRUSTED_EXTENSION_ENV, "ext-1#alpha,ext-1#beta");
+
+        let config = NativeMessagingConfig::from_env()?;
+        let error = config
+            .enforce_extension(&trusted_message("alpha"))
+            .expect_err("duplicate trusted extension ids should be surfaced");
+        assert!(error.to_string().contains(TRUSTED_EXTENSION_ENV));
+        assert!(error.to_string().contains("duplicate trusted extension id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_trusted_hosts_env_entry_surfaces_parse_error() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(TRUSTED_HOSTS_ENV, " , ");
+
+        let config = NativeMessagingConfig::from_env()?;
+        let error = config
+            .enforce_host(&NativeMessage {
+                msg_type: "request".to_string(),
+                method: None,
+                params: None,
+                id: None,
+                extension_id: None,
+                extension_secret: None,
+                host: Some("localhost".to_string()),
+                protocol_version: None,
+            })
+            .expect_err("malformed trusted hosts config should be surfaced");
+        assert!(error.to_string().contains(TRUSTED_HOSTS_ENV));
+        assert!(error.to_string().contains("no host entries could be parsed"));
         Ok(())
     }
 

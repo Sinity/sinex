@@ -184,7 +184,7 @@ impl Renderer for DotRenderer {
 
                 // Filter workspace packages to only those in our focus set
                 self.graph
-                    .workspace_packages()
+                    .workspace_packages()?
                     .into_iter()
                     .filter(|p| focused_pkg_names.contains(&p.name().to_string()))
                     .collect()
@@ -196,14 +196,14 @@ impl Renderer for DotRenderer {
 
                 // Filter workspace packages to only those in our focus set
                 self.graph
-                    .workspace_packages()
+                    .workspace_packages()?
                     .into_iter()
                     .filter(|p| focused_pkg_names.contains(&p.name().to_string()))
                     .collect()
             }
         } else {
             // No focus: render all packages
-            self.graph.workspace_packages()
+            self.graph.workspace_packages()?
         };
 
         // Add nodes for all packages in the filtered set
@@ -266,7 +266,7 @@ impl JsonRenderer {
 impl Renderer for JsonRenderer {
     /// Render graph in JSON format compatible with D3.js
     fn render(&self) -> Result<String> {
-        let packages = self.graph.workspace_packages();
+        let packages = self.graph.workspace_packages()?;
 
         // Create nodes from all packages
         let nodes: Vec<NodeJson> = packages
@@ -282,19 +282,26 @@ impl Renderer for JsonRenderer {
         for pkg in &packages {
             let pkg_id = pkg.id();
             // Query forward dependencies
-            if let Ok(query) = self.graph.graph().query_forward(vec![pkg_id]) {
-                let resolved = query.resolve();
-                // Get all packages this one depends on
-                for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
-                    if pkg_id != dep_id
-                        && let Ok(dep_metadata) = self.graph.graph().metadata(dep_id)
-                    {
-                        edges.push(EdgeJson {
-                            source: pkg.name().to_string(),
-                            target: dep_metadata.name().to_string(),
-                        });
-                    }
+            let query = self
+                .graph
+                .graph()
+                .query_forward(vec![pkg_id])
+                .with_context(|| format!("Failed to query forward dependencies for '{}'", pkg.name()))?;
+            let resolved = query.resolve();
+            // Get all packages this one depends on
+            for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
+                if pkg_id == dep_id {
+                    continue;
                 }
+                let dep_metadata = self
+                    .graph
+                    .graph()
+                    .metadata(dep_id)
+                    .with_context(|| format!("Failed to resolve dependency metadata while rendering '{}'", pkg.name()))?;
+                edges.push(EdgeJson {
+                    source: pkg.name().to_string(),
+                    target: dep_metadata.name().to_string(),
+                });
             }
         }
 
@@ -427,7 +434,7 @@ impl Renderer for AsciiRenderer {
         if let Some(focus_pkg) = &self.focus {
             output.push_str(&self.render_tree(focus_pkg, "", true, 0, &mut visited)?);
         } else {
-            let packages = self.graph.workspace_packages();
+            let packages = self.graph.workspace_packages()?;
             for (i, pkg) in packages.iter().enumerate() {
                 let is_last = i == packages.len() - 1;
                 output.push_str(&self.render_tree(pkg.name(), "", is_last, 0, &mut visited)?);
@@ -488,7 +495,7 @@ mod tests {
     #[sinex_test]
     async fn test_dot_renderer_with_focus() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
-        let packages = graph.workspace_packages();
+        let packages = graph.workspace_packages()?;
 
         // Use first package as focus target
         if !packages.is_empty() {
@@ -515,7 +522,7 @@ mod tests {
     #[sinex_test]
     async fn test_dot_renderer_builder_pattern() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
-        let packages = graph.workspace_packages();
+        let packages = graph.workspace_packages()?;
 
         if !packages.is_empty() {
             let focus_pkg = packages[0].name().to_string();

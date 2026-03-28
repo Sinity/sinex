@@ -12,18 +12,26 @@ use sinex_primitives::{Id, JsonValue};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use xtask::sandbox::prelude::*;
 
-fn make_context(source: &str, event_type: &str) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(
+    source: &str,
+    event_type: &str,
+    ts_orig: Option<Timestamp>,
+) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
         source: source.into(),
         event_type: event_type.into(),
-        ts_orig: Some(Timestamp::now()),
+        ts_orig,
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
     }
+}
+
+fn make_context(source: &str, event_type: &str) -> DerivedTriggerContext {
+    make_context_with_optional_ts(source, event_type, Some(Timestamp::now()))
 }
 
 fn kitty_input(command: &str) -> JsonValue {
@@ -128,6 +136,21 @@ async fn test_rejects_unknown_source() -> TestResult<()> {
     let result = canon.process(&mut state, input, &ctx).await.unwrap();
 
     assert!(result.is_none(), "unknown source should be rejected");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_missing_ts_orig_is_rejected() -> TestResult<()> {
+    let mut canon = TerminalCommandCanonicalizer::new();
+    let mut state = ();
+    let ctx = make_context_with_optional_ts("shell.kitty", "command.executed", None);
+
+    let error = canon
+        .process(&mut state, kitty_input("ls -la"), &ctx)
+        .await
+        .expect_err("missing ts_orig must be rejected");
+
+    assert!(error.to_string().contains("missing ts_orig"));
     Ok(())
 }
 

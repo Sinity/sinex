@@ -20,7 +20,7 @@ async fn test_watcher_state_transitions() -> Result<(), Box<dyn std::error::Erro
 
     let was_active = handle.is_active();
     assert!(was_active);
-    handle.shutdown().await;
+    handle.shutdown().await?;
     assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }
@@ -35,7 +35,7 @@ async fn test_watcher_running_constructor() -> Result<(), Box<dyn std::error::Er
     let health = handle.health();
     assert!(health.active);
     let tracker = handle.health_tracker();
-    handle.shutdown().await;
+    handle.shutdown().await?;
     assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }
@@ -73,7 +73,7 @@ async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::E
     handle.start(task, None)?;
     let tracker = handle.health_tracker();
 
-    handle.shutdown().await;
+    handle.shutdown().await?;
     sleep(Duration::from_millis(100)).await;
 
     assert!(!flag.load(Ordering::SeqCst));
@@ -92,7 +92,7 @@ async fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> 
     let extracted = handle.take_material();
     assert_eq!(extracted, Some("test_context"));
     assert!(handle.take_material().is_none());
-    handle.shutdown().await;
+    handle.shutdown().await?;
     Ok(())
 }
 
@@ -117,11 +117,32 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
     assert!(handle.is_active());
     let tracker = handle.health_tracker();
 
-    handle.shutdown().await;
+    handle.shutdown().await?;
     sleep(Duration::from_millis(100)).await;
     assert!(!main_flag.load(Ordering::SeqCst));
     assert!(!forwarder_flag.load(Ordering::SeqCst));
     assert!(!tracker.read().expect("health lock").active);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_watcher_is_inactive_when_forwarder_finishes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let main_task = tokio::spawn(async {
+        sleep(Duration::from_secs(10)).await;
+    });
+    let forwarder = tokio::spawn(async {});
+
+    let mut handle = WatcherHandle::<()>::initialized("test");
+    handle.start(main_task, Some(forwarder))?;
+    tokio::task::yield_now().await;
+
+    assert!(
+        !handle.is_active(),
+        "completed forwarders must make the watcher inactive so supervisors can restart it"
+    );
+
+    handle.shutdown().await?;
     Ok(())
 }
 
@@ -163,5 +184,50 @@ async fn test_watcher_record_error_recovers_from_poisoned_lock(
 
     let health = handle.health();
     assert_eq!(health.last_error.as_deref(), Some("recovered"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_watcher_shutdown_rejects_panicked_task(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let task = tokio::spawn(async {
+        panic!("watcher panic");
+    });
+    tokio::task::yield_now().await;
+
+    let mut handle = WatcherHandle::<()>::initialized("test");
+    handle.start(task, None)?;
+
+    let error = handle
+        .shutdown()
+        .await
+        .expect_err("panicked watcher tasks must fail shutdown honestly");
+    let message = format!("{error:#}");
+    assert!(message.contains("Watcher task failed during shutdown"));
+    assert!(message.contains("watcher task"));
+    assert!(message.contains("test"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_watcher_shutdown_rejects_panicked_forwarder(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let task = tokio::spawn(async {});
+    let forwarder = tokio::spawn(async {
+        panic!("forwarder panic");
+    });
+    tokio::task::yield_now().await;
+
+    let mut handle = WatcherHandle::<()>::initialized("test");
+    handle.start(task, Some(forwarder))?;
+
+    let error = handle
+        .shutdown()
+        .await
+        .expect_err("panicked watcher forwarders must fail shutdown honestly");
+    let message = format!("{error:#}");
+    assert!(message.contains("Watcher task failed during shutdown"));
+    assert!(message.contains("watcher forwarder"));
+    assert!(message.contains("test"));
     Ok(())
 }

@@ -99,7 +99,7 @@ fn execute_catalog(
     include_disabled: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let engine = PrivacyEngine::new(PrivacyConfig::from_env())?;
+    let engine = PrivacyEngine::new(PrivacyConfig::from_env()?)?;
     let rules = engine.catalog();
 
     // Parse category filter
@@ -195,7 +195,7 @@ fn execute_catalog(
 fn execute_test(input: &str, context_str: &str, ctx: &CommandContext) -> Result<CommandResult> {
     let context = parse_context(context_str)?;
 
-    let mut config = PrivacyConfig::from_env();
+    let mut config = PrivacyConfig::from_env()?;
     config.track_stats = true;
     let engine = PrivacyEngine::new(config)?;
 
@@ -256,7 +256,7 @@ fn execute_test(input: &str, context_str: &str, ctx: &CommandContext) -> Result<
 
 /// Execute decrypt subcommand: decrypt an encrypted token
 fn execute_decrypt(token: &str, ctx: &CommandContext) -> Result<CommandResult> {
-    let engine = PrivacyEngine::new(PrivacyConfig::from_env())?;
+    let engine = PrivacyEngine::new(PrivacyConfig::from_env()?)?;
 
     match engine.decrypt(token) {
         Ok(decrypted) => {
@@ -333,7 +333,7 @@ fn execute_key(generate: bool, ctx: &CommandContext) -> Result<CommandResult> {
             }))
             .with_duration(ctx.elapsed()))
     } else {
-        let config = PrivacyConfig::from_env();
+        let config = PrivacyConfig::from_env()?;
         let has_key = config.key.resolve().is_some();
         let source = if config.key.key_file.is_some() {
             Some("file")
@@ -462,8 +462,8 @@ track_stats = false
                     .filter(|p| std::path::Path::new(p).exists())
             });
 
-        let config = PrivacyConfig::from_env();
-        let rule_count = PrivacyEngine::new(config.clone()).map_or(0, |e| e.catalog().len());
+        let config = PrivacyConfig::from_env()?;
+        let rule_count = PrivacyEngine::new(config.clone())?.catalog().len();
 
         if ctx.is_human() {
             println!("{}", style("Privacy Engine Configuration").bold().cyan());

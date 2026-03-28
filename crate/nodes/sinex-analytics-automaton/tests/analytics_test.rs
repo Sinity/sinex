@@ -12,18 +12,25 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use xtask::sandbox::prelude::*;
 
-fn make_context(event_type: &str) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(
+    event_type: &str,
+    ts_orig: Option<Timestamp>,
+) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
         source: "test".into(),
         event_type: event_type.into(),
-        ts_orig: Some(Timestamp::now()),
+        ts_orig,
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
     }
+}
+
+fn make_context(event_type: &str) -> DerivedTriggerContext {
+    make_context_with_optional_ts(event_type, Some(Timestamp::now()))
 }
 
 /// Helper: create a context with an explicit `ts_orig` for determinism testing.
@@ -68,6 +75,20 @@ async fn test_single_event_increments_counter() -> TestResult<()> {
     process(&mut automaton, &mut state, serde_json::json!({}), &ctx).await?;
 
     assert_eq!(state.event_counts.get("file.created"), Some(&1));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_missing_ts_orig_is_rejected() -> TestResult<()> {
+    let mut automaton = AnalyticsAutomaton;
+    let mut state = AnalyticsState::default();
+    let ctx = make_context_with_optional_ts("file.created", None);
+
+    let error = process(&mut automaton, &mut state, serde_json::json!({}), &ctx)
+        .await
+        .expect_err("missing ts_orig must be rejected");
+
+    assert!(error.to_string().contains("missing ts_orig"));
     Ok(())
 }
 

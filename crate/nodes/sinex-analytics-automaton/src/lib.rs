@@ -12,7 +12,7 @@ use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::Uuid;
-use sinex_primitives::temporal::{Timestamp, now};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -61,10 +61,11 @@ impl WindowedNode for AnalyticsAutomaton {
             .event_counts
             .entry(event_type_str.clone())
             .or_insert(0) += 1;
+        let ts_orig = context.require_ts_orig()?;
 
         state.recent_events.push_back(EventSummary {
             event_type: event_type_str,
-            timestamp: context.ts_orig.unwrap_or_else(now),
+            timestamp: ts_orig,
             event_id: context.trigger_uuid(),
         });
 

@@ -656,22 +656,70 @@ impl<T: Node + 'static> NodeRunner<T> {
         true
     }
 
-    fn log_shutdown_join_result(task_name: &str, result: Result<(), tokio::task::JoinError>) {
+    fn shutdown_join_result(
+        task_name: &str,
+        result: Result<(), tokio::task::JoinError>,
+    ) -> NodeResult<()> {
         match result {
             Ok(()) => {
                 debug!(task = task_name, "Task finished before shutdown cleanup");
+                Ok(())
             }
             Err(join_error) if join_error.is_cancelled() => {
                 debug!(task = task_name, "Task aborted during shutdown cleanup");
+                Ok(())
             }
             Err(join_error) => {
-                warn!(
-                    task = task_name,
-                    error = %join_error,
-                    "Task exited unexpectedly during shutdown cleanup"
-                );
+                Err(SinexError::processing("Task failed during shutdown")
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", join_error.to_string()))
             }
         }
+    }
+
+    fn leadership_release_result(instance_id: &str, result: NodeResult<()>) -> NodeResult<()> {
+        result.map_err(|error| error.with_context("instance_id", instance_id.to_string()))
+    }
+
+    fn event_batcher_shutdown_result(
+        result: Result<NodeResult<()>, tokio::task::JoinError>,
+    ) -> NodeResult<()> {
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error),
+            Err(join_error) => Err(
+                SinexError::processing("Event batcher failed during shutdown")
+                    .with_context("join_error", join_error.to_string()),
+            ),
+        }
+    }
+
+    fn push_shutdown_error(
+        errors: &mut Vec<(String, SinexError)>,
+        step: impl Into<String>,
+        result: NodeResult<()>,
+    ) {
+        if let Err(error) = result {
+            errors.push((step.into(), error));
+        }
+    }
+
+    fn collapse_shutdown_errors(mut errors: Vec<(String, SinexError)>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let (step, error) = errors.remove(0);
+        let mut combined = error.with_context("shutdown_step", step);
+        for (index, (step, extra)) in errors.into_iter().enumerate() {
+            combined = combined
+                .with_context(format!("additional_shutdown_step_{}", index + 1), step)
+                .with_context(
+                    format!("additional_shutdown_error_{}", index + 1),
+                    extra.to_string(),
+                );
+        }
+        Err(combined)
     }
 
     fn build_instance_id(host: &str) -> String {
@@ -720,9 +768,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         nats_client: &async_nats::Client,
         reply: Option<async_nats::Subject>,
         ack: &NodeScanAck,
-    ) {
+    ) -> NodeResult<()> {
         let Some(reply) = reply else {
-            return;
+            return Ok(());
         };
 
         let payload = match encode_control_message(
@@ -739,26 +787,27 @@ impl<T: Node + 'static> NodeRunner<T> {
                     error = %error,
                     "Failed to encode scan acknowledgement"
                 );
-                return;
+                return Err(error);
             }
         };
 
-        if let Err(error) = nats_client.publish(reply.clone(), payload.into()).await {
-            warn!(
-                operation_id = %ack.operation_id,
-                node = %ack.node_name,
-                subject = %reply,
-                error = %error,
-                "Failed to publish scan acknowledgement"
-            );
-        }
+        nats_client
+            .publish(reply.clone(), payload.into())
+            .await
+            .map_err(|error| {
+                SinexError::messaging("Failed to publish scan acknowledgement")
+                    .with_context("operation_id", ack.operation_id.to_string())
+                    .with_context("node", ack.node_name.clone())
+                    .with_context("subject", reply.to_string())
+                    .with_std_error(&error)
+            })
     }
 
     async fn publish_scan_progress(
         nats_client: &async_nats::Client,
         subject: String,
         progress: &NodeScanProgress,
-    ) {
+    ) -> NodeResult<()> {
         let payload = match encode_control_message(
             "scan progress update",
             progress.operation_id,
@@ -773,19 +822,20 @@ impl<T: Node + 'static> NodeRunner<T> {
                     error = %error,
                     "Failed to encode scan progress update"
                 );
-                return;
+                return Err(error);
             }
         };
 
-        if let Err(error) = nats_client.publish(subject.clone(), payload.into()).await {
-            warn!(
-                operation_id = %progress.operation_id,
-                node = %progress.node_name,
-                subject = %subject,
-                error = %error,
-                "Failed to publish scan progress update"
-            );
-        }
+        nats_client
+            .publish(subject.clone(), payload.into())
+            .await
+            .map_err(|error| {
+                SinexError::messaging("Failed to publish scan progress update")
+                    .with_context("operation_id", progress.operation_id.to_string())
+                    .with_context("node", progress.node_name.clone())
+                    .with_context("subject", subject)
+                    .with_std_error(&error)
+            })
     }
 
     #[cfg(feature = "db")]
@@ -1304,18 +1354,22 @@ impl<T: Node + 'static> NodeRunner<T> {
         };
 
         Self::signal_shutdown_channel(heartbeat_shutdown_tx, "heartbeat");
-        if let Err(error) = heartbeat_handle.await {
-            warn!(error = %error, "Failed to join heartbeat task");
-        }
+        let heartbeat_result = Self::shutdown_join_result("heartbeat", heartbeat_handle.await);
 
         systemd_notify::stop_watchdog(watchdog_handle, "sinex-node").await;
         systemd_notify::notify_stopping("sinex-node");
 
         let shutdown_result = self.shutdown().await;
 
+        let mut terminal_errors = Vec::new();
+        Self::push_shutdown_error(&mut terminal_errors, "service", service_result);
+        Self::push_shutdown_error(&mut terminal_errors, "heartbeat", heartbeat_result);
+        Self::push_shutdown_error(&mut terminal_errors, "shutdown", shutdown_result);
+        let terminal_result = Self::collapse_shutdown_errors(terminal_errors);
+
         #[cfg(feature = "db")]
         if let Some(pool) = runtime.handles().db_pool().cloned() {
-            let terminal = if service_result.is_ok() && shutdown_result.is_ok() {
+            let terminal = if terminal_result.is_ok() {
                 NodeState::Stopped
             } else {
                 NodeState::Failed
@@ -1323,14 +1377,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             Self::update_registered_run_status(&pool, runtime.service_info(), terminal).await;
         }
 
-        match (service_result, shutdown_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(service_error), Ok(())) => Err(service_error),
-            (Ok(()), Err(shutdown_error)) => Err(shutdown_error),
-            (Err(service_error), Err(shutdown_error)) => {
-                Err(service_error.with_context("shutdown_error", shutdown_error.to_string()))
-            }
-        }
+        terminal_result
     }
 
     /// Start the NATS command listener for node-dispatch replay.
@@ -1403,13 +1450,29 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 accepted: false,
                                 error: Some(format!("Failed to deserialize command: {err}")),
                             };
-                            Self::publish_scan_ack(&nats_client, Some(reply), &nack).await;
+                            if let Err(error) =
+                                Self::publish_scan_ack(&nats_client, Some(reply), &nack).await
+                            {
+                                warn!(
+                                    node = %node_name,
+                                    error = %error,
+                                    "Failed to publish malformed-command rejection"
+                                );
+                            }
                         }
                         continue;
                     }
                 };
 
                 let operation_id = command.operation_id;
+                let Some(reply) = msg.reply.clone() else {
+                    warn!(
+                        operation_id = %operation_id,
+                        node = %node_name,
+                        "Ignoring scan command without reply subject"
+                    );
+                    continue;
+                };
 
                 if node_type != NodeType::Ingestor {
                     let ack = NodeScanAck {
@@ -1420,7 +1483,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
                         )),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1433,7 +1505,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Node '{node_name}' does not support historical scans (supports_historical = false)"
                         )),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1447,7 +1528,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .to_string(),
                         ),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1458,7 +1548,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("Node was started without a replay worker factory".to_string()),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 };
 
@@ -1469,7 +1568,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                         accepted: false,
                         error: Some("A scan is already in progress on this node".to_string()),
                     };
-                    Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                    if let Err(error) =
+                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                    {
+                        warn!(
+                            operation_id = %operation_id,
+                            node = %node_name,
+                            error = %error,
+                            "Failed to publish scan rejection"
+                        );
+                    }
                     continue;
                 }
 
@@ -1479,7 +1587,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                     accepted: true,
                     error: None,
                 };
-                Self::publish_scan_ack(&nats_client, msg.reply, &ack).await;
+                if let Err(error) =
+                    Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
+                {
+                    error!(
+                        operation_id = %operation_id,
+                        node = %node_name,
+                        error = %error,
+                        "Failed to publish scan acceptance; aborting dispatched scan"
+                    );
+                    active_scan.store(false, Ordering::SeqCst);
+                    continue;
+                }
 
                 info!(
                     operation_id = %operation_id,
@@ -1498,6 +1617,15 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let scan_command = command.clone();
 
                 tokio::spawn(async move {
+                    struct ActiveScanGuard(Arc<AtomicBool>);
+
+                    impl Drop for ActiveScanGuard {
+                        fn drop(&mut self) {
+                            self.0.store(false, Ordering::SeqCst);
+                        }
+                    }
+
+                    let _active_scan_guard = ActiveScanGuard(scan_active.clone());
                     let progress_subject = scan_env
                         .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
@@ -1509,12 +1637,21 @@ impl<T: Node + 'static> NodeRunner<T> {
                         final_report: None,
                         error: None,
                     };
-                    Self::publish_scan_progress(
+                    if let Err(error) = Self::publish_scan_progress(
                         &scan_client,
                         progress_subject.clone(),
                         &start_progress,
                     )
-                    .await;
+                    .await
+                    {
+                        error!(
+                            operation_id = %operation_id,
+                            node = %scan_node_name,
+                            error = %error,
+                            "Failed to publish initial scan progress; aborting dispatched scan"
+                        );
+                        return;
+                    }
 
                     let scan_outcome = Self::execute_dispatched_scan(
                         factory,
@@ -1561,10 +1698,17 @@ impl<T: Node + 'static> NodeRunner<T> {
                         }
                     };
 
-                    Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
-                        .await;
-
-                    scan_active.store(false, Ordering::SeqCst);
+                    if let Err(error) =
+                        Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                            .await
+                    {
+                        error!(
+                            operation_id = %operation_id,
+                            node = %scan_node_name,
+                            error = %error,
+                            "Failed to publish final scan progress"
+                        );
+                    }
                 });
             }
 
@@ -1651,25 +1795,51 @@ impl<T: Node + 'static> NodeRunner<T> {
         let shutdown_result = worker.shutdown().await;
         drop(worker);
 
-        let events_emitted = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
+        let forwarder_result = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
 
-        match (scan_result, shutdown_result) {
-            (Ok(report), Ok(())) => Ok(DispatchedScanOutcome {
+        match (scan_result, shutdown_result, forwarder_result) {
+            (Ok(report), Ok(()), Ok(events_emitted)) => Ok(DispatchedScanOutcome {
                 report,
                 events_emitted,
             }),
-            (Err(error), Ok(())) => Err(FailedDispatchedScanOutcome {
+            (Err(error), Ok(()), Ok(events_emitted)) => Err(FailedDispatchedScanOutcome {
                 error,
                 events_emitted,
             }),
-            (Ok(_), Err(error)) => Err(FailedDispatchedScanOutcome {
+            (Ok(_), Err(error), Ok(events_emitted)) => Err(FailedDispatchedScanOutcome {
                 error,
                 events_emitted,
             }),
-            (Err(scan_error), Err(shutdown_error)) => Err(FailedDispatchedScanOutcome {
-                error: scan_error.with_context("shutdown_error", shutdown_error.to_string()),
-                events_emitted,
+            (Err(scan_error), Err(shutdown_error), Ok(events_emitted)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: scan_error.with_context("shutdown_error", shutdown_error.to_string()),
+                    events_emitted,
+                })
+            }
+            (Ok(_), Ok(()), Err(forwarder_error)) => Err(forwarder_error),
+            (Err(scan_error), Ok(()), Err(forwarder_error)) => Err(FailedDispatchedScanOutcome {
+                error: scan_error
+                    .with_context("replay_forwarder_error", forwarder_error.error.to_string()),
+                events_emitted: forwarder_error.events_emitted,
             }),
+            (Ok(_), Err(shutdown_error), Err(forwarder_error)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: shutdown_error
+                        .with_context("replay_forwarder_error", forwarder_error.error.to_string()),
+                    events_emitted: forwarder_error.events_emitted,
+                })
+            }
+            (Err(scan_error), Err(shutdown_error), Err(forwarder_error)) => {
+                Err(FailedDispatchedScanOutcome {
+                    error: scan_error
+                        .with_context("shutdown_error", shutdown_error.to_string())
+                        .with_context(
+                            "replay_forwarder_error",
+                            forwarder_error.error.to_string(),
+                        ),
+                    events_emitted: forwarder_error.events_emitted,
+                })
+            }
         }
     }
 
@@ -1743,17 +1913,19 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn finish_replay_forwarder(
         forwarder_handle: tokio::task::JoinHandle<NodeResult<()>>,
         emitted_counter: Arc<AtomicU64>,
-    ) -> u64 {
+    ) -> Result<u64, FailedDispatchedScanOutcome> {
+        let events_emitted = emitted_counter.load(Ordering::SeqCst);
         match forwarder_handle.await {
-            Ok(Ok(())) => emitted_counter.load(Ordering::SeqCst),
-            Ok(Err(error)) => {
-                warn!(error = %error, "Replay forwarder failed");
-                emitted_counter.load(Ordering::SeqCst)
-            }
-            Err(join_error) => {
-                warn!(error = %join_error, "Replay forwarder join failed");
-                emitted_counter.load(Ordering::SeqCst)
-            }
+            Ok(Ok(())) => Ok(events_emitted),
+            Ok(Err(error)) => Err(FailedDispatchedScanOutcome {
+                error,
+                events_emitted,
+            }),
+            Err(join_error) => Err(FailedDispatchedScanOutcome {
+                error: SinexError::processing("Replay forwarder join failed".to_string())
+                    .with_std_error(&join_error),
+                events_emitted,
+            }),
         }
     }
 
@@ -2484,47 +2656,89 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         info!("Shutting down stream node runner");
 
-        Self::abort_task(
-            &mut self.schema_listener_handle,
+        let mut shutdown_errors = Vec::new();
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
             "schema broadcast listener",
-        )
-        .await;
-        Self::abort_task(&mut self.command_listener_handle, "command listener").await;
-        self.shutdown_leader_state().await;
-        self.shutdown_event_batcher().await;
-        Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
-        Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
+            Self::abort_task(
+                &mut self.schema_listener_handle,
+                "schema broadcast listener",
+            )
+            .await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "command listener",
+            Self::abort_task(&mut self.command_listener_handle, "command listener").await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "coordination",
+            self.shutdown_leader_state().await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "event batcher",
+            self.shutdown_event_batcher().await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "automaton consumer",
+            Self::abort_task(&mut self.consumer_handle, "automaton consumer").await,
+        );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "checkpoint cleanup",
+            Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await,
+        );
+        Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
 
-        self.node.shutdown().await
+        Self::collapse_shutdown_errors(shutdown_errors)
     }
 
-    async fn abort_task(handle: &mut Option<tokio::task::JoinHandle<()>>, name: &str) {
+    async fn abort_task(
+        handle: &mut Option<tokio::task::JoinHandle<()>>,
+        name: &str,
+    ) -> NodeResult<()> {
         if let Some(h) = handle.take() {
             h.abort();
-            Self::log_shutdown_join_result(name, h.await);
+            Self::shutdown_join_result(name, h.await)
+        } else {
+            Ok(())
         }
     }
 
-    async fn shutdown_leader_state(&mut self) {
+    async fn shutdown_leader_state(&mut self) -> NodeResult<()> {
         if let Some(state) = self.leader_state.take() {
+            let mut shutdown_errors = Vec::new();
             state.heartbeat_handle.abort();
-            Self::log_shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await);
-            if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
-                warn!(error = %err, "Failed to release leadership on shutdown");
-            }
+            Self::push_shutdown_error(
+                &mut shutdown_errors,
+                "coordination heartbeat",
+                Self::shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await),
+            );
+            Self::push_shutdown_error(
+                &mut shutdown_errors,
+                "coordination leadership release",
+                Self::leadership_release_result(
+                    &state.instance_id,
+                    state.kv_client.release_leadership(&state.instance_id).await,
+                ),
+            );
+            Self::collapse_shutdown_errors(shutdown_errors)
+        } else {
+            Ok(())
         }
     }
 
-    async fn shutdown_event_batcher(&mut self) {
+    async fn shutdown_event_batcher(&mut self) -> NodeResult<()> {
         if let Some(shutdown_tx) = self.event_batcher_shutdown.take() {
             Self::signal_shutdown_channel(shutdown_tx, "event batcher");
         }
         if let Some(handle) = self.event_batcher_handle.take() {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => error!(error = %err, "Event batcher failed during shutdown"),
-                Err(join_err) => error!(error = %join_err, "Failed to join event batcher task"),
-            }
+            Self::event_batcher_shutdown_result(handle.await)
+        } else {
+            Ok(())
         }
     }
 }
@@ -2632,6 +2846,107 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn publish_scan_ack_reports_nats_failures(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let client = ctx.nats_client();
+
+        let operation_id = Uuid::now_v7();
+        let ack = NodeScanAck {
+            operation_id,
+            node_name: "test-node".to_string(),
+            accepted: true,
+            error: Some("x".repeat(2_000_000)),
+        };
+
+        let error = NodeRunner::<RuntimeTestNode>::publish_scan_ack(
+            &client,
+            Some("sinex.test.reply".into()),
+            &ack,
+        )
+        .await
+        .expect_err("oversized control payloads must fail scan acknowledgements honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to publish scan acknowledgement"));
+        assert!(message.contains("sinex.test.reply"));
+        assert!(message.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn publish_scan_progress_reports_nats_failures(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let client = ctx.nats_client();
+
+        let operation_id = Uuid::now_v7();
+        let progress = NodeScanProgress {
+            operation_id,
+            node_name: "test-node".to_string(),
+            events_processed: 1,
+            events_emitted: 2,
+            final_report: None,
+            error: Some("x".repeat(2_000_000)),
+        };
+
+        let error = NodeRunner::<RuntimeTestNode>::publish_scan_progress(
+            &client,
+            "sinex.test.progress".to_string(),
+            &progress,
+        )
+        .await
+        .expect_err("oversized control payloads must fail scan progress honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to publish scan progress update"));
+        assert!(message.contains("sinex.test.progress"));
+        assert!(message.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
+        let emitted_counter = Arc::new(AtomicU64::new(7));
+        let handle = tokio::spawn(async {
+            Err(SinexError::processing(
+                "replay forwarder target channel closed".to_string(),
+            ))
+        });
+
+        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder failures must fail the dispatched scan honestly");
+
+        assert_eq!(outcome.events_emitted, 7);
+        assert!(
+            outcome
+                .error
+                .to_string()
+                .contains("replay forwarder target channel closed")
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
+        let emitted_counter = Arc::new(AtomicU64::new(3));
+        let handle: tokio::task::JoinHandle<NodeResult<()>> = tokio::spawn(async move {
+            panic!("forwarder panic");
+        });
+
+        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder panics must fail the dispatched scan honestly");
+
+        assert_eq!(outcome.events_emitted, 3);
+        assert!(outcome.error.to_string().contains("Replay forwarder join failed"));
+        Ok(())
+    }
+
     #[sinex_test]
     async fn resolve_provisionals_to_events_surfaces_missing_confirmed_event(
         ctx: TestContext,
@@ -2736,6 +3051,55 @@ mod tests {
 
         assert!(NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
         rx.await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("runtime panic");
+        });
+
+        let error = NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+            .expect_err("panicked runtime tasks must fail shutdown honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("Task failed during shutdown"));
+        assert!(message.contains("runtime-task"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
+        let handle = tokio::spawn(async move {
+            panic!("batcher panic");
+            #[allow(unreachable_code)]
+            Ok::<(), SinexError>(())
+        });
+
+        let error = NodeRunner::<RuntimeTestNode>::event_batcher_shutdown_result(handle.await)
+            .expect_err("panicked batcher tasks must fail shutdown honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("Event batcher failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<()> {
+        let error = NodeRunner::<RuntimeTestNode>::collapse_shutdown_errors(vec![
+            (
+                "heartbeat".to_string(),
+                SinexError::processing("primary shutdown failure"),
+            ),
+            (
+                "event batcher".to_string(),
+                SinexError::processing("secondary shutdown failure"),
+            ),
+        ])
+        .expect_err("multiple shutdown failures must stay visible");
+        let message = format!("{error:#}");
+        assert!(message.contains("primary shutdown failure"));
+        assert!(message.contains("event batcher"));
+        assert!(message.contains("secondary shutdown failure"));
         Ok(())
     }
 }

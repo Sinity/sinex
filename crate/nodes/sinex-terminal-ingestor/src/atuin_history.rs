@@ -11,6 +11,7 @@ use sinex_node_sdk::{
     read_rows_with_params,
 };
 use sinex_primitives::Timestamp;
+use std::io::{Error as IoError, ErrorKind};
 
 /// Represents a single command from Atuin history.
 #[derive(Debug, Clone)]
@@ -55,8 +56,7 @@ pub fn read_atuin_history(
     }
 
     if let Some(end_time) = end_time {
-        let end_time_ns =
-            i64::try_from(end_time.inner().unix_timestamp_nanos()).unwrap_or(i64::MAX);
+        let end_time_ns = encode_query_timestamp_ns(end_time)?;
         read_rows_with_params(
             path,
             "SELECT
@@ -96,6 +96,18 @@ pub fn read_atuin_history(
             map_atuin_row,
         )
     }
+}
+
+fn encode_query_timestamp_ns(end_time: Timestamp) -> Result<i64, rusqlite::Error> {
+    i64::try_from(end_time.inner().unix_timestamp_nanos()).map_err(|error| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(IoError::new(
+            ErrorKind::InvalidData,
+            format!(
+                "Atuin query end_time is outside SQLite i64 nanosecond range: {} ({error})",
+                end_time.format_rfc3339()
+            ),
+        )))
+    })
 }
 
 /// Get the current maximum row ID from the Atuin history database.

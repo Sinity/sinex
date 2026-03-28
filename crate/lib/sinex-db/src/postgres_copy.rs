@@ -427,10 +427,10 @@ impl ToPostgresCopy for Event<JsonValue> {
             .as_uuid()
             .to_string();
 
-        let ts_val = self.ts_orig.unwrap_or_else(Timestamp::now);
-        let (pg_ts, ts_orig_subnano) = ts_val.to_postgres_parts();
-
-        // format_rfc3339 expects Timestamp, pg_ts is OffsetDateTime
+        let ts_orig = self
+            .ts_orig
+            .ok_or_else(|| Error::Protocol("Event missing ts_orig for COPY insert".into()))?;
+        let (pg_ts, ts_orig_subnano) = ts_orig.to_postgres_parts();
         let ts_orig_str = Timestamp::from(pg_ts).format_rfc3339();
 
         let payload = serde_json::to_string(&self.payload).map_err(|err| {
@@ -633,6 +633,7 @@ fn escape_copy_str_slow(buf: &mut Vec<u8>, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Event;
     use crate::repositories::events::StreamBatchRow;
     use serde_json::json;
     use sinex_primitives::domain::{EventSource, EventType};
@@ -726,6 +727,41 @@ mod tests {
                 fields[idx]
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn missing_event_ts_orig_is_rejected() -> ::xtask::sandbox::TestResult<()> {
+        let event = Event::<JsonValue> {
+            id: Some(Id::new()),
+            source: EventSource::from_static("test.source"),
+            event_type: EventType::from_static("test.event"),
+            payload: json!({"ok": true}),
+            ts_orig: None,
+            host: sinex_primitives::domain::HostName::from_static("localhost"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: crate::Provenance::Material {
+                id: Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::builder::OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        let mut buf = Vec::new();
+        let error = event
+            .write_copy_row(&mut buf)
+            .expect_err("missing ts_orig must be rejected");
+        assert!(error.to_string().contains("missing ts_orig"));
         Ok(())
     }
 

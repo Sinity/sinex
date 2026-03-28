@@ -277,19 +277,39 @@ pub async fn create_or_open_kv_store(
     let bucket = config.bucket.clone();
     match js.create_key_value(config).await {
         Ok(store) => Ok(store),
-        Err(create_err) => js.get_key_value(&bucket).await.map_err(|open_err| {
-            SinexError::kv(format!(
-                "Failed to create/open NATS KV bucket {bucket} (create: {create_err}, open: {open_err})"
-            ))
-        }),
+        Err(create_err) if kv_bucket_already_exists(&create_err) => {
+            js.get_key_value(&bucket).await.map_err(|open_err| {
+                SinexError::kv(format!(
+                    "Failed to open existing NATS KV bucket {bucket} after create conflict"
+                ))
+                .with_std_error(&open_err)
+            })
+        }
+        Err(create_err) => Err(
+            SinexError::kv(format!("Failed to create NATS KV bucket {bucket}"))
+                .with_std_error(&create_err),
+        ),
     }
+}
+
+fn kv_bucket_already_exists(err: &jetstream::context::CreateKeyValueError) -> bool {
+    std::error::Error::source(err)
+        .and_then(|source| source.downcast_ref::<jetstream::context::CreateStreamError>())
+        .is_some_and(|stream_err| {
+            matches!(
+                stream_err.kind(),
+                jetstream::context::CreateStreamErrorKind::JetStream(js_err)
+                    if js_err.error_code() == jetstream::ErrorCode::STREAM_NAME_EXIST
+            )
+        })
 }
 
 #[cfg(test)]
 mod tests {
     // Small inline tests are justified here because they exercise private TLS
-    // provider installation behavior directly.
+    // provider installation behavior and private KV error classification directly.
     use super::*;
+    use serde_json::json;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -310,6 +330,44 @@ mod tests {
     async fn non_tls_config_skips_provider_installation() -> xtask::sandbox::TestResult<()> {
         let cfg = NatsConnectionConfig::default();
         cfg.ensure_rustls_crypto_provider()?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kv_bucket_already_exists_matches_stream_name_conflict(
+    ) -> xtask::sandbox::TestResult<()> {
+        let stream_error = jetstream::context::CreateStreamError::new(
+            jetstream::context::CreateStreamErrorKind::JetStream(serde_json::from_value(json!({
+                "code": 400,
+                "err_code": jetstream::ErrorCode::STREAM_NAME_EXIST.0,
+                "description": "stream already exists",
+            }))?),
+        );
+        let kv_error = jetstream::context::CreateKeyValueError::with_source(
+            jetstream::context::CreateKeyValueErrorKind::BucketCreate,
+            stream_error,
+        );
+
+        assert!(kv_bucket_already_exists(&kv_error));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kv_bucket_already_exists_rejects_other_bucket_create_errors(
+    ) -> xtask::sandbox::TestResult<()> {
+        let stream_error = jetstream::context::CreateStreamError::new(
+            jetstream::context::CreateStreamErrorKind::JetStream(serde_json::from_value(json!({
+                "code": 400,
+                "err_code": jetstream::ErrorCode::STREAM_INVALID_CONFIG.0,
+                "description": "invalid stream configuration",
+            }))?),
+        );
+        let kv_error = jetstream::context::CreateKeyValueError::with_source(
+            jetstream::context::CreateKeyValueErrorKind::BucketCreate,
+            stream_error,
+        );
+
+        assert!(!kv_bucket_already_exists(&kv_error));
         Ok(())
     }
 }

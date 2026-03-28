@@ -295,27 +295,11 @@ impl UdevWatcher {
         };
 
         for path in event.paths {
-            let device_path = path.to_string_lossy().to_string();
-
-            // Extract device class from path
-            let class_name = if let Some(parent) = path.parent() {
-                parent
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-            } else {
-                "unknown"
-            };
+            let device_path = Self::device_path_for_event(&path)?;
+            let class_name = Self::class_name_for_event(&path)?;
 
             // Determine device type
-            let device_type = match class_name {
-                "net" => "network",
-                "block" => "storage",
-                "input" => "input",
-                "usb" => "usb",
-                "sound" => "audio",
-                _ => "other",
-            };
+            let device_type = Self::device_type_for_class_name(class_name);
 
             // Get device properties for create/add events
             let properties = if action == "add" || action == "change" {
@@ -335,6 +319,40 @@ impl UdevWatcher {
         Ok(())
     }
 
+    fn device_path_for_event(path: &Path) -> NodeResult<String> {
+        path.to_str().map(str::to_owned).ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing("udev watcher received non-utf8 device path")
+                .with_context("path_debug", format!("{path:?}"))
+        })
+    }
+
+    fn class_name_for_event<'a>(path: &'a Path) -> NodeResult<&'a str> {
+        let class_dir = path.parent().ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing("udev watcher path is missing class directory")
+                .with_context("path_debug", format!("{path:?}"))
+        })?;
+        class_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::processing(
+                    "udev watcher path has invalid class directory name",
+                )
+                .with_context("path_debug", format!("{path:?}"))
+            })
+    }
+
+    fn device_type_for_class_name(class_name: &str) -> &'static str {
+        match class_name {
+            "net" => "network",
+            "block" => "storage",
+            "input" => "input",
+            "usb" => "usb",
+            "sound" => "audio",
+            _ => "other",
+        }
+    }
+
     async fn send_event(
         tx: &mpsc::Sender<Event<JsonValue>>,
         mut event: Event<JsonValue>,
@@ -342,10 +360,11 @@ impl UdevWatcher {
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
         material.decorate_event(&mut event).await?;
-        if let Err(err) = tx.send(event).await {
-            warn!("Event channel closed while sending {}: {}", context, err);
-        }
-        Ok(())
+        tx.send(event).await.map_err(|err| {
+            sinex_node_sdk::SinexError::processing("udev event channel closed")
+                .with_context("context", context.to_string())
+                .with_std_error(&err)
+        })
     }
 
     /// Start streaming events
@@ -363,8 +382,63 @@ impl UdevWatcher {
 #[cfg(test)]
 mod tests {
     use super::UdevWatcher;
+    use crate::{WatcherMaterialContext, material_context::MaterialContext};
+    use async_trait::async_trait;
+    use notify::{
+        Event as NotifyEvent,
+        EventKind,
+        event::{CreateKind, ModifyKind},
+    };
+    use serde_json::json;
+    use sinex_db::models::{Event, Provenance};
+    use sinex_node_sdk::NodeResult;
+    use sinex_primitives::{Id, JsonValue};
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
+
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+
+    #[derive(Debug)]
+    struct TestMaterialContext;
+
+    #[async_trait]
+    impl MaterialContext for TestMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Ok(())
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
+    fn test_material() -> WatcherMaterialContext {
+        Arc::new(TestMaterialContext)
+    }
+
+    fn notify_event(kind: EventKind, path: PathBuf) -> NotifyEvent {
+        NotifyEvent::new(kind).add_path(path)
+    }
 
     #[sinex_test]
     async fn get_device_properties_parses_uevent_file() -> TestResult<()> {
@@ -404,6 +478,92 @@ mod tests {
         assert!(error.to_string().contains("Failed to read uevent properties"));
         assert!(error.to_string().contains("uevent"));
         std::fs::remove_dir_all(&device_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_event_rejects_closed_channel() -> TestResult<()> {
+        let material = test_material();
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let event = Event::new_json(
+            "system-watcher",
+            "udev.device.other",
+            json!({"action": "change"}),
+            material.initial_provenance(),
+        );
+
+        let error = UdevWatcher::send_event(&tx, event, "test_closed_send", &material)
+            .await
+            .expect_err("closed udev event channels must fail honestly");
+
+        assert!(error.to_string().contains("udev event channel closed"));
+        assert!(error.to_string().contains("test_closed_send"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn handle_inotify_event_rejects_non_utf8_paths() -> TestResult<()> {
+        let watcher = UdevWatcher {
+            _monitor_hotplug: false,
+        };
+        let material = test_material();
+        let (tx, _rx) = mpsc::channel(1);
+        let invalid_path = PathBuf::from(OsString::from_vec(vec![
+            b'/',
+            b's',
+            b'y',
+            b's',
+            b'/',
+            b'c',
+            b'l',
+            b'a',
+            b's',
+            b's',
+            b'/',
+            b'n',
+            b'e',
+            b't',
+            b'/',
+            0xff,
+        ]));
+
+        let error = watcher
+            .handle_inotify_event(
+                notify_event(EventKind::Modify(ModifyKind::Any), invalid_path),
+                &tx,
+                &material,
+            )
+            .await
+            .expect_err("non-utf8 udev paths must fail honestly");
+
+        assert!(error
+            .to_string()
+            .contains("udev watcher received non-utf8 device path"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_inotify_event_rejects_paths_without_class_name() -> TestResult<()> {
+        let watcher = UdevWatcher {
+            _monitor_hotplug: false,
+        };
+        let material = test_material();
+        let (tx, _rx) = mpsc::channel(1);
+
+        let error = watcher
+            .handle_inotify_event(
+                notify_event(EventKind::Create(CreateKind::Any), PathBuf::from("/ttyUSB0")),
+                &tx,
+                &material,
+            )
+            .await
+            .expect_err("root-level device paths must fail honestly");
+
+        assert!(error
+            .to_string()
+            .contains("udev watcher path has invalid class directory name"));
         Ok(())
     }
 }

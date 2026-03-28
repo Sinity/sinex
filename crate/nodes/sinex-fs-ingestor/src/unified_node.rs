@@ -332,20 +332,27 @@ impl FilesystemNode {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
-    fn log_watcher_shutdown_result(index: usize, result: Result<(), tokio::task::JoinError>) {
+    fn watcher_shutdown_result(
+        index: usize,
+        result: Result<(), tokio::task::JoinError>,
+    ) -> NodeResult<()> {
         match result {
             Ok(()) => {
                 debug!(watcher_index = index, "Filesystem watcher task finished before shutdown");
+                Ok(())
             }
             Err(error) if error.is_cancelled() => {
                 debug!(watcher_index = index, "Filesystem watcher task cancelled during shutdown");
+                Ok(())
             }
             Err(error) => {
-                warn!(
-                    watcher_index = index,
-                    error = %error,
-                    "Filesystem watcher task exited unexpectedly during shutdown"
-                );
+                Err(
+                    SinexError::processing(
+                        "filesystem watcher task exited unexpectedly during shutdown",
+                    )
+                    .with_context("watcher_index", index.to_string())
+                    .with_source(error),
+                )
             }
         }
     }
@@ -621,7 +628,7 @@ impl IngestorNode for FilesystemNode {
         // Wait for all watcher tasks to finish
         let mut guard = self.watch_handles.lock().await;
         for (index, handle) in guard.drain(..).enumerate() {
-            Self::log_watcher_shutdown_result(index, handle.await);
+            Self::watcher_shutdown_result(index, handle.await)?;
         }
 
         info!(
@@ -1068,7 +1075,7 @@ async fn capture_material(
     reason: &str,
     content: Option<&[u8]>,
 ) -> NodeResult<Uuid> {
-    let identifier = path.to_string_lossy();
+    let identifier = observed_path_string(path)?;
     let mut handle = ctx
         .acquisition
         .begin_material(&identifier)
@@ -1140,7 +1147,7 @@ async fn capture_material_from_file_inner(
         .await
         .map_err(|_| SinexError::processing("Capture semaphore closed".to_string()))?;
 
-    let identifier = path.to_string_lossy();
+    let identifier = observed_path_string(path)?;
     let mut handle = ctx
         .acquisition
         .begin_material(&identifier)
@@ -1228,8 +1235,15 @@ fn is_transient_capture_error(err: &SinexError) -> bool {
 }
 
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
-    RecordedPath::from_observed(path.to_string_lossy().to_string())
+    RecordedPath::from_observed(observed_path_string(path)?)
         .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
+}
+
+fn observed_path_string(path: &Path) -> NodeResult<String> {
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+        SinexError::validation("filesystem watcher observed non-utf8 path")
+            .with_context("path_debug", format!("{path:?}"))
+    })
 }
 
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
@@ -1264,6 +1278,7 @@ mod tests {
     use sinex_db::models::{Event as SinexEvent, Provenance};
     use sinex_node_sdk::AcquisitionManager;
     use sinex_primitives::Id;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
@@ -1273,6 +1288,10 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1378,7 +1397,7 @@ mod tests {
     #[sinex_test]
     async fn filesystem_watcher_shutdown_result_accepts_clean_exit() -> TestResult<()> {
         let handle = tokio::spawn(async {});
-        FilesystemNode::log_watcher_shutdown_result(0, handle.await);
+        FilesystemNode::watcher_shutdown_result(0, handle.await)?;
         Ok(())
     }
 
@@ -1388,16 +1407,47 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(30)).await;
         });
         handle.abort();
-        FilesystemNode::log_watcher_shutdown_result(1, handle.await);
+        FilesystemNode::watcher_shutdown_result(1, handle.await)?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn filesystem_watcher_shutdown_result_accepts_panicked_task() -> TestResult<()> {
+    async fn filesystem_watcher_shutdown_result_rejects_panicked_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("filesystem watcher panic");
         });
-        FilesystemNode::log_watcher_shutdown_result(2, handle.await);
+        let error = FilesystemNode::watcher_shutdown_result(2, handle.await)
+            .expect_err("panicked watcher should fail shutdown honestly");
+        let message = error.to_string();
+        assert!(
+            message.contains("filesystem watcher task exited unexpectedly during shutdown"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("watcher_index"),
+            "watcher index should be preserved in shutdown failure context: {message}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn observed_path_string_rejects_non_utf8_paths() -> TestResult<()> {
+        let invalid_path = PathBuf::from(OsString::from_vec(vec![
+            b'/',
+            b't',
+            b'm',
+            b'p',
+            b'/',
+            0xff,
+        ]));
+
+        let error =
+            observed_path_string(&invalid_path).expect_err("non-utf8 observed paths must fail");
+
+        assert!(error
+            .to_string()
+            .contains("filesystem watcher observed non-utf8 path"));
         Ok(())
     }
 

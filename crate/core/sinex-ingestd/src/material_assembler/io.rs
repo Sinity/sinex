@@ -27,7 +27,7 @@ use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
@@ -145,7 +145,8 @@ async fn restore_state_params(
         }
         has_non_empty_lines = true;
 
-        if let Ok(envelope) = serde_json::from_str::<WalEntryEnvelope>(line) {
+        match parse_wal_envelope_line(line) {
+            Ok(envelope) => {
             // Verify CRC: re-serialize the entry and compare checksum
             let entry_json = match serde_json::to_vec(&envelope.entry) {
                 Ok(json) => json,
@@ -177,14 +178,17 @@ async fn restore_state_params(
             }
             has_envelope_entries = true;
             state_snapshot.apply(envelope.entry);
-        } else {
-            warn!(
-                material_id = %material_id,
-                line = line_num + 1,
-                "WAL replay error — invalid envelope entry, stopping replay"
-            );
-            replay_corrupted = true;
-            break;
+            }
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    line = line_num + 1,
+                    error = %error,
+                    "WAL replay error — invalid envelope entry, stopping replay"
+                );
+                replay_corrupted = true;
+                break;
+            }
         }
     }
 
@@ -316,6 +320,24 @@ async fn restore_state_params(
     }))
 }
 
+fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
+    serde_json::from_str::<WalEntryEnvelope>(line).map_err(|error| {
+        format!(
+            "failed to parse WAL envelope JSON: {error}; wal_line={}",
+            wal_line_preview(line)
+        )
+    })
+}
+
+fn wal_line_preview(line: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 160;
+    let mut preview = line.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+    if line.chars().count() > MAX_PREVIEW_CHARS {
+        preview.push('…');
+    }
+    preview
+}
+
 #[derive(Default)]
 struct ReplayedState {
     expected_offset: i64,
@@ -440,9 +462,28 @@ async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> Inges
             SinexError::io(format!("Failed to stat buffered slice {}", path.display()))
                 .with_source(e)
         })?;
-        total += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+        let slice_bytes = buffered_slice_file_len_bytes(path, metadata.len())?;
+        total = checked_buffered_slice_total(total, slice_bytes, path)?;
     }
     Ok(total)
+}
+
+fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> IngestdResult<i64> {
+    i64::try_from(len).map_err(|error| {
+        SinexError::processing("buffered slice length exceeds i64 range")
+            .with_context("path", path.display().to_string())
+            .with_context("slice_len_bytes", len.to_string())
+            .with_std_error(&error)
+    })
+}
+
+fn checked_buffered_slice_total(total: i64, slice_bytes: i64, path: &Path) -> IngestdResult<i64> {
+    total.checked_add(slice_bytes).ok_or_else(|| {
+        SinexError::processing("buffered slice byte total overflowed")
+            .with_context("path", path.display().to_string())
+            .with_context("current_total_bytes", total.to_string())
+            .with_context("slice_len_bytes", slice_bytes.to_string())
+    })
 }
 
 async fn prune_stale_buffered_slices(
@@ -1020,6 +1061,28 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn buffered_slice_file_len_bytes_rejects_unrepresentable_lengths() -> TestResult<()> {
+        let error = buffered_slice_file_len_bytes(Path::new("/tmp/oversized-slice"), u64::MAX)
+            .expect_err("oversized buffered slices must fail honestly");
+
+        assert!(error
+            .to_string()
+            .contains("buffered slice length exceeds i64 range"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn checked_buffered_slice_total_rejects_overflow() -> TestResult<()> {
+        let error = checked_buffered_slice_total(i64::MAX, 1, Path::new("/tmp/overflow-slice"))
+            .expect_err("buffered slice byte totals must not silently overflow");
+
+        assert!(error
+            .to_string()
+            .contains("buffered slice byte total overflowed"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn handle_slice_ignores_duplicate_buffered_offset_without_growing_state(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -1201,6 +1264,24 @@ mod tests {
 
         assert!(error.to_string().contains("invalid material id"));
         assert!(error.to_string().contains("notes"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_wal_envelope_line_reports_error_and_preview() -> TestResult<()> {
+        let error = parse_wal_envelope_line("{\"invalid\":")
+            .expect_err("invalid WAL envelope JSON must surface parse context");
+
+        assert!(error.contains("failed to parse WAL envelope JSON"));
+        assert!(error.contains("wal_line={\"invalid\":"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wal_line_preview_truncates_long_lines() -> TestResult<()> {
+        let preview = wal_line_preview(&"a".repeat(200));
+        assert_eq!(preview.chars().count(), 161);
+        assert!(preview.ends_with('…'));
         Ok(())
     }
 

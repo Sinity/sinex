@@ -70,9 +70,9 @@ impl SystemdServiceDetails {
         }
 
         Ok(Self {
-            active_state: active_state.unwrap_or_else(|| "unknown".to_string()),
-            sub_state: sub_state.unwrap_or_else(|| "unknown".to_string()),
-            load_state: load_state.unwrap_or_else(|| "unknown".to_string()),
+            active_state: require_systemd_show_field("ActiveState", active_state)?,
+            sub_state: require_systemd_show_field("SubState", sub_state)?,
+            load_state: require_systemd_show_field("LoadState", load_state)?,
             unit_type,
             notify_access,
             watchdog_usec,
@@ -126,6 +126,13 @@ impl SystemdServiceDetails {
             "watchdog_usec": self.watchdog_usec,
         })
     }
+}
+
+fn require_systemd_show_field(field: &'static str, value: Option<String>) -> NodeResult<String> {
+    value.filter(|value| !value.trim().is_empty()).ok_or_else(|| {
+        SinexError::processing("systemd show output missing required field".to_string())
+            .with_context("field", field)
+    })
 }
 
 impl fmt::Display for ServiceStatus {
@@ -817,7 +824,12 @@ async fn discover_unit_files_in_path(unit_path: &str) -> NodeResult<Vec<String>>
         match entries.next_entry().await {
             Ok(Some(entry)) => {
                 let file_name = entry.file_name();
-                let file_name_str = file_name.to_string_lossy();
+                let file_name_str = file_name.into_string().map_err(|file_name| {
+                    SinexError::processing(format!(
+                        "Failed to decode systemd unit entry name as UTF-8 in '{unit_path}'"
+                    ))
+                    .with_context("entry", format!("{file_name:?}"))
+                })?;
                 let file_type = entry.file_type().await.map_err(|error| {
                     SinexError::processing(format!(
                         "Failed to inspect file type for systemd unit entry '{}/{}': {error}",
@@ -884,6 +896,18 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn systemd_service_details_reject_missing_required_states() -> TestResult<()> {
+        let error = SystemdServiceDetails::from_show_output(
+            "ActiveState=active\nType=notify\nNotifyAccess=main\nWatchdogUSec=60000000\n",
+        )
+        .expect_err("missing SubState/LoadState should fail honestly");
+
+        assert!(error.to_string().contains("missing required field"));
+        assert!(error.to_string().contains("SubState"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn discover_unit_files_in_path_reports_non_directory_paths() -> TestResult<()> {
         let temp = tempfile::tempdir()?;
         let bogus_path = temp.path().join("not-a-directory");
@@ -915,6 +939,26 @@ mod tests {
                 format!("{}/sinex-ingestd.service", temp.path().display()),
             ]
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn discover_unit_files_in_path_rejects_non_utf8_entry_names() -> TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp = tempfile::tempdir()?;
+        let invalid_name = std::ffi::OsString::from_vec(vec![
+            b's', b'i', b'n', b'e', b'x', b'-', 0xff, b'.', b's', b'e', b'r', b'v', b'i', b'c',
+            b'e',
+        ]);
+        std::fs::write(temp.path().join(invalid_name), [])?;
+
+        let error = discover_unit_files_in_path(temp.path().to_str().expect("utf8 path"))
+            .await
+            .expect_err("non-utf8 unit entries should fail honestly");
+
+        assert!(error.to_string().contains("decode systemd unit entry name"));
         Ok(())
     }
 }
