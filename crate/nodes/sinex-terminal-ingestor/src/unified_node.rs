@@ -2396,6 +2396,21 @@ impl TerminalNode {
         }
     }
 
+    fn collapse_shutdown_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let mut error = errors.remove(0);
+        for (index, extra) in errors.into_iter().enumerate() {
+            error = error.with_context(
+                format!("additional_shutdown_error_{}", index + 1),
+                extra.to_string(),
+            );
+        }
+        Err(error)
+    }
+
     #[must_use]
     pub fn config(&self) -> &TerminalConfig {
         &self.config
@@ -2981,23 +2996,27 @@ impl IngestorNode for TerminalNode {
         let handles: Vec<_> = guard.drain(..).collect();
         drop(guard);
 
-        for handle in handles {
+        let mut shutdown_errors = Vec::new();
+        for (watcher_index, handle) in handles.into_iter().enumerate() {
             match handle.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    return Err(SinexError::processing(
+                    shutdown_errors.push(SinexError::processing(
                         "terminal watcher failed before shutdown completed",
                     )
+                    .with_context("watcher_index", watcher_index.to_string())
                     .with_source(error));
                 }
                 Err(error) => {
-                    return Err(SinexError::processing(
+                    shutdown_errors.push(SinexError::processing(
                         "terminal watcher task ended with join error during shutdown",
                     )
+                    .with_context("watcher_index", watcher_index.to_string())
                     .with_std_error(&error));
                 }
             }
         }
+        Self::collapse_shutdown_errors(shutdown_errors)?;
         info!("Terminal watcher shutdown complete");
         Ok(())
     }
@@ -5844,6 +5863,37 @@ mod tests {
                 .to_string()
                 .contains("terminal watcher exploded before shutdown"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_waits_for_remaining_handles_after_failure() -> TestResult<()> {
+        let mut node = TerminalNode::default();
+        let start = Instant::now();
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async {
+                Err::<(), _>(SinexError::processing("first terminal watcher failed"))
+            }));
+            guard.push(tokio::spawn(async {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok::<(), SinexError>(())
+            }));
+        }
+
+        let error = node
+            .shutdown(&TerminalCheckpoint::default())
+            .await
+            .expect_err("shutdown should wait for all watcher handles before returning");
+        assert!(
+            start.elapsed() >= Duration::from_millis(25),
+            "shutdown returned before awaiting the later watcher handle",
+        );
+        assert!(
+            error.to_string().contains("first terminal watcher failed"),
+            "unexpected error: {error}",
         );
         Ok(())
     }
