@@ -936,7 +936,7 @@ impl NodeCoordination {
 
             // Send heartbeat regardless of mode
             if let Err(e) = self.kv_client.heartbeat(&self.current_metadata()).await {
-                warn!("Failed to send heartbeat: {}", e);
+                self.record_coordination_failure("instance_heartbeat", &e);
             }
 
             match self.apply_mode_transition(desired_mode, &process_events).await {
