@@ -681,15 +681,16 @@ impl HistoryDb {
 
     /// Check whether this database contains synthetic (seeded) data.
     pub fn check_synthetic(&self) -> Result<bool> {
-        let exists: bool = self
+        let exists = self
             .conn
             .query_row(
                 "SELECT 1 FROM metadata WHERE key = 'synthetic' AND value = 'true' LIMIT 1",
                 [],
                 |_| Ok(true),
             )
-            .unwrap_or(false);
-        Ok(exists)
+            .optional()
+            .context("failed to query synthetic history marker")?;
+        Ok(exists.unwrap_or(false))
     }
 
     /// Mark the database as containing synthetic data.
@@ -704,10 +705,11 @@ impl HistoryDb {
     }
 
     /// Clear the synthetic marker (called on first real `start_invocation`).
-    fn clear_synthetic(&self) {
-        let _ = self
-            .conn
-            .execute("DELETE FROM metadata WHERE key = 'synthetic'", []);
+    fn clear_synthetic(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM metadata WHERE key = 'synthetic'", [])
+            .context("failed to clear synthetic marker")?;
+        Ok(())
     }
 
     /// Print a one-time-per-process warning if this database is synthetic.
@@ -751,7 +753,7 @@ impl HistoryDb {
 
         // Transition from synthetic to real: clear the marker on first real write.
         if self.is_synthetic {
-            self.clear_synthetic();
+            self.clear_synthetic()?;
         }
 
         with_sqlite_lock_retry("start invocation history row", || {
@@ -2981,6 +2983,7 @@ impl HistoryDb {
         struct Row {
             command: String,
             started_at: String,
+            started_at_ts: OffsetDateTime,
             finished_at: Option<String>,
             duration_secs: Option<f64>,
             status: String,
@@ -2998,10 +3001,17 @@ impl HistoryDb {
 
         let rows: Vec<Row> = stmt
             .query_map([], |row| {
+                let started_at: String = row.get(1)?;
+                let finished_at: Option<String> = row.get(2)?;
+                let started_at_ts = parse_invocation_timestamp(1, "started_at", &started_at)?;
+                if let Some(finished_at_value) = finished_at.as_deref() {
+                    let _ = parse_invocation_timestamp(2, "finished_at", finished_at_value)?;
+                }
                 Ok(Row {
                     command: row.get(0)?,
-                    started_at: row.get(1)?,
-                    finished_at: row.get(2)?,
+                    started_at,
+                    started_at_ts,
+                    finished_at,
                     duration_secs: row.get(3)?,
                     status: row.get(4)?,
                 })
@@ -3011,26 +3021,12 @@ impl HistoryDb {
         let gap_secs = i64::from(gap_minutes) * 60;
         let mut sessions: Vec<WorkingSession> = Vec::new();
         let mut current: Option<WorkingSession> = None;
-        let mut prev_started: Option<String> = None;
+        let mut prev_started: Option<OffsetDateTime> = None;
 
         for row in &rows {
-            let gap_exceeded = prev_started.as_deref().map_or(true, |prev| {
-                let gap = time::OffsetDateTime::parse(
-                    &row.started_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .ok()
-                .and_then(|curr| {
-                    time::OffsetDateTime::parse(
-                        prev,
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .ok()
-                    .map(|p| (curr - p).whole_seconds())
-                })
-                .unwrap_or(i64::MAX);
-                gap > gap_secs
-            });
+            let gap_exceeded = prev_started
+                .map(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs)
+                .unwrap_or(true);
 
             if gap_exceeded {
                 if let Some(s) = current.take() {
@@ -3062,7 +3058,7 @@ impl HistoryDb {
                     s.failure_count += 1;
                 }
             }
-            prev_started = Some(row.started_at.clone());
+            prev_started = Some(row.started_at_ts);
         }
         if let Some(s) = current {
             sessions.push(s);
@@ -3618,7 +3614,11 @@ impl HistoryDb {
                     ))
                 },
             )
-            .unwrap_or((0, 0));
+            .wrap_err_with(|| {
+                format!(
+                    "failed to compute transition probability from '{from_command}' to '{to_command}'"
+                )
+            })?;
 
         if total == 0 {
             return Ok(0.0);
@@ -4114,6 +4114,42 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_check_synthetic_surfaces_query_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-synthetic-query-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE metadata RENAME TO metadata_old;
+            CREATE TABLE metadata (
+                value TEXT NOT NULL
+            );
+            ",
+        )?;
+
+        let error = db
+            .check_synthetic()
+            .expect_err("metadata query failures should surface");
+        assert!(format!("{error:#}").contains("failed to query synthetic history marker"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_start_invocation_surfaces_synthetic_marker_clear_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-synthetic-clear-failure.db");
+        let mut db = HistoryDb::open(&db_path)?;
+        db.is_synthetic = true;
+        db.conn.execute_batch("DROP TABLE metadata;")?;
+
+        let error = db
+            .start_invocation("check", None, None, None)
+            .expect_err("synthetic marker clear failures should surface");
+        assert!(format!("{error:#}").contains("failed to clear synthetic marker"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_get_recent_with_command_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-filter.db");
@@ -4197,6 +4233,46 @@ mod tests {
             .get_last("check")
             .expect_err("invalid started_at should surface");
         assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_working_sessions_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-working-sessions-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["broken-started-at", id],
+        )?;
+
+        let error = db
+            .get_working_sessions(10, 30)
+            .expect_err("invalid working session timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_working_sessions_surfaces_invalid_finished_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-working-sessions-invalid-finished-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET finished_at = ?1 WHERE id = ?2",
+            params!["broken-finished-at", id],
+        )?;
+
+        let error = db
+            .get_working_sessions(10, 30)
+            .expect_err("invalid working session completion timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation finished_at"));
         Ok(())
     }
 
@@ -4937,6 +5013,30 @@ mod tests {
     async fn invalid_invocation_status_is_rejected() -> TestResult<()> {
         let err = InvocationStatus::try_from_str("mystery").expect_err("should fail");
         assert!(err.to_string().contains("invalid invocation status"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_transition_probability_surfaces_query_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-transition-probability-query-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL
+            );
+            ",
+        )?;
+
+        let error = db
+            .get_transition_probability("check", "test", 5, 20)
+            .expect_err("transition probability query failures should surface");
+        assert!(format!("{error:#}").contains("failed to compute transition probability"));
         Ok(())
     }
 }
