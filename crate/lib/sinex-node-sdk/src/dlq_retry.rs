@@ -412,6 +412,31 @@ fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> NodeResult<u32> {
     })
 }
 
+fn combine_retry_counts(header_retry: u32, delivery_retry: Result<i64, String>) -> NodeResult<u32> {
+    match delivery_retry {
+        Ok(delivered) => {
+            let delivery_retry = u32::try_from(delivered).map_err(|error| {
+                SinexError::processing("DLQ delivery retry count exceeds supported range")
+                    .with_context("delivered", delivered.to_string())
+                    .with_std_error(&error)
+            })?;
+            Ok(header_retry.max(delivery_retry))
+        }
+        Err(error) if header_retry > 0 => {
+            warn!(
+                stored_retry_count = header_retry,
+                error = %error,
+                "Failed to inspect JetStream delivery metadata; using stored Retry-Count header"
+            );
+            Ok(header_retry)
+        }
+        Err(error) => Err(
+            SinexError::processing("Failed to inspect DLQ delivery metadata")
+                .with_context("delivery_metadata_error", error),
+        ),
+    }
+}
+
 fn dlq_retry_attempts(msg: &jetstream::Message) -> NodeResult<u32> {
     let header_retry = match msg.headers.as_ref() {
         Some(headers) => dlq_stored_retry_count(headers)?,
@@ -419,11 +444,9 @@ fn dlq_retry_attempts(msg: &jetstream::Message) -> NodeResult<u32> {
     };
     let delivery_retry = msg
         .info()
-        .ok()
         .map(|info| info.delivered.saturating_sub(1))
-        .and_then(|delivered| u32::try_from(delivered).ok())
-        .unwrap_or(0);
-    Ok(header_retry.max(delivery_retry))
+        .map_err(|error| error.to_string());
+    combine_retry_counts(header_retry, delivery_retry)
 }
 
 fn dlq_event_id(subject: &str, headers: &async_nats::HeaderMap, payload: &[u8]) -> Option<String> {
@@ -523,4 +546,43 @@ fn dlq_requeue_target(
         original_nats_msg_id,
         event_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::combine_retry_counts;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn combine_retry_counts_prefers_larger_delivery_count() -> TestResult<()> {
+        let retries = combine_retry_counts(2, Ok(5))?;
+        assert_eq!(retries, 5);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_uses_stored_header_when_delivery_metadata_is_missing()
+    -> TestResult<()> {
+        let retries = combine_retry_counts(3, Err("metadata unavailable".to_string()))?;
+        assert_eq!(retries, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_rejects_missing_delivery_metadata_without_header()
+    -> TestResult<()> {
+        let error = combine_retry_counts(0, Err("metadata unavailable".to_string()))
+            .expect_err("missing delivery metadata without stored retries must fail honestly");
+        assert!(error.to_string().contains("Failed to inspect DLQ delivery metadata"));
+        assert!(error.to_string().contains("metadata unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_rejects_delivery_count_overflow() -> TestResult<()> {
+        let error = combine_retry_counts(0, Ok(i64::from(u32::MAX) + 1))
+            .expect_err("overflowing delivery count must fail honestly");
+        assert!(error.to_string().contains("exceeds supported range"));
+        Ok(())
+    }
 }
