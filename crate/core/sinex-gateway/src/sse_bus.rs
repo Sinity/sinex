@@ -12,6 +12,7 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::{Id, JsonValue, Timestamp};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
@@ -428,8 +429,27 @@ impl SubscriptionBus {
             }
         };
 
-        // Wrap in Arc for zero-copy fan-out to multiple clients
-        let events: Vec<Arc<Event<JsonValue>>> = events.into_iter().map(Arc::new).collect();
+        let mut events_by_id: HashMap<_, _> = events
+            .into_iter()
+            .filter_map(|event| event.id.map(|id| (id, Arc::new(event))))
+            .collect();
+        let mut events = Vec::new();
+        let mut missing_ids = Vec::new();
+        for id in ids {
+            if let Some(event) = events_by_id.remove(&id) {
+                events.push(event);
+            } else {
+                missing_ids.push(id);
+            }
+        }
+
+        if !missing_ids.is_empty() {
+            warn!(
+                missing = missing_ids.len(),
+                "SSE fan-out fetch missed confirmed events; preserving IDs for retry"
+            );
+            id_buffer.extend(missing_ids);
+        }
 
         // Snapshot handles so DashMap entry locks are not held during filter evaluation or send.
         let subscriptions = self.snapshot_subscriptions();
@@ -457,8 +477,13 @@ impl SubscriptionBus {
 
 #[cfg(test)]
 mod tests {
-    use super::SubscriptionBus;
-    use sinex_primitives::{Id, Uuid};
+    use super::{SseMessage, SubscriptionBus};
+    use serde_json::json;
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::events::{DynamicPayload, Event};
+    use sinex_primitives::query::SubscriptionFilter;
+    use sinex_primitives::{Id, JsonValue, Uuid};
+    use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
 
     // Inline because these exercise private confirmation parsing/reporting helpers.
@@ -533,6 +558,39 @@ mod tests {
             id_buffer,
             vec![event_id],
             "SSE confirmation batches should stay buffered when DB fan-out fetch fails"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_batch_preserves_missing_confirmations_for_retry(ctx: TestContext) -> TestResult<()> {
+        let bus = SubscriptionBus::new();
+        let (_, mut rx) = bus
+            .register(SubscriptionFilter::default())
+            .expect("test subscription should register");
+
+        let event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
+            .from_material(ctx.create_source_material(Some("sse-batch-miss")).await?)
+            .build()?;
+        let event = ctx.pool().events().insert(event).await?;
+        let event_id = event.id.expect("inserted event must have id");
+        let missing_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+
+        let mut id_buffer = vec![event_id, missing_id];
+        bus.flush_batch(&mut id_buffer, ctx.pool()).await;
+
+        let message = timeout(Duration::from_secs(1), rx.recv())
+            .await?
+            .expect("subscription should receive the found event");
+        match message {
+            SseMessage::Event { event, .. } => assert_eq!(event.id, Some(event_id)),
+            other => panic!("expected event payload, got {other:?}"),
+        }
+
+        assert_eq!(
+            id_buffer,
+            vec![missing_id],
+            "missing confirmed event ids must remain buffered for retry"
         );
         Ok(())
     }
