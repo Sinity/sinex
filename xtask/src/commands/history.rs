@@ -582,6 +582,15 @@ fn parse_duration_secs(s: &str) -> Option<i64> {
     }
 }
 
+fn format_history_cutoff_timestamp(
+    cutoff: time::OffsetDateTime,
+    context: &'static str,
+) -> Result<String> {
+    cutoff
+        .format(&time::format_description::well_known::Rfc3339)
+        .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_list(
     db: &HistoryDb,
@@ -598,14 +607,15 @@ fn execute_list(
     let mut warnings = Vec::new();
 
     // Parse --since into an RFC3339 cutoff timestamp
-    let since_ts: Option<String> = since.and_then(|s| {
-        parse_duration_secs(s).map(|secs| {
-            let cutoff = time::OffsetDateTime::now_utc() - time::Duration::seconds(secs);
-            cutoff
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default()
+    let since_ts = since
+        .and_then(parse_duration_secs)
+        .map(|secs| {
+            format_history_cutoff_timestamp(
+                time::OffsetDateTime::now_utc() - time::Duration::seconds(secs),
+                "history --since cutoff",
+            )
         })
-    });
+        .transpose()?;
 
     let invocations =
         db.get_recent_filtered(limit, offset, command, since_ts.as_deref(), sort_by)?;

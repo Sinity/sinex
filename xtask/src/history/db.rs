@@ -192,6 +192,49 @@ pub(crate) fn parse_stored_invocation_status(
     })
 }
 
+fn invalid_invocation_field(
+    column_index: usize,
+    field_name: &'static str,
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column_index,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid invocation {field_name}: {error}"),
+        )),
+    )
+}
+
+fn parse_invocation_timestamp(
+    column_index: usize,
+    field_name: &'static str,
+    value: &str,
+) -> rusqlite::Result<OffsetDateTime> {
+    OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+        .map_err(|error| invalid_invocation_field(column_index, field_name, error))
+}
+
+fn format_invocation_timestamp(
+    column_index: usize,
+    field_name: &'static str,
+    value: OffsetDateTime,
+) -> rusqlite::Result<String> {
+    value
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|error| invalid_invocation_field(column_index, field_name, error))
+}
+
+fn format_history_timestamp(
+    timestamp: OffsetDateTime,
+    context: &'static str,
+) -> Result<String> {
+    timestamp
+        .format(&time::format_description::well_known::Rfc3339)
+        .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
+}
+
 /// A recorded command invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invocation {
@@ -2836,11 +2879,10 @@ impl HistoryDb {
         days: u32,
         limit: usize,
     ) -> Result<Vec<InvocationTimelineEntry>> {
-        let cutoff = {
-            let dt = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
-            dt.format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default()
-        };
+        let cutoff = format_history_timestamp(
+            time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
+            "history timeline cutoff",
+        )?;
 
         let mut sql = String::from(
             r"
@@ -2893,11 +2935,17 @@ impl HistoryDb {
         let mut entries: Vec<InvocationTimelineEntry> = stmt
             .query_map(refs.as_slice(), |row| {
                 let status_str: String = row.get(2)?;
+                let started_at_raw: String = row.get(3)?;
+                let started_at = format_invocation_timestamp(
+                    3,
+                    "started_at",
+                    parse_invocation_timestamp(3, "started_at", &started_at_raw)?,
+                )?;
                 Ok(InvocationTimelineEntry {
                     id: row.get(0)?,
                     command: row.get(1)?,
                     status: parse_stored_invocation_status(status_str)?,
-                    started_at: row.get(3)?,
+                    started_at,
                     duration_secs: row.get(4)?,
                     stage_count: row.get::<_, i64>(5)? as usize,
                     error_count: row.get::<_, i64>(6)? as usize,
@@ -3627,14 +3675,11 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         args_json: row.get(4)?,
         git_commit: row.get(5)?,
         git_dirty: row.get::<_, i32>(6)? != 0,
-        started_at: OffsetDateTime::parse(
-            &started_at_str,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-        finished_at: finished_at_str.and_then(|s| {
-            OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
-        }),
+        started_at: parse_invocation_timestamp(7, "started_at", &started_at_str)?,
+        finished_at: finished_at_str
+            .as_deref()
+            .map(|value| parse_invocation_timestamp(8, "finished_at", value))
+            .transpose()?,
         duration_secs: row.get(9)?,
         exit_code: row.get(10)?,
         status: parse_stored_invocation_status(status_str)?,
@@ -4132,6 +4177,66 @@ mod tests {
         // Query for a command that doesn't exist
         let result = db.get_last("nonexistent")?;
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_last_surfaces_invalid_invocation_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-last-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["definitely-not-rfc3339", id],
+        )?;
+
+        let error = db
+            .get_last("check")
+            .expect_err("invalid started_at should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_last_surfaces_invalid_invocation_finished_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-last-invalid-finished-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET finished_at = ?1 WHERE id = ?2",
+            params!["not-a-timestamp", id],
+        )?;
+
+        let error = db
+            .get_last("check")
+            .expect_err("invalid finished_at should surface");
+        assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_invocation_timeline_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-timeline-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["bad-timeline-ts", id],
+        )?;
+
+        let error = db
+            .get_invocation_timeline(Some("check"), 30, 10)
+            .expect_err("invalid timeline timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
         Ok(())
     }
 
