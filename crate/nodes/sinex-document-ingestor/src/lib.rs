@@ -140,6 +140,27 @@ impl DocumentNode {
         }
     }
 
+    fn completed_report(
+        started_at: Timestamp,
+        finished_at: Timestamp,
+        duration: std::time::Duration,
+        events_processed: u64,
+        successful_targets: Vec<String>,
+        failed_targets: Vec<(String, String)>,
+        warnings: Vec<String>,
+    ) -> ScanReport {
+        ScanReport {
+            events_processed,
+            duration,
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
+            node_stats: HashMap::new(),
+            successful_targets,
+            failed_targets,
+            warnings,
+        }
+    }
+
     fn is_allowed_path(&self, target: &str) -> NodeResult<bool> {
         for root in &self.config.allowed_roots {
             if validate_path_within_root(target, root).is_ok() {
@@ -150,6 +171,7 @@ impl DocumentNode {
     }
 
     async fn ingest_targets(&self, targets: &[String]) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         let start = Instant::now();
         let mut events_processed = 0u64;
         let mut successful_targets = Vec::new();
@@ -172,16 +194,16 @@ impl DocumentNode {
             }
         }
 
-        Ok(ScanReport {
+        let finished_at = Timestamp::now();
+        Ok(Self::completed_report(
+            started_at,
+            finished_at,
+            start.elapsed(),
             events_processed,
-            duration: start.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: None,
-            node_stats: HashMap::new(),
             successful_targets,
             failed_targets,
             warnings,
-        })
+        ))
     }
 
     async fn ingest_target(&self, target: &str) -> NodeResult<Option<Uuid>> {
@@ -476,5 +498,37 @@ impl Clone for DocumentNode {
 impl Default for DocumentNode {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DocumentNode;
+    use sinex_node_sdk::runtime::stream::Checkpoint;
+    use sinex_primitives::temporal::Timestamp;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_completed_report_uses_elapsed_window() -> ::xtask::sandbox::TestResult<()> {
+        let started_at =
+            Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp should be valid");
+        let finished_at =
+            Timestamp::from_unix_timestamp(1_700_000_123).expect("timestamp should be valid");
+        let report = DocumentNode::completed_report(
+            started_at,
+            finished_at,
+            std::time::Duration::from_secs(2),
+            3,
+            vec!["/tmp/doc.txt".to_string()],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(finished_at, None)
+        );
+        assert_eq!(report.time_range, Some((started_at, finished_at)));
+        Ok(())
     }
 }

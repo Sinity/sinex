@@ -14,12 +14,33 @@ pub struct EventOverrides {
 }
 
 static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::LazyLock::new(|| {
-    let permits = std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8);
+    let permits = pipeline_concurrency_from_env().unwrap_or_else(|error| panic!("{error}"));
     Arc::new(Semaphore::new(permits))
 });
+
+fn pipeline_concurrency_from_env() -> TestResult<usize> {
+    match std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY") {
+        Ok(raw) => parse_pipeline_concurrency(&raw),
+        Err(std::env::VarError::NotPresent) => Ok(8),
+        Err(error) => Err(eyre!(
+            "failed to read SINEX_TEST_PIPELINE_CONCURRENCY: {error}"
+        )),
+    }
+}
+
+fn parse_pipeline_concurrency(raw: &str) -> TestResult<usize> {
+    let permits = raw.parse::<usize>().map_err(|error| {
+        eyre!(
+            "invalid SINEX_TEST_PIPELINE_CONCURRENCY value '{raw}': {error}"
+        )
+    })?;
+    if permits == 0 {
+        return Err(eyre!(
+            "invalid SINEX_TEST_PIPELINE_CONCURRENCY value '{raw}': must be greater than zero"
+        ));
+    }
+    Ok(permits)
+}
 
 /// Acquire a permit for running a pipeline test.
 ///
@@ -44,4 +65,32 @@ pub async fn wait_for_event_persisted(
     // With 32 concurrent ingestd processes + DB slots, events regularly need
     // 15-25s to flow through NATS → ingestd → DB.
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id, Timeouts::STANDARD).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_parse_pipeline_concurrency_accepts_positive_usize() -> TestResult<()> {
+        assert_eq!(parse_pipeline_concurrency("12")?, 12);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_pipeline_concurrency_rejects_invalid_number() -> TestResult<()> {
+        let error = parse_pipeline_concurrency("abc").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid SINEX_TEST_PIPELINE_CONCURRENCY value 'abc'"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_pipeline_concurrency_rejects_zero() -> TestResult<()> {
+        let error = parse_pipeline_concurrency("0").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("must be greater than zero"));
+        Ok(())
+    }
 }

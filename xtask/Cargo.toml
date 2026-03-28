@@ -40,7 +40,7 @@ libc = "0.2"
 
 # TLS certificate generation
 rcgen       = { workspace = true, features = ["pem", "x509-parser"] }
-x509-parser = "0.16"
+x509-parser = { version = "0.16", features = ["verify"] }
 time        = { workspace = true }
 
 # Hot reload and orchestration
@@ -105,6 +105,7 @@ human-panic = "2.0"
 shadow-rs = "0.35"
 
 [build-dependencies]
+blake3 = { workspace = true }
 shadow-rs = "0.35"
 
 [dev-dependencies]

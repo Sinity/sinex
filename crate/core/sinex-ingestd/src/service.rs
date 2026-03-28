@@ -33,6 +33,7 @@ use std::{
 };
 use tokio::{
     sync::Mutex,
+    sync::oneshot,
     sync::RwLock,
     task::{JoinHandle, JoinSet},
     time::{Duration, interval},
@@ -63,6 +64,81 @@ fn trigger_shutdown(
     if !shutdown_flag.swap(true, Ordering::AcqRel) {
         shutdown_notify.notify_waiters();
     }
+}
+
+fn log_node_manifest_write_failure(
+    operation: &'static str,
+    node_name: &NodeName,
+    error: &SinexError,
+) {
+    warn!(
+        operation,
+        node = %node_name,
+        version = env!("CARGO_PKG_VERSION"),
+        error = %error,
+        "Failed to persist ingestd node manifest state"
+    );
+}
+
+async fn await_ready_signal(
+    component: &'static str,
+    ready_timeout: Duration,
+    ready_rx: oneshot::Receiver<()>,
+) -> IngestdResult<()> {
+    match tokio::time::timeout(ready_timeout, ready_rx).await {
+        Ok(Ok(())) => {
+            info!(component, "Startup component reached ready state");
+            Ok(())
+        }
+        Ok(Err(_)) => Err(
+            SinexError::service(format!(
+                "{component} setup failed before signaling ready"
+            ))
+            .with_operation("service.await_ready_signal")
+            .with_context("component", component)
+            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
+        ),
+        Err(_) => Err(
+            SinexError::service(format!(
+                "{component} did not signal ready within {ready_timeout:?}"
+            ))
+            .with_operation("service.await_ready_signal")
+            .with_context("component", component)
+            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
+        ),
+    }
+}
+
+fn attach_startup_cleanup_error(
+    startup_error: SinexError,
+    cleanup_error: &SinexError,
+) -> SinexError {
+    startup_error.with_context("shutdown_cleanup_error", cleanup_error.to_string())
+}
+
+fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
+    SinexError::service(format!("critical task failed during shutdown: {name}"))
+        .with_context("task", name)
+        .with_source(error.to_string())
+}
+
+fn cleanup_task_join_failure(name: &'static str, error: &tokio::task::JoinError) -> SinexError {
+    SinexError::service(format!("critical task join failed during shutdown: {name}"))
+        .with_context("task", name)
+        .with_source(error.to_string())
+}
+
+fn cleanup_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
+    SinexError::service("critical task monitor join failed during shutdown")
+        .with_source(error.to_string())
+}
+
+fn cleanup_task_timeout(count: usize, timeout: Duration) -> SinexError {
+    SinexError::timeout(format!(
+        "timed out waiting for {count} critical tasks during shutdown"
+    ))
+    .with_duration(timeout)
+    .with_count(count)
 }
 
 /// Main ingestion service
@@ -248,7 +324,7 @@ impl IngestService {
         }
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
-        let (js_handle, js_ready_rx) = match (&self.nats_client, &self.db_pool) {
+        let (mut js_handle, mut js_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
                 let (h, rx) = self
                     .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
@@ -258,7 +334,7 @@ impl IngestService {
             _ => (None, None),
         };
 
-        let (ma_handle, ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
+        let (mut ma_handle, mut ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
                 let (h, rx) = self
                     .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
@@ -304,10 +380,19 @@ impl IngestService {
                 Err(e) => {
                     // May fail if already registered (unique constraint) - update heartbeat instead
                     debug!("Node registration failed (may already exist): {e}");
-                    let _ = pool
+                    if let Err(update_error) = pool
                         .state()
                         .update_node_heartbeat_for_version(&node_name, env!("CARGO_PKG_VERSION"))
-                        .await;
+                        .await
+                    {
+                        warn!(
+                            node = %node_name,
+                            version = env!("CARGO_PKG_VERSION"),
+                            register_error = %e,
+                            heartbeat_error = %update_error,
+                            "Failed to recover ingestd node manifest registration by updating heartbeat"
+                        );
+                    }
                 }
             }
 
@@ -329,10 +414,13 @@ impl IngestService {
                     () = emitter.start_periodic_heartbeat(None) => {}
                     () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                         let node_name = NodeName::new("sinex-ingestd");
-                        let _ = heartbeat_pool
+                        if let Err(error) = heartbeat_pool
                             .state()
                             .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
-                            .await;
+                            .await
+                        {
+                            log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+                        }
                     }
                 }
             });
@@ -343,36 +431,26 @@ impl IngestService {
         // (streams bound, WAL restored) before telling systemd we're ready.
         // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
         let ready_timeout = Duration::from_secs(30);
-        if let Some(rx) = js_ready_rx {
-            match tokio::time::timeout(ready_timeout, rx).await {
-                Ok(Ok(())) => info!("JetStream consumer ready"),
-                // Sender dropped without sending — setup task failed before reaching the ready point.
-                // monitor_runtime will observe the task exit and report the actual error.
-                Ok(Err(_)) => {
-                    warn!("JetStream consumer setup failed (ready channel closed without signal)");
-                }
-                Err(_) => warn!(
-                    "JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"
-                ),
-            }
+        if let Some(rx) = js_ready_rx.take()
+            && let Err(error) = await_ready_signal("JetStream consumer", ready_timeout, rx).await
+        {
+            return self
+                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .await;
         }
-        if let Some(rx) = ma_ready_rx {
-            match tokio::time::timeout(ready_timeout, rx).await {
-                Ok(Ok(())) => info!("MaterialAssembler ready"),
-                Ok(Err(_)) => {
-                    warn!("MaterialAssembler setup failed (ready channel closed without signal)");
-                }
-                Err(_) => warn!(
-                    "MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"
-                ),
-            }
+        if let Some(rx) = ma_ready_rx.take()
+            && let Err(error) = await_ready_signal("MaterialAssembler", ready_timeout, rx).await
+        {
+            return self
+                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .await;
         }
 
         systemd_notify::notify_ready("sinex-ingestd");
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-ingestd");
 
         // Monitor critical tasks - exit on first failure or shutdown signal
-        let monitor_result = self.monitor_runtime(js_handle, ma_handle).await;
+        let monitor_result = self.monitor_runtime(js_handle.take(), ma_handle.take()).await;
         systemd_notify::stop_watchdog(watchdog_handle, "sinex-ingestd").await;
         systemd_notify::notify_stopping("sinex-ingestd");
 
@@ -381,6 +459,31 @@ impl IngestService {
 
         info!("Ingestion service stopped");
         monitor_result
+    }
+
+    async fn finish_startup_failure(
+        &self,
+        startup_error: SinexError,
+        js_handle: Option<JoinHandle<IngestdResult<()>>>,
+        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
+    ) -> IngestdResult<()> {
+        error!(error = %startup_error, "Critical ingestd component failed during startup");
+        trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
+
+        let startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
+            Ok(()) => startup_error,
+            Err(cleanup_error) => {
+                error!(
+                    startup_error = %startup_error,
+                    cleanup_error = %cleanup_error,
+                    "Startup failure cleanup surfaced an additional critical task failure"
+                );
+                attach_startup_cleanup_error(startup_error, &cleanup_error)
+            }
+        };
+
+        self.wait_for_tasks(Duration::from_secs(5)).await;
+        Err(startup_error)
     }
 
     /// Monitor critical tasks - exit on first failure or shutdown signal
@@ -416,8 +519,12 @@ impl IngestService {
             }
         };
 
-        Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
-        result
+        let cleanup_error = Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
+        match (result, cleanup_error) {
+            (Ok(()), Some(error)) => Err(error),
+            (Err(error), _) => Err(error),
+            (Ok(()), None) => Ok(()),
+        }
     }
 
     fn track_critical_task(
@@ -433,9 +540,9 @@ impl IngestService {
     async fn wait_for_critical_tasks(
         tasks: &mut JoinSet<CriticalTaskOutcome>,
         timeout: Duration,
-    ) {
+    ) -> Option<SinexError> {
         if tasks.is_empty() {
-            return;
+            return None;
         }
 
         info!(
@@ -445,6 +552,7 @@ impl IngestService {
 
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
+        let mut cleanup_error = None;
 
         loop {
             tokio::select! {
@@ -455,20 +563,30 @@ impl IngestService {
                         }
                         Some(Ok((name, Ok(Err(error))))) => {
                             warn!(task = name, error = %error, "Critical task exited with error during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(cleanup_task_failure(name, &error));
+                            }
                         }
                         Some(Ok((name, Err(error)))) => {
                             warn!(task = name, error = ?error, "Critical task join failed during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(cleanup_task_join_failure(name, &error));
+                            }
                         }
                         Some(Err(error)) => {
                             warn!(error = ?error, "Critical task monitor join failed during shutdown");
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(cleanup_task_monitor_failure(&error));
+                            }
                         }
                         None => break,
                     }
                 }
                 () = &mut deadline => {
+                    let remaining = tasks.len();
                     warn!(
                         "Timed out waiting for {} critical tasks after {:?}, aborting remaining work",
-                        tasks.len(),
+                        remaining,
                         timeout
                     );
                     tasks.abort_all();
@@ -477,12 +595,16 @@ impl IngestService {
                             debug!(error = ?error, "Critical task aborted during shutdown cleanup");
                         }
                     }
+                    if cleanup_error.is_none() {
+                        cleanup_error = Some(cleanup_task_timeout(remaining, timeout));
+                    }
                     break;
                 }
             }
         }
 
         info!("Critical task cleanup complete");
+        cleanup_error
     }
 
     fn handle_task_result(
@@ -504,7 +626,7 @@ impl IngestService {
         shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
         match result {
-            Ok(()) if shutdown_flag.load(Ordering::Relaxed) => {
+            Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("{name} completed during shutdown");
                 Ok(())
             }
@@ -680,7 +802,7 @@ impl IngestService {
             let result = assembler
                 .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
                 .await;
-            if shutdown_flag.load(Ordering::Relaxed) {
+            if shutdown_flag.load(Ordering::Acquire) {
                 info!("MaterialAssembler shutting down normally");
                 Ok(())
             } else {
@@ -1185,6 +1307,45 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn await_ready_signal_accepts_ready_component() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = oneshot::channel();
+        tx.send(())
+            .expect("sending ready signal should succeed in the test");
+
+        await_ready_signal("JetStream consumer", Duration::from_millis(10), rx).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_ready_signal_rejects_dropped_sender() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = oneshot::channel::<()>();
+        drop(tx);
+
+        let error = await_ready_signal("MaterialAssembler", Duration::from_millis(10), rx)
+            .await
+            .expect_err("dropped ready sender must fail honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("setup failed"));
+        assert!(message.contains("MaterialAssembler"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_ready_signal_rejects_timeout() -> xtask::sandbox::TestResult<()> {
+        let (_tx, rx) = oneshot::channel::<()>();
+
+        let error = await_ready_signal("JetStream consumer", Duration::from_millis(10), rx)
+            .await
+            .expect_err("timed out ready signal must fail honestly");
+
+        let message = error.to_string();
+        assert!(message.contains("did not signal ready"));
+        assert!(message.contains("JetStream consumer"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure(
     ) -> xtask::sandbox::TestResult<()> {
         let service = test_service();
@@ -1209,6 +1370,45 @@ mod tests {
         assert!(
             sibling_finished.load(Ordering::SeqCst),
             "monitor_runtime should await the sibling critical task after shutdown"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finish_startup_failure_preserves_cleanup_error_context(
+    ) -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+        let sibling_finished = Arc::new(AtomicBool::new(false));
+
+        let failing = tokio::spawn(async { Err(SinexError::service("cleanup boom")) });
+        let sibling_flag = Arc::clone(&sibling_finished);
+        let shutdown_flag = Arc::clone(&service.shutdown_flag);
+        let shutdown_notify = Arc::clone(&service.shutdown_notify);
+        let sibling = tokio::spawn(async move {
+            shutdown_signal(&shutdown_flag, &shutdown_notify).await;
+            sibling_flag.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let error = service
+            .finish_startup_failure(
+                SinexError::service("startup failed"),
+                Some(failing),
+                Some(sibling),
+            )
+            .await
+            .expect_err("startup failure should remain an error");
+
+        assert!(error.to_string().contains("startup failed"));
+        let cleanup_context = error
+            .context_map()
+            .get("shutdown_cleanup_error")
+            .expect("cleanup failure should be preserved in startup error context");
+        assert!(cleanup_context.contains("JetStream consumer"));
+        assert!(cleanup_context.contains("cleanup boom"));
+        assert!(
+            sibling_finished.load(Ordering::SeqCst),
+            "startup cleanup should still await sibling critical tasks"
         );
         Ok(())
     }
@@ -1253,6 +1453,15 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("missing from repository"));
         assert!(message.contains(&missing_schema_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_node_manifest_write_failure_accepts_processing_errors(
+    ) -> xtask::sandbox::TestResult<()> {
+        let node_name = NodeName::new("sinex-ingestd");
+        let error = SinexError::processing("node manifest update exploded");
+        log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
         Ok(())
     }
 }

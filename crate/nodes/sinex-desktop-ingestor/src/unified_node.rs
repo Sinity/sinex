@@ -685,16 +685,18 @@ impl IngestorNode for DesktopNode {
         state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         let start_time = std::time::Instant::now();
 
         let snapshot = self.take_snapshot(&state.health).await?;
         state.last_state = Some(snapshot.clone());
+        let finished_at = Timestamp::now();
 
         let report = ScanReport {
             events_processed: snapshot.enabled_sources.len() as u64,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["desktop_snapshot".to_string()],
             failed_targets: vec![],
@@ -807,6 +809,7 @@ impl IngestorNode for DesktopNode {
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         info!("Starting continuous desktop monitoring");
+        let started_at = Timestamp::now();
         let start_time = std::time::Instant::now();
         let mut warnings = Vec::new();
 
@@ -901,12 +904,13 @@ impl IngestorNode for DesktopNode {
 
         // Cleanup handled by Drop of WatcherHandles when DesktopNode is dropped?
         // IngestorNode doesn't drop self immediately, shutdown is called.
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["desktop_continuous".to_string()],
             failed_targets: vec![],
@@ -1259,6 +1263,46 @@ mod tests {
             report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_run_continuous_reports_elapsed_time_window(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let runtime = TestRuntimeBuilder::new(&ctx, "desktop-time-window")
+            .with_dry_run(true)
+            .build()
+            .await?;
+
+        let mut node = DesktopNode::new();
+        let mut config = DesktopConfig::default();
+        config.clipboard_enabled = false;
+        config.window_manager_enabled = false;
+        config.activitywatch_db_path = None;
+        let mut state = DesktopPersistentState::default();
+        node.initialize(config, &runtime.runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        let (started_at, finished_at) = report
+            .time_range
+            .expect("desktop continuous report should include an elapsed time window");
+        assert!(finished_at > started_at);
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(finished_at, None)
         );
         Ok(())
     }

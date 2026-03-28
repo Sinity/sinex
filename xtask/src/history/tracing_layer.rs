@@ -41,6 +41,10 @@ fn warn_trace_history_once(message: &str) {
     }
 }
 
+fn format_trace_timestamp(timestamp: OffsetDateTime) -> Result<String, time::error::Format> {
+    timestamp.format(&time::format_description::well_known::Rfc3339)
+}
+
 /// A single trace event to persist to the history database.
 struct TraceRecord {
     invocation_id: Option<i64>,
@@ -89,9 +93,15 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for HistoryTracingLayer {
         let mut visitor = FieldExtractor::default();
         event.record(&mut visitor);
         let event_kind = classify_event_kind(meta.target(), meta.level(), &visitor.fields);
-        let ts = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_default();
+        let ts = match format_trace_timestamp(OffsetDateTime::now_utc()) {
+            Ok(timestamp) => timestamp,
+            Err(error) => {
+                warn_trace_history_once(&format!(
+                    "failed to format trace event timestamp for history persistence: {error}"
+                ));
+                return;
+            }
+        };
         let fields = visitor.extra_fields_as_json();
         let record = TraceRecord {
             invocation_id: self.current_invocation_id(),

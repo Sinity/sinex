@@ -269,7 +269,7 @@ pub struct ReplayStatsPayload {
 /// Emitted after each batch is processed by the `JetStream` consumer.
 /// Captures throughput, latency, and schema validation coverage data for batch processing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.ingestd", event_type = "batch.stats")]
+#[event_payload(source = "sinex.ingestd", event_type = "batch.stats", version = "2.0.0")]
 pub struct IngestdBatchStatsPayload {
     /// Number of events in this batch
     pub batch_size: u32,

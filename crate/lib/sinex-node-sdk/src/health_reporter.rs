@@ -3,6 +3,7 @@
 //! Provides uniform health tracking that automatically monitors success/error rates
 //! and emits health.status events via `SelfObserver` when status changes.
 
+use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
 use std::sync::{
@@ -155,10 +156,10 @@ impl HealthReporter {
         self.metrics.errors.fetch_add(1, Ordering::Relaxed);
 
         // Update wall clock time (for display/observability)
-        let now_wall = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now_wall = unix_timestamp_secs_with_warning(
+            std::time::SystemTime::now(),
+            "health reporter error timestamp",
+        );
         self.metrics
             .last_error_time
             .store(now_wall, Ordering::Relaxed);

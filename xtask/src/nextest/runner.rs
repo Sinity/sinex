@@ -155,9 +155,11 @@ impl<'a> TestRunner<'a> {
 
         // Record metrics to DB if history is active
         if let Some((db, invocation_id)) = history {
-            // We ignore errors here
-            let _ =
-                db.record_system_metrics(invocation_id, metrics.avg_cpu(), metrics.max_mem_mb());
+            if let Err(error) =
+                db.record_system_metrics(invocation_id, metrics.avg_cpu(), metrics.max_mem_mb())
+            {
+                eprintln!("⚠️  Failed to record nextest system metrics: {error}");
+            }
 
             // Back-fill test metadata from JUnit XML.
             // nextest's libtest-json-plus only includes stdout for failed tests,

@@ -7,8 +7,8 @@
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{
-    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, max_row_id_for_query,
-    read_rows_after, read_rows_with_params,
+    SqliteTableCheckError, ensure_sqlite_with_tables, max_row_id_for_query, read_rows_after,
+    read_rows_with_params,
 };
 use sinex_primitives::Timestamp;
 
@@ -24,12 +24,6 @@ pub struct AtuinHistoryEntry {
     pub cwd: String,
     pub session_id: String,
     pub hostname: String,
-}
-
-/// Check if a path points to an Atuin `SQLite` history file.
-#[must_use]
-pub fn is_atuin_sqlite_history(path: &Utf8PathBuf) -> bool {
-    is_sqlite_with_tables(path, &["history"])
 }
 
 pub fn ensure_atuin_sqlite_history(path: &Utf8PathBuf) -> Result<(), SqliteTableCheckError> {

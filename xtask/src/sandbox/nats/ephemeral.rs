@@ -23,6 +23,7 @@ use tokio::{
     time::{Instant, sleep, timeout},
 };
 use tokio_stream::StreamExt;
+use tracing::warn;
 use which::which;
 
 static SHARED_NATS_REGISTRY: std::sync::LazyLock<AsyncMutex<HashMap<String, Arc<EphemeralNats>>>> =
@@ -172,8 +173,18 @@ impl EphemeralNatsBuilder {
                 match EphemeralNats::wait_for_ready(port, &mut child).await {
                     Ok(()) => break (url, child),
                     Err(err) => {
-                        let _ = child.start_kill();
-                        let _ = timeout(Duration::from_secs(1), child.wait()).await;
+                        if let Err(error) = child.start_kill() {
+                            warn!(error = %error, "Failed to start-kill NATS child after readiness failure");
+                        }
+                        match timeout(Duration::from_secs(1), child.wait()).await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(error)) => {
+                                warn!(error = %error, "Failed waiting for NATS child after readiness failure");
+                            }
+                            Err(_) => {
+                                warn!("Timed out waiting for NATS child after readiness failure");
+                            }
+                        }
 
                         if attempt >= MAX_ATTEMPTS {
                             return Err(err);
@@ -260,8 +271,18 @@ impl EphemeralNats {
     pub async fn shutdown(&self) -> Result<()> {
         let mut guard = self.process.lock().await;
         if let Some(mut child) = guard.take() {
-            let _ = child.start_kill();
-            let _ = timeout(Duration::from_secs(2), child.wait()).await;
+            if let Err(error) = child.start_kill() {
+                warn!(error = %error, "Failed to start-kill ephemeral NATS child during shutdown");
+            }
+            match timeout(Duration::from_secs(2), child.wait()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    warn!(error = %error, "Failed waiting for ephemeral NATS child during shutdown");
+                }
+                Err(_) => {
+                    warn!("Timed out waiting for ephemeral NATS child during shutdown");
+                }
+            }
         }
         Ok(())
     }

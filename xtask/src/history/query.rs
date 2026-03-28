@@ -37,7 +37,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use super::db::{
-    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, parse_stored_invocation_status,
+    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation,
 };
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
@@ -1144,34 +1144,7 @@ impl HistoryDb {
         );
 
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(bound_params.iter()), |row| {
-            let started_str: String = row.get(7)?;
-            let finished_str: Option<String> = row.get(8)?;
-            let status_str: String = row.get(11)?;
-            Ok(Invocation {
-                id: row.get(0)?,
-                command: row.get(1)?,
-                subcommand: row.get(2)?,
-                profile: row.get(3)?,
-                args_json: row.get(4)?,
-                git_commit: row.get(5)?,
-                git_dirty: row.get::<_, i32>(6)? != 0,
-                started_at: OffsetDateTime::parse(
-                    &started_str,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                finished_at: finished_str.and_then(|s| {
-                    OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
-                }),
-                duration_secs: row.get(9)?,
-                exit_code: row.get(10)?,
-                status: parse_stored_invocation_status(status_str)?,
-                host: row.get(12)?,
-                cwd: row.get(13)?,
-                live_stage: row.get(14)?,
-            })
-        })?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(bound_params.iter()), row_to_invocation)?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -1304,5 +1277,56 @@ impl HistoryDb {
                 row.get(0)
             })?;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these regressions exercise the private query execution path directly.
+    use super::*;
+    use crate::sandbox::prelude::*;
+    use rusqlite::params;
+    use tempfile::tempdir;
+
+    #[sinex_test]
+    async fn test_run_invocation_query_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-query-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["bad-query-started-at", id],
+        )?;
+
+        let error = InvocationQuery::new()
+            .command("check")
+            .run(&db)
+            .expect_err("invalid started_at should surface from invocation queries");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_run_invocation_query_surfaces_invalid_finished_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-query-invalid-finished-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET finished_at = ?1 WHERE id = ?2",
+            params!["bad-query-finished-at", id],
+        )?;
+
+        let error = InvocationQuery::new()
+            .command("check")
+            .run(&db)
+            .expect_err("invalid finished_at should surface from invocation queries");
+        assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
     }
 }

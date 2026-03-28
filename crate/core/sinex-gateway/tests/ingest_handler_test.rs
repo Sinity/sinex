@@ -17,9 +17,10 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
     let harness = NatsHarness::start(ctx).await?;
     ensure_events_stream(&harness.client, &harness.env).await?;
 
-    let subject = harness
-        .env
-        .nats_subject("events.raw.gateway_test.inline_event");
+    let subject =
+        harness
+            .env
+            .nats_raw_event_subject_with_namespace(None, "gateway.test", "inline.event");
     let mut subscription = harness.client.subscribe(subject).await?;
     harness.client.flush().await?;
 

@@ -241,11 +241,17 @@ impl XtaskCommand for CheckCommand {
         }
 
         // Resource warning before heavy operation
-        if ctx.is_human()
-            && let Ok(status) = resources::ResourceStatus::capture()
-            && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB)
-        {
-            eprintln!("  ⚠ {warning}");
+        if ctx.is_human() {
+            match resources::ResourceStatus::capture() {
+                Ok(status) => {
+                    if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
+                        eprintln!("  ⚠ {warning}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("  ⚠ Failed to inspect local resources: {error:#}");
+                }
+            }
         }
 
         let mut result = CommandResult::success();

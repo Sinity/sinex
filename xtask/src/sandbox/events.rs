@@ -184,8 +184,11 @@ impl EventPublisher for Sandbox {
 
         let payload = serde_json::to_vec(&envelope)?;
 
-        let base_subject = format!("events.raw.{}", event.source);
-        let subject = self.pipeline_namespace().subject(&base_subject);
+        let subject = self.env().nats_raw_event_subject_with_namespace(
+            Some(self.pipeline_namespace().prefix()),
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
 
         client.publish(subject.clone(), payload.into()).await?;
         client

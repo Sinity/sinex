@@ -271,14 +271,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     let (ingestd_status, last_heartbeat_age_secs) = match heartbeat_row {
         Some(row) => {
             let age = row.age_secs;
-            let status_str = row.status.as_deref().unwrap_or("");
-            let status = if status_str != "active" {
-                IngestdStatus::Down
-            } else if age.is_some_and(|a| a > HEARTBEAT_STALE_SECS) {
-                IngestdStatus::Stale
-            } else {
-                IngestdStatus::Healthy
-            };
+            let status = interpret_ingestd_status(row.status.as_deref(), age);
             (status, age)
         }
         None => (IngestdStatus::Down, None),
@@ -344,6 +337,17 @@ struct HeartbeatRow {
 struct TimedMetricRow {
     value: f64,
     age_secs: i64,
+}
+
+fn interpret_ingestd_status(status: Option<&str>, age_secs: Option<i64>) -> IngestdStatus {
+    match status {
+        Some("running" | "active") => match age_secs {
+            Some(age) if age > HEARTBEAT_STALE_SECS => IngestdStatus::Stale,
+            Some(_) => IngestdStatus::Healthy,
+            None => IngestdStatus::Down,
+        },
+        Some(_) | None => IngestdStatus::Down,
+    }
 }
 
 #[cfg(test)]
@@ -457,6 +461,45 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("failed to query runtime metrics"))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_ingestd_status_accepts_running_and_active()
+    -> xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            interpret_ingestd_status(Some("running"), Some(5)),
+            IngestdStatus::Healthy
+        );
+        assert_eq!(
+            interpret_ingestd_status(Some("active"), Some(5)),
+            IngestdStatus::Healthy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_ingestd_status_marks_live_rows_stale_or_down_when_needed()
+    -> xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            interpret_ingestd_status(Some("running"), Some(HEARTBEAT_STALE_SECS + 1)),
+            IngestdStatus::Stale
+        );
+        assert_eq!(
+            interpret_ingestd_status(Some("active"), None),
+            IngestdStatus::Down
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_interpret_ingestd_status_rejects_non_live_statuses()
+    -> xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            interpret_ingestd_status(Some("inactive"), Some(1)),
+            IngestdStatus::Down
+        );
+        assert_eq!(interpret_ingestd_status(None, Some(1)), IngestdStatus::Down);
         Ok(())
     }
 }

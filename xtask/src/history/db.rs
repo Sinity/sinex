@@ -48,6 +48,16 @@ fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -
     }
 }
 
+fn validate_finite_duration_secs(context: &str, duration_secs: f64) -> Result<()> {
+    if duration_secs.is_finite() {
+        return Ok(());
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "{context} has non-finite duration_secs: {duration_secs}"
+    ))
+}
+
 fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
     error.chain().any(|cause| {
         cause
@@ -190,6 +200,49 @@ pub(crate) fn parse_stored_invocation_status(
             )),
         )
     })
+}
+
+fn invalid_invocation_field(
+    column_index: usize,
+    field_name: &'static str,
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column_index,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid invocation {field_name}: {error}"),
+        )),
+    )
+}
+
+fn parse_invocation_timestamp(
+    column_index: usize,
+    field_name: &'static str,
+    value: &str,
+) -> rusqlite::Result<OffsetDateTime> {
+    OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+        .map_err(|error| invalid_invocation_field(column_index, field_name, error))
+}
+
+fn format_invocation_timestamp(
+    column_index: usize,
+    field_name: &'static str,
+    value: OffsetDateTime,
+) -> rusqlite::Result<String> {
+    value
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|error| invalid_invocation_field(column_index, field_name, error))
+}
+
+fn format_history_timestamp(
+    timestamp: OffsetDateTime,
+    context: &'static str,
+) -> Result<String> {
+    timestamp
+        .format(&time::format_description::well_known::Rfc3339)
+        .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
 }
 
 /// A recorded command invocation.
@@ -638,15 +691,16 @@ impl HistoryDb {
 
     /// Check whether this database contains synthetic (seeded) data.
     pub fn check_synthetic(&self) -> Result<bool> {
-        let exists: bool = self
+        let exists = self
             .conn
             .query_row(
                 "SELECT 1 FROM metadata WHERE key = 'synthetic' AND value = 'true' LIMIT 1",
                 [],
                 |_| Ok(true),
             )
-            .unwrap_or(false);
-        Ok(exists)
+            .optional()
+            .context("failed to query synthetic history marker")?;
+        Ok(exists.unwrap_or(false))
     }
 
     /// Mark the database as containing synthetic data.
@@ -661,10 +715,11 @@ impl HistoryDb {
     }
 
     /// Clear the synthetic marker (called on first real `start_invocation`).
-    fn clear_synthetic(&self) {
-        let _ = self
-            .conn
-            .execute("DELETE FROM metadata WHERE key = 'synthetic'", []);
+    fn clear_synthetic(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM metadata WHERE key = 'synthetic'", [])
+            .context("failed to clear synthetic marker")?;
+        Ok(())
     }
 
     /// Print a one-time-per-process warning if this database is synthetic.
@@ -708,7 +763,7 @@ impl HistoryDb {
 
         // Transition from synthetic to real: clear the marker on first real write.
         if self.is_synthetic {
-            self.clear_synthetic();
+            self.clear_synthetic()?;
         }
 
         with_sqlite_lock_retry("start invocation history row", || {
@@ -1690,7 +1745,9 @@ impl HistoryDb {
             })?;
 
         for (id, output) in &rows {
-            let meta = parse_sandbox_meta(output);
+            let meta = parse_sandbox_meta(output).wrap_err_with(|| {
+                format!("failed to parse sandbox metadata for stored test result row {id}")
+            })?;
             if meta.slot_name.is_some() || meta.slot_wait_ms.is_some() {
                 update_stmt.execute(params![
                     meta.slot_name,
@@ -2533,7 +2590,22 @@ impl HistoryDb {
         invocation_id: i64,
         report: &crate::commands::exercise::ExerciseReport,
     ) -> Result<()> {
-        let report_json = serde_json::to_string(report).ok();
+        validate_finite_duration_secs("exercise report", report.duration_secs)?;
+        for entry in &report.results {
+            validate_finite_duration_secs(
+                &format!("exercise result '{}'", entry.id),
+                entry.duration_secs,
+            )?;
+            for step in &entry.steps {
+                validate_finite_duration_secs(
+                    &format!("exercise step '{}' for '{}'", step.label, entry.id),
+                    step.duration_secs,
+                )?;
+            }
+        }
+
+        let report_json = serde_json::to_string(report)
+            .wrap_err("failed to serialize exercise report for history persistence")?;
         // Infer tier from results: if mixed, leave NULL (multi-tier run).
         let tier: Option<&str> = {
             let tiers: std::collections::HashSet<&str> =
@@ -2558,7 +2630,7 @@ impl HistoryDb {
                 report.failed as i64,
                 report.skipped as i64,
                 report.duration_secs,
-                report_json,
+                Some(report_json),
             ],
             |row| row.get::<_, i64>(0),
         ).context("failed to insert exercise_run row")?;
@@ -2836,11 +2908,10 @@ impl HistoryDb {
         days: u32,
         limit: usize,
     ) -> Result<Vec<InvocationTimelineEntry>> {
-        let cutoff = {
-            let dt = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
-            dt.format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default()
-        };
+        let cutoff = format_history_timestamp(
+            time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
+            "history timeline cutoff",
+        )?;
 
         let mut sql = String::from(
             r"
@@ -2893,11 +2964,17 @@ impl HistoryDb {
         let mut entries: Vec<InvocationTimelineEntry> = stmt
             .query_map(refs.as_slice(), |row| {
                 let status_str: String = row.get(2)?;
+                let started_at_raw: String = row.get(3)?;
+                let started_at = format_invocation_timestamp(
+                    3,
+                    "started_at",
+                    parse_invocation_timestamp(3, "started_at", &started_at_raw)?,
+                )?;
                 Ok(InvocationTimelineEntry {
                     id: row.get(0)?,
                     command: row.get(1)?,
                     status: parse_stored_invocation_status(status_str)?,
-                    started_at: row.get(3)?,
+                    started_at,
                     duration_secs: row.get(4)?,
                     stage_count: row.get::<_, i64>(5)? as usize,
                     error_count: row.get::<_, i64>(6)? as usize,
@@ -2933,6 +3010,7 @@ impl HistoryDb {
         struct Row {
             command: String,
             started_at: String,
+            started_at_ts: OffsetDateTime,
             finished_at: Option<String>,
             duration_secs: Option<f64>,
             status: String,
@@ -2950,10 +3028,17 @@ impl HistoryDb {
 
         let rows: Vec<Row> = stmt
             .query_map([], |row| {
+                let started_at: String = row.get(1)?;
+                let finished_at: Option<String> = row.get(2)?;
+                let started_at_ts = parse_invocation_timestamp(1, "started_at", &started_at)?;
+                if let Some(finished_at_value) = finished_at.as_deref() {
+                    let _ = parse_invocation_timestamp(2, "finished_at", finished_at_value)?;
+                }
                 Ok(Row {
                     command: row.get(0)?,
-                    started_at: row.get(1)?,
-                    finished_at: row.get(2)?,
+                    started_at,
+                    started_at_ts,
+                    finished_at,
                     duration_secs: row.get(3)?,
                     status: row.get(4)?,
                 })
@@ -2963,26 +3048,12 @@ impl HistoryDb {
         let gap_secs = i64::from(gap_minutes) * 60;
         let mut sessions: Vec<WorkingSession> = Vec::new();
         let mut current: Option<WorkingSession> = None;
-        let mut prev_started: Option<String> = None;
+        let mut prev_started: Option<OffsetDateTime> = None;
 
         for row in &rows {
-            let gap_exceeded = prev_started.as_deref().map_or(true, |prev| {
-                let gap = time::OffsetDateTime::parse(
-                    &row.started_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .ok()
-                .and_then(|curr| {
-                    time::OffsetDateTime::parse(
-                        prev,
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .ok()
-                    .map(|p| (curr - p).whole_seconds())
-                })
-                .unwrap_or(i64::MAX);
-                gap > gap_secs
-            });
+            let gap_exceeded = prev_started
+                .map(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs)
+                .unwrap_or(true);
 
             if gap_exceeded {
                 if let Some(s) = current.take() {
@@ -3014,7 +3085,7 @@ impl HistoryDb {
                     s.failure_count += 1;
                 }
             }
-            prev_started = Some(row.started_at.clone());
+            prev_started = Some(row.started_at_ts);
         }
         if let Some(s) = current {
             sessions.push(s);
@@ -3570,7 +3641,11 @@ impl HistoryDb {
                     ))
                 },
             )
-            .unwrap_or((0, 0));
+            .wrap_err_with(|| {
+                format!(
+                    "failed to compute transition probability from '{from_command}' to '{to_command}'"
+                )
+            })?;
 
         if total == 0 {
             return Ok(0.0);
@@ -3614,7 +3689,7 @@ pub struct ExerciseResultRow {
     pub step_count: i64,
 }
 
-fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
+pub(super) fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
     let started_at_str: String = row.get(7)?;
     let finished_at_str: Option<String> = row.get(8)?;
     let status_str: String = row.get(11)?;
@@ -3627,14 +3702,11 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         args_json: row.get(4)?,
         git_commit: row.get(5)?,
         git_dirty: row.get::<_, i32>(6)? != 0,
-        started_at: OffsetDateTime::parse(
-            &started_at_str,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-        finished_at: finished_at_str.and_then(|s| {
-            OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
-        }),
+        started_at: parse_invocation_timestamp(7, "started_at", &started_at_str)?,
+        finished_at: finished_at_str
+            .as_deref()
+            .map(|value| parse_invocation_timestamp(8, "finished_at", value))
+            .transpose()?,
         duration_secs: row.get(9)?,
         exit_code: row.get(10)?,
         status: parse_stored_invocation_status(status_str)?,
@@ -3671,13 +3743,19 @@ struct SandboxMeta {
     cleanup_ms: Option<i64>,
 }
 
+fn parse_sandbox_metric(field: &str, value: &str) -> Result<i64> {
+    value
+        .parse()
+        .wrap_err_with(|| format!("invalid sandbox metadata field {field}={value}"))
+}
+
 /// Parse sandbox slog events from test output to extract infrastructure metadata.
 ///
 /// Looks for `[sandbox:*] event=slot_acquired` lines and extracts:
 /// - `slot` → slot_name (e.g., "sinex_test_pool_13")
 /// - `duration_ms` → slot_wait_ms (total acquisition time including cleanup)
 /// - `clean_ms` → cleanup_ms (cleanup time for dirty slots, absent for clean slots)
-fn parse_sandbox_meta(output: &str) -> SandboxMeta {
+fn parse_sandbox_meta(output: &str) -> Result<SandboxMeta> {
     let mut meta = SandboxMeta::default();
 
     for line in output.lines() {
@@ -3690,9 +3768,9 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
             if let Some(val) = part.strip_prefix("slot=") {
                 meta.slot_name = Some(val.to_string());
             } else if let Some(val) = part.strip_prefix("duration_ms=") {
-                meta.slot_wait_ms = val.parse().ok();
+                meta.slot_wait_ms = Some(parse_sandbox_metric("duration_ms", val)?);
             } else if let Some(val) = part.strip_prefix("clean_ms=") {
-                meta.cleanup_ms = val.parse().ok();
+                meta.cleanup_ms = Some(parse_sandbox_metric("clean_ms", val)?);
             }
         }
 
@@ -3700,12 +3778,13 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
         break;
     }
 
-    meta
+    Ok(meta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::exercise::{ExerciseReport, ReportEntry, StepEntry};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
@@ -4069,6 +4148,42 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_check_synthetic_surfaces_query_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-synthetic-query-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE metadata RENAME TO metadata_old;
+            CREATE TABLE metadata (
+                value TEXT NOT NULL
+            );
+            ",
+        )?;
+
+        let error = db
+            .check_synthetic()
+            .expect_err("metadata query failures should surface");
+        assert!(format!("{error:#}").contains("failed to query synthetic history marker"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_start_invocation_surfaces_synthetic_marker_clear_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-synthetic-clear-failure.db");
+        let mut db = HistoryDb::open(&db_path)?;
+        db.is_synthetic = true;
+        db.conn.execute_batch("DROP TABLE metadata;")?;
+
+        let error = db
+            .start_invocation("check", None, None, None)
+            .expect_err("synthetic marker clear failures should surface");
+        assert!(format!("{error:#}").contains("failed to clear synthetic marker"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_get_recent_with_command_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-filter.db");
@@ -4132,6 +4247,106 @@ mod tests {
         // Query for a command that doesn't exist
         let result = db.get_last("nonexistent")?;
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_last_surfaces_invalid_invocation_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-last-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["definitely-not-rfc3339", id],
+        )?;
+
+        let error = db
+            .get_last("check")
+            .expect_err("invalid started_at should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_working_sessions_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-working-sessions-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["broken-started-at", id],
+        )?;
+
+        let error = db
+            .get_working_sessions(10, 30)
+            .expect_err("invalid working session timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_working_sessions_surfaces_invalid_finished_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-working-sessions-invalid-finished-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET finished_at = ?1 WHERE id = ?2",
+            params!["broken-finished-at", id],
+        )?;
+
+        let error = db
+            .get_working_sessions(10, 30)
+            .expect_err("invalid working session completion timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_last_surfaces_invalid_invocation_finished_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-last-invalid-finished-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET finished_at = ?1 WHERE id = ?2",
+            params!["not-a-timestamp", id],
+        )?;
+
+        let error = db
+            .get_last("check")
+            .expect_err("invalid finished_at should surface");
+        assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_invocation_timeline_surfaces_invalid_started_at() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-timeline-invalid-started-at.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            params!["bad-timeline-ts", id],
+        )?;
+
+        let error = db
+            .get_invocation_timeline(Some("check"), 30, 10)
+            .expect_err("invalid timeline timestamps should surface");
+        assert!(format!("{error:#}").contains("invalid invocation started_at"));
         Ok(())
     }
 
@@ -4747,10 +4962,53 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_record_exercise_run_rejects_non_finite_duration() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-record-exercise-run-invalid-report.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("exercise", None, None, None)?;
+
+        let report = ExerciseReport {
+            status: "failed".to_string(),
+            total: 1,
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            duration_secs: f64::NAN,
+            output_dir: "/tmp/exercise".to_string(),
+            results: vec![ReportEntry {
+                id: "t1.example".to_string(),
+                tier: "t1".to_string(),
+                passed: false,
+                duration_secs: 1.0,
+                error: Some("boom".to_string()),
+                steps: vec![StepEntry {
+                    label: "exercise".to_string(),
+                    passed: false,
+                    exit_code: 1,
+                    duration_secs: 1.0,
+                    validation_errors: vec!["bad".to_string()],
+                }],
+            }],
+        };
+
+        let error = db
+            .record_exercise_run(invocation_id, &report)
+            .expect_err("non-finite exercise report must fail history persistence");
+        let rendered = format!("{error:#}");
+
+        assert!(
+            rendered.contains("exercise report has non-finite duration_secs"),
+            "expected explicit non-finite duration error, got: {rendered}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_parse_sandbox_meta_slot_acquired() -> TestResult<()> {
         // Clean slot (no clean_ms field)
         let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_5 duration_ms=42 pid=12345 clean=true\ntest output here";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_5"));
         assert_eq!(meta.slot_wait_ms, Some(42));
         assert!(meta.cleanup_ms.is_none());
@@ -4761,7 +5019,7 @@ mod tests {
     async fn test_parse_sandbox_meta_dirty_slot() -> TestResult<()> {
         // Dirty slot with cleanup time
         let output = "some earlier output\n[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_13 duration_ms=381 clean_ms=352 pid=917199 clean=false\nmore output";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_13"));
         assert_eq!(meta.slot_wait_ms, Some(381));
         assert_eq!(meta.cleanup_ms, Some(352));
@@ -4771,10 +5029,18 @@ mod tests {
     #[sinex_test]
     async fn test_parse_sandbox_meta_no_slog_events() -> TestResult<()> {
         let output = "plain test output\nno sandbox events here";
-        let meta = parse_sandbox_meta(output);
+        let meta = parse_sandbox_meta(output)?;
         assert!(meta.slot_name.is_none());
         assert!(meta.slot_wait_ms.is_none());
         assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_rejects_invalid_duration() -> TestResult<()> {
+        let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_7 duration_ms=oops pid=12345";
+        let error = parse_sandbox_meta(output).unwrap_err();
+        assert!(format!("{error:#}").contains("invalid sandbox metadata field duration_ms=oops"));
         Ok(())
     }
 
@@ -4832,6 +5098,30 @@ mod tests {
     async fn invalid_invocation_status_is_rejected() -> TestResult<()> {
         let err = InvocationStatus::try_from_str("mystery").expect_err("should fail");
         assert!(err.to_string().contains("invalid invocation status"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_transition_probability_surfaces_query_failures() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-transition-probability-query-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL
+            );
+            ",
+        )?;
+
+        let error = db
+            .get_transition_probability("check", "test", 5, 20)
+            .expect_err("transition probability query failures should surface");
+        assert!(format!("{error:#}").contains("failed to compute transition probability"));
         Ok(())
     }
 }

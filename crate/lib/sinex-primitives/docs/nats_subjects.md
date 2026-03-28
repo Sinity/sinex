@@ -10,12 +10,13 @@ Reference: `crate/lib/sinex-primitives/src/environment.rs`
 
 ## Subject Naming
 
-**Dot-to-underscore normalization**: Publishers normalize dots in `source` and `event_type` values when forming subject names. For example:
+**Collision-free token encoding**: publishers encode `source` and `event_type` into a single subject token each, so dots stop colliding with underscores. For example:
 
-- Source `fs.watcher` becomes `fs_watcher` in the subject
-- Event type `file.created` becomes `file_created` in the subject
+- Source `fs.watcher` becomes `fs_d_watcher` in the subject
+- Source `fs_watcher` becomes `fs_u_watcher` in the subject
+- Event type `file.created` becomes `file_d_created` in the subject
 
-This ensures subject names don't conflict with the NATS subject hierarchy while preserving the original values in the payload.
+This keeps the fixed `events.raw.<source>.<event_type>` hierarchy while preserving a one-to-one mapping from logical identifiers to NATS subject tokens.
 
 Reference: `crate/lib/sinex-node-sdk/src/nats_publisher.rs:121-127`
 
@@ -54,8 +55,8 @@ Reference: `crate/lib/sinex-node-sdk/src/dlq_retry.rs:70-85`
 Fully-qualified subject names in development environment:
 
 ```
-dev.events.raw.fs_watcher.file_created       # File creation event
-dev.events.raw.terminal_kitty.shell_command  # Shell command event
+dev.events.raw.fs_d_watcher.file_d_created       # File creation event
+dev.events.raw.terminal_u_kitty.shell_d_command  # Shell command event
 dev.events.confirmations.01HXYZ...           # Confirmation for event ID
 dev.events.dlq.ingestd                       # DLQ message from ingestd
 dev.system.schemas.active                    # Schema broadcast

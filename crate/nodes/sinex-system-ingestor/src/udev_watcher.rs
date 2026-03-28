@@ -194,18 +194,24 @@ impl UdevWatcher {
     }
 
     /// Get device properties from uevent file
-    async fn get_device_properties(device_path: &str) -> std::collections::HashMap<String, String> {
+    async fn get_device_properties(
+        device_path: &str,
+    ) -> NodeResult<std::collections::HashMap<String, String>> {
         let mut properties = std::collections::HashMap::new();
         let uevent_path = std::path::Path::new(device_path).join("uevent");
 
-        if let Ok(content) = tokio::fs::read_to_string(uevent_path).await {
-            for line in content.lines() {
-                if let Some((key, value)) = line.split_once('=') {
-                    properties.insert(key.to_string(), value.to_string());
-                }
+        let content = tokio::fs::read_to_string(&uevent_path).await.map_err(|error| {
+            sinex_node_sdk::SinexError::processing("Failed to read uevent properties")
+                .with_context("uevent_path", uevent_path.display().to_string())
+                .with_source(error)
+        })?;
+
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                properties.insert(key.to_string(), value.to_string());
             }
         }
-        properties
+        Ok(properties)
     }
 
     /// Monitor udev events using inotify
@@ -313,7 +319,7 @@ impl UdevWatcher {
 
             // Get device properties for create/add events
             let properties = if action == "add" || action == "change" {
-                Self::get_device_properties(&device_path).await
+                Self::get_device_properties(&device_path).await?
             } else {
                 std::collections::HashMap::with_capacity(8)
             };
@@ -351,5 +357,53 @@ impl UdevWatcher {
         info!("Starting udev event streaming");
 
         self.monitor_udev_events(tx, material).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UdevWatcher;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn get_device_properties_parses_uevent_file() -> TestResult<()> {
+        let device_dir = std::env::temp_dir().join(format!(
+            "sinex-udev-test-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&device_dir)?;
+        std::fs::write(
+            device_dir.join("uevent"),
+            "DEVNAME=/dev/test0\nSUBSYSTEM=net\n",
+        )?;
+
+        let properties =
+            UdevWatcher::get_device_properties(device_dir.to_str().expect("utf-8 temp path"))
+                .await?;
+
+        assert_eq!(properties.get("DEVNAME").map(String::as_str), Some("/dev/test0"));
+        assert_eq!(properties.get("SUBSYSTEM").map(String::as_str), Some("net"));
+        std::fs::remove_dir_all(&device_dir)?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_device_properties_surfaces_read_failures() -> TestResult<()> {
+        let device_dir = std::env::temp_dir().join(format!(
+            "sinex-udev-test-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&device_dir)?;
+
+        let error =
+            UdevWatcher::get_device_properties(device_dir.to_str().expect("utf-8 temp path"))
+                .await
+                .expect_err("missing uevent file must fail honestly");
+
+        assert!(error.to_string().contains("Failed to read uevent properties"));
+        assert!(error.to_string().contains("uevent"));
+        std::fs::remove_dir_all(&device_dir)?;
+        Ok(())
     }
 }
