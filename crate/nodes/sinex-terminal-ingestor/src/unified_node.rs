@@ -467,6 +467,20 @@ impl TerminalMetrics {
 }
 
 impl HistoryWatcherContext {
+    fn validate_state(&self, state: HistoryState) -> NodeResult<HistoryState> {
+        if let Some(sqlite_row_id) = state.sqlite_row_id
+            && sqlite_row_id < 0
+        {
+            return Err(SinexError::processing(
+                "history watcher state has invalid negative sqlite_row_id",
+            )
+            .with_context("shell", self.shell.clone())
+            .with_context("path", self.path.to_string())
+            .with_context("sqlite_row_id", sqlite_row_id.to_string()));
+        }
+        Ok(state)
+    }
+
     fn checkpoint_key(&self) -> String {
         format!("{}:{}", self.shell, self.path)
     }
@@ -737,8 +751,11 @@ impl HistoryWatcherContext {
 
     async fn resolve_state(&self, state_override: Option<HistoryState>) -> NodeResult<HistoryState> {
         match state_override {
-            Some(state) => Ok(state),
-            None => Ok(self.load_state().await?.unwrap_or_default()),
+            Some(state) => self.validate_state(state),
+            None => match self.load_state().await? {
+                Some(state) => self.validate_state(state),
+                None => Ok(HistoryState::default()),
+            },
         }
     }
 
@@ -804,22 +821,28 @@ impl HistoryWatcherContext {
                     },
                     |entry| {
                         let row_id = entry.row_id;
-                        let line_number = u64::try_from(row_id).unwrap_or_default();
-                        let prepared = prepare_command_for_capture(
-                            self,
-                            &entry.command,
-                            line_number,
-                            Some(&mut recent_hashes),
-                        );
+                        let prepared = match sqlite_row_id_to_line_number(self, row_id) {
+                            Ok(line_number) => prepare_command_for_capture(
+                                self,
+                                &entry.command,
+                                line_number,
+                                Some(&mut recent_hashes),
+                            )
+                            .map_err(|error| {
+                                let message =
+                                    format!("failed to process Fish row {row_id}: {error}");
+                                self.record_error("process_fish_entry", &message);
+                                self.strict_warning(message)
+                            }),
+                            Err(error) => {
+                                let message =
+                                    format!("failed to process Fish row {row_id}: {error}");
+                                self.record_error("process_fish_entry", &message);
+                                Err(self.strict_warning(message))
+                            }
+                        };
                         async move {
-                            let Some(final_command) = prepared
-                                .map_err(|error| {
-                                    let message =
-                                        format!("failed to process Fish row {row_id}: {error}");
-                                    self.record_error("process_fish_entry", &message);
-                                    self.strict_warning(message)
-                                })?
-                            else {
+                            let Some(final_command) = prepared? else {
                                 return Ok(SqliteHistoryRowOutcome::Skipped);
                             };
 
@@ -882,18 +905,25 @@ impl HistoryWatcherContext {
                     },
                     |entry| {
                         let row_id = entry.row_id;
-                        let line_number = u64::try_from(row_id).unwrap_or_default();
-                        let prepared =
-                            prepare_command_for_capture(self, &entry.command, line_number, None);
+                        let prepared = match sqlite_row_id_to_line_number(self, row_id) {
+                            Ok(line_number) => {
+                                prepare_command_for_capture(self, &entry.command, line_number, None)
+                                    .map_err(|error| {
+                                        let message =
+                                            format!("failed to process Atuin row {row_id}: {error}");
+                                        self.record_error("process_atuin_entry", &message);
+                                        self.strict_warning(message)
+                                    })
+                            }
+                            Err(error) => {
+                                let message =
+                                    format!("failed to process Atuin row {row_id}: {error}");
+                                self.record_error("process_atuin_entry", &message);
+                                Err(self.strict_warning(message))
+                            }
+                        };
                         async move {
-                            let Some(final_command) = prepared
-                                .map_err(|error| {
-                                    let message =
-                                        format!("failed to process Atuin row {row_id}: {error}");
-                                    self.record_error("process_atuin_entry", &message);
-                                    self.strict_warning(message)
-                                })?
-                            else {
+                            let Some(final_command) = prepared? else {
                                 return Ok(SqliteHistoryRowOutcome::Skipped);
                             };
 
@@ -1512,13 +1542,22 @@ impl HistoryWatcherContext {
             None,
             |from_row_id, end_time| fish_history::read_fish_history(&self.path, from_row_id, end_time),
             |entry| {
-                let line_number = u64::try_from(entry.row_id).unwrap_or_default();
-                let prepared = prepare_command_for_capture(
-                    self,
-                    &entry.command,
-                    line_number,
-                    Some(recent_hashes),
-                );
+                let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
+                    Ok(line_number) => prepare_command_for_capture(
+                        self,
+                        &entry.command,
+                        line_number,
+                        Some(recent_hashes),
+                    ),
+                    Err(error) => {
+                        self.record_error("process_fish_entry", &error.to_string());
+                        warn!(
+                            "Failed to process Fish history entry from {}: {}",
+                            self.path, error
+                        );
+                        Ok(None)
+                    }
+                };
                 async move {
                     let Some(final_command) = prepared
                         .map_err(|error| {
@@ -1589,9 +1628,19 @@ impl HistoryWatcherContext {
                 atuin_history::read_atuin_history(&self.path, from_row_id, end_time)
             },
             |entry| {
-                let line_number = u64::try_from(entry.row_id).unwrap_or_default();
-                let prepared =
-                    prepare_command_for_capture(self, &entry.command, line_number, None);
+                let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
+                    Ok(line_number) => {
+                        prepare_command_for_capture(self, &entry.command, line_number, None)
+                    }
+                    Err(error) => {
+                        self.record_error("process_atuin_entry", &error.to_string());
+                        warn!(
+                            "Failed to process Atuin history entry from {}: {}",
+                            self.path, error
+                        );
+                        Ok(None)
+                    }
+                };
                 async move {
                     let Some(final_command) = prepared
                         .map_err(|error| {
@@ -1832,7 +1881,7 @@ async fn process_command(
         timestamp,
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
-        line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
+        line_number: Some(payload_line_number(ctx, line_number)?),
     };
 
     let event = build_material_json_event(
@@ -1852,6 +1901,26 @@ async fn process_command(
         line_number,
     )
     .await
+}
+
+fn sqlite_row_id_to_line_number(ctx: &HistoryWatcherContext, row_id: i64) -> NodeResult<u64> {
+    u64::try_from(row_id).map_err(|error| {
+        SinexError::processing("history entry has invalid negative sqlite row id")
+            .with_context("shell", ctx.shell.clone())
+            .with_context("path", ctx.path.to_string())
+            .with_context("row_id", row_id.to_string())
+            .with_std_error(&error)
+    })
+}
+
+fn payload_line_number(ctx: &HistoryWatcherContext, line_number: u64) -> NodeResult<u32> {
+    u32::try_from(line_number).map_err(|error| {
+        SinexError::processing("history line number exceeds payload range")
+            .with_context("shell", ctx.shell.clone())
+            .with_context("path", ctx.path.to_string())
+            .with_context("line_number", line_number.to_string())
+            .with_std_error(&error)
+    })
 }
 
 enum TextHistoryLine<'a> {
@@ -1922,7 +1991,7 @@ async fn emit_prepared_fish_entry(
     entry: &crate::fish_history::FishHistoryEntry,
     final_command: String,
 ) -> NodeResult<()> {
-    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
     let material_bytes = final_command.as_bytes().to_vec();
 
     record_processed_command_for_test(ctx, &final_command).await;
@@ -1939,7 +2008,7 @@ async fn emit_prepared_fish_entry(
         timestamp: entry.when.and_then(Timestamp::from_unix_timestamp),
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
-        line_number: Some(u32::try_from(line_number).unwrap_or(u32::MAX)),
+        line_number: Some(payload_line_number(ctx, line_number)?),
     };
 
     let event = build_material_json_event(
@@ -1967,7 +2036,7 @@ async fn process_atuin_entry(
     entry: &crate::atuin_history::AtuinHistoryEntry,
     _recent_hashes: &mut VecDeque<u64>,
 ) -> NodeResult<()> {
-    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
     let Some(final_command) = prepare_command_for_capture(ctx, &entry.command, line_number, None)?
     else {
         return Ok(());
@@ -1980,7 +2049,7 @@ async fn emit_prepared_atuin_entry(
     entry: &crate::atuin_history::AtuinHistoryEntry,
     final_command: String,
 ) -> NodeResult<()> {
-    let line_number = u64::try_from(entry.row_id).unwrap_or_default();
+    let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
     let payload = match AtuinCommandExecutedPayload::from_raw_history(
         final_command.clone(),
         RecordedPath::from(entry.cwd.clone()),
@@ -2049,6 +2118,19 @@ pub struct TerminalNode {
 pub struct TerminalCheckpoint {}
 
 impl TerminalNode {
+    fn validate_checkpoint_state(key: &str, state: HistoryState) -> NodeResult<HistoryState> {
+        if let Some(sqlite_row_id) = state.sqlite_row_id
+            && sqlite_row_id < 0
+        {
+            return Err(SinexError::checkpoint(
+                "terminal history checkpoint has invalid negative sqlite_row_id",
+            )
+            .with_context("source", key.to_string())
+            .with_context("sqlite_row_id", sqlite_row_id.to_string()));
+        }
+        Ok(state)
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -2225,11 +2307,22 @@ impl TerminalNode {
                     .with_std_error(&error)
             })?;
 
-        Ok(checkpoint.sources.get(key).cloned())
+        checkpoint
+            .sources
+            .get(key)
+            .cloned()
+            .map(|state| Self::validate_checkpoint_state(key, state))
+            .transpose()
     }
 
     fn checkpoint_from_states(states: HashMap<String, HistoryState>) -> NodeResult<Checkpoint> {
-        let position = serde_json::to_value(TerminalHistoryCheckpoint { sources: states })
+        let validated_states = states
+            .into_iter()
+            .map(|(key, state)| Self::validate_checkpoint_state(&key, state).map(|state| (key, state)))
+            .collect::<NodeResult<HashMap<_, _>>>()?;
+        let position = serde_json::to_value(TerminalHistoryCheckpoint {
+            sources: validated_states,
+        })
             .map_err(|error| {
                 SinexError::serialization("failed to encode terminal history checkpoint state")
                     .with_std_error(&error)
@@ -2792,6 +2885,46 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn terminal_history_checkpoint_rejects_negative_sqlite_row_id() -> TestResult<()> {
+        let error = TerminalNode::checkpoint_from_states(HashMap::from([(
+            "atuin:/tmp/history.db".to_string(),
+            HistoryState {
+                sqlite_row_id: Some(-1),
+                ..HistoryState::default()
+            },
+        )]))
+        .expect_err("negative sqlite row ids must not be serialized into checkpoints");
+
+        assert!(error.to_string().contains("invalid negative sqlite_row_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_history_checkpoint_restore_rejects_negative_sqlite_row_id(
+    ) -> TestResult<()> {
+        let checkpoint = Checkpoint::external(
+            serde_json::json!({
+                "sources": {
+                    "atuin:/tmp/history.db": {
+                        "offset_bytes": 0,
+                        "line_number": 0,
+                        "pending_timestamp": null,
+                        "sqlite_row_id": -1,
+                        "recent_hashes": [],
+                    }
+                }
+            }),
+            "terminal history source progress",
+        );
+
+        let error = TerminalNode::checkpoint_state_for_source(&checkpoint, "atuin:/tmp/history.db")
+            .expect_err("negative sqlite row ids must not be accepted from incoming checkpoints");
+
+        assert!(error.to_string().contains("invalid negative sqlite_row_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn process_atuin_entry_emits_shell_atuin_event(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
@@ -3111,6 +3244,57 @@ mod tests {
         assert!(next.is_err(), "invalid Atuin row should not emit an event");
 
         ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_atuin_entry_rejects_negative_row_id(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-atuin-negative-row-id")
+                .with_dry_run(false)
+                .build()
+                .await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.local/share/atuin/history.db",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            metrics: TerminalMetrics::new(),
+            shell: "atuin".to_string(),
+            path: Utf8PathBuf::from("/home/test/.local/share/atuin/history.db"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+            source_mode: HistorySourceMode::AtuinSqlite,
+        };
+
+        let entry = crate::atuin_history::AtuinHistoryEntry {
+            row_id: -1,
+            history_id: "h1".to_string(),
+            timestamp_ns: 1_700_000_000_000_000_000,
+            duration_ns: 50_000_000,
+            exit_code: 0,
+            command: "echo 'hello from atuin'".to_string(),
+            cwd: "/realm/project/sinex".to_string(),
+            session_id: "session-1".to_string(),
+            hostname: "test-host".to_string(),
+        };
+        let mut recent_hashes = VecDeque::new();
+        let error = process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes)
+            .await
+            .expect_err("negative Atuin row ids must fail honestly");
+        assert!(error.to_string().contains("invalid negative sqlite row id"));
         Ok(())
     }
 
