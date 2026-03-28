@@ -21,7 +21,6 @@ use sinex_primitives::events::payloads::{
     FishCommandExecutedPayload, KittyCommandExecutedPayload, ZshCommandExecutedPayload,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::temporal::now;
 use tracing::info;
 
 #[derive(Default)]
@@ -66,7 +65,7 @@ impl TransducerNode for TerminalCommandCanonicalizer {
         }
 
         // 1:1 transform: ts_orig from input, single parent
-        let ts_orig = context.ts_orig.unwrap_or_else(now);
+        let ts_orig = context.require_ts_orig()?;
         let Some(mut payload) = canonicalize_payload(context.source.as_str(), input, ts_orig)? else {
             return Ok(None);
         };

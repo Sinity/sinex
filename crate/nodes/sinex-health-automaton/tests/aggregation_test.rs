@@ -13,18 +13,22 @@ use sinex_primitives::{Id, JsonValue};
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts: Timestamp) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
         source: "test".into(),
         event_type: "health.status".into(),
-        ts_orig: Some(ts),
+        ts_orig,
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
     }
+}
+
+fn make_context(ts: Timestamp) -> DerivedTriggerContext {
+    make_context_with_optional_ts(Some(ts))
 }
 
 /// Helper that mirrors the `ScopeReconcilerWrapper` dispatch:
@@ -70,6 +74,25 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
         "status should be updated"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_missing_ts_orig(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let input = json!({
+        "component": "test-component",
+        "previous_status": "healthy",
+        "current_status": "degraded",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &make_context_with_optional_ts(None))
+        .await
+        .expect_err("missing ts_orig must be rejected");
+
+    assert!(error.to_string().contains("missing ts_orig"));
     Ok(())
 }
 

@@ -284,7 +284,7 @@ impl ScopeReconcilerNode for HealthAggregator {
         input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
-        let now = context.ts_orig.unwrap_or_else(Timestamp::now);
+        let now = context.require_ts_orig()?;
         let component = parse_component_name(&input)?.to_string();
         if component != scope_key {
             return Err(NodeLogicError::InputParsing(format!(

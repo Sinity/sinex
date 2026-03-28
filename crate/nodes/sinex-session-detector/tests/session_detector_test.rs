@@ -7,18 +7,22 @@ use sinex_primitives::{Id, JsonValue};
 use sinex_session_detector::{SessionDetector, SessionState};
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
         source: "test".into(),
         event_type: "desktop.window.focused".into(),
-        ts_orig: Some(ts_orig),
+        ts_orig,
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Replay,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
     }
+}
+
+fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
+    make_context_with_optional_ts(Some(ts_orig))
 }
 
 struct EnvGuard {
@@ -62,6 +66,24 @@ async fn replay_events_do_not_trigger_gap_from_wall_clock() -> TestResult<()> {
         !detector.window_complete(&state),
         "replay of closely spaced historical events must not trigger a session boundary from wall-clock drift"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn missing_ts_orig_is_rejected() -> TestResult<()> {
+    let mut detector = SessionDetector;
+    let mut state = SessionState::default();
+
+    let error = detector
+        .accumulate(
+            &mut state,
+            serde_json::json!({}),
+            &make_context_with_optional_ts(None),
+        )
+        .await
+        .expect_err("missing ts_orig must be rejected");
+
+    assert!(error.to_string().contains("missing ts_orig"));
     Ok(())
 }
 
