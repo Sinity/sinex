@@ -38,6 +38,28 @@ pub use sinex_db::models::Blob as BlobMetadata;
 /// Default capacity for blob-manager event channels to prevent unbounded buffering.
 pub const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
+fn verification_status_persist_error(
+    annex_key: &str,
+    status: BlobVerificationStatus,
+    error: &SinexError,
+) -> SinexError {
+    SinexError::processing(format!(
+        "failed to persist blob verification status for {annex_key}"
+    ))
+    .with_context("verification_status", status)
+    .with_source(error.to_string())
+}
+
+fn attach_verification_status_update_error(
+    error: SinexError,
+    status_error: &SinexError,
+) -> SinexError {
+    error.with_context(
+        "verification_status_update_error",
+        status_error.to_string(),
+    )
+}
+
 #[derive(Debug)]
 pub struct BlobManager {
     annex: GitAnnex,
@@ -58,6 +80,16 @@ impl BlobManager {
             db_pool,
             event_sender,
         })
+    }
+
+    async fn persist_verification_status(
+        &self,
+        annex_key: &str,
+        status: BlobVerificationStatus,
+    ) -> NodeResult<()> {
+        self.update_verification_status(annex_key, status)
+            .await
+            .map_err(|error| verification_status_persist_error(annex_key, status, &error))
     }
 
     /// Builds an event tied to the supplied source material.
@@ -387,16 +419,22 @@ impl BlobManager {
             }
 
             if !expected.is_empty() && computed != expected {
-                let _ = self
-                    .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
-                    .await;
-                return Err(SinexError::processing(format!(
+                let mismatch_error = SinexError::processing(format!(
                     "Blob content hash mismatch for {annex_key} (expected {expected}, got {computed})"
-                )));
+                ));
+                if let Err(status_error) = self
+                    .persist_verification_status(annex_key, BlobVerificationStatus::Corrupted)
+                    .await
+                {
+                    return Err(attach_verification_status_update_error(
+                        mismatch_error,
+                        &status_error,
+                    ));
+                }
+                return Err(mismatch_error);
             } else if !expected.is_empty() {
-                let _ = self
-                    .update_verification_status(annex_key, BlobVerificationStatus::Verified)
-                    .await;
+                self.persist_verification_status(annex_key, BlobVerificationStatus::Verified)
+                    .await?;
                 verified = true;
             }
         }
@@ -404,16 +442,22 @@ impl BlobManager {
         if !verified && let Some(expected_blake3) = &blob.checksum_blake3 {
             let computed = blake3::hash(&content).to_hex();
             if computed.as_str() != expected_blake3 {
-                let _ = self
-                    .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
-                    .await;
-                return Err(SinexError::processing(format!(
+                let mismatch_error = SinexError::processing(format!(
                     "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
-                )));
+                ));
+                if let Err(status_error) = self
+                    .persist_verification_status(annex_key, BlobVerificationStatus::Corrupted)
+                    .await
+                {
+                    return Err(attach_verification_status_update_error(
+                        mismatch_error,
+                        &status_error,
+                    ));
+                }
+                return Err(mismatch_error);
             }
-            let _ = self
-                .update_verification_status(annex_key, BlobVerificationStatus::Verified)
-                .await;
+            self.persist_verification_status(annex_key, BlobVerificationStatus::Verified)
+                .await?;
         }
 
         self.publish_blob_event(
@@ -657,5 +701,52 @@ impl BlobManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        attach_verification_status_update_error, verification_status_persist_error,
+    };
+    use crate::SinexError;
+    use sinex_primitives::domain::BlobVerificationStatus;
+
+    // Inline because these cover private blob verification error helpers only.
+    #[test]
+    fn verification_status_persist_error_is_explicit() {
+        let error = verification_status_persist_error(
+            "SHA256E-s1--deadbeef.txt",
+            BlobVerificationStatus::Verified,
+            &SinexError::database("write failed"),
+        );
+
+        assert!(error
+            .to_string()
+            .contains("failed to persist blob verification status"));
+        assert_eq!(
+            error.context_map().get("verification_status"),
+            Some(&BlobVerificationStatus::Verified.to_string()),
+        );
+        assert!(
+            error
+                .sources()
+                .iter()
+                .any(|source| source.contains("write failed"))
+        );
+    }
+
+    #[test]
+    fn verification_status_update_error_is_attached_to_mismatch() {
+        let mismatch = SinexError::processing("Blob content hash mismatch");
+        let combined = attach_verification_status_update_error(
+            mismatch,
+            &SinexError::processing("failed to persist blob verification status"),
+        );
+
+        assert_eq!(
+            combined.context_map().get("verification_status_update_error"),
+            Some(&"Processing error: failed to persist blob verification status".to_string()),
+        );
     }
 }

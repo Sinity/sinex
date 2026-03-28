@@ -6,6 +6,7 @@
 
 use crate::error::{Result, SinexError};
 use std::env;
+use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
 use url::{Url, form_urlencoded};
@@ -281,6 +282,44 @@ impl SinexEnvironment {
         } else {
             self.nats_subject(trimmed)
         }
+    }
+
+    /// Encode a logical subject token so distinct source/type identifiers
+    /// cannot alias onto the same NATS subject token.
+    #[must_use]
+    pub fn nats_subject_token(token: &str) -> String {
+        let mut encoded = String::with_capacity(token.len());
+        for byte in token.bytes() {
+            match byte {
+                b'a'..=b'z' | b'0'..=b'9' | b'-' => encoded.push(byte as char),
+                b'_' => encoded.push_str("_u_"),
+                b'.' => encoded.push_str("_d_"),
+                _ => {
+                    encoded.push_str("_x");
+                    let _ = write!(&mut encoded, "{byte:02x}");
+                    encoded.push('_');
+                }
+            }
+        }
+        encoded
+    }
+
+    /// Build the canonical raw-event subject for a `(source, event_type)` pair.
+    #[must_use]
+    pub fn nats_raw_event_subject_with_namespace(
+        &self,
+        namespace: Option<&str>,
+        source: &str,
+        event_type: &str,
+    ) -> String {
+        self.nats_subject_with_namespace(
+            namespace,
+            &format!(
+                "events.raw.{}.{}",
+                Self::nats_subject_token(source),
+                Self::nats_subject_token(event_type)
+            ),
+        )
     }
 
     /// Get an environment-namespaced stream name with an additional namespace suffix.

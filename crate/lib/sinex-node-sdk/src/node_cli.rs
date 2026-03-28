@@ -20,6 +20,7 @@ use sinex_primitives::temporal::Timestamp;
 pub use crate::{ActivityEntry, IngestionHistoryEntry};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -360,6 +361,22 @@ fn handle_export_result(path: &SanitizedPath, result: NodeResult<()>) -> NodeRes
     }
 }
 
+fn render_cli_value<E: Display>(result: Result<String, E>) -> String {
+    result.unwrap_or_else(|error| format!("<format error: {error}>"))
+}
+
+fn render_cli_timestamp(timestamp: Timestamp) -> String {
+    render_cli_value(timestamp.format(time::macros::format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second]"
+    )))
+}
+
+fn render_cli_time(timestamp: Timestamp) -> String {
+    render_cli_value(timestamp.format(time::macros::format_description!(
+        "[hour]:[minute]:[second]"
+    )))
+}
+
 fn edge_mode_enabled(database_url_supplied: bool) -> bool {
     env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode")
         && !database_url_supplied
@@ -694,15 +711,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         if let Some((start, end)) = report.time_range {
             println!(
                 "  Time range: {} to {}",
-                start
-                    .format(time::macros::format_description!(
-                        "[year]-[month]-[day] [hour]:[minute]:[second]"
-                    ))
-                    .unwrap_or_default(),
-                end.format(time::macros::format_description!(
-                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                ))
-                .unwrap_or_default()
+                render_cli_timestamp(start),
+                render_cli_timestamp(end)
             );
         }
 
@@ -755,12 +765,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     println!("  Description: {}", state.description);
                     println!(
                         "  Last updated: {}",
-                        state
-                            .last_updated
-                            .format(time::macros::format_description!(
-                                "[year]-[month]-[day] [hour]:[minute]:[second]"
-                            ))
-                            .unwrap_or_default()
+                        render_cli_timestamp(state.last_updated)
                     );
                     if let Some(total) = state.total_items {
                         println!("  Total items: {total}");
@@ -772,12 +777,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                         for activity in &state.recent_activity {
                             println!(
                                 "    - {}: {}",
-                                activity
-                                    .timestamp
-                                    .format(time::macros::format_description!(
-                                        "[hour]:[minute]:[second]"
-                                    ))
-                                    .unwrap_or_default(),
+                                render_cli_time(activity.timestamp),
                                 activity.description
                             );
                         }
@@ -806,21 +806,12 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                         println!("  ID: {}", entry.id);
                         println!(
                             "    Started: {}",
-                            entry
-                                .started_at
-                                .format(time::macros::format_description!(
-                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                ))
-                                .unwrap_or_default()
+                            render_cli_timestamp(entry.started_at)
                         );
                         if let Some(completed) = entry.completed_at {
                             println!(
                                 "    Completed: {}",
-                                completed
-                                    .format(time::macros::format_description!(
-                                        "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                    ))
-                                    .unwrap_or_default()
+                                render_cli_timestamp(completed)
                             );
                         }
                         println!("    Events: {}", entry.events_generated);
@@ -843,20 +834,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     println!("Coverage Analysis:");
                     println!(
                         "  Time range: {} to {}",
-                        analysis
-                            .time_range
-                            .0
-                            .format(time::macros::format_description!(
-                                "[year]-[month]-[day] [hour]:[minute]:[second]"
-                            ))
-                            .unwrap_or_default(),
-                        analysis
-                            .time_range
-                            .1
-                            .format(time::macros::format_description!(
-                                "[year]-[month]-[day] [hour]:[minute]:[second]"
-                            ))
-                            .unwrap_or_default()
+                        render_cli_timestamp(analysis.time_range.0),
+                        render_cli_timestamp(analysis.time_range.1)
                     );
                     println!("  Source total: {}", analysis.source_total);
                     println!("  Sinex total: {}", analysis.sinex_total);
@@ -963,7 +942,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 
 #[cfg(test)]
 mod tests {
-    use super::{edge_mode_enabled, handle_export_result, unavailable_section};
+    use super::{
+        edge_mode_enabled, handle_export_result, render_cli_value, unavailable_section,
+    };
     use crate::SinexError;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
@@ -992,6 +973,13 @@ mod tests {
         assert!(message.contains("failed to export node exploration data"));
         assert!(message.contains("/tmp/export.json"));
         assert!(message.contains("disk full while exporting"));
+    }
+
+    #[test]
+    fn render_cli_value_is_explicit_on_format_failure() {
+        let rendered = render_cli_value::<&str>(Err("bad timestamp field"));
+
+        assert_eq!(rendered, "<format error: bad timestamp field>");
     }
 
     #[sinex_serial_test]

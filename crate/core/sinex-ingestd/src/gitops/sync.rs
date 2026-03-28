@@ -84,7 +84,7 @@ impl GitOpsSyncService {
         stats.sources_checked = sources.len();
 
         for source in sources {
-            if self.shutdown_flag.load(Ordering::Relaxed) {
+            if self.shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
 
@@ -230,7 +230,7 @@ struct SourceSyncResult {
 /// Helper function to create a shutdown signal future.
 async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
     loop {
-        if shutdown_flag.load(Ordering::Relaxed) {
+        if shutdown_flag.load(Ordering::Acquire) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

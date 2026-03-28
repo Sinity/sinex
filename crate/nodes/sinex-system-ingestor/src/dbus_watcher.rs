@@ -80,6 +80,28 @@ impl FromStr for DBusType {
     }
 }
 
+fn record_activity_timestamp(
+    activity_tracker: &Arc<std::sync::Mutex<std::time::Instant>>,
+) -> std::time::Instant {
+    let mut last_activity = activity_tracker.lock().unwrap_or_else(|poisoned| {
+        warn!("D-Bus activity tracker lock poisoned while recording activity; recovering");
+        poisoned.into_inner()
+    });
+    let now = std::time::Instant::now();
+    *last_activity = now;
+    now
+}
+
+fn activity_elapsed(
+    activity_tracker: &Arc<std::sync::Mutex<std::time::Instant>>,
+) -> std::time::Duration {
+    let last_activity = activity_tracker.lock().unwrap_or_else(|poisoned| {
+        warn!("D-Bus activity tracker lock poisoned while checking health; recovering");
+        poisoned.into_inner()
+    });
+    last_activity.elapsed()
+}
+
 /// Convert D-Bus member name to `PowerEventType`
 fn parse_power_event(member: &str) -> PowerEventType {
     match member {
@@ -409,9 +431,7 @@ impl DbusWatcher {
             MatchRule::new(),
             Box::new(move |msg, _| {
                 // Update activity tracker
-                if let Ok(mut last_activity) = activity_for_callback.lock() {
-                    *last_activity = std::time::Instant::now();
-                }
+                record_activity_timestamp(&activity_for_callback);
 
                 // Extract message data synchronously
                 let msg_data = DbusMessageData {
@@ -459,9 +479,7 @@ impl DbusWatcher {
             tokio::time::sleep(health_check_interval).await;
 
             // Check if we've received activity recently
-            if let Ok(last) = activity_tracker.lock()
-                && last.elapsed() > inactivity_timeout
-            {
+            if activity_elapsed(&activity_tracker) > inactivity_timeout {
                 warn!(
                     "D-Bus {} bus: No messages received for {}s, connection may be stale",
                     bus_type,
@@ -1195,10 +1213,12 @@ impl DbusWatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::DbusWatcher;
+    use super::{DbusWatcher, activity_elapsed, record_activity_timestamp};
     use serde_json::json;
     use sinex_primitives::events::enums::PlaybackStatus;
     use sinex_primitives::temporal::Timestamp;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use xtask::sandbox::prelude::*;
 
     // Inline because these exercise private D-Bus parsing helpers directly.
@@ -1320,6 +1340,35 @@ mod tests {
         let error = DbusWatcher::monitoring_task_exit_error(0, Err(join_error));
         assert!(error.to_string().contains("panicked"));
         assert!(error.to_string().contains("task_index"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_activity_timestamp_recovers_from_poisoned_lock() -> TestResult<()> {
+        let tracker = Arc::new(Mutex::new(std::time::Instant::now() - Duration::from_secs(5)));
+        let poison = tracker.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poison.lock().expect("lock should acquire before poison");
+            panic!("poison activity tracker");
+        });
+
+        let recorded_at = record_activity_timestamp(&tracker);
+        assert!(recorded_at.elapsed() < Duration::from_secs(1));
+        assert!(activity_elapsed(&tracker) < Duration::from_secs(1));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activity_elapsed_recovers_from_poisoned_lock() -> TestResult<()> {
+        let tracker = Arc::new(Mutex::new(std::time::Instant::now() - Duration::from_secs(2)));
+        let poison = tracker.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poison.lock().expect("lock should acquire before poison");
+            panic!("poison activity tracker");
+        });
+
+        let elapsed = activity_elapsed(&tracker);
+        assert!(elapsed >= Duration::from_secs(2));
         Ok(())
     }
 }

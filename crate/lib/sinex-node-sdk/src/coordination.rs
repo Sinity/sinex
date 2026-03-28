@@ -54,6 +54,7 @@
 //! ```
 
 use crate::heartbeat::HeartbeatEmitter;
+use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
@@ -786,11 +787,7 @@ impl From<&NodeInstance> for InstanceMetadata {
 }
 
 fn instance_started_at(instance: &NodeInstance) -> i64 {
-    instance
-        .start_time
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+    unix_timestamp_secs_with_warning(instance.start_time, "coordination instance start time") as i64
 }
 
 fn instance_metadata_at(instance: &NodeInstance, last_heartbeat: Option<i64>) -> InstanceMetadata {

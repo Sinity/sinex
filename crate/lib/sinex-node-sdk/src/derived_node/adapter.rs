@@ -45,6 +45,20 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
     true
 }
 
+#[cfg(feature = "messaging")]
+fn log_self_observation_failure(
+    node_name: &str,
+    metric_name: &str,
+    error: &crate::self_observation::SelfObservationError,
+) {
+    warn!(
+        node = node_name,
+        metric = metric_name,
+        error = %error,
+        "Derived-node self-observation emit failed"
+    );
+}
+
 /// Shared runtime adapter for all derived node models.
 ///
 /// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
@@ -367,9 +381,16 @@ where
                 >= Duration::from_secs(self.config.checkpoint_timeout_secs)
     }
 
-    fn current_checkpoint_internal(&self) -> Checkpoint {
-        let state_json = serde_json::to_value(&self.persisted_state).unwrap_or(JsonValue::Null);
-        Checkpoint::external(state_json, format!("derived_node_{}", self.node.name()))
+    fn current_checkpoint_internal(&self) -> NodeResult<Checkpoint> {
+        let state_json = serde_json::to_value(&self.persisted_state).map_err(|error| {
+            SinexError::serialization("failed to serialize current derived node checkpoint state")
+                .with_context("node", self.node.name().to_string())
+                .with_std_error(&error)
+        })?;
+        Ok(Checkpoint::external(
+            state_json,
+            format!("derived_node_{}", self.node.name()),
+        ))
     }
 
     // ── Event Processing ───────────────────────────────────────────────
@@ -577,11 +598,25 @@ where
 
             let mut keys = Vec::new();
             for id in &affected_ids {
-                if let Ok(Some(event)) = pool.events().get_by_id(*id).await
-                    && let Some(ref sk) = event.scope_key
-                    && !keys.contains(sk)
-                {
-                    keys.push(sk.clone());
+                match pool.events().get_by_id(*id).await {
+                    Ok(Some(event)) => {
+                        if let Some(ref sk) = event.scope_key
+                            && !keys.contains(sk)
+                        {
+                            keys.push(sk.clone());
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Err(
+                            SinexError::database(
+                                "Failed to load affected event while deriving invalidation scope keys",
+                            )
+                            .with_context("event_id", id.to_string())
+                            .with_context("node", self.node.name())
+                            .with_source(error),
+                        );
+                    }
                 }
             }
             keys
@@ -789,7 +824,9 @@ where
         // Emit "received" counter
         #[cfg(feature = "messaging")]
         if let Some(ref obs) = self.self_observer {
-            let _ = obs.emit_counter("invalidation.received", 1, None).await;
+            if let Err(error) = obs.emit_counter("invalidation.received", 1, None).await {
+                log_self_observation_failure(node_name, "invalidation.received", &error);
+            }
         }
 
         let invalidation = match serde_json::from_slice::<
@@ -806,7 +843,9 @@ where
                 );
                 #[cfg(feature = "messaging")]
                 if let Some(ref obs) = self.self_observer {
-                    let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                    if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
+                        log_self_observation_failure(node_name, "invalidation.errors", &error);
+                    }
                 }
                 return None;
             }
@@ -851,18 +890,39 @@ where
                     // Emit success metrics
                     #[cfg(feature = "messaging")]
                     if let Some(ref obs) = self.self_observer {
-                        let _ = obs.emit_counter("invalidation.processed", 1, None).await;
-                        let _ = obs
+                        if let Err(error) = obs.emit_counter("invalidation.processed", 1, None).await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.processed",
+                                &error,
+                            );
+                        }
+                        if let Err(error) = obs
                             .emit_counter_with_delta(
                                 "invalidation.outputs_emitted",
                                 count,
                                 count,
                                 None,
                             )
-                            .await;
-                        let _ = obs
+                            .await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.outputs_emitted",
+                                &error,
+                            );
+                        }
+                        if let Err(error) = obs
                             .emit_gauge("invalidation.processing_duration_ms", duration_ms, None)
-                            .await;
+                            .await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.processing_duration_ms",
+                                &error,
+                            );
+                        }
                     }
 
                     Some(count)
@@ -876,7 +936,9 @@ where
                     );
                     #[cfg(feature = "messaging")]
                     if let Some(ref obs) = self.self_observer {
-                        let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                        if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
+                            log_self_observation_failure(node_name, "invalidation.errors", &error);
+                        }
                     }
                     None
                 }
@@ -1043,7 +1105,7 @@ where
         Ok(ScanReport {
             events_processed: 0,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal(),
+            final_checkpoint: self.current_checkpoint_internal()?,
             time_range: None,
             node_stats: HashMap::from([
                 (
@@ -1184,7 +1246,7 @@ where
         Ok(ScanReport {
             events_processed,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal(),
+            final_checkpoint: self.current_checkpoint_internal()?,
             time_range: None,
             node_stats: HashMap::from([
                 ("total_processed".to_string(), events_processed),
@@ -1361,7 +1423,7 @@ where
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(self.current_checkpoint_internal())
+        self.current_checkpoint_internal()
     }
 
     async fn health_check(&self) -> NodeResult<bool> {
@@ -1475,7 +1537,11 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
+    #[cfg(feature = "messaging")]
+    use super::log_self_observation_failure;
     use super::signal_shutdown_channel;
+    #[cfg(feature = "messaging")]
+    use crate::self_observation::SelfObservationError;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
 
@@ -1495,6 +1561,17 @@ mod tests {
         assert!(signal_shutdown_channel(&tx, "test-derived"));
         rx.changed().await?;
         assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn log_self_observation_failure_accepts_publish_errors() -> TestResult<()> {
+        log_self_observation_failure(
+            "test-derived",
+            "invalidation.errors",
+            &SelfObservationError::Publish("boom".to_string()),
+        );
         Ok(())
     }
 }

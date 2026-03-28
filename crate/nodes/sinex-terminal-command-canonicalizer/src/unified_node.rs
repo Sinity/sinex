@@ -141,17 +141,14 @@ fn canonicalize_kitty(
 
     Ok(Some(CanonicalCommandPayload {
         command,
-        working_directory: payload
-            .working_directory
-            .map(|path| path.to_string())
-            .unwrap_or_default(),
-        exit_code: payload.exit_status.unwrap_or_default(),
-        duration_ms: payload.execution_time_ms.unwrap_or(0),
+        working_directory: payload.working_directory.map(|path| path.to_string()),
+        exit_code: payload.exit_status,
+        duration_ms: payload.execution_time_ms,
         start_time: ts_orig,
         end_time: ts_orig,
-        user: String::new(),
-        session_id: String::new(),
-        environment_hash: String::new(),
+        user: None,
+        session_id: None,
+        environment_hash: None,
         source_events: Vec::new(),
         enrichment_history: Vec::new(),
     }))
@@ -174,17 +171,24 @@ fn canonicalize_atuin(
 
     Ok(Some(CanonicalCommandPayload {
         command,
-        working_directory: payload.cwd.to_string(),
-        exit_code: payload.exit_code,
-        duration_ms,
+        working_directory: Some(payload.cwd.to_string()),
+        exit_code: Some(payload.exit_code),
+        duration_ms: Some(duration_ms),
         start_time: payload.ts_start_orig,
         end_time: payload.ts_end_orig,
-        user: String::new(),
-        session_id: payload.atuin_session_id,
-        environment_hash: String::new(),
+        user: None,
+        session_id: normalize_optional_string(Some(payload.atuin_session_id)),
+        environment_hash: None,
         source_events: Vec::new(),
         enrichment_history: Vec::new(),
     }))
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(value)
+    })
 }
 
 fn canonicalize_history(
@@ -203,14 +207,14 @@ fn canonicalize_history(
 
     Ok(Some(CanonicalCommandPayload {
         command,
-        working_directory: working_directory.map(|path| path.to_string()).unwrap_or_default(),
-        exit_code: exit_code.unwrap_or_default(),
-        duration_ms: duration_ms.unwrap_or(0),
+        working_directory: working_directory.map(|path| path.to_string()),
+        exit_code,
+        duration_ms,
         start_time: ts_orig,
         end_time: ts_orig,
-        user: user.unwrap_or_default(),
-        session_id: session_id.unwrap_or_default(),
-        environment_hash: environment_hash.unwrap_or_default(),
+        user: normalize_optional_string(user),
+        session_id: normalize_optional_string(session_id),
+        environment_hash: normalize_optional_string(environment_hash),
         source_events: Vec::new(),
         enrichment_history: Vec::new(),
     }))

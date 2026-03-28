@@ -142,10 +142,7 @@ fn execute_html(
     if open {
         let index_path = Path::new(output).join("html").join("index.html");
         if index_path.exists() {
-            let _ = std::process::Command::new("xdg-open")
-                .arg(&index_path)
-                .spawn()
-                .or_else(|_| std::process::Command::new("open").arg(&index_path).spawn());
+            open_report_in_browser(&index_path)?;
         } else {
             bail!("HTML report not found at {}", index_path.display());
         }
@@ -154,6 +151,26 @@ fn execute_html(
     Ok(CommandResult::success()
         .with_message(format!("HTML report: {output}/html/index.html"))
         .with_duration(ctx.elapsed()))
+}
+
+fn open_report_in_browser(index_path: &Path) -> Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(index_path)
+        .spawn()
+        .or_else(|xdg_error| {
+            std::process::Command::new("open")
+                .arg(index_path)
+                .spawn()
+                .map_err(|open_error| {
+                    eyre!(
+                        "failed to open coverage report {} (xdg-open: {}; open: {})",
+                        index_path.display(),
+                        xdg_error,
+                        open_error
+                    )
+                })
+        })?;
+    Ok(())
 }
 
 fn execute_lcov(
@@ -355,6 +372,7 @@ mod tests {
     use super::*;
     use crate::output::OutputFormat;
     use crate::sandbox::sinex_test;
+    use std::os::unix::fs::PermissionsExt;
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -406,6 +424,75 @@ mod tests {
             subcommand: CoverageSubcommand::Clean,
         };
         assert_eq!(cmd.name(), "coverage");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_open_report_in_browser_reports_missing_openers(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let report = temp.path().join("index.html");
+        std::fs::write(&report, "<html></html>")?;
+
+        let original_path = std::env::var("PATH").ok();
+        unsafe { std::env::set_var("PATH", temp.path()) };
+
+        let error = open_report_in_browser(&report)
+            .expect_err("missing browser opener commands must fail honestly");
+        let message = error.to_string();
+        assert!(message.contains("failed to open coverage report"));
+        assert!(message.contains("xdg-open"));
+        assert!(message.contains("open"));
+
+        match original_path {
+            Some(path) => unsafe { std::env::set_var("PATH", path) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_open_report_in_browser_accepts_xdg_open(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let report = temp.path().join("index.html");
+        let opener = temp.path().join("xdg-open");
+        std::fs::write(&report, "<html></html>")?;
+        std::fs::write(
+            &opener,
+            "#!/bin/sh\nprintf '%s' \"$1\" > \"$TMPDIR/coverage-opened-path\"\n",
+        )?;
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755))?;
+
+        let capture_dir = tempfile::tempdir()?;
+        let original_path = std::env::var("PATH").ok();
+        let original_tmpdir = std::env::var("TMPDIR").ok();
+        unsafe {
+            std::env::set_var("PATH", temp.path());
+            std::env::set_var("TMPDIR", capture_dir.path());
+        }
+
+        open_report_in_browser(&report)?;
+
+        let capture_path = capture_dir.path().join("coverage-opened-path");
+        for _ in 0..50 {
+            if capture_path.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let captured = std::fs::read_to_string(&capture_path)?;
+        assert_eq!(captured, report.to_string_lossy());
+
+        match original_path {
+            Some(path) => unsafe { std::env::set_var("PATH", path) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        match original_tmpdir {
+            Some(path) => unsafe { std::env::set_var("TMPDIR", path) },
+            None => unsafe { std::env::remove_var("TMPDIR") },
+        }
         Ok(())
     }
 }

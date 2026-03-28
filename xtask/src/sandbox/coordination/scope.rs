@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::runtime::Handle;
 use tokio::sync::OwnedSemaphorePermit;
-use tracing::info;
+use tracing::{info, warn};
 
 /// `PipelineScope` provides a complete pipeline test harness with ingestd, `JetStream`,
 /// and automatic cleanup.
@@ -471,10 +471,14 @@ impl Drop for PipelineScope<'_> {
         if let Some(mut ingestd) = self.ingestd.take() {
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
-                    let _ = ingestd.stop().await;
+                    if let Err(error) = ingestd.stop().await {
+                        warn!(error = %error, "Failed to stop pipeline ingestd during drop cleanup");
+                    }
                 });
             } else {
-                let _ = futures::executor::block_on(ingestd.stop());
+                if let Err(error) = futures::executor::block_on(ingestd.stop()) {
+                    warn!(error = %error, "Failed to stop pipeline ingestd during sync drop cleanup");
+                }
             }
         }
     }

@@ -3,7 +3,7 @@ use color_eyre::eyre::Context;
 use rusqlite::Connection;
 use sinex_primitives::Timestamp;
 use sinex_terminal_ingestor::fish_history::{
-    get_max_row_id, is_fish_sqlite_history, read_fish_history,
+    ensure_fish_sqlite_history, get_max_row_id, read_fish_history,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -43,16 +43,16 @@ fn create_test_fish_history(dir: &TempDir) -> TestResult<Utf8PathBuf> {
 }
 
 #[sinex_test]
-async fn test_is_fish_sqlite_history_detects_valid_database() -> TestResult<()> {
+async fn test_ensure_fish_sqlite_history_detects_valid_database() -> TestResult<()> {
     let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
     let history_path = create_test_fish_history(&temp_dir)?;
 
-    assert!(is_fish_sqlite_history(&history_path));
+    ensure_fish_sqlite_history(&history_path)?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_is_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
+async fn test_ensure_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
     let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
     let invalid_path = temp_dir.path().join("not_a_db.txt");
     fs::write(&invalid_path, "just some text").wrap_err("write invalid history file")?;
@@ -61,7 +61,12 @@ async fn test_is_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
         color_eyre::eyre::eyre!("temporary invalid history path should be valid UTF-8")
     })?;
 
-    assert!(!is_fish_sqlite_history(&invalid_utf8));
+    let error = ensure_fish_sqlite_history(&invalid_utf8)
+        .expect_err("invalid Fish history file must surface the SQLite validation error");
+    assert!(
+        !error.to_string().is_empty(),
+        "invalid Fish history file should preserve error context"
+    );
     Ok(())
 }
 

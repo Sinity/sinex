@@ -135,13 +135,10 @@ impl NatsPublisher {
             serde_json::from_slice::<JsonValue>(&original_event_bytes).map_err(
                 sinex_primitives::SinexError::from,
             )?;
-        let original_subject = self.env.nats_subject_with_namespace(
+        let original_subject = self.env.nats_raw_event_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!(
-                "events.raw.{}.{}",
-                event.source.as_str().replace('.', "_"),
-                event.event_type.as_str().replace('.', "_")
-            ),
+            event.source.as_str(),
+            event.event_type.as_str(),
         );
 
         // Build DLQ entry with error context
@@ -247,13 +244,10 @@ impl NatsPublisher {
             source_event_ids,
         )?;
 
-        let subject = self.env.nats_subject_with_namespace(
+        let subject = self.env.nats_raw_event_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!(
-                "events.raw.{}.{}",
-                event.source.as_str().replace('.', "_"),
-                event.event_type.as_str().replace('.', "_")
-            ),
+            event.source.as_str(),
+            event.event_type.as_str(),
         );
 
         // Add idempotency header

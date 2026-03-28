@@ -5,7 +5,7 @@
 //! re-exports these types from here.
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Result, bail, eyre};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -67,6 +67,57 @@ where
             Err(error) => bail!("failed to read {context_label}: {error}"),
         }
     }
+}
+
+fn child_running(child: &mut Child, label: &str) -> Result<bool> {
+    child
+        .try_wait()
+        .with_context(|| format!("failed to poll {label} process state"))?
+        .map_or(Ok(true), |_| Ok(false))
+}
+
+#[cfg(unix)]
+fn send_sigterm_if_running(child: &mut Child, label: &str) -> Result<()> {
+    let Some(id) = child.id() else {
+        return Ok(());
+    };
+    match nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(id as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if child_running(child, label)? {
+                bail!("failed to send SIGTERM to {label} (pid {id}): {error}");
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn send_sigterm_if_running(_child: &mut Child, _label: &str) -> Result<()> {
+    Ok(())
+}
+
+async fn kill_child_if_running(child: &mut Child, label: &str, context: &str) -> Result<()> {
+    if !child_running(child, label)? {
+        return Ok(());
+    }
+    match child.kill().await {
+        Ok(()) => {}
+        Err(error) => {
+            if child_running(child, label)? {
+                return Err(
+                    eyre!(error).wrap_err(format!("failed to kill {label} {context}"))
+                );
+            }
+        }
+    }
+    child.wait()
+        .await
+        .with_context(|| format!("failed to wait for {label} after kill {context}"))?;
+    Ok(())
 }
 
 impl DevOrchestrator {
@@ -227,16 +278,7 @@ impl DevOrchestrator {
         if let Some(mut child) = self.child.take() {
             println!("[run] Stopping {}...", self.args.binary);
 
-            // Send SIGTERM for graceful shutdown
-            #[cfg(unix)]
-            {
-                if let Some(id) = child.id() {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(id as i32),
-                        nix::sys::signal::Signal::SIGTERM,
-                    );
-                }
-            }
+            send_sigterm_if_running(&mut child, &self.args.binary)?;
 
             // Wait for graceful shutdown with timeout
             tokio::select! {
@@ -248,7 +290,7 @@ impl DevOrchestrator {
                 }
                 () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                     eprintln!("[run] Timeout waiting for graceful shutdown, killing...");
-                    let _ = child.kill().await;
+                    kill_child_if_running(&mut child, &self.args.binary, "after shutdown timeout").await?;
                 }
             }
         }
@@ -314,7 +356,12 @@ impl DevOrchestrator {
                     }
                     () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                         eprintln!("[handoff] Timeout waiting for old instance, force killing...");
-                        let _ = old_child.kill().await;
+                        kill_child_if_running(
+                            &mut old_child,
+                            &format!("old {}", self.args.binary),
+                            "after handoff timeout",
+                        )
+                        .await?;
                     }
                 }
             }
@@ -354,13 +401,8 @@ impl DevOrchestrator {
         let _watcher = FileWatcher::for_workspace(self.workspace_root.as_std_path(), tx)
             .map_err(|e| eyre!(e.to_string()))?;
 
-        // Set up signal handler
-        let shutdown = self.shutdown_requested.clone();
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            println!("\n[ctrl+c] Shutting down...");
-            shutdown.store(true, Ordering::SeqCst);
-        });
+        let shutdown_signal = tokio::signal::ctrl_c();
+        tokio::pin!(shutdown_signal);
 
         println!(
             "[watch] Watching {} for changes. Press Ctrl+C to stop.",
@@ -374,6 +416,11 @@ impl DevOrchestrator {
             }
 
             tokio::select! {
+                result = &mut shutdown_signal => {
+                    result.wrap_err("failed to wait for Ctrl+C in dev orchestrator")?;
+                    println!("\n[ctrl+c] Shutting down...");
+                    self.shutdown_requested.store(true, Ordering::SeqCst);
+                }
                 Some(event) = rx.recv() => {
                     match event {
                         WatchEvent::FileChanged(path) => {
@@ -433,7 +480,7 @@ pub async fn run_binary(args: RunArgs, workspace_root: Utf8PathBuf) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::stream_reader_lines;
+    use super::{child_running, stream_reader_lines};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -477,6 +524,18 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("failed to read build stdout"));
         assert!(message.contains("valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_child_running_reports_exited_process() -> ::xtask::sandbox::TestResult<()> {
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()?;
+        child.wait().await?;
+
+        assert!(!child_running(&mut child, "test child")?);
         Ok(())
     }
 }

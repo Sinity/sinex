@@ -42,7 +42,7 @@ New nodes usually implement `IngestorNode` or `AutomatonNode` and use `node_entr
 
 ### 3. NATS Subject Routing
 
-Subject pattern: `events.raw.{source}.{event_type}` (subject-safe normalized). New sources automatically get routing without configuration. JetStream consumers use wildcards: `events.raw.>`.
+Subject pattern: `events.raw.{source}.{event_type}` with collision-free token encoding for each source/type component. New sources automatically get routing without configuration, and JetStream consumers still use the stable wildcard `events.raw.>`.
 
 ### 4. NixOS Module
 

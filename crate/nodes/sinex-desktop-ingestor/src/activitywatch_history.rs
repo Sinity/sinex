@@ -6,8 +6,7 @@ use camino::Utf8PathBuf;
 use rusqlite::types::Type;
 use serde_json::{Value as JsonValue, json};
 use sinex_node_sdk::{
-    SqliteTableCheckError, ensure_sqlite_with_tables, is_sqlite_with_tables, read_rows_after,
-    read_rows_with_params,
+    SqliteTableCheckError, ensure_sqlite_with_tables, read_rows_after, read_rows_with_params,
 };
 use sinex_primitives::Timestamp;
 use std::io::{Error as IoError, ErrorKind};
@@ -60,12 +59,6 @@ impl ActivityWatchHistoryEntry {
             "data": self.data,
         })
     }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[must_use]
-pub fn is_activitywatch_sqlite(path: &Utf8PathBuf) -> bool {
-    is_sqlite_with_tables(path, &["events", "buckets"])
 }
 
 pub fn ensure_activitywatch_sqlite(path: &Utf8PathBuf) -> Result<(), SqliteTableCheckError> {
@@ -225,7 +218,8 @@ fn encode_query_timestamp_ns(end_time: Timestamp) -> Result<i64, rusqlite::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityWatchEntryKind, get_max_row_id, is_activitywatch_sqlite, read_activitywatch_history,
+        ActivityWatchEntryKind, ensure_activitywatch_sqlite, get_max_row_id,
+        read_activitywatch_history,
     };
     use camino::Utf8PathBuf;
     use color_eyre::eyre::eyre;
@@ -269,7 +263,7 @@ mod tests {
     #[sinex_test]
     async fn activitywatch_sqlite_detection_requires_expected_schema() -> TestResult<()> {
         let path = fixture_db()?;
-        assert!(is_activitywatch_sqlite(&path));
+        ensure_activitywatch_sqlite(&path)?;
         Ok(())
     }
 

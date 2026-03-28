@@ -4,7 +4,9 @@
 //! This module only handles explicitly SQLite-backed Fish history sources.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::{is_sqlite_with_tables, max_row_id_for_query, read_rows_after};
+use sinex_node_sdk::{
+    SqliteTableCheckError, ensure_sqlite_with_tables, max_row_id_for_query, read_rows_after,
+};
 use sinex_primitives::Timestamp;
 use sinex_node_sdk::read_rows_with_params;
 
@@ -19,10 +21,8 @@ pub struct FishHistoryEntry {
     pub when: Option<i64>,
 }
 
-/// Check if a path points to a Fish `SQLite` history file
-#[must_use]
-pub fn is_fish_sqlite_history(path: &Utf8PathBuf) -> bool {
-    is_sqlite_with_tables(path, &["history"])
+pub fn ensure_fish_sqlite_history(path: &Utf8PathBuf) -> Result<(), SqliteTableCheckError> {
+    ensure_sqlite_with_tables(path, &["history"])
 }
 
 /// Read Fish history entries starting from a given row offset

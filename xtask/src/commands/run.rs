@@ -23,6 +23,18 @@ use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
 
+fn unix_timestamp_secs(now: std::time::SystemTime, context: &str) -> Result<u64> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .with_context(|| format!("{context}: system clock is before the unix epoch"))
+}
+
+fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u128> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_micros())
+        .with_context(|| format!("{context}: system clock is before the unix epoch"))
+}
+
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
 /// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
 fn is_node_package(name: &str) -> bool {
@@ -78,10 +90,10 @@ impl DevJournal {
             .append(true)
             .open(path)
             .with_context(|| format!("open dev journal at {}", path.display()))?;
-        let boot_ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let boot_ts = unix_timestamp_secs(
+            std::time::SystemTime::now(),
+            "failed to derive dev journal boot timestamp",
+        )?;
         let boot_id = format!("dev-{boot_ts}");
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -107,10 +119,16 @@ impl DevJournal {
     }
 
     fn write_entry(&self, unit: &str, pid: u32, message: &str) {
-        let ts_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        let ts_us = match unix_timestamp_micros(
+            std::time::SystemTime::now(),
+            "failed to derive dev journal entry timestamp",
+        ) {
+            Ok(ts_us) => ts_us,
+            Err(error) => {
+                eprintln!("[run] {error:#}");
+                return;
+            }
+        };
         // journald --output=json format consumed by unified_journal_watcher.rs
         let entry = serde_json::json!({
             "_SYSTEMD_UNIT": format!("{unit}.service"),
@@ -258,6 +276,37 @@ async fn wait_for_any_child_exit(
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+}
+
+async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
+    match child
+        .try_wait()
+        .with_context(|| format!("failed to poll {name} before bundle shutdown"))?
+    {
+        Some(_) => return Ok(()),
+        None => {}
+    }
+
+    match child.kill().await {
+        Ok(()) => {}
+        Err(error) => {
+            if child
+                .try_wait()
+                .with_context(|| format!("failed to repoll {name} after bundle kill failure"))?
+                .is_none()
+            {
+                return Err(
+                    eyre!(error)
+                        .wrap_err(format!("failed to kill {name} during bundle shutdown"))
+                );
+            }
+        }
+    }
+
+    child.wait()
+        .await
+        .with_context(|| format!("failed to wait for {name} during bundle shutdown"))?;
+    Ok(())
 }
 
 /// Known binary targets and their package names
@@ -821,15 +870,22 @@ impl RunCommand {
         if ctx.is_human() {
             println!("\nShutting down remaining processes...");
         }
+        let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
-                if let Err(e) = child.kill().await
-                    && ctx.is_human()
-                {
-                    eprintln!("Warning: couldn't kill {name}: {e}");
+                if let Err(error) = stop_bundle_child(name, child).await {
+                    if ctx.is_human() {
+                        eprintln!("Error stopping {name}: {error:#}");
+                    }
+                    shutdown_failures.push(format!("{name}: {error:#}"));
                 }
-                let _ = child.wait().await;
             }
+        }
+        if !shutdown_failures.is_empty() {
+            bail!(
+                "failed to stop remaining bundle processes:\n{}",
+                shutdown_failures.join("\n")
+            );
         }
 
         Ok(CommandResult::success()
@@ -1204,7 +1260,7 @@ async fn execute_tether(
                 "[{}] {} {}",
                 console::style(event.sequence).cyan(),
                 console::style(&event.subject).green(),
-                serde_json::to_string(&event.payload).unwrap_or_default()
+                event.payload
             );
         } else {
             println!("{}", serde_json::to_string(&event)?);
@@ -1330,6 +1386,26 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_unix_timestamp_helpers_reject_pre_epoch_clock() -> ::xtask::sandbox::TestResult<()>
+    {
+        let before_epoch = std::time::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("pre-epoch timestamp");
+
+        let secs_error =
+            unix_timestamp_secs(before_epoch, "boot timestamp").expect_err("pre-epoch secs");
+        assert!(format!("{secs_error:#}")
+            .contains("boot timestamp: system clock is before the unix epoch"));
+
+        let micros_error =
+            unix_timestamp_micros(before_epoch, "entry timestamp").expect_err("pre-epoch micros");
+        assert!(format!("{micros_error:#}")
+            .contains("entry timestamp: system clock is before the unix epoch"));
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_metrics_reject_non_local_subcommands() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(false);
         let mut command = base_command(RunSubcommand::Tether {
@@ -1365,6 +1441,19 @@ mod tests {
             local_run_failure_suggestion(Some(path)),
             "Inspect the process output above or the dev journal at /tmp/dev-journal.log"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stop_bundle_child_succeeds_for_exited_process()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()?;
+        child.wait().await?;
+
+        stop_bundle_child("test child", &mut child).await?;
         Ok(())
     }
 }

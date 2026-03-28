@@ -27,7 +27,11 @@ use sinex_node_sdk::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
+use tokio::{
+    sync::mpsc,
+    sync::watch,
+    task::{JoinError, JoinHandle},
+};
 use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
@@ -137,6 +141,38 @@ const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
+fn log_forwarder_join_result(task_name: &str, result: Result<(), JoinError>) {
+    match result {
+        Ok(()) => {}
+        Err(err) if err.is_cancelled() => {
+            warn!(task = task_name, "System forwarder task was cancelled");
+        }
+        Err(err) => {
+            warn!(task = task_name, error = %err, "System forwarder task failed");
+        }
+    }
+}
+
+fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
+    match checkpoint {
+        Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
+        _ => None,
+    }
+}
+
+async fn finalize_material_after_scan_error(
+    material: &WatcherMaterialContext,
+    reason: &str,
+    original_error: &SinexError,
+) -> NodeResult<()> {
+    material.finalize(reason).await.map_err(|finalize_error| {
+        SinexError::processing("unified journal historical scan failed and material finalization also failed")
+            .with_context("scan_error", original_error.to_string())
+            .with_context("finalize_error", finalize_error.to_string())
+    })?;
+    Err(original_error.clone())
+}
+
 /// Unified system node implementing `IngestorNode`
 pub struct SystemNode {
     /// System monitoring configuration
@@ -178,6 +214,10 @@ impl Default for SystemNode {
 }
 
 impl SystemNode {
+    fn watcher_last_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
+        handle.and_then(|watcher| watcher.health().last_error)
+    }
+
     /// Create a new unified system node
     #[must_use]
     pub fn new() -> Self {
@@ -609,17 +649,24 @@ impl SystemNode {
             .create_dbus_watcher(self.config.dbus_config.clone())
             .await?;
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("dbus").with_material(material);
+        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "D-Bus watcher terminated");
             }
         });
-        Ok(WatcherHandle::running(
-            "dbus",
-            task,
-            Some(forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(forwarder))?;
+        Ok(handle)
     }
 
     async fn spawn_unified_journal_task(
@@ -643,8 +690,9 @@ impl SystemNode {
                 self.dlq_publisher(),
             )
             .await?;
-
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("unified_journal").with_material(material);
+        let health = handle.health_tracker();
         let systemd_tx_opt = if self.config.systemd_enabled {
             Some(systemd_tx)
         } else {
@@ -656,21 +704,28 @@ impl SystemNode {
                 .start_streaming_with_systemd(journal_tx, systemd_tx_opt, watcher_material)
                 .await
             {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "Unified journal watcher terminated");
             }
         });
 
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
-            let _ = tokio::join!(journal_forwarder, systemd_forwarder);
+            let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
+            log_forwarder_join_result("journal", journal_result);
+            log_forwarder_join_result("systemd", systemd_result);
         });
 
-        Ok(WatcherHandle::running(
-            "unified_journal",
-            task,
-            Some(combined_forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(combined_forwarder))?;
+        Ok(handle)
     }
 
     async fn spawn_udev_task(
@@ -682,17 +737,24 @@ impl SystemNode {
         let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
         let mut watcher = self.factory.create_udev_watcher(true).await?;
         let watcher_material = material.clone();
+        let handle = WatcherHandle::initialized("udev").with_material(material);
+        let health = handle.health_tracker();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
+                match health.write() {
+                    Ok(mut watcher_health) => {
+                        watcher_health.last_error = Some(err.to_string());
+                    }
+                    Err(poisoned) => {
+                        poisoned.into_inner().last_error = Some(err.to_string());
+                    }
+                }
                 warn!(error = %err, "udev watcher terminated");
             }
         });
-        Ok(WatcherHandle::running(
-            "udev",
-            task,
-            Some(forwarder),
-            Some(material),
-        ))
+        let mut handle = handle;
+        handle.start(task, Some(forwarder))?;
+        Ok(handle)
     }
 
     /// Perform historical scan on system sources
@@ -738,9 +800,12 @@ impl SystemNode {
         {
             Ok(count) => count,
             Err(err) => {
-                let _ = material
-                    .finalize("system-unified-journal historical scan")
-                    .await;
+                finalize_material_after_scan_error(
+                    &material,
+                    "system-unified-journal historical scan",
+                    &err,
+                )
+                .await?;
                 return Err(err);
             }
         };
@@ -749,12 +814,8 @@ impl SystemNode {
         drop(systemd_tx_opt);
 
         let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-        if let Err(err) = journal_result {
-            warn!(error = %err, "Historical journal forwarder task failed");
-        }
-        if let Err(err) = systemd_result {
-            warn!(error = %err, "Historical systemd forwarder task failed");
-        }
+        log_forwarder_join_result("historical journal", journal_result);
+        log_forwarder_join_result("historical systemd", systemd_result);
 
         material
             .finalize("system-unified-journal historical scan")
@@ -854,16 +915,18 @@ impl IngestorNode for SystemNode {
         state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         let start_time = std::time::Instant::now();
 
         let snapshot = self.take_snapshot(state).await?;
         let source_count = snapshot.enabled_sources.len() as u64;
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: source_count,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_snapshot".to_string()],
             failed_targets: vec![],
@@ -880,6 +943,7 @@ impl IngestorNode for SystemNode {
     ) -> NodeResult<ScanReport> {
         let start_time = std::time::Instant::now();
         let emit_events = !args.dry_run;
+        let final_timestamp = until.end_time().unwrap_or_else(Timestamp::now);
 
         let events_processed = self
             .scan_historical_system_data(&from, &until, &args, emit_events)
@@ -888,14 +952,8 @@ impl IngestorNode for SystemNode {
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((
-                match &from {
-                    Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => Timestamp::now() - time::Duration::hours(1), // estimate
-                },
-                Timestamp::now(),
-            )),
+            final_checkpoint: Checkpoint::timestamp(final_timestamp, None),
+            time_range: checkpoint_timestamp(&from).map(|started_at| (started_at, final_timestamp)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_historical".to_string()],
             failed_targets: vec![],
@@ -909,6 +967,7 @@ impl IngestorNode for SystemNode {
         from: Checkpoint,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
+        let started_at = Timestamp::now();
         self.start_continuous_monitoring(from).await?;
 
         // Periodic snapshot loop: updates `state.health` every 30 seconds.
@@ -949,12 +1008,13 @@ impl IngestorNode for SystemNode {
         }
 
         self.shutdown_watchers().await;
+        let finished_at = Timestamp::now();
 
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
-            time_range: Some((Timestamp::now(), Timestamp::now())),
+            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
@@ -1016,7 +1076,7 @@ impl IngestorNode for SystemNode {
         .iter()
         .filter(|&&active| active)
         .count() as u64;
-        let healthy = connected_sources > 0 || active_sources == 0;
+        let healthy = active_sources == 0 || connected_sources == active_sources;
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -1027,12 +1087,20 @@ impl IngestorNode for SystemNode {
                 "journal_active": self.journal_connected(),
                 "udev_active": self.udev_connected(),
                 "systemd_active": self.systemd_connected(),
+                "dbus_error": Self::watcher_last_error(self.dbus_watcher.as_ref()),
+                "journal_error": Self::watcher_last_error(self.unified_journal_watcher.as_ref()),
+                "udev_error": Self::watcher_last_error(self.udev_watcher.as_ref()),
+                "systemd_error": Self::watcher_last_error(self.unified_journal_watcher.as_ref()),
             }),
         );
         let description = if active_sources == 0 {
             "System Source (all watchers disabled)".to_string()
         } else if connected_sources == 0 {
             format!("System Source ({active_sources} enabled watcher(s), none connected)")
+        } else if connected_sources < active_sources {
+            format!(
+                "System Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
+            )
         } else {
             format!(
                 "System Source ({connected_sources}/{active_sources} watcher(s) connected)"
@@ -1177,6 +1245,34 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FailingFinalizeMaterialContext;
+
+    #[async_trait::async_trait]
+    impl MaterialContext for FailingFinalizeMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: sinex_primitives::Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Err(SinexError::processing("finalize exploded"))
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
     struct MockWatcher;
     #[async_trait::async_trait]
     impl SystemWatcher for MockWatcher {
@@ -1291,6 +1387,10 @@ mod tests {
                 "journal_active": false,
                 "udev_active": false,
                 "systemd_active": false,
+                "dbus_error": null,
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
             }))
         );
         Ok(())
@@ -1328,7 +1428,8 @@ mod tests {
         let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
 
         assert!(source.is_connected);
-        assert!(source.healthy);
+        assert!(!source.healthy);
+        assert!(source.description.contains("degraded"));
         assert_eq!(
             source
                 .metadata
@@ -1343,6 +1444,58 @@ mod tests {
                 "journal_active": false,
                 "udev_active": false,
                 "systemd_active": false,
+                "dbus_error": null,
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_is_healthy_when_all_enabled_watchers_are_connected() -> TestResult<()>
+    {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: true,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        node.dbus_watcher = Some(WatcherHandle::running("dbus", task, None, None));
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert!(source.is_connected);
+        assert!(source.healthy);
+        assert!(source.description.contains("1/1 watcher(s) connected"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_surfaces_watcher_errors() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        let dbus = WatcherHandle::<WatcherMaterialContext>::initialized("dbus");
+        dbus.record_error("dbus stream failed".to_string());
+        node.dbus_watcher = Some(dbus);
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": false,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+                "dbus_error": "dbus stream failed",
+                "journal_error": null,
+                "udev_error": null,
+                "systemd_error": null,
             }))
         );
         Ok(())
@@ -1423,6 +1576,73 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn system_historical_report_uses_requested_time_bounds() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let from_ts = Timestamp::now() - time::Duration::minutes(10);
+        let until_ts = from_ts + time::Duration::minutes(5);
+        let report = node
+            .scan_historical(
+                &mut SystemPersistentState::default(),
+                Checkpoint::timestamp(from_ts, None),
+                TimeHorizon::Historical { end_time: until_ts },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(until_ts, None)
+        );
+        assert_eq!(report.time_range, Some((from_ts, until_ts)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_reports_elapsed_time_window() -> TestResult<()> {
+        let mut node = SystemNode::with_config(SystemConfig {
+            dbus_enabled: false,
+            journal_enabled: false,
+            udev_enabled: false,
+            systemd_enabled: false,
+            ..SystemConfig::default()
+        });
+
+        let (tx, _rx) = mpsc::channel(16);
+        node.set_emitter_override(EventEmitter::new(tx, true));
+        node.set_material_override(Arc::new(MockMaterialContext));
+
+        let state = SystemPersistentState::default();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        drop(shutdown_tx);
+
+        let report = task.await??;
+        let (started_at, finished_at) = report
+            .time_range
+            .expect("continuous report should include an elapsed time window");
+        assert!(finished_at > started_at);
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(finished_at, None)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn system_config_overrides_reject_invalid_bool_types() -> TestResult<()> {
         let mut config = SystemConfig::default();
         let overrides = HashMap::from([("dbus_enabled".to_string(), json!("yes"))]);
@@ -1469,6 +1689,50 @@ mod tests {
         assert!(state.last_state.is_none());
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("snapshot exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalize_material_after_scan_error_preserves_both_failures() -> TestResult<()> {
+        let material: WatcherMaterialContext = Arc::new(FailingFinalizeMaterialContext);
+        let error = finalize_material_after_scan_error(
+            &material,
+            "system-unified-journal historical scan",
+            &SinexError::processing("historical scan exploded"),
+        )
+        .await
+        .expect_err("double failure should be surfaced honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("historical scan failed"));
+        assert!(message.contains("historical scan exploded"));
+        assert!(message.contains("finalize exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
+        let handle = tokio::spawn(async {});
+        log_forwarder_join_result("journal", handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        log_forwarder_join_result("journal", handle.await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn log_forwarder_join_result_accepts_panicked_task() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            panic!("journal forwarder panic");
+        });
+        log_forwarder_join_result("journal", handle.await);
         Ok(())
     }
 }

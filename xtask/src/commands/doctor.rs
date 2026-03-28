@@ -1094,11 +1094,8 @@ fn resolve_database_probe_target(
     if let Some(url) = database_url {
         return Ok(Some(DatabaseProbeTarget {
             database_url: url.to_string(),
-            password_file: descriptor
-                .and_then(|value| value.secrets.database_password_file.clone()),
-            password_required: descriptor
-                .map(|value| value.database.password_required)
-                .unwrap_or(false),
+            password_file: None,
+            password_required: false,
             source: "DATABASE_URL".to_string(),
         }));
     }
@@ -3697,6 +3694,79 @@ mod tests {
         );
         assert!(target.password_required);
         assert_eq!(target.source, "nixos");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_database_probe_target_does_not_graft_descriptor_secrets_onto_database_url()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            source: Some("nixos".to_string()),
+            database: sinex_primitives::DeploymentDatabaseRuntime {
+                enabled: true,
+                host: Some("127.0.0.1".to_string()),
+                port: Some(5432),
+                name: Some("sinex_prod".to_string()),
+                user: Some("sinex".to_string()),
+                local_auth: Some("scram-sha-256".to_string()),
+                password_required: true,
+            },
+            secrets: sinex_primitives::DeploymentSecrets {
+                database_password_file: Some(PathBuf::from("/run/agenix/sinex-local-db")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let target = resolve_database_probe_target(
+            Some("postgresql:///sinex_dev?host=/tmp/sinex-test-run"),
+            Some(&descriptor),
+        )?
+        .expect("explicit DATABASE_URL should produce a probe target");
+
+        assert_eq!(
+            target.database_url,
+            "postgresql:///sinex_dev?host=/tmp/sinex-test-run"
+        );
+        assert_eq!(target.password_file, None);
+        assert!(!target.password_required);
+        assert_eq!(target.source, "DATABASE_URL");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_effective_database_probe_url_keeps_socket_database_url_without_descriptor_password()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            source: Some("nixos".to_string()),
+            database: sinex_primitives::DeploymentDatabaseRuntime {
+                enabled: true,
+                host: Some("127.0.0.1".to_string()),
+                port: Some(5432),
+                name: Some("sinex_prod".to_string()),
+                user: Some("sinex".to_string()),
+                local_auth: Some("scram-sha-256".to_string()),
+                password_required: true,
+            },
+            secrets: sinex_primitives::DeploymentSecrets {
+                database_password_file: Some(PathBuf::from("/run/agenix/sinex-local-db")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (effective_url, source) = resolve_effective_database_probe_url(
+            Some("postgresql:///sinex_dev?host=/tmp/sinex-test-run"),
+            Some(&descriptor),
+            "runtime metrics",
+        )?
+        .expect("explicit DATABASE_URL should be usable without descriptor password grafting");
+
+        assert_eq!(
+            effective_url,
+            "postgresql:///sinex_dev?host=/tmp/sinex-test-run"
+        );
+        assert_eq!(source, "DATABASE_URL");
         Ok(())
     }
 
