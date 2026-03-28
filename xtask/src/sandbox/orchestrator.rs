@@ -50,10 +50,29 @@ pub struct TestIngestdHandle {
     pub stream_name: String,
 }
 
+async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &str) -> Result<()> {
+    if let Some(status) = child
+        .try_wait()
+        .wrap_err_with(|| format!("failed to inspect {process_name} child status before stop"))?
+    {
+        eprintln!("📋 {process_name} exited before explicit stop: {status}");
+        return Ok(());
+    }
+
+    child
+        .kill()
+        .await
+        .wrap_err_with(|| format!("failed to kill {process_name} child process"))?;
+    child
+        .wait()
+        .await
+        .wrap_err_with(|| format!("failed to wait for {process_name} child process after kill"))?;
+    Ok(())
+}
+
 impl TestIngestdHandle {
     pub async fn stop(&mut self) -> Result<()> {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+        let stop_result = terminate_test_child(&mut self.child, "test ingestd").await;
         // Dump debug log file
         let debug_log = ingestd_debug_log_path_for_test_process();
         match read_ingestd_debug_log(&debug_log) {
@@ -67,7 +86,7 @@ impl TestIngestdHandle {
             }
             Err(error) => eprintln!("📋 ingestd log unavailable: {error:#}"),
         }
-        Ok(())
+        stop_result
     }
 }
 
@@ -190,9 +209,7 @@ pub struct TestGatewayHandle {
 
 impl TestGatewayHandle {
     pub async fn stop(&mut self) -> Result<()> {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
-        Ok(())
+        terminate_test_child(&mut self.child, "test gateway").await
     }
 }
 
@@ -472,6 +489,7 @@ pub async fn start_test_ingestd_with_config(
 mod tests {
     use super::*;
     use std::fs;
+    use tokio::process::Command;
 
     #[sinex_test]
     async fn captured_output_stdout_json_lines_surfaces_invalid_json() -> TestResult<()> {
@@ -546,6 +564,21 @@ mod tests {
             read_ingestd_debug_log(&debug_log)?,
             Some("line one\nline two\n".to_string())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminate_test_child_accepts_exited_process() -> TestResult<()> {
+        let mut child = Command::new("true").spawn()?;
+        child.wait().await?;
+        terminate_test_child(&mut child, "unit-test child").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminate_test_child_kills_running_process() -> TestResult<()> {
+        let mut child = Command::new("sleep").arg("30").spawn()?;
+        terminate_test_child(&mut child, "unit-test child").await?;
         Ok(())
     }
 }

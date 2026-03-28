@@ -248,7 +248,9 @@ impl DevOrchestrator {
                 }
                 () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                     eprintln!("[run] Timeout waiting for graceful shutdown, killing...");
-                    let _ = child.kill().await;
+                    if let Err(error) = child.kill().await {
+                        eprintln!("[run] Failed to kill {} after shutdown timeout: {error}", self.args.binary);
+                    }
                 }
             }
         }
@@ -314,7 +316,9 @@ impl DevOrchestrator {
                     }
                     () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                         eprintln!("[handoff] Timeout waiting for old instance, force killing...");
-                        let _ = old_child.kill().await;
+                        if let Err(error) = old_child.kill().await {
+                            eprintln!("[handoff] Failed to kill old instance after timeout: {error}");
+                        }
                     }
                 }
             }

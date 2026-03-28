@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tokio::runtime::Handle;
 use tokio::sync::OwnedSemaphorePermit;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Default RPC bearer token used by the test stack.
 /// Format: `<secret>:<role>` — the gateway parses the role suffix for authorization.
@@ -396,19 +396,27 @@ impl Drop for TestCoreStack<'_> {
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
                     if let Some(mut gw) = gateway {
-                        let _ = gw.stop().await;
+                        if let Err(error) = gw.stop().await {
+                            warn!(error = %error, "Failed to stop sandbox gateway during drop cleanup");
+                        }
                     }
                     if let Some(mut ing) = ingestd {
-                        let _ = ing.stop().await;
+                        if let Err(error) = ing.stop().await {
+                            warn!(error = %error, "Failed to stop sandbox ingestd during drop cleanup");
+                        }
                     }
                 });
             } else {
                 // Fallback: sync cleanup
                 if let Some(mut gw) = gateway {
-                    let _ = futures::executor::block_on(gw.stop());
+                    if let Err(error) = futures::executor::block_on(gw.stop()) {
+                        warn!(error = %error, "Failed to stop sandbox gateway during sync drop cleanup");
+                    }
                 }
                 if let Some(mut ing) = ingestd {
-                    let _ = futures::executor::block_on(ing.stop());
+                    if let Err(error) = futures::executor::block_on(ing.stop()) {
+                        warn!(error = %error, "Failed to stop sandbox ingestd during sync drop cleanup");
+                    }
                 }
             }
         }
