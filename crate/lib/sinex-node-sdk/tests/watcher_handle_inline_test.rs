@@ -126,6 +126,27 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[sinex_test]
+async fn test_watcher_is_inactive_when_forwarder_finishes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let main_task = tokio::spawn(async {
+        sleep(Duration::from_secs(10)).await;
+    });
+    let forwarder = tokio::spawn(async {});
+
+    let mut handle = WatcherHandle::<()>::initialized("test");
+    handle.start(main_task, Some(forwarder))?;
+    tokio::task::yield_now().await;
+
+    assert!(
+        !handle.is_active(),
+        "completed forwarders must make the watcher inactive so supervisors can restart it"
+    );
+
+    handle.shutdown().await?;
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_watcher_health_recovers_from_poisoned_lock(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let handle = WatcherHandle::<()>::initialized("test");

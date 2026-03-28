@@ -253,7 +253,12 @@ impl<M> WatcherHandle<M> {
     /// Check if the watcher is currently active (running and task not finished).
     pub fn is_active(&self) -> bool {
         match &self.state {
-            WatcherState::Running { task, .. } => !task.is_finished(),
+            WatcherState::Running { task, forwarder } => {
+                !task.is_finished()
+                    && forwarder
+                        .as_ref()
+                        .is_none_or(|forwarder| !forwarder.is_finished())
+            }
             WatcherState::Initialized | WatcherState::Stopped => false,
         }
     }

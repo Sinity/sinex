@@ -148,11 +148,18 @@ fn forwarder_join_result(task_name: &str, result: Result<(), JoinError>) -> Node
             warn!(task = task_name, "System forwarder task was cancelled");
             Ok(())
         }
-        Err(err) => Err(
-            SinexError::processing("system forwarder task failed")
-                .with_context("task", task_name.to_string())
-                .with_context("join_error", err.to_string()),
-        ),
+        Err(err) => {
+            let error = if err.is_panic() {
+                SinexError::processing("system forwarder task failed")
+                    .with_context("task", task_name.to_string())
+                    .with_context("panic", panic_payload_message(err.into_panic()))
+            } else {
+                SinexError::processing("system forwarder task failed")
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", err.to_string())
+            };
+            Err(error)
+        }
     }
 }
 
@@ -169,6 +176,16 @@ fn collapse_forwarder_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
         );
     }
     Err(error)
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else {
+        "non-string panic payload".to_string()
+    }
 }
 
 fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
@@ -1223,14 +1240,21 @@ where
             match event.to_json_event() {
                 Ok(json_event) => {
                     if let Err(err) = emitter.emit(json_event).await {
-                        warn!(error = %err, channel = channel_name, "Failed to emit forwarded event");
+                        panic!(
+                            "{}",
+                            SinexError::processing("Failed to emit forwarded event")
+                                .with_context("channel", channel_name.to_string())
+                                .with_source(err)
+                        );
                     }
                 }
                 Err(err) => {
-                    warn!(error = %err, channel = channel_name, "Failed to convert event to JSON");
-                    // We continue even if one event fails? Or abort?
-                    // Original likely logged and continued or used ?
-                    // Let's log and continue to avoid killing the stream for one bad event
+                    panic!(
+                        "{}",
+                        SinexError::processing("Failed to convert forwarded event to JSON")
+                            .with_context("channel", channel_name.to_string())
+                            .with_source(err)
+                    );
                 }
             }
         }
@@ -1811,6 +1835,39 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("system forwarder task failed"));
         assert!(message.contains("journal"));
+        assert!(message.contains("journal forwarder panic"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn spawn_forwarder_rejects_emission_failures() -> TestResult<()> {
+        let (emitter_tx, emitter_rx) = mpsc::channel(1);
+        drop(emitter_rx);
+        let emitter = EventEmitter::new(emitter_tx, false);
+
+        let (tx, rx) = mpsc::channel(1);
+        let handle = spawn_forwarder("system.test.forwarder", rx, emitter);
+
+        let event = DynamicPayload::new(
+            "system.test",
+            "system.test.forwarded",
+            serde_json::json!({ "ok": true }),
+        )
+        .from_material(Id::<SourceMaterial>::new())
+        .build()?;
+
+        tx.send(event)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!(error.to_string()))?;
+        drop(tx);
+
+        let error = forwarder_join_result("system.test.forwarder", handle.await)
+            .expect_err("forwarder emission failures must fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("system forwarder task failed"));
+        assert!(message.contains("system.test.forwarder"));
+        assert!(message.contains("Failed to emit forwarded event"));
+        assert!(message.contains("Event channel closed"));
         Ok(())
     }
 }
