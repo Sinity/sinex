@@ -474,10 +474,10 @@ impl FilesystemNode {
 
     fn snapshot_state(&self) -> FilesystemState {
         let host = self.service_info().map_or_else(
-            |_| HostName::from_static("unknown-host"),
+            |_| sinex_primitives::events::builder::get_hostname(),
             |info| {
                 HostName::new(info.host().to_string())
-                    .unwrap_or_else(|_| HostName::from_static("unknown-host"))
+                    .unwrap_or_else(|_| sinex_primitives::events::builder::get_hostname())
             },
         );
 
@@ -1368,6 +1368,19 @@ mod tests {
         assert!(!state.healthy);
         assert_eq!(state.total_items, Some(0));
         assert!(state.description.contains("No filesystem watch paths configured"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn snapshot_state_falls_back_to_global_host_identity() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        let state = node.snapshot_state();
+
+        assert_eq!(
+            state.host,
+            sinex_primitives::events::builder::get_hostname(),
+            "filesystem snapshot state should reuse the shared host identity fallback",
+        );
         Ok(())
     }
 

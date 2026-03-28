@@ -1,6 +1,6 @@
 use super::Timestamp;
 use super::{Event, SourceMaterial};
-use crate::domain::{EventSource, EventType};
+use crate::domain::{EventSource, EventType, HostName};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::non_empty::NonEmptyVec;
@@ -486,25 +486,81 @@ impl Provenance {
 ///
 /// Prefers `/etc/machine-id` (a stable UUID assigned at OS provision time) over
 /// `gethostname()` (mutable, ephemeral). Falls back to the hostname if the
-/// machine-id file is absent or unreadable. The value is computed once and
-/// reused for the lifetime of the process.
-static HOST_IDENTITY: std::sync::LazyLock<crate::domain::HostName> =
-    std::sync::LazyLock::new(|| {
-        let id = std::fs::read_to_string("/etc/machine-id")
-            .ok()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                gethostname::gethostname()
-                    .to_string_lossy()
-                    .into_owned()
-            });
-        crate::domain::HostName::new(id)
-            .unwrap_or_else(|_| crate::domain::HostName::from_static("unknown-host"))
-    });
+/// machine-id file is absent or unreadable. If both sources are present but
+/// invalid as hostnames, derive a deterministic fallback from their raw bytes
+/// instead of collapsing multiple hosts to the same fabricated value. The value
+/// is computed once and reused for the lifetime of the process.
+static HOST_IDENTITY: std::sync::LazyLock<HostName> = std::sync::LazyLock::new(|| {
+    resolve_host_identity(
+        std::fs::read_to_string("/etc/machine-id").ok().as_deref(),
+        Some(gethostname::gethostname().to_string_lossy().as_ref()),
+    )
+});
+
+fn resolve_host_identity(machine_id: Option<&str>, hostname: Option<&str>) -> HostName {
+    let machine_id = machine_id.map(str::trim).filter(|candidate| !candidate.is_empty());
+    let hostname = hostname.map(str::trim).filter(|candidate| !candidate.is_empty());
+
+    if let Some(candidate) = machine_id.and_then(validated_host_candidate) {
+        return candidate;
+    }
+    if let Some(candidate) = hostname.and_then(validated_host_candidate) {
+        return candidate;
+    }
+    if let Some(candidate) = machine_id {
+        return derived_host_fallback(candidate);
+    }
+    if let Some(candidate) = hostname {
+        return derived_host_fallback(candidate);
+    }
+    HostName::from_static("unknown-host")
+}
+
+fn validated_host_candidate(candidate: &str) -> Option<HostName> {
+    HostName::new(candidate.to_owned()).ok()
+}
+
+fn derived_host_fallback(candidate: &str) -> HostName {
+    let digest = blake3::hash(candidate.as_bytes()).to_hex();
+    HostName::new(format!("host-{}", &digest[..16]))
+        .expect("derived host fallback must always produce a valid hostname")
+}
 
 // Helper function to get hostname (needed by builder)
 #[must_use]
-pub fn get_hostname() -> crate::domain::HostName {
+pub fn get_hostname() -> HostName {
     HOST_IDENTITY.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Inline because these exercise private host-identity resolution helpers directly.
+    #[test]
+    fn resolve_host_identity_prefers_valid_machine_id() {
+        let host = resolve_host_identity(Some("0123456789abcdef"), Some("sinnix-prime"));
+        assert_eq!(host.as_str(), "0123456789abcdef");
+    }
+
+    // Inline because these exercise private host-identity resolution helpers directly.
+    #[test]
+    fn resolve_host_identity_falls_back_to_valid_hostname() {
+        let host = resolve_host_identity(Some("bad machine id"), Some("sinnix-prime"));
+        assert_eq!(host.as_str(), "sinnix-prime");
+    }
+
+    // Inline because these exercise private host-identity resolution helpers directly.
+    #[test]
+    fn resolve_host_identity_derives_deterministic_fallback_from_invalid_inputs() {
+        let host = resolve_host_identity(Some("bad machine id"), Some("bad host"));
+        assert_eq!(host.as_str(), "host-887759893f18d0bb");
+    }
+
+    // Inline because these exercise private host-identity resolution helpers directly.
+    #[test]
+    fn resolve_host_identity_uses_unknown_host_only_when_no_identity_material_exists() {
+        let host = resolve_host_identity(None, Some("   "));
+        assert_eq!(host.as_str(), "unknown-host");
+    }
 }
