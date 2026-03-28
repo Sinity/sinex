@@ -381,9 +381,16 @@ where
                 >= Duration::from_secs(self.config.checkpoint_timeout_secs)
     }
 
-    fn current_checkpoint_internal(&self) -> Checkpoint {
-        let state_json = serde_json::to_value(&self.persisted_state).unwrap_or(JsonValue::Null);
-        Checkpoint::external(state_json, format!("derived_node_{}", self.node.name()))
+    fn current_checkpoint_internal(&self) -> NodeResult<Checkpoint> {
+        let state_json = serde_json::to_value(&self.persisted_state).map_err(|error| {
+            SinexError::serialization("failed to serialize current derived node checkpoint state")
+                .with_context("node", self.node.name().to_string())
+                .with_std_error(&error)
+        })?;
+        Ok(Checkpoint::external(
+            state_json,
+            format!("derived_node_{}", self.node.name()),
+        ))
     }
 
     // ── Event Processing ───────────────────────────────────────────────
@@ -1084,7 +1091,7 @@ where
         Ok(ScanReport {
             events_processed: 0,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal(),
+            final_checkpoint: self.current_checkpoint_internal()?,
             time_range: None,
             node_stats: HashMap::from([
                 (
@@ -1225,7 +1232,7 @@ where
         Ok(ScanReport {
             events_processed,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal(),
+            final_checkpoint: self.current_checkpoint_internal()?,
             time_range: None,
             node_stats: HashMap::from([
                 ("total_processed".to_string(), events_processed),
@@ -1402,7 +1409,7 @@ where
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(self.current_checkpoint_internal())
+        self.current_checkpoint_internal()
     }
 
     async fn health_check(&self) -> NodeResult<bool> {
