@@ -36,8 +36,8 @@ pub struct SourceState {
     /// Source description or status message
     pub description: String,
 
-    /// Last update timestamp
-    pub last_updated: Timestamp,
+    /// Last observed source update timestamp, if known
+    pub last_updated: Option<Timestamp>,
 
     /// Replication lag in seconds
     pub lag_seconds: Option<f64>,

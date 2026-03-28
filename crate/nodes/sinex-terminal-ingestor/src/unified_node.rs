@@ -507,6 +507,22 @@ impl TerminalMetrics {
             .collect()
     }
 
+    fn last_updated(&self) -> Option<Timestamp> {
+        self.recent_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .back()
+            .map(|entry| entry.timestamp)
+            .or_else(|| {
+                self.shells
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .values()
+                    .filter_map(|shell| shell.last_poll_at)
+                    .max()
+            })
+    }
+
     fn push_activity(&self, description: String, data: serde_json::Value) {
         let mut activity = self
             .recent_activity
@@ -3099,7 +3115,7 @@ impl ExplorationProvider for TerminalNode {
             is_connected,
             healthy,
             description,
-            last_updated: Timestamp::now(),
+            last_updated: self.metrics.last_updated(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
             total_items: Some(self.config.history_sources.len() as u64),
@@ -5323,6 +5339,7 @@ mod tests {
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| color_eyre::eyre::eyre!("usable_sources missing"))?;
         assert_eq!(usable_sources, 1);
+        assert_eq!(state.last_updated, None);
 
         let misconfigured = state
             .metadata
@@ -5382,6 +5399,7 @@ mod tests {
             state.healthy,
             "transient cumulative errors must not poison terminal source health forever"
         );
+        assert!(state.last_updated.is_some(), "error activity should update source freshness");
         assert_eq!(
             state
                 .metadata

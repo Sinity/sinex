@@ -1207,10 +1207,7 @@ impl IngestorNode for SystemNode {
 
         Ok(sinex_node_sdk::exploration::SourceState {
             description,
-            last_updated: state
-                .last_state
-                .as_ref()
-                .map_or_else(Timestamp::now, |s| s.captured_at),
+            last_updated: state.last_state.as_ref().map(|s| s.captured_at),
             total_items: None,
             healthy,
             recent_activity,
@@ -1485,6 +1482,7 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             Some(0)
         );
+        assert_eq!(source.last_updated, None);
         Ok(())
     }
 

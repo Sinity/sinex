@@ -46,6 +46,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
+        Mutex as StdMutex,
     },
 };
 use tokio::{
@@ -188,6 +189,7 @@ struct EventMetrics {
     events_deleted: AtomicU64,
     events_moved: AtomicU64,
     processing_errors: AtomicU64,
+    last_activity: StdMutex<Option<Timestamp>>,
 }
 
 impl EventMetrics {
@@ -199,35 +201,55 @@ impl EventMetrics {
             events_deleted: AtomicU64::new(0),
             events_moved: AtomicU64::new(0),
             processing_errors: AtomicU64::new(0),
+            last_activity: StdMutex::new(None),
         })
+    }
+
+    fn record_activity(&self) {
+        *self
+            .last_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Timestamp::now());
     }
 
     fn record_created(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_created.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_modified(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_modified.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_deleted(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_deleted.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_moved(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_moved.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_error(&self) {
         self.processing_errors.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     pub(crate) fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
         vec![]
+    }
+
+    fn last_updated(&self) -> Option<Timestamp> {
+        *self
+            .last_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn metadata(&self) -> HashMap<String, serde_json::Value> {
@@ -682,7 +704,7 @@ impl ExplorationProvider for FilesystemNode {
             is_connected,
             healthy,
             description,
-            last_updated: Timestamp::now(),
+            last_updated: self.metrics.last_updated(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
             total_items: Some(watched_paths as u64),
@@ -1364,6 +1386,7 @@ mod tests {
         assert!(!state.is_connected);
         assert!(!state.healthy);
         assert_eq!(state.total_items, Some(0));
+        assert_eq!(state.last_updated, None);
         assert!(state.description.contains("No filesystem watch paths configured"));
         Ok(())
     }
@@ -1403,6 +1426,7 @@ mod tests {
                 .and_then(serde_json::Value::as_u64)
                 .is_some_and(|count| count == 1)
         );
+        assert!(state.last_updated.is_some());
         Ok(())
     }
 

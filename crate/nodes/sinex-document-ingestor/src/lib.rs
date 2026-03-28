@@ -497,7 +497,7 @@ impl ExplorationProvider for DocumentNode {
             is_connected,
             healthy: healthy && config_healthy,
             description,
-            last_updated: Timestamp::now(),
+            last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -583,6 +583,7 @@ mod tests {
 
         assert!(!state.is_connected);
         assert!(!state.healthy);
+        assert_eq!(state.last_updated, None);
         assert!(state.description.contains("not initialized"));
         assert_eq!(state.metadata.get("initialized"), Some(&json!(false)));
         Ok(())
