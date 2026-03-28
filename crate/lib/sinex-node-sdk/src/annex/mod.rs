@@ -502,8 +502,16 @@ impl GitAnnex {
         }
 
         match parse_add_output_for_key(&output.stdout) {
-            Some(key) => Ok(key),
-            None => self.get_key(relative_path).await,
+            Ok(Some(key)) => Ok(key),
+            Ok(None) => self.get_key(relative_path).await,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    output_preview = %String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(160)]),
+                    "Failed to parse git-annex add JSON output; falling back to lookupkey"
+                );
+                self.get_key(relative_path).await
+            }
         }
     }
 
@@ -694,8 +702,10 @@ impl GitAnnex {
     }
 }
 
-fn parse_add_output_for_key(stdout: &[u8]) -> Option<AnnexKey> {
-    let output = std::str::from_utf8(stdout).ok()?;
+fn parse_add_output_for_key(stdout: &[u8]) -> Result<Option<AnnexKey>, String> {
+    let output = std::str::from_utf8(stdout)
+        .map_err(|error| format!("git-annex add output was not valid UTF-8: {error}"))?;
+    let mut invalid_line: Option<String> = None;
     for line in output.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -703,12 +713,20 @@ fn parse_add_output_for_key(stdout: &[u8]) -> Option<AnnexKey> {
         }
         let parsed: JsonValue = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
-            Err(_) => continue,
+            Err(error) => {
+                invalid_line.get_or_insert_with(|| {
+                    format!(
+                        "git-annex add output contained invalid JSON line `{}`: {error}",
+                        line.chars().take(120).collect::<String>()
+                    )
+                });
+                continue;
+            }
         };
         let key = parsed.get("key").and_then(|value| value.as_str());
         if let Some(key) = key {
             match AnnexKey::parse(key) {
-                Ok(parsed_key) => return Some(parsed_key),
+                Ok(parsed_key) => return Ok(Some(parsed_key)),
                 Err(err) => {
                     warn!(
                         error = %err,
@@ -719,5 +737,45 @@ fn parse_add_output_for_key(stdout: &[u8]) -> Option<AnnexKey> {
             }
         }
     }
-    None
+    match invalid_line {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Small inline tests are used here because the parser helper is private
+    // and tightly coupled to git-annex output semantics.
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn parse_add_output_for_key_reports_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
+        let error = parse_add_output_for_key(&[0xff]).expect_err("invalid utf-8 must be reported");
+        assert!(error.contains("not valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_add_output_for_key_reports_invalid_json_without_key() -> ::xtask::sandbox::TestResult<()> {
+        let error =
+            parse_add_output_for_key(b"not-json\n").expect_err("invalid json must be reported");
+        assert!(error.contains("invalid JSON line"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_add_output_for_key_prefers_valid_key_when_present() -> ::xtask::sandbox::TestResult<()> {
+        let key = parse_add_output_for_key(
+            br#"{"note":"noise"}
+{"key":"SHA256E-s42--deadbeef.txt"}"#,
+        )
+        .expect("valid json output should parse")
+        .expect("valid annex key should be returned");
+        assert_eq!(key.backend, "SHA256E");
+        assert_eq!(key.size, 42);
+        assert_eq!(key.hash, "deadbeef.txt");
+        Ok(())
+    }
 }
