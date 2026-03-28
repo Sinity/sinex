@@ -45,6 +45,20 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
     true
 }
 
+#[cfg(feature = "messaging")]
+fn log_self_observation_failure(
+    node_name: &str,
+    metric_name: &str,
+    error: &crate::self_observation::SelfObservationError,
+) {
+    warn!(
+        node = node_name,
+        metric = metric_name,
+        error = %error,
+        "Derived-node self-observation emit failed"
+    );
+}
+
 /// Shared runtime adapter for all derived node models.
 ///
 /// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
@@ -789,7 +803,9 @@ where
         // Emit "received" counter
         #[cfg(feature = "messaging")]
         if let Some(ref obs) = self.self_observer {
-            let _ = obs.emit_counter("invalidation.received", 1, None).await;
+            if let Err(error) = obs.emit_counter("invalidation.received", 1, None).await {
+                log_self_observation_failure(node_name, "invalidation.received", &error);
+            }
         }
 
         let invalidation = match serde_json::from_slice::<
@@ -806,7 +822,9 @@ where
                 );
                 #[cfg(feature = "messaging")]
                 if let Some(ref obs) = self.self_observer {
-                    let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                    if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
+                        log_self_observation_failure(node_name, "invalidation.errors", &error);
+                    }
                 }
                 return None;
             }
@@ -851,18 +869,39 @@ where
                     // Emit success metrics
                     #[cfg(feature = "messaging")]
                     if let Some(ref obs) = self.self_observer {
-                        let _ = obs.emit_counter("invalidation.processed", 1, None).await;
-                        let _ = obs
+                        if let Err(error) = obs.emit_counter("invalidation.processed", 1, None).await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.processed",
+                                &error,
+                            );
+                        }
+                        if let Err(error) = obs
                             .emit_counter_with_delta(
                                 "invalidation.outputs_emitted",
                                 count,
                                 count,
                                 None,
                             )
-                            .await;
-                        let _ = obs
+                            .await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.outputs_emitted",
+                                &error,
+                            );
+                        }
+                        if let Err(error) = obs
                             .emit_gauge("invalidation.processing_duration_ms", duration_ms, None)
-                            .await;
+                            .await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.processing_duration_ms",
+                                &error,
+                            );
+                        }
                     }
 
                     Some(count)
@@ -876,7 +915,9 @@ where
                     );
                     #[cfg(feature = "messaging")]
                     if let Some(ref obs) = self.self_observer {
-                        let _ = obs.emit_counter("invalidation.errors", 1, None).await;
+                        if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
+                            log_self_observation_failure(node_name, "invalidation.errors", &error);
+                        }
                     }
                     None
                 }
@@ -1475,7 +1516,11 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
+    #[cfg(feature = "messaging")]
+    use super::log_self_observation_failure;
     use super::signal_shutdown_channel;
+    #[cfg(feature = "messaging")]
+    use crate::self_observation::SelfObservationError;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
 
@@ -1495,6 +1540,17 @@ mod tests {
         assert!(signal_shutdown_channel(&tx, "test-derived"));
         rx.changed().await?;
         assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn log_self_observation_failure_accepts_publish_errors() -> TestResult<()> {
+        log_self_observation_failure(
+            "test-derived",
+            "invalidation.errors",
+            &SelfObservationError::Publish("boom".to_string()),
+        );
         Ok(())
     }
 }
