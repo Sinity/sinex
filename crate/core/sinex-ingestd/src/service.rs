@@ -41,24 +41,28 @@ use tracing::{debug, error, info, warn};
 
 /// Awaits the shutdown signal reactively (no polling).
 ///
-/// Returns immediately if the flag is already set, otherwise waits for
-/// `shutdown_notify.notify_waiters()` to be called during graceful shutdown.
+/// Arms the `Notify` waiter before reading the flag so a shutdown that lands
+/// between subscription and the flag read cannot be lost.
 async fn shutdown_signal(
     shutdown_flag: &Arc<AtomicBool>,
     shutdown_notify: &Arc<tokio::sync::Notify>,
 ) {
-    if shutdown_flag.load(Ordering::Relaxed) {
-        return;
+    loop {
+        let notified = shutdown_notify.notified();
+        if shutdown_flag.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
     }
-    shutdown_notify.notified().await;
 }
 
 fn trigger_shutdown(
     shutdown_flag: &Arc<AtomicBool>,
     shutdown_notify: &Arc<tokio::sync::Notify>,
 ) {
-    shutdown_flag.store(true, Ordering::SeqCst);
-    shutdown_notify.notify_waiters();
+    if !shutdown_flag.swap(true, Ordering::AcqRel) {
+        shutdown_notify.notify_waiters();
+    }
 }
 
 /// Main ingestion service
@@ -1112,6 +1116,23 @@ mod tests {
         )
         .await
         .expect("shutdown waiters should wake immediately");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn prior_shutdown_signal_wakes_late_waiters_immediately() -> xtask::sandbox::TestResult<()>
+    {
+        let service = test_service();
+        trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
+        trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
+
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+        )
+        .await
+        .expect("late shutdown waiters should observe an already-triggered shutdown");
 
         Ok(())
     }
