@@ -164,6 +164,34 @@ mod tests {
         );
         Ok(())
     }
+
+    #[sinex_test]
+    async fn require_log_file_source_uri_rejects_missing_values() -> TestResult<()> {
+        let error = super::require_log_file_source_uri(None)
+            .expect_err("missing source URI should fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("log-file staging requires a non-empty source URI"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_log_file_source_uri_rejects_blank_values() -> TestResult<()> {
+        let error = super::require_log_file_source_uri(Some("   "))
+            .expect_err("blank source URI should fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("log-file staging requires a non-empty source URI"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
 }
 
 struct ReconciliationTask {
@@ -814,6 +842,15 @@ impl LogFileStageNode {
     }
 }
 
+fn require_log_file_source_uri(source_uri: Option<&str>) -> NodeResult<&str> {
+    match source_uri {
+        Some(uri) if !uri.trim().is_empty() => Ok(uri),
+        _ => Err(
+            SinexError::processing("log-file staging requires a non-empty source URI".to_string()),
+        ),
+    }
+}
+
 fn normalize_metadata(value: JsonValue) -> JsonValue {
     match value {
         JsonValue::Object(_) => value,
@@ -855,11 +892,12 @@ impl StageAsYouGoNode for LogFileStageNode {
         metadata: serde_json::Value,
     ) -> NodeResult<StageAsYouGoResult> {
         let start_time = std::time::Instant::now();
+        let source_uri = require_log_file_source_uri(source_uri)?;
 
         // Step 1: Register in-flight source material
         let source_material_id = self
             .context
-            .register_in_flight("log_file", source_uri, metadata)
+            .register_in_flight("log_file", Some(source_uri), metadata)
             .await?;
 
         // Step 2: Process content line by line, emitting events with provenance
@@ -885,7 +923,7 @@ impl StageAsYouGoNode for LogFileStageNode {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),
-                log_file: source_uri.unwrap_or("unknown").to_string(),
+                log_file: source_uri.to_string(),
                 offset_start,
                 offset_end,
                 source_material_id: source_material_id.to_string(),
