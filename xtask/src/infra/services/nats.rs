@@ -220,6 +220,34 @@ fn remove_service_file(path: &Path, label: &str) -> Result<()> {
     }
 }
 
+fn wait_for_nats_startup_probe(
+    pid: u32,
+    expected_port: u16,
+    mut child_status: impl FnMut() -> Result<Option<String>>,
+    mut is_running_pid: impl FnMut(u32) -> bool,
+    mut listener_port_for_pid: impl FnMut(u32) -> Result<Option<u16>>,
+) -> Result<()> {
+    for _ in 0..30 {
+        if let Some(status) = child_status()? {
+            bail!("NATS process {pid} exited before startup completed ({status})");
+        }
+        if !is_running_pid(pid) {
+            bail!("NATS process {pid} exited before startup completed");
+        }
+        match listener_port_for_pid(pid)? {
+            Some(port) if port == expected_port => return Ok(()),
+            Some(port) => bail!(
+                "NATS process {pid} is listening on unexpected port {port} (expected {expected_port})"
+            ),
+            None => std::thread::sleep(std::time::Duration::from_millis(500)),
+        }
+    }
+
+    bail!(
+        "NATS process {pid} did not bind port {expected_port} within 15 seconds"
+    )
+}
+
 impl NatsManager {
     #[must_use]
     pub fn new(config: NatsConfig) -> Self {
@@ -310,7 +338,7 @@ jetstream {{
         }
         let log_file = fs::File::create(&self.config.log_file)?;
 
-        let child = self
+        let mut child = self
             .nats_server_command()
             .stdout(log_file.try_clone()?)
             .stderr(log_file)
@@ -320,20 +348,38 @@ jetstream {{
         if let Some(parent) = self.config.pid_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.config.pid_file, child.id().to_string())?;
+        let pid = child.id();
+        fs::write(&self.config.pid_file, pid.to_string())?;
 
-        // Wait for port
-        for _ in 0..30 {
-            if std::net::TcpStream::connect(format!("127.0.0.1:{}", self.config.port)).is_ok() {
-                if verbose {
-                    println!("NATS started");
-                }
-                return Ok(());
+        let startup = wait_for_nats_startup_probe(
+            pid,
+            self.config.port,
+            || {
+                child
+                    .try_wait()
+                    .wrap_err("failed to poll spawned NATS process")
+                    .map(|status| status.map(|status| status.to_string()))
+            },
+            |pid| self.is_running_pid(pid),
+            |pid| self.listener_port_for_pid(pid),
+        );
+
+        if let Err(startup_error) = startup {
+            if let Err(cleanup_error) =
+                self.remove_pid_file_if_present("NATS pid file after failed startup")
+            {
+                return Err(cleanup_error.wrap_err(format!(
+                    "NATS startup failed: {startup_error:#}"
+                )));
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            return Err(startup_error);
         }
 
-        bail!("NATS failed to start within 15 seconds")
+        if verbose {
+            println!("NATS started");
+        }
+
+        Ok(())
     }
 
     pub fn stop(&self, verbose: bool) -> Result<()> {
@@ -621,6 +667,50 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
         let message = format!("{error:#}");
         assert!(message.contains("missing port separator"));
         assert!(message.contains("malformed-listener"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_nats_startup_probe_accepts_expected_listener() -> TestResult<()> {
+        wait_for_nats_startup_probe(
+            123,
+            4222,
+            || Ok(None),
+            |_pid| true,
+            |_pid| Ok(Some(4222)),
+        )?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_nats_startup_probe_rejects_early_exit() -> TestResult<()> {
+        let error = wait_for_nats_startup_probe(
+            123,
+            4222,
+            || Ok(Some("exit status: 1".to_string())),
+            |_pid| true,
+            |_pid| Ok(None),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("exited before startup completed"));
+        assert!(message.contains("exit status: 1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn wait_for_nats_startup_probe_rejects_unexpected_listener_port() -> TestResult<()> {
+        let error = wait_for_nats_startup_probe(
+            123,
+            4222,
+            || Ok(None),
+            |_pid| true,
+            |_pid| Ok(Some(4333)),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("unexpected port 4333"));
+        assert!(message.contains("expected 4222"));
         Ok(())
     }
 
