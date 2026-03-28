@@ -141,16 +141,34 @@ const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
-fn log_forwarder_join_result(task_name: &str, result: Result<(), JoinError>) {
+fn forwarder_join_result(task_name: &str, result: Result<(), JoinError>) -> NodeResult<()> {
     match result {
-        Ok(()) => {}
+        Ok(()) => Ok(()),
         Err(err) if err.is_cancelled() => {
             warn!(task = task_name, "System forwarder task was cancelled");
+            Ok(())
         }
-        Err(err) => {
-            warn!(task = task_name, error = %err, "System forwarder task failed");
-        }
+        Err(err) => Err(
+            SinexError::processing("system forwarder task failed")
+                .with_context("task", task_name.to_string())
+                .with_context("join_error", err.to_string()),
+        ),
     }
+}
+
+fn collapse_forwarder_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
+    if errors.is_empty() {
+        return Ok(());
+    }
+
+    let mut error = errors.remove(0);
+    for (index, extra) in errors.into_iter().enumerate() {
+        error = error.with_context(
+            format!("additional_forwarder_error_{}", index + 1),
+            extra.to_string(),
+        );
+    }
+    Err(error)
 }
 
 fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
@@ -752,8 +770,16 @@ impl SystemNode {
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
             let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-            log_forwarder_join_result("journal", journal_result);
-            log_forwarder_join_result("systemd", systemd_result);
+            let mut forwarder_errors = Vec::new();
+            if let Err(error) = forwarder_join_result("journal", journal_result) {
+                forwarder_errors.push(error);
+            }
+            if let Err(error) = forwarder_join_result("systemd", systemd_result) {
+                forwarder_errors.push(error);
+            }
+            if let Err(error) = collapse_forwarder_errors(forwarder_errors) {
+                panic!("{error}");
+            }
         });
 
         let mut handle = handle;
@@ -847,12 +873,22 @@ impl SystemNode {
         drop(systemd_tx_opt);
 
         let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
-        log_forwarder_join_result("historical journal", journal_result);
-        log_forwarder_join_result("historical systemd", systemd_result);
+        let mut forwarder_errors = Vec::new();
+        if let Err(error) = forwarder_join_result("historical journal", journal_result) {
+            forwarder_errors.push(error);
+        }
+        if let Err(error) = forwarder_join_result("historical systemd", systemd_result) {
+            forwarder_errors.push(error);
+        }
 
-        material
+        if let Err(error) = material
             .finalize("system-unified-journal historical scan")
-            .await?;
+            .await
+        {
+            forwarder_errors.push(error);
+        }
+
+        collapse_forwarder_errors(forwarder_errors)?;
 
         Ok(count)
     }
@@ -1749,28 +1785,32 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
+    async fn forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
         let handle = tokio::spawn(async {});
-        log_forwarder_join_result("journal", handle.await);
+        forwarder_join_result("journal", handle.await)?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
+    async fn forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(30)).await;
         });
         handle.abort();
-        log_forwarder_join_result("journal", handle.await);
+        forwarder_join_result("journal", handle.await)?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn log_forwarder_join_result_accepts_panicked_task() -> TestResult<()> {
+    async fn forwarder_join_result_rejects_panicked_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("journal forwarder panic");
         });
-        log_forwarder_join_result("journal", handle.await);
+        let error = forwarder_join_result("journal", handle.await)
+            .expect_err("panicked forwarders must fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("system forwarder task failed"));
+        assert!(message.contains("journal"));
         Ok(())
     }
 }
