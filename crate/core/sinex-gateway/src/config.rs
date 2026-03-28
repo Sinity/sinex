@@ -287,14 +287,37 @@ impl Default for GatewayConfig {
 }
 
 impl GatewayConfig {
-    /// Load configuration from defaults and environment variables.
-    pub fn load() -> Result<Self, SinexError> {
+    fn load_with_optional_database_url(database_url: Option<String>) -> Result<Self, SinexError> {
         let mut config = Self {
             nats: NatsConnectionConfig::from_env(),
             ..Self::default()
         };
         config.apply_gateway_env_overrides()?;
         config.apply_manual_env_overrides()?;
+        if let Some(url) = database_url {
+            config.database_url = url;
+        }
+        Ok(config)
+    }
+
+    /// Load configuration from defaults and environment variables.
+    pub fn load() -> Result<Self, SinexError> {
+        let mut config = Self::load_with_optional_database_url(None)?;
+        if config.database_url.trim().is_empty() {
+            return Err(SinexError::configuration(
+                "Database URL not provided — set DATABASE_URL or pass --database-url",
+            ));
+        }
+        config.database_url = resolve_effective_database_url(&config.database_url)?;
+        Ok(config)
+    }
+
+    /// Load defaults and environment overrides, then force a specific database URL.
+    ///
+    /// This is used by tests and helper binaries that need the normal runtime wiring
+    /// (NATS, TLS, annex, auth) but provide the database URL out-of-band.
+    pub fn load_with_database_url(database_url: impl Into<String>) -> Result<Self, SinexError> {
+        let mut config = Self::load_with_optional_database_url(Some(database_url.into()))?;
         if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
                 "Database URL not provided — set DATABASE_URL or pass --database-url",

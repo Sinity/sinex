@@ -94,3 +94,17 @@ async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()
     assert!(message.contains("many"));
     Ok(())
 }
+
+#[sinex_test]
+async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new(&["SINEX_NATS_URL", "SINEX_GATEWAY_ANNEX_PATH"]);
+    env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");
+    env.set("SINEX_GATEWAY_ANNEX_PATH", "/tmp/sinex-annex-test");
+
+    let config = GatewayConfig::load_with_database_url("postgresql://gateway-helper/sinex")?;
+
+    assert_eq!(config.database_url, "postgresql://gateway-helper/sinex");
+    assert_eq!(config.nats.url, "nats://127.0.0.1:4555");
+    assert_eq!(config.annex_path, "/tmp/sinex-annex-test");
+    Ok(())
+}

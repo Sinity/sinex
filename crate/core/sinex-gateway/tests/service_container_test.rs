@@ -311,6 +311,11 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
         "Database should be reachable during tests (db_ok=false in health report)"
     );
     assert!(
+        report.db_latency_ms.is_some(),
+        "Database probe should report latency in health report"
+    );
+    assert_eq!(report.db_detail, "ok");
+    assert!(
         report.serving,
         "Gateway should report serving=true when the DB-backed RPC surface is live"
     );
