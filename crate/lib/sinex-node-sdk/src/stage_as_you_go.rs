@@ -63,6 +63,7 @@ mod tests {
     use super::StageAsYouGoContext;
     use crate::runtime::stream::EventEmitter;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
+    use tokio::sync::watch;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use uuid::Uuid;
@@ -123,6 +124,25 @@ mod tests {
         assert!(context.reconciliation_task.is_none());
         Ok(())
     }
+
+    #[sinex_test]
+    async fn signal_reconciliation_shutdown_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = watch::channel(false);
+        drop(rx);
+
+        assert!(!super::signal_reconciliation_shutdown(&tx));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_reconciliation_shutdown_delivers_to_receiver() -> TestResult<()> {
+        let (tx, mut rx) = watch::channel(false);
+
+        assert!(super::signal_reconciliation_shutdown(&tx));
+        rx.changed().await?;
+        assert!(*rx.borrow());
+        Ok(())
+    }
 }
 
 struct ReconciliationTask {
@@ -138,12 +158,20 @@ impl ReconciliationTask {
     }
 }
 
+fn signal_reconciliation_shutdown(shutdown: &watch::Sender<bool>) -> bool {
+    if shutdown.send(true).is_err() {
+        warn!("Stage-as-You-Go reconciliation shutdown receiver dropped before cleanup");
+        return false;
+    }
+    true
+}
+
 impl Drop for ReconciliationTask {
     fn drop(&mut self) {
         // Signal graceful shutdown — the task checks this via select! and exits
         // on its next loop iteration. We intentionally do NOT abort() here because
         // that would interrupt in-flight reconciliation (database operations).
-        let _ = self.shutdown.send(true);
+        signal_reconciliation_shutdown(&self.shutdown);
     }
 }
 
