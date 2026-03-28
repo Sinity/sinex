@@ -136,7 +136,7 @@ impl DlqRetryHandler {
                     if self.handle_dlq_message(&js, &msg).await? {
                         result.retried += 1;
                     } else {
-                        if dlq_retry_attempts(&msg) >= self.config.max_retries {
+                        if dlq_retry_attempts(&msg)? >= self.config.max_retries {
                             result.permanently_failed += 1;
                         }
                     }
@@ -219,11 +219,19 @@ impl DlqRetryHandler {
                 }
             };
 
-            let Some(candidate_event_id) =
-                dlq_event_id(message.subject.as_str(), &message.headers, &message.payload)
-            else {
-                continue;
-            };
+            let candidate_event_id =
+                match dlq_event_id(message.subject.as_str(), &message.headers, &message.payload) {
+                    Ok(Some(event_id)) => event_id,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        warn!(
+                            subject = %message.subject,
+                            error = %error,
+                            "Ignoring malformed DLQ event identifier while scanning by ID"
+                        );
+                        continue;
+                    }
+                };
             if candidate_event_id != event_id {
                 continue;
             }
@@ -245,7 +253,7 @@ impl DlqRetryHandler {
         js: &jetstream::Context,
         msg: &jetstream::Message,
     ) -> NodeResult<bool> {
-        let retry_count = dlq_retry_attempts(msg);
+        let retry_count = dlq_retry_attempts(msg)?;
 
         if retry_count >= self.config.max_retries {
             let subject = &msg.subject;
@@ -323,7 +331,7 @@ impl DlqRetryHandler {
         stream: &jetstream::stream::Stream,
         message: &async_nats::jetstream::message::StreamMessage,
     ) -> NodeResult<()> {
-        let retry_count = dlq_stored_retry_count(&message.headers);
+        let retry_count = dlq_stored_retry_count(&message.headers)?;
         let target = dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
 
         let mut headers = async_nats::HeaderMap::new();
@@ -399,54 +407,107 @@ struct DlqRequeueTarget {
     event_id: Option<String>,
 }
 
-fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> u32 {
-    headers
-        .get("Retry-Count")
-        .and_then(|value| value.as_str().parse::<u32>().ok())
-        .unwrap_or(0)
+fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> NodeResult<u32> {
+    let Some(value) = headers.get("Retry-Count") else {
+        return Ok(0);
+    };
+
+    value.as_str().parse::<u32>().map_err(|error| {
+        SinexError::processing("DLQ Retry-Count header is invalid".to_string())
+            .with_context("header", "Retry-Count")
+            .with_context("value", value.to_string())
+            .with_std_error(&error)
+    })
 }
 
-fn dlq_retry_attempts(msg: &jetstream::Message) -> u32 {
-    let header_retry = msg.headers.as_ref().map_or(0, dlq_stored_retry_count);
+fn combine_retry_counts(header_retry: u32, delivery_retry: Result<i64, String>) -> NodeResult<u32> {
+    match delivery_retry {
+        Ok(delivered) => {
+            let delivery_retry = u32::try_from(delivered).map_err(|error| {
+                SinexError::processing("DLQ delivery retry count exceeds supported range")
+                    .with_context("delivered", delivered.to_string())
+                    .with_std_error(&error)
+            })?;
+            Ok(header_retry.max(delivery_retry))
+        }
+        Err(error) if header_retry > 0 => {
+            warn!(
+                stored_retry_count = header_retry,
+                error = %error,
+                "Failed to inspect JetStream delivery metadata; using stored Retry-Count header"
+            );
+            Ok(header_retry)
+        }
+        Err(error) => Err(
+            SinexError::processing("Failed to inspect DLQ delivery metadata")
+                .with_context("delivery_metadata_error", error),
+        ),
+    }
+}
+
+fn dlq_retry_attempts(msg: &jetstream::Message) -> NodeResult<u32> {
+    let header_retry = match msg.headers.as_ref() {
+        Some(headers) => dlq_stored_retry_count(headers)?,
+        None => 0,
+    };
     let delivery_retry = msg
         .info()
-        .ok()
         .map(|info| info.delivered.saturating_sub(1))
-        .and_then(|delivered| u32::try_from(delivered).ok())
-        .unwrap_or(0);
-    header_retry.max(delivery_retry)
+        .map_err(|error| error.to_string());
+    combine_retry_counts(header_retry, delivery_retry)
 }
 
-fn dlq_event_id(subject: &str, headers: &async_nats::HeaderMap, payload: &[u8]) -> Option<String> {
-    headers
-        .get("Event-Id")
-        .map(std::string::ToString::to_string)
+fn dlq_subject_event_id(subject: &str) -> Option<String> {
+    let parts: Vec<_> = subject.split('.').collect();
+    (parts.len() >= 4).then(|| parts[parts.len() - 1].to_owned())
+}
+
+fn dlq_payload_event_id(payload: &[u8]) -> NodeResult<Option<String>> {
+    let value = serde_json::from_slice::<JsonValue>(payload).map_err(|error| {
+        SinexError::processing("Failed to parse DLQ payload while extracting event ID")
+            .with_source(error)
+    })?;
+    Ok(value
+        .get("event_id")
+        .and_then(|field| field.as_str())
+        .map(ToOwned::to_owned)
         .or_else(|| {
-            serde_json::from_slice::<JsonValue>(payload).ok().and_then(|value| {
-                value
-                    .get("event_id")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned)
-                    .or_else(|| {
-                        value
-                            .get("original_event")
-                            .and_then(|field| field.get("id"))
-                            .and_then(|field| field.as_str())
-                            .map(ToOwned::to_owned)
-                    })
-                    .or_else(|| {
-                        value
-                            .get("original_payload")
-                            .and_then(|field| field.get("id"))
-                            .and_then(|field| field.as_str())
-                            .map(ToOwned::to_owned)
-                    })
-            })
+            value
+                .get("original_event")
+                .and_then(|field| field.get("id"))
+                .and_then(|field| field.as_str())
+                .map(ToOwned::to_owned)
         })
         .or_else(|| {
-            let parts: Vec<_> = subject.split('.').collect();
-            (parts.len() >= 4).then(|| parts[parts.len() - 1].to_owned())
-        })
+            value
+                .get("original_payload")
+                .and_then(|field| field.get("id"))
+                .and_then(|field| field.as_str())
+                .map(ToOwned::to_owned)
+        }))
+}
+
+fn dlq_event_id(subject: &str, headers: &async_nats::HeaderMap, payload: &[u8]) -> NodeResult<Option<String>> {
+    if let Some(event_id) = headers.get("Event-Id") {
+        return Ok(Some(event_id.to_string()));
+    }
+
+    match dlq_payload_event_id(payload) {
+        Ok(Some(event_id)) => Ok(Some(event_id)),
+        Ok(None) => Ok(dlq_subject_event_id(subject)),
+        Err(error) => {
+            if let Some(event_id) = dlq_subject_event_id(subject) {
+                warn!(
+                    subject,
+                    error = %error,
+                    "Falling back to DLQ subject event identifier after payload parse failure"
+                );
+                Ok(Some(event_id))
+            } else {
+                Err(error.with_context("subject", subject.to_string()))
+            }
+        }
+    }
 }
 
 fn dlq_requeue_target(
@@ -500,7 +561,7 @@ fn dlq_requeue_target(
                 .and_then(|value| value.as_str())
                 .map(ToOwned::to_owned)
         })
-        .or_else(|| dlq_event_id(subject, headers, payload));
+        .or_else(|| dlq_event_id(subject, headers, payload).ok().flatten());
 
     let original_nats_msg_id = envelope
         .get("nats_msg_id")
@@ -514,4 +575,85 @@ fn dlq_requeue_target(
         original_nats_msg_id,
         event_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{combine_retry_counts, dlq_event_id, dlq_payload_event_id};
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn combine_retry_counts_prefers_larger_delivery_count() -> TestResult<()> {
+        let retries = combine_retry_counts(2, Ok(5))?;
+        assert_eq!(retries, 5);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_uses_stored_header_when_delivery_metadata_is_missing()
+    -> TestResult<()> {
+        let retries = combine_retry_counts(3, Err("metadata unavailable".to_string()))?;
+        assert_eq!(retries, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_rejects_missing_delivery_metadata_without_header()
+    -> TestResult<()> {
+        let error = combine_retry_counts(0, Err("metadata unavailable".to_string()))
+            .expect_err("missing delivery metadata without stored retries must fail honestly");
+        assert!(error.to_string().contains("Failed to inspect DLQ delivery metadata"));
+        assert!(error.to_string().contains("metadata unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn combine_retry_counts_rejects_delivery_count_overflow() -> TestResult<()> {
+        let error = combine_retry_counts(0, Ok(i64::from(u32::MAX) + 1))
+            .expect_err("overflowing delivery count must fail honestly");
+        assert!(error.to_string().contains("exceeds supported range"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_payload_event_id_rejects_invalid_json() -> TestResult<()> {
+        let error = dlq_payload_event_id(br#"{"event_id":"oops""#)
+            .expect_err("invalid DLQ payload JSON must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse DLQ payload while extracting event ID")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_event_id_falls_back_to_subject_when_payload_parse_fails() -> TestResult<()> {
+        let headers = async_nats::HeaderMap::new();
+        let event_id = dlq_event_id(
+            "events.dlq.source.00000000-0000-7000-8000-000000000001",
+            &headers,
+            br#"{"event_id":"oops""#,
+        )?;
+        assert_eq!(
+            event_id.as_deref(),
+            Some("00000000-0000-7000-8000-000000000001")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_event_id_rejects_payload_parse_failure_without_subject_fallback()
+    -> TestResult<()> {
+        let headers = async_nats::HeaderMap::new();
+        let error = dlq_event_id("events.dlq", &headers, br#"{"event_id":"oops""#)
+            .expect_err("payload parse failure without subject fallback must fail honestly");
+        assert!(error.to_string().contains("subject"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse DLQ payload while extracting event ID")
+        );
+        Ok(())
+    }
 }

@@ -465,3 +465,24 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
 
     Ok(())
 }
+
+#[sinex_test]
+async fn run_system_health_checks_preserves_clean_probe_state(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+
+    let health = repo.run_system_health_checks().await?;
+
+    assert!(health.db_connected);
+    assert_eq!(health.db_connect_error, None);
+    assert!(health.events_table_exists);
+    assert_eq!(health.events_table_error, None);
+    assert_eq!(health.timescaledb_error, None);
+    assert!(health.timescaledb_version.is_some());
+    assert!(health.uuid_v7_generation_works);
+    assert_eq!(health.uuid_v7_error, None);
+    assert!(health.json_schema_extension_works);
+    assert_eq!(health.json_schema_error, None);
+    assert!(health.node_health.is_some());
+    assert_eq!(health.node_health_error, None);
+    Ok(())
+}

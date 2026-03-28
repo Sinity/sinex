@@ -113,6 +113,18 @@ pub struct InstanceMetadata {
 }
 
 impl CoordinationKvClient {
+    fn parse_leader_id(raw: &[u8], context: &'static str) -> Result<String, SinexError> {
+        let leader = std::str::from_utf8(raw).map_err(|error| {
+            SinexError::serialization(format!("Invalid {context} leader ID encoding: {error}"))
+        })?;
+        if leader.trim().is_empty() {
+            return Err(SinexError::serialization(format!(
+                "Invalid {context} leader ID: value is empty"
+            )));
+        }
+        Ok(leader.to_string())
+    }
+
     async fn put_instance_metadata(
         &self,
         metadata: &InstanceMetadata,
@@ -286,7 +298,8 @@ impl CoordinationKvClient {
             }
 
             // Check if we are already the leader
-            let current_leader = std::str::from_utf8(&entry.value).unwrap_or("");
+            let current_leader =
+                Self::parse_leader_id(&entry.value, "coordination leadership entry")?;
             if current_leader == candidate_id {
                 match bucket
                     .update(key, candidate_id.to_string().into(), entry.revision)
@@ -333,7 +346,8 @@ impl CoordinationKvClient {
                 return Ok(());
             }
 
-            let current_leader = std::str::from_utf8(&entry.value).unwrap_or("");
+            let current_leader =
+                Self::parse_leader_id(&entry.value, "coordination leadership entry")?;
             if current_leader == candidate_id {
                 // CAS update to prove we still own this key at this revision.
                 // If another instance claimed leadership between our entry() read
@@ -443,9 +457,7 @@ impl CoordinationKvClient {
             .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {e}")))?;
 
         if let Some(entry) = entry {
-            let leader = std::str::from_utf8(&entry)
-                .map_err(|e| SinexError::serialization(format!("Invalid leader ID encoding: {e}")))?
-                .to_string();
+            let leader = Self::parse_leader_id(&entry, "coordination leadership entry")?;
             Ok(Some(leader))
         } else {
             Ok(None)
@@ -519,6 +531,44 @@ mod tests {
         assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
         assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
         assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(10));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_leader_id_accepts_valid_utf8() -> ::xtask::sandbox::TestResult<()> {
+        let leader = CoordinationKvClient::parse_leader_id(
+            b"node-a",
+            "coordination leadership entry",
+        )?;
+        assert_eq!(leader, "node-a");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_leader_id_rejects_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
+        let error = CoordinationKvClient::parse_leader_id(
+            &[0xff, 0xfe],
+            "coordination leadership entry",
+        )
+        .expect_err("invalid leader bytes must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid coordination leadership entry leader ID encoding")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_leader_id_rejects_empty_value() -> ::xtask::sandbox::TestResult<()> {
+        let error =
+            CoordinationKvClient::parse_leader_id(b"   ", "coordination leadership entry")
+                .expect_err("empty leader bytes must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid coordination leadership entry leader ID: value is empty")
+        );
         Ok(())
     }
 }

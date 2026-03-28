@@ -126,6 +126,27 @@ async fn test_read_fish_history_respects_end_time_boundary() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn test_read_fish_history_rejects_invalid_when_type() -> TestResult<()> {
+    let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
+    let history_path = create_test_fish_history(&temp_dir)?;
+
+    let conn = Connection::open(history_path.as_std_path()).wrap_err("re-open fish history database")?;
+    conn.execute(
+        "INSERT INTO history (command, \"when\") VALUES (?, ?)",
+        rusqlite::params!["echo broken", "not-a-timestamp"],
+    )
+    .wrap_err("insert invalid fish history row")?;
+
+    let error = read_fish_history(&history_path, 0, None)
+        .expect_err("invalid when type should fail fish history read");
+    assert!(
+        error.to_string().contains("failed to map SQLite row 4"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_get_max_row_id() -> TestResult<()> {
     let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
     let history_path = create_test_fish_history(&temp_dir)?;

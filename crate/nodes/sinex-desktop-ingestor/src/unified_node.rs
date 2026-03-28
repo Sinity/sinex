@@ -258,20 +258,46 @@ impl DesktopNode {
         self.config.activitywatch_db_path.as_ref()
     }
 
-    fn checkpoint_activitywatch_row_id(checkpoint: &Checkpoint) -> Option<i64> {
+    fn checkpoint_activitywatch_row_id(checkpoint: &Checkpoint) -> NodeResult<Option<i64>> {
         match checkpoint {
-            Checkpoint::External { position, .. } => position
-                .get("activitywatch_row_id")
-                .and_then(serde_json::Value::as_i64),
-            _ => None,
+            Checkpoint::External { position, .. } => match position.get("activitywatch_row_id") {
+                Some(serde_json::Value::Number(value)) => {
+                    let row_id = value.as_i64().ok_or_else(|| {
+                        SinexError::validation(
+                            "desktop ActivityWatch checkpoint row id must fit in i64",
+                        )
+                        .with_context("activitywatch_row_id", value.to_string())
+                    })?;
+                    if row_id < 0 {
+                        return Err(
+                            SinexError::validation(
+                                "desktop ActivityWatch checkpoint has invalid negative activitywatch_row_id",
+                            )
+                            .with_context("activitywatch_row_id", row_id.to_string()),
+                        );
+                    }
+                    Ok(Some(row_id))
+                }
+                Some(other) => Err(
+                    SinexError::validation(
+                        "desktop ActivityWatch checkpoint row id must be an integer",
+                    )
+                    .with_context("activitywatch_row_id", other.to_string()),
+                ),
+                None => Ok(None),
+            },
+            _ => Ok(None),
         }
     }
 
     fn historical_activitywatch_start_row(
         state: &DesktopPersistentState,
         from: &Checkpoint,
-    ) -> i64 {
-        Self::checkpoint_activitywatch_row_id(from).unwrap_or(state.activitywatch_last_row_id)
+    ) -> NodeResult<i64> {
+        Ok(
+            Self::checkpoint_activitywatch_row_id(from)?
+                .unwrap_or(state.activitywatch_last_row_id),
+        )
     }
 
     fn activitywatch_runtime_handles(
@@ -700,7 +726,7 @@ impl IngestorNode for DesktopNode {
             ))
         })?;
 
-        let start_row_id = Self::historical_activitywatch_start_row(state, &from);
+        let start_row_id = Self::historical_activitywatch_start_row(state, &from)?;
         let mut first_ts = None;
         let mut last_ts = None;
         let node = &*self;
@@ -1003,7 +1029,7 @@ mod tests {
         );
 
         assert_eq!(
-            DesktopNode::historical_activitywatch_start_row(&state, &checkpoint),
+            DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)?,
             12
         );
         Ok(())
@@ -1018,9 +1044,45 @@ mod tests {
         };
 
         assert_eq!(
-            DesktopNode::historical_activitywatch_start_row(&state, &Checkpoint::None),
+            DesktopNode::historical_activitywatch_start_row(&state, &Checkpoint::None)?,
             42
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_rejects_negative_checkpoint_row_id()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::external(
+            json!({ "activitywatch_row_id": -1 }),
+            "ActivityWatch row -1",
+        );
+
+        let error = DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)
+            .expect_err("negative ActivityWatch checkpoint row ids must fail honestly");
+        assert!(error.to_string().contains("invalid negative activitywatch_row_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_rejects_non_integer_checkpoint_row_id()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::external(
+            json!({ "activitywatch_row_id": "twelve" }),
+            "ActivityWatch row twelve",
+        );
+
+        let error = DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)
+            .expect_err("non-integer ActivityWatch checkpoint row ids must fail honestly");
+        assert!(error.to_string().contains("row id must be an integer"));
         Ok(())
     }
 

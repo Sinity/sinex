@@ -19,6 +19,7 @@ use sqlx::{FromRow, PgPool};
 use std::ops::Bound;
 use std::str::FromStr;
 use std::time::Duration;
+use tracing::warn;
 use uuid::Uuid;
 
 /// Database record for `operations_log` table
@@ -63,14 +64,58 @@ const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 const MANAGED_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
 
 fn node_heartbeat_stale_after() -> Duration {
-    std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map_or(
-            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs()),
-            Duration::from_secs,
-        )
+    match std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS") {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) if value > 0 => Duration::from_secs(value),
+            Ok(_) => {
+                warn!(
+                    variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
+                    value = %raw,
+                    default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
+                    "Node heartbeat stale timeout override must be greater than zero; using default"
+                );
+                Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+            }
+            Err(error) => {
+                warn!(
+                    variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
+                    value = %raw,
+                    %error,
+                    default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
+                    "Invalid node heartbeat stale timeout override; using default"
+                );
+                Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+            }
+        },
+        Err(std::env::VarError::NotPresent) => {
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
+                default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
+                "Node heartbeat stale timeout override is not valid UTF-8; using default"
+            );
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        }
+    }
+}
+
+fn probe_health<T>(result: DbResult<T>) -> (Option<T>, Option<String>) {
+    match result {
+        Ok(value) => (Some(value), None),
+        Err(error) => {
+            let message = error.to_string();
+            (None, Some(message))
+        }
+    }
+}
+
+fn probe_health_bool(result: DbResult<bool>) -> (bool, Option<String>) {
+    match result {
+        Ok(value) => (value, None),
+        Err(error) => (false, Some(error.to_string())),
+    }
 }
 
 impl<'a> Repository<'a> for StateRepository<'a> {
@@ -1243,32 +1288,43 @@ impl StateRepository<'_> {
     /// Run basic system health checks
     pub async fn run_system_health_checks(&self) -> DbResult<SystemHealthReport> {
         // Check database connectivity
-        let db_connected = sqlx::query!("SELECT 1 as one")
+        let (db_connected, db_connect_error) = match sqlx::query!("SELECT 1 as one")
             .fetch_one(self.pool)
             .await
-            .is_ok();
+        {
+            Ok(_) => (true, None),
+            Err(error) => (false, Some(db_error(error, "check database connectivity").to_string())),
+        };
 
         // Check extensions
-        let timescaledb_version = self.get_timescaledb_version().await.ok().flatten();
-        let uuid_v7_works = self.test_uuid_v7_generation().await.is_ok();
-        let json_schema_works = self.test_json_schema_validation().await.is_ok();
+        let (timescaledb_version, timescaledb_error) =
+            probe_health(self.get_timescaledb_version().await);
+        let (uuid_v7_generation, uuid_v7_error) =
+            probe_health(self.test_uuid_v7_generation().await);
+        let (json_schema_works, json_schema_error) =
+            probe_health_bool(self.test_json_schema_validation().await);
 
         // Check critical tables
-        let events_table_exists = self.table_exists("core", "events").await.unwrap_or(false);
+        let (events_table_exists, events_table_error) =
+            probe_health_bool(self.table_exists("core", "events").await);
 
         // Get node health
-        let node_health = self
-            .get_node_health(node_heartbeat_stale_after())
-            .await
-            .ok();
+        let (node_health, node_health_error) =
+            probe_health(self.get_node_health(node_heartbeat_stale_after()).await);
 
         Ok(SystemHealthReport {
             db_connected,
-            timescaledb_version,
-            uuid_v7_generation_works: uuid_v7_works,
+            db_connect_error,
+            timescaledb_version: timescaledb_version.flatten(),
+            timescaledb_error,
+            uuid_v7_generation_works: uuid_v7_generation.is_some(),
+            uuid_v7_error,
             json_schema_extension_works: json_schema_works,
+            json_schema_error,
             events_table_exists,
+            events_table_error,
             node_health,
+            node_health_error,
         })
     }
 }
@@ -1345,12 +1401,100 @@ pub struct OperationStatistics {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SystemHealthReport {
     pub db_connected: bool,
+    pub db_connect_error: Option<String>,
     pub timescaledb_version: Option<String>,
+    pub timescaledb_error: Option<String>,
     pub uuid_v7_generation_works: bool,
+    pub uuid_v7_error: Option<String>,
     pub json_schema_extension_works: bool,
+    pub json_schema_error: Option<String>,
     pub events_table_exists: bool,
+    pub events_table_error: Option<String>,
 
     pub node_health: Option<NodeHealthSummary>,
+    pub node_health_error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because this covers local env/default and report helper semantics.
+    use super::{
+        DEFAULT_NODE_HEARTBEAT_STALE_SECS, node_heartbeat_stale_after, probe_health,
+        probe_health_bool,
+    };
+    use sinex_primitives::error::SinexError;
+    use std::time::Duration;
+    use xtask::sandbox::sinex_serial_test;
+
+    struct ScopedEnvGuard {
+        keys: Vec<(String, Option<String>)>,
+    }
+
+    impl ScopedEnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            let previous = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                .collect();
+            Self { keys: previous }
+        }
+
+        fn set(&mut self, key: &str, value: &str) {
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_NODE_HEARTBEAT_STALE_SECS"]);
+        env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "bogus");
+
+        assert_eq!(
+            node_heartbeat_stale_after(),
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn node_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["SINEX_NODE_HEARTBEAT_STALE_SECS"]);
+        env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "0");
+
+        assert_eq!(
+            node_heartbeat_stale_after(),
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn probe_health_preserves_error_text() {
+        let (_value, error) =
+            probe_health::<()>(Err(SinexError::configuration("probe failed")));
+        assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
+    }
+
+    #[test]
+    fn probe_health_bool_preserves_error_text() {
+        let (value, error) =
+            probe_health_bool(Err(SinexError::configuration("probe failed")));
+        assert!(!value);
+        assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
+    }
 }
 
 // ============================================================================

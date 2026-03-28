@@ -839,13 +839,19 @@ impl MaterialAssembler {
             .file_name()
             .and_then(|n| n.to_str())
         else {
-            warn!(path = ?path, "Skipping orphaned assembler folder with non-UTF-8 name");
-            return Ok(());
+            return Err(SinexError::invalid_state(format!(
+                "Assembler state folder name is not valid UTF-8: {}",
+                path.display()
+            )));
         };
 
-        let Ok(material_id) = Uuid::from_str(folder_name) else {
-            return Ok(()); // Skip non-UUID folders
-        };
+        let material_id = Uuid::from_str(folder_name).map_err(|error| {
+            SinexError::invalid_state(format!(
+                "Assembler state folder has invalid material id `{folder_name}`"
+            ))
+            .with_source(error)
+            .with_context("path", path.display().to_string())
+        })?;
 
         // Check if this material is still active in memory
         if self.assembler_state.contains_key(&material_id) {
@@ -865,14 +871,37 @@ impl MaterialAssembler {
 
         // Check file age - only clean up if old enough
         let temp_path = path.join(state::TEMP_FILE_NAME);
-        if temp_path.exists()
-            && let Ok(metadata) = fs::metadata(&temp_path).await
-            && let Ok(modified) = metadata.modified()
-        {
-            let now = std::time::SystemTime::now();
-            if let Ok(age) = now.duration_since(modified)
-                && age > self.orphaned_file_age_threshold
-            {
+        if fs::try_exists(&temp_path).await.map_err(|error| {
+            SinexError::io(format!(
+                "Failed to check orphaned temp file existence {}",
+                temp_path.display()
+            ))
+            .with_source(error)
+        })? {
+            let metadata = fs::metadata(&temp_path).await.map_err(|error| {
+                SinexError::io(format!(
+                    "Failed to read orphaned temp file metadata {}",
+                    temp_path.display()
+                ))
+                .with_source(error)
+            })?;
+            let modified = metadata.modified().map_err(|error| {
+                SinexError::io(format!(
+                    "Failed to read orphaned temp file modification time {}",
+                    temp_path.display()
+                ))
+                .with_source(error)
+            })?;
+            let age = std::time::SystemTime::now()
+                .duration_since(modified)
+                .map_err(|error| {
+                    SinexError::invalid_state(format!(
+                        "Orphaned temp file modification time is in the future: {}",
+                        temp_path.display()
+                    ))
+                    .with_source(error)
+                })?;
+            if age > self.orphaned_file_age_threshold {
                 warn!(
                     material_id = %material_id,
                     age_hours = age.as_secs() / 3600,
@@ -882,6 +911,84 @@ impl MaterialAssembler {
             }
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because this exercises private orphan-state cleanup paths.
+    use super::MaterialAssembler;
+    use crate::MaterialReadySet;
+    use camino::Utf8PathBuf;
+    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    use std::sync::Arc;
+    use xtask::sandbox::prelude::*;
+
+    async fn test_assembler(
+        ctx: &TestContext,
+    ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("orphan-cleanup-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            100,
+            512 * 1024 * 1024,
+            300,
+            3_600,
+            90,
+        )?;
+
+        Ok((assembler, annex_dir, state_dir))
+    }
+
+    #[sinex_test]
+    async fn check_orphaned_folder_rejects_non_uuid_name(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let path = state_dir.path().join("not-a-uuid");
+        tokio::fs::create_dir_all(&path).await?;
+
+        let error = assembler
+            .check_orphaned_folder(path)
+            .await
+            .expect_err("invalid state directory names must fail honestly");
+        assert!(error.to_string().contains("invalid material id"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn check_orphaned_folder_rejects_non_utf8_name(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let invalid_name = std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'x']);
+        let path = state_dir.path().join(invalid_name);
+        tokio::fs::create_dir_all(&path).await?;
+
+        let error = assembler
+            .check_orphaned_folder(path)
+            .await
+            .expect_err("non-utf8 state directory names must fail honestly");
+        assert!(error.to_string().contains("not valid UTF-8"));
         Ok(())
     }
 }

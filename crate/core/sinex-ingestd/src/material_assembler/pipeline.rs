@@ -135,9 +135,7 @@ pub(super) fn spawn_begin_consumer(
                     }
                 };
 
-                let material_id = serde_json::from_slice::<MaterialBeginMessage>(&message.payload)
-                    .ok()
-                    .and_then(|msg| Uuid::from_str(&msg.material_id).ok());
+                let material_id = parse_begin_material_id(&message.payload);
 
                 let result = std::panic::AssertUnwindSafe(async {
                     assembler.handle_begin(message.clone()).await
@@ -155,11 +153,12 @@ pub(super) fn spawn_begin_consumer(
                     Err(panic) => {
                         let panic_msg = describe_panic(&*panic);
                         error!(
-                            material_id = ?material_id,
+                            material_id = ?material_id.as_ref().ok(),
+                            material_id_error = ?material_id.as_ref().err(),
                             "Begin consumer panicked: {}",
                             panic_msg
                         );
-                        if let Some(material_id) = material_id {
+                        if let Ok(material_id) = material_id {
                             assembler
                                 .route_material_error(
                                     material_id,
@@ -257,16 +256,13 @@ pub(super) fn spawn_slices_consumer(
                     }
                 };
 
-                let material_id = message
-                    .subject
-                    .split('.')
-                    .next_back()
-                    .and_then(|part| Uuid::from_str(part).ok());
+                let material_id = parse_slice_material_id(message.subject.as_str());
 
-                let Some(material_id) = material_id else {
+                let Ok(material_id) = material_id else {
                     warn!(
-                        "Slice message missing material id in subject {}",
-                        message.subject
+                        subject = %message.subject,
+                        error = %material_id.unwrap_err(),
+                        "Rejecting malformed slice message subject"
                     );
                     let _ = message.ack().await;
                     continue;
@@ -433,7 +429,7 @@ pub(super) fn spawn_end_consumer(
                     }
                 };
 
-                let material_id = Uuid::from_str(&end_message.material_id).ok();
+                let material_id = parse_material_id(&end_message.material_id, "end message material_id");
 
                 let result =
                     std::panic::AssertUnwindSafe(async { assembler.handle_end(end_message).await })
@@ -454,11 +450,12 @@ pub(super) fn spawn_end_consumer(
                     Err(panic) => {
                         let panic_msg = describe_panic(&*panic);
                         error!(
-                            material_id = ?material_id,
+                            material_id = ?material_id.as_ref().ok(),
+                            material_id_error = ?material_id.as_ref().err(),
                             "End consumer panicked: {}",
                             panic_msg
                         );
-                        if let Some(material_id) = material_id {
+                        if let Ok(material_id) = material_id {
                             assembler
                                 .route_material_error(
                                     material_id,
@@ -531,6 +528,24 @@ fn describe_panic(panic: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
+fn parse_material_id(raw: &str, context: &str) -> Result<Uuid, String> {
+    Uuid::from_str(raw).map_err(|error| format!("invalid {context} '{raw}': {error}"))
+}
+
+fn parse_begin_material_id(payload: &[u8]) -> Result<Uuid, String> {
+    let begin = serde_json::from_slice::<MaterialBeginMessage>(payload)
+        .map_err(|error| format!("invalid begin payload: {error}"))?;
+    parse_material_id(&begin.material_id, "begin material_id")
+}
+
+fn parse_slice_material_id(subject: &str) -> Result<Uuid, String> {
+    let raw = subject
+        .split('.')
+        .next_back()
+        .ok_or_else(|| format!("slice subject '{subject}' is missing material id"))?;
+    parse_material_id(raw, "slice subject material_id")
+}
+
 fn parse_slice_offset(
     subject: &str,
     headers: Option<&async_nats::HeaderMap>,
@@ -553,8 +568,12 @@ fn parse_slice_offset(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_slice_offset;
+    use super::{
+        parse_begin_material_id, parse_material_id, parse_slice_material_id, parse_slice_offset,
+    };
     use async_nats::HeaderMap;
+    use serde_json::json;
+    use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
     const SUBJECT: &str = "dev.source_material.slices.test.00000000-0000-7000-8000-000000000001";
@@ -595,6 +614,58 @@ mod tests {
         let error = parse_slice_offset(SUBJECT, Some(&headers))
             .expect_err("negative offset should fail");
         assert!(error.contains("negative Offset header"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_material_id_reports_context() -> TestResult<()> {
+        let error = parse_material_id("not-a-uuid", "test material_id")
+            .expect_err("invalid material id should fail");
+        assert!(error.contains("test material_id"));
+        assert!(error.contains("not-a-uuid"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_begin_material_id_rejects_invalid_payload() -> TestResult<()> {
+        let error = parse_begin_material_id(
+            serde_json::to_vec(&json!({
+                "material_id": "not-a-uuid",
+                "material_kind": "shell-history",
+                "source_identifier": "history.db",
+                "metadata": {},
+                "started_at": "2026-03-28T08:00:00Z"
+            }))?
+            .as_slice(),
+        )
+            .expect_err("invalid begin material id should fail");
+        assert!(error.contains("begin material_id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_begin_material_id_accepts_valid_payload() -> TestResult<()> {
+        let material_id = "00000000-0000-7000-8000-000000000001";
+        let parsed = parse_begin_material_id(
+            serde_json::to_vec(&json!({
+                "material_id": material_id,
+                "material_kind": "shell-history",
+                "source_identifier": "history.db",
+                "metadata": {},
+                "started_at": "2026-03-28T08:00:00Z"
+            }))?
+                .as_slice(),
+        )
+        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        assert_eq!(parsed, material_id.parse::<Uuid>()?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_slice_material_id_rejects_invalid_subject() -> TestResult<()> {
+        let error = parse_slice_material_id("dev.source_material.slices.test.not-a-uuid")
+            .expect_err("invalid slice subject material id should fail");
+        assert!(error.contains("slice subject material_id"));
         Ok(())
     }
 }

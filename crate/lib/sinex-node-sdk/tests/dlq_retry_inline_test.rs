@@ -184,3 +184,53 @@ async fn dlq_retry_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> TestR
 
     Ok(())
 }
+
+#[sinex_test]
+async fn dlq_retry_by_id_rejects_invalid_retry_count_header(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = ctx.env().clone();
+    ensure_retry_streams(&client, &env).await?;
+
+    let event_id = Uuid::now_v7().to_string();
+    let original_subject = env.nats_subject("events.raw.test_source.test_input");
+    let original_event = json!({
+        "id": event_id,
+        "source": "test.source",
+        "event_type": "test.input",
+        "ts_orig": Timestamp::now().format_rfc3339(),
+        "host": "test-host",
+        "payload": { "value": "bad retry count" }
+    });
+    let dlq_entry = json!({
+        "nats_msg_id": event_id,
+        "error": "db failure",
+        "original_payload": original_event,
+        "failed_at": Timestamp::now().format_rfc3339()
+    });
+
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    headers.insert("Original-Subject", original_subject.as_str());
+    headers.insert("Retry-Count", "not-a-number");
+    headers.insert("Event-Id", event_id.as_str());
+
+    client
+        .publish_with_headers(
+            env.nats_subject("events.dlq.ingestd"),
+            headers,
+            serde_json::to_vec(&dlq_entry)?.into(),
+        )
+        .await?;
+    client.flush().await?;
+
+    let handler = DlqRetryHandler::new(client.clone(), env, DlqRetryConfig::default());
+    let error = handler
+        .retry_by_id(&event_id)
+        .await
+        .expect_err("invalid Retry-Count header should fail honestly");
+
+    assert!(error.to_string().contains("Retry-Count"));
+    assert!(error.to_string().contains("not-a-number"));
+    Ok(())
+}

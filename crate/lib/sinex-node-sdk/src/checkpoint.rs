@@ -37,7 +37,11 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
+use crate::{
+    NodeResult, SinexError,
+    error_helpers::{env_bool_with_default, env_parse_with_default},
+    runtime::stream::Checkpoint,
+};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::temporal::Timestamp;
@@ -370,10 +374,11 @@ impl CheckpointManager {
             // Warn if the restored checkpoint is stale — the node may replay already-processed events.
             // Only warn for non-empty checkpoints (Checkpoint::None means a fresh/reset state).
             if !matches!(state.checkpoint, Checkpoint::None) {
-                let max_age_hours: u64 = std::env::var("SINEX_CHECKPOINT_MAX_AGE_HOURS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(24);
+                let max_age_hours: u64 = env_parse_with_default(
+                    "SINEX_CHECKPOINT_MAX_AGE_HOURS",
+                    24_u64,
+                    "checkpoint staleness",
+                );
 
                 let age: time::Duration = Timestamp::now() - state.last_activity;
                 let age_hours = age.whole_hours();
@@ -620,7 +625,7 @@ impl Default for CheckpointCleanupConfig {
         Self {
             max_age: std::time::Duration::from_hours(720), // 30 days
             interval: std::time::Duration::from_hours(24),
-            enabled: true,
+            enabled: false,
         }
     }
 }
@@ -633,18 +638,21 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
     #[must_use]
     pub fn from_env() -> Self {
-        let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
-            .is_ok_and(|v| v.to_lowercase() == "true" || v == "1");
-
-        let max_age_days: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
-
-        let interval_hours: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(24);
+        let enabled = env_bool_with_default(
+            "SINEX_CHECKPOINT_CLEANUP_ENABLED",
+            false,
+            "checkpoint cleanup",
+        );
+        let max_age_days: u64 = env_parse_with_default(
+            "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
+            30_u64,
+            "checkpoint cleanup",
+        );
+        let interval_hours: u64 = env_parse_with_default(
+            "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
+            24_u64,
+            "checkpoint cleanup",
+        );
 
         Self {
             max_age: std::time::Duration::from_secs(max_age_days * 24 * 60 * 60),
@@ -800,4 +808,66 @@ pub fn spawn_checkpoint_cleanup_task(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because this covers local checkpoint env/default semantics.
+    use super::CheckpointCleanupConfig;
+    use xtask::sandbox::sinex_serial_test;
+
+    struct ScopedEnvGuard {
+        keys: Vec<(String, Option<String>)>,
+    }
+
+    impl ScopedEnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            let previous = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                .collect();
+            Self { keys: previous }
+        }
+
+        fn set(&mut self, key: &str, value: &str) {
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn checkpoint_cleanup_default_is_disabled() -> xtask::sandbox::TestResult<()> {
+        assert!(!CheckpointCleanupConfig::default().enabled);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn checkpoint_cleanup_from_env_defaults_invalid_overrides() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&[
+            "SINEX_CHECKPOINT_CLEANUP_ENABLED",
+            "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
+            "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
+        ]);
+        env.set("SINEX_CHECKPOINT_CLEANUP_ENABLED", "maybe");
+        env.set("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS", "bogus");
+        env.set("SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS", "bogus");
+
+        let config = CheckpointCleanupConfig::from_env();
+        assert!(!config.enabled);
+        assert_eq!(config.max_age.as_secs(), 30 * 24 * 60 * 60);
+        assert_eq!(config.interval.as_secs(), 24 * 60 * 60);
+        Ok(())
+    }
 }

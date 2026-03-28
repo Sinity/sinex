@@ -69,12 +69,60 @@ pub async fn acquire_with_timeout(
 const DEFAULT_POOL_ACQUIRE_WARN_MS: u64 = 100;
 static POOL_ACQUIRE_WARN_MS: OnceLock<u64> = OnceLock::new();
 
+fn env_parse_override<T>(var: &str, context: &str) -> Option<T>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    match env::var(var) {
+        Ok(raw) => parse_env_override_value(var, &raw, context),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                context,
+                "Environment override is not valid UTF-8; ignoring value"
+            );
+            None
+        }
+    }
+}
+
+fn parse_env_override_value<T>(var: &str, raw: &str, context: &str) -> Option<T>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    match raw.parse::<T>() {
+        Ok(value) => Some(value),
+        Err(error) => {
+            warn!(
+                variable = var,
+                value = %raw,
+                %error,
+                context,
+                "Invalid environment override; ignoring value"
+            );
+            None
+        }
+    }
+}
+
+fn env_parse_with_default<T>(var: &str, default: T, context: &str) -> T
+where
+    T: FromStr + Clone,
+    T::Err: std::fmt::Display,
+{
+    env_parse_override(var, context).unwrap_or(default)
+}
+
 fn pool_acquire_warn_threshold() -> std::time::Duration {
     let ms = *POOL_ACQUIRE_WARN_MS.get_or_init(|| {
-        std::env::var("SINEX_POOL_ACQUIRE_WARN_MS")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_POOL_ACQUIRE_WARN_MS)
+        env_parse_with_default(
+            "SINEX_POOL_ACQUIRE_WARN_MS",
+            DEFAULT_POOL_ACQUIRE_WARN_MS,
+            "database pool acquire warn threshold",
+        )
     });
     std::time::Duration::from_millis(ms)
 }
@@ -118,21 +166,22 @@ impl PoolConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(val) = env::var("SINEX_DB_MAX_CONNECTIONS")
-            && let Ok(num) = val.parse()
+        if let Some(num) =
+            env_parse_override("SINEX_DB_MAX_CONNECTIONS", "database pool max connections")
         {
             config.max_connections = num;
         }
 
-        if let Ok(val) = env::var("SINEX_DB_MIN_CONNECTIONS")
-            && let Ok(num) = val.parse()
+        if let Some(num) =
+            env_parse_override("SINEX_DB_MIN_CONNECTIONS", "database pool min connections")
         {
             config.min_connections = num;
         }
 
-        if let Ok(val) = env::var("SINEX_DB_ACQUIRE_TIMEOUT_SECS")
-            && let Ok(num) = val.parse()
-        {
+        if let Some(num) = env_parse_override(
+            "SINEX_DB_ACQUIRE_TIMEOUT_SECS",
+            "database pool acquire timeout",
+        ) {
             config.acquire_timeout_secs = Seconds::from_secs(num);
         }
 
@@ -262,4 +311,83 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
             .map_err(SinexError::from)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because this covers local env parsing semantics in the pool module.
+    use super::{
+        DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_with_default,
+        parse_env_override_value,
+    };
+    use xtask::sandbox::sinex_serial_test;
+
+    struct ScopedEnvGuard {
+        keys: Vec<(String, Option<String>)>,
+    }
+
+    impl ScopedEnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            let previous = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                .collect();
+            Self { keys: previous }
+        }
+
+        fn set(&mut self, key: &str, value: &str) {
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for ScopedEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn env_parse_override_rejects_invalid_numeric_values() {
+        let parsed = parse_env_override_value::<u64>("SINEX_UNUSED", "bogus", "test context");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn env_parse_with_default_keeps_default_without_override() {
+        let parsed = env_parse_with_default(
+            "SINEX_UNUSED",
+            DEFAULT_POOL_ACQUIRE_WARN_MS,
+            "test context",
+        );
+        assert_eq!(parsed, DEFAULT_POOL_ACQUIRE_WARN_MS);
+    }
+
+    #[sinex_serial_test]
+    async fn pool_config_from_env_ignores_invalid_overrides() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&[
+            "SINEX_DB_MAX_CONNECTIONS",
+            "SINEX_DB_MIN_CONNECTIONS",
+            "SINEX_DB_ACQUIRE_TIMEOUT_SECS",
+        ]);
+        env.set("SINEX_DB_MAX_CONNECTIONS", "bogus");
+        env.set("SINEX_DB_MIN_CONNECTIONS", "bogus");
+        env.set("SINEX_DB_ACQUIRE_TIMEOUT_SECS", "bogus");
+
+        let config = PoolConfig::from_env();
+
+        assert_eq!(config.max_connections, PoolConfig::default().max_connections);
+        assert_eq!(config.min_connections, PoolConfig::default().min_connections);
+        assert_eq!(
+            config.acquire_timeout_secs.as_secs(),
+            PoolConfig::default().acquire_timeout_secs.as_secs()
+        );
+        Ok(())
+    }
 }

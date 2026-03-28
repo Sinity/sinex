@@ -6,6 +6,7 @@
 //! implementing the service/scan/explore subcommand pattern.
 
 use crate::event_node::EventTransport;
+use crate::error_helpers::env_bool_with_default;
 pub use crate::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
@@ -359,6 +360,11 @@ fn handle_export_result(path: &SanitizedPath, result: NodeResult<()>) -> NodeRes
     }
 }
 
+fn edge_mode_enabled(database_url_supplied: bool) -> bool {
+    env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode")
+        && !database_url_supplied
+}
+
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
 
     /// Create new CLI runner with a node instance
@@ -491,8 +497,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 Ok(pool) => Some(pool),
                 Err(err) => {
                     // Check if we allow running without DB (Edge Mode)
-                    let edge_mode = std::env::var("SINEX_EDGE_MODE").is_ok();
-                    if edge_mode && args.database_url.is_none() {
+                    if edge_mode_enabled(args.database_url.is_some()) {
                         warn!("Running in Edge Mode without database connection");
                         None
                     } else {
@@ -515,8 +520,11 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             )
             .await?;
 
-        let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let coordination_disabled = env_bool_with_default(
+            "SINEX_COORDINATION_DISABLED",
+            false,
+            "node coordination",
+        );
         let node_type = runner.node_type();
 
         // Run service with optional coordination
@@ -955,10 +963,11 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_export_result, unavailable_section};
+    use super::{edge_mode_enabled, handle_export_result, unavailable_section};
     use crate::SinexError;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
+    use xtask::sandbox::sinex_serial_test;
 
     // Inline test is appropriate because this exercises private CLI formatting only.
     #[test]
@@ -983,6 +992,19 @@ mod tests {
         assert!(message.contains("failed to export node exploration data"));
         assert!(message.contains("/tmp/export.json"));
         assert!(message.contains("disk full while exporting"));
+    }
+
+    #[sinex_serial_test]
+    async fn edge_mode_requires_truthy_boolean_override() -> xtask::sandbox::TestResult<()> {
+        unsafe { std::env::set_var("SINEX_EDGE_MODE", "enabled") };
+
+        assert!(
+            !edge_mode_enabled(false),
+            "invalid edge-mode override must not silently enable DB-less execution"
+        );
+
+        unsafe { std::env::remove_var("SINEX_EDGE_MODE") };
+        Ok(())
     }
 }
 

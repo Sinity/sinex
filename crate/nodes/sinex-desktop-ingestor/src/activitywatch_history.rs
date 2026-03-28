@@ -88,7 +88,8 @@ pub fn read_activitywatch_history(
         let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
         let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
         let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
-        let duration_ms = u64::try_from(duration_ns / 1_000_000).unwrap_or(0);
+        let duration_ms = u64::try_from(duration_ns / 1_000_000)
+            .expect("non-negative ActivityWatch duration should fit into u64 milliseconds");
 
         let payload = row
             .get::<_, Option<String>>(4)?
@@ -109,8 +110,7 @@ pub fn read_activitywatch_history(
     }
 
     if let Some(end_time) = end_time {
-        let end_time_ns =
-            i64::try_from(end_time.inner().unix_timestamp_nanos()).unwrap_or(i64::MAX);
+        let end_time_ns = encode_query_timestamp_ns(end_time)?;
         read_rows_with_params(
             path,
             "SELECT
@@ -211,6 +211,18 @@ fn parse_activitywatch_payload(
     })
 }
 
+fn encode_query_timestamp_ns(end_time: Timestamp) -> Result<i64, rusqlite::Error> {
+    i64::try_from(end_time.inner().unix_timestamp_nanos()).map_err(|error| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(IoError::new(
+            ErrorKind::InvalidData,
+            format!(
+                "ActivityWatch query end_time is outside SQLite i64 nanosecond range: {} ({error})",
+                end_time.format_rfc3339()
+            ),
+        )))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -271,6 +283,7 @@ mod tests {
         assert_eq!(last_row_id, 3);
         assert_eq!(entries[0].kind, ActivityWatchEntryKind::Window);
         assert_eq!(entries[0].host, "sinnix-prime");
+        assert_eq!(entries[0].duration_ms, 3_000);
         assert_eq!(entries[0].data.get("app").and_then(serde_json::Value::as_str), Some("kitty"));
         assert_eq!(entries[1].kind, ActivityWatchEntryKind::Web);
         assert_eq!(
@@ -294,6 +307,24 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].kind, ActivityWatchEntryKind::Window);
         assert_eq!(last_row_id, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_history_reader_rejects_unrepresentable_end_time_filter()
+    -> TestResult<()> {
+        let path = fixture_db()?;
+        let end_time = super::Timestamp::from_unix_timestamp_nanos(i128::from(i64::MAX) + 1)
+            .ok_or_else(|| eyre!("valid far-future timestamp"))?;
+
+        let error = read_activitywatch_history(&path, 0, Some(end_time))
+            .expect_err("far-future end_time filter should fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("outside SQLite i64 nanosecond range")
+        );
         Ok(())
     }
 

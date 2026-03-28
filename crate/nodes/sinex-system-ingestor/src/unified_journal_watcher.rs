@@ -173,6 +173,27 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn resolve_max_line_bytes() -> NodeResult<usize> {
+        match std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES") {
+            Ok(raw) => raw.parse::<usize>().map_err(|error| {
+                sinex_node_sdk::SinexError::configuration(
+                    "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer".to_string(),
+                )
+                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
+                .with_context("value", raw)
+                .with_source(error)
+            }),
+            Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAX_JOURNAL_LINE_BYTES),
+            Err(error) => Err(
+                sinex_node_sdk::SinexError::configuration(
+                    "Failed to read SINEX_JOURNAL_MAX_LINE_BYTES".to_string(),
+                )
+                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
+                .with_source(error),
+            ),
+        }
+    }
+
     fn parse_optional_field<T>(
         entry: &serde_json::Map<String, serde_json::Value>,
         field: &str,
@@ -328,10 +349,7 @@ impl UnifiedJournalWatcher {
         }
 
         // Load max line bytes from environment or use default
-        let max_line_bytes = std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES);
+        let max_line_bytes = Self::resolve_max_line_bytes()?;
 
         info!("Journal max line size configured: {} bytes", max_line_bytes);
 
@@ -1110,10 +1128,8 @@ impl UnifiedJournalWatcher {
         let event = match event_kind {
             SystemdEventKind::Started => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let main_pid = entry["_PID"]
-                    .as_str()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .map(ProcessId::from_raw);
+                let main_pid =
+                    Self::parse_optional_field::<u32>(obj, "_PID", &cursor)?.map(ProcessId::from_raw);
                 let e = Event::new(
                     SystemdUnitStartedPayload {
                         unit_name: unit_name.to_string(),
@@ -1307,8 +1323,14 @@ impl UnifiedJournalWatcher {
     /// Update event tracking.
     /// Reserved for metrics and diagnostics integration.
     fn record_event(&self) {
-        if let Ok(mut last_event) = self.last_event_time.lock() {
-            *last_event = Some(Instant::now());
+        match self.last_event_time.lock() {
+            Ok(mut last_event) => {
+                *last_event = Some(Instant::now());
+            }
+            Err(poisoned) => {
+                warn!("Journal watcher last_event_time lock poisoned during event update");
+                *poisoned.into_inner() = Some(Instant::now());
+            }
         }
         self.event_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -1316,8 +1338,14 @@ impl UnifiedJournalWatcher {
     /// Record an error.
     /// Reserved for metrics and diagnostics integration.
     fn record_error(&self, error: String) {
-        if let Ok(mut last_error) = self.last_error.lock() {
-            *last_error = Some(error);
+        match self.last_error.lock() {
+            Ok(mut last_error) => {
+                *last_error = Some(error);
+            }
+            Err(poisoned) => {
+                warn!("Journal watcher last_error lock poisoned during error update");
+                *poisoned.into_inner() = Some(error);
+            }
         }
     }
 }
@@ -1325,10 +1353,30 @@ impl UnifiedJournalWatcher {
 #[async_trait::async_trait]
 impl WatcherLifecycle for UnifiedJournalWatcher {
     fn health_snapshot(&self) -> WatcherActivitySnapshot {
+        let last_event = match self.last_event_time.lock() {
+            Ok(last_event) => *last_event,
+            Err(poisoned) => {
+                warn!("Journal watcher last_event_time lock poisoned during health snapshot");
+                *poisoned.into_inner()
+            }
+        };
+        let last_error = match self.last_error.lock() {
+            Ok(last_error) => last_error.clone(),
+            Err(poisoned) => {
+                warn!("Journal watcher last_error lock poisoned during health snapshot");
+                let last_error = poisoned.into_inner();
+                Some(
+                    last_error.clone().unwrap_or_else(|| {
+                        "journal watcher last_error lock poisoned".to_string()
+                    }),
+                )
+            }
+        };
+
         WatcherActivitySnapshot {
             active: !self.cancel_token.is_cancelled(),
-            last_event: self.last_event_time.lock().ok().and_then(|t| *t),
-            last_error: self.last_error.lock().ok().and_then(|e| e.clone()),
+            last_event,
+            last_error,
             events_processed: self.event_count.load(Ordering::Relaxed),
         }
     }
@@ -1377,7 +1425,13 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
     }
 
     fn last_event_timestamp(&self) -> Option<Instant> {
-        self.last_event_time.lock().ok().and_then(|t| *t)
+        match self.last_event_time.lock() {
+            Ok(last_event) => *last_event,
+            Err(poisoned) => {
+                warn!("Journal watcher last_event_time lock poisoned during timestamp lookup");
+                *poisoned.into_inner()
+            }
+        }
     }
 
     fn cancellation_token(&self) -> &CancellationToken {
@@ -1446,6 +1500,42 @@ mod tests {
         Arc::new(TestMaterialContext)
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, original }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.as_deref() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
     #[sinex_test]
     async fn parse_journal_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
@@ -1463,6 +1553,37 @@ mod tests {
 
         assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
         assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_max_line_bytes_rejects_invalid_env(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let _guard = EnvVarGuard::set("SINEX_JOURNAL_MAX_LINE_BYTES", "not-a-number");
+
+        let error = UnifiedJournalWatcher::resolve_max_line_bytes()
+            .expect_err("invalid journal max line env must fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer")
+        );
+        assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_max_line_bytes_uses_default_when_env_is_absent(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let _guard = EnvVarGuard::unset("SINEX_JOURNAL_MAX_LINE_BYTES");
+
+        assert_eq!(
+            UnifiedJournalWatcher::resolve_max_line_bytes()?,
+            DEFAULT_MAX_JOURNAL_LINE_BYTES
+        );
         Ok(())
     }
 
@@ -1591,6 +1712,28 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn parse_systemd_entry_rejects_invalid_pid(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "not-a-pid",
+        });
+
+        let error = watcher
+            .parse_systemd_entry(&entry, &material)
+            .expect_err("invalid systemd pid must fail honestly");
+
+        assert!(error.to_string().contains("invalid _PID"));
+        assert!(error.to_string().contains("not-a-pid"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn parse_oversized_line_metadata_preserves_cursor_and_unit(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -1668,6 +1811,62 @@ mod tests {
         let snapshot = watcher.health_snapshot();
         assert_eq!(snapshot.events_processed, 1);
         assert!(snapshot.last_event.is_some());
+        Ok(())
+    }
+
+    fn poison_mutex<T: Send + 'static>(mutex: Arc<Mutex<T>>, value: T) {
+        let result = std::thread::spawn(move || {
+            let mut guard = mutex.lock().expect("test mutex should lock before poisoning");
+            *guard = value;
+            panic!("poison mutex for regression coverage");
+        })
+        .join();
+        assert!(result.is_err(), "poisoning thread should panic");
+    }
+
+    #[sinex_test]
+    async fn health_snapshot_preserves_poisoned_last_error(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        poison_mutex(
+            Arc::clone(&watcher.last_error),
+            Some("poisoned journal error".to_string()),
+        );
+
+        let snapshot = watcher.health_snapshot();
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some("poisoned journal error")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_error_recovers_from_poisoned_last_error_lock(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        poison_mutex(Arc::clone(&watcher.last_error), None::<String>);
+
+        watcher.record_error("recovered error".to_string());
+
+        let snapshot = watcher.health_snapshot();
+        assert_eq!(snapshot.last_error.as_deref(), Some("recovered error"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn last_event_timestamp_recovers_from_poisoned_lock(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let poisoned_time = Instant::now();
+        poison_mutex(Arc::clone(&watcher.last_event_time), Some(poisoned_time));
+
+        let last_event = watcher
+            .last_event_timestamp()
+            .expect("poisoned last_event lock should still yield stored time");
+        assert_eq!(last_event, poisoned_time);
         Ok(())
     }
 }

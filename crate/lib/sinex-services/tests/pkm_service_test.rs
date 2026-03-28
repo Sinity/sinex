@@ -145,6 +145,46 @@ async fn test_register_source_material_stream(ctx: TestContext) -> TestResult<()
 }
 
 #[sinex_test]
+async fn test_register_source_material_file_requires_source_uri(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let pkm = PkmService::new(pool.clone());
+
+    let error = pkm
+        .register_source_material("file", None, b"hello world", Some("text/plain"), json!({}))
+        .await
+        .expect_err("file source material without source_uri must fail honestly");
+
+    assert!(
+        error
+            .to_string()
+            .contains("source_uri is required for source material type 'file'")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_register_source_material_blob_text_requires_source_uri(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let pkm = PkmService::new(pool.clone());
+
+    let error = pkm
+        .register_source_material("blob.text", Some("   "), b"hello world", Some("text/plain"), json!({}))
+        .await
+        .expect_err("blob.text source material without filename must fail honestly");
+
+    assert!(
+        error
+            .to_string()
+            .contains("source_uri is required for source material type 'blob.text'")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_register_source_material_content_preview_text(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let pkm = PkmService::new(pool.clone());

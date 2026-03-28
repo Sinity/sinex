@@ -628,9 +628,6 @@ impl KnowledgeGraphRepository<'_> {
         } else {
             target.created_at
         };
-        let merged_created_at_offset =
-            Timestamp::from_unix_timestamp(merged_created_at.unix_timestamp())
-                .unwrap_or(Timestamp::now());
 
         sqlx::query!(
             r#"
@@ -652,7 +649,7 @@ impl KnowledgeGraphRepository<'_> {
                 .map(|id| *id.as_uuid())
                 .collect::<Vec<_>>() as _,
             merged_confidence,
-            *merged_created_at_offset
+            *merged_created_at
         )
         .execute(&mut *tx)
         .await

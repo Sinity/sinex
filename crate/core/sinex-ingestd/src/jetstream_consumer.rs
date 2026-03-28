@@ -42,7 +42,8 @@ struct ConfirmationRetryRequest {
 #[derive(Debug, Serialize)]
 struct DlqEntry {
     /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
-    nats_msg_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nats_msg_id: Option<String>,
     error: String,
     original_payload: JsonValue,
     failed_at: Timestamp,
@@ -1635,7 +1636,7 @@ impl JetStreamConsumer {
             .map(str::to_owned);
 
         let dlq_entry = DlqEntry {
-            nats_msg_id: original_nats_msg_id.unwrap_or_else(|| "unknown".to_string()),
+            nats_msg_id: original_nats_msg_id,
             error,
             original_payload,
             failed_at: Timestamp::now(),
@@ -1666,7 +1667,7 @@ impl JetStreamConsumer {
             {
                 Ok(ack) => match ack.await {
                     Ok(_) => {
-                        debug!(nats_msg_id = %dlq_entry.nats_msg_id, "Routed to DLQ");
+                        debug!(nats_msg_id = ?dlq_entry.nats_msg_id, "Routed to DLQ");
                         return Ok(());
                     }
                     Err(err) => {
