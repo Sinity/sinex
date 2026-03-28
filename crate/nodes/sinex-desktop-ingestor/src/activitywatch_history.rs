@@ -48,14 +48,6 @@ pub struct ActivityWatchHistoryEntry {
 
 impl ActivityWatchHistoryEntry {
     #[must_use]
-    pub fn string_field(&self, key: &str) -> Option<String> {
-        self.data
-            .get(key)
-            .and_then(JsonValue::as_str)
-            .map(ToOwned::to_owned)
-    }
-
-    #[must_use]
     pub fn raw_material_payload(&self) -> JsonValue {
         json!({
             "row_id": self.row_id,
@@ -279,14 +271,14 @@ mod tests {
         assert_eq!(last_row_id, 3);
         assert_eq!(entries[0].kind, ActivityWatchEntryKind::Window);
         assert_eq!(entries[0].host, "sinnix-prime");
-        assert_eq!(entries[0].string_field("app").as_deref(), Some("kitty"));
+        assert_eq!(entries[0].data.get("app").and_then(serde_json::Value::as_str), Some("kitty"));
         assert_eq!(entries[1].kind, ActivityWatchEntryKind::Web);
         assert_eq!(
-            entries[1].string_field("url").as_deref(),
+            entries[1].data.get("url").and_then(serde_json::Value::as_str),
             Some("https://example.com")
         );
         assert_eq!(entries[2].kind, ActivityWatchEntryKind::Afk);
-        assert_eq!(entries[2].string_field("status").as_deref(), Some("afk"));
+        assert_eq!(entries[2].data.get("status").and_then(serde_json::Value::as_str), Some("afk"));
 
         Ok(())
     }
@@ -340,7 +332,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(
-            entries[0].string_field("title").as_deref(),
+            entries[0].data.get("title").and_then(serde_json::Value::as_str),
             Some("after malformed json")
         );
         assert_eq!(last_row_id, 5);
@@ -375,7 +367,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(
-            entries[0].string_field("title").as_deref(),
+            entries[0].data.get("title").and_then(serde_json::Value::as_str),
             Some("after malformed timestamp")
         );
         assert_eq!(last_row_id, 5);

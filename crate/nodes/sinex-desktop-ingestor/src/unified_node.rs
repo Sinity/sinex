@@ -306,6 +306,37 @@ impl DesktopNode {
         })
     }
 
+    fn require_activitywatch_string_field(
+        entry: &ActivityWatchHistoryEntry,
+        field: &str,
+    ) -> NodeResult<String> {
+        match entry.data.get(field) {
+            Some(serde_json::Value::String(value)) => Ok(value.clone()),
+            Some(other) => Err(SinexError::validation(format!(
+                "ActivityWatch row {} field '{field}' must be a string, got {other}",
+                entry.row_id
+            ))),
+            None => Err(SinexError::validation(format!(
+                "ActivityWatch row {} is missing required field '{field}'",
+                entry.row_id
+            ))),
+        }
+    }
+
+    fn require_activitywatch_nonempty_string_field(
+        entry: &ActivityWatchHistoryEntry,
+        field: &str,
+    ) -> NodeResult<String> {
+        let value = Self::require_activitywatch_string_field(entry, field)?;
+        if value.trim().is_empty() {
+            return Err(SinexError::validation(format!(
+                "ActivityWatch row {} field '{field}' must not be empty",
+                entry.row_id
+            )));
+        }
+        Ok(value)
+    }
+
     async fn stage_activitywatch_material(
         acquisition: &AcquisitionManager,
         db_path: &Utf8PathBuf,
@@ -347,92 +378,105 @@ impl DesktopNode {
         })?;
 
         match entry.kind {
-            ActivityWatchEntryKind::Window => ActivityWatchWindowActivePayload {
-                app: entry.string_field("app").unwrap_or_default(),
-                title: Self::redact_window_title(entry.string_field("title")).unwrap_or_default(),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Window => {
+                let app = Self::require_activitywatch_nonempty_string_field(entry, "app")?;
+                let title = Self::require_activitywatch_string_field(entry, "title")?;
+
+                ActivityWatchWindowActivePayload {
+                    app,
+                    title: Self::redact_window_title(Some(title)).unwrap_or_default(),
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch window event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch window event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch window event")
-                    .with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch window event")
-                    .with_source(error)
-            }),
-            ActivityWatchEntryKind::Web => ActivityWatchBrowserTabActivePayload {
-                browser: entry
-                    .string_field("app")
-                    .unwrap_or_else(|| "browser".to_string()),
-                title: Self::redact_window_title(entry.string_field("title")).unwrap_or_default(),
-                url: Self::redact_document(entry.string_field("url")).unwrap_or_default(),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Web => {
+                let browser = Self::require_activitywatch_nonempty_string_field(entry, "app")?;
+                let title = Self::require_activitywatch_string_field(entry, "title")?;
+                let url = Self::require_activitywatch_string_field(entry, "url")?;
+
+                ActivityWatchBrowserTabActivePayload {
+                    browser,
+                    title: Self::redact_window_title(Some(title)).unwrap_or_default(),
+                    url: Self::redact_document(Some(url)).unwrap_or_default(),
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch web event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch web event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch web event").with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch web event")
-                    .with_source(error)
-            }),
-            ActivityWatchEntryKind::Afk => ActivityWatchAfkChangedPayload {
-                status: entry
-                    .string_field("status")
-                    .unwrap_or_else(|| "unknown".to_string()),
-                duration_ms: entry.duration_ms,
-                bucket_id: entry.bucket_id.clone(),
+            ActivityWatchEntryKind::Afk => {
+                let status = Self::require_activitywatch_nonempty_string_field(entry, "status")?;
+
+                ActivityWatchAfkChangedPayload {
+                    status,
+                    duration_ms: entry.duration_ms,
+                    bucket_id: entry.bucket_id.clone(),
+                }
+                .into_builder()
+                .hostname(host)
+                .from_material(material_id, 0)
+                .at_time(entry.started_at)
+                .with_offset_start(0)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .with_offset_end(material_len as i64)
+                .map_err(|error| {
+                    SinexError::service("failed to set ActivityWatch offset").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::service("failed to build ActivityWatch afk event")
+                        .with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("failed to encode ActivityWatch afk event")
+                        .with_source(error)
+                })
             }
-            .into_builder()
-            .hostname(host)
-            .from_material(material_id, 0)
-            .at_time(entry.started_at)
-            .with_offset_start(0)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .with_offset_end(material_len as i64)
-            .map_err(|error| {
-                SinexError::service("failed to set ActivityWatch offset").with_source(error)
-            })?
-            .build()
-            .map_err(|error| {
-                SinexError::service("failed to build ActivityWatch afk event").with_source(error)
-            })?
-            .to_json_event()
-            .map_err(|error| {
-                SinexError::serialization("failed to encode ActivityWatch afk event")
-                    .with_source(error)
-            }),
         }
     }
 
@@ -932,6 +976,24 @@ mod tests {
     use serde_json::json;
     use xtask::sandbox::sinex_test;
 
+    fn sample_activitywatch_entry(
+        kind: ActivityWatchEntryKind,
+        data: serde_json::Value,
+    ) -> xtask::sandbox::TestResult<ActivityWatchHistoryEntry> {
+        Ok(ActivityWatchHistoryEntry {
+            row_id: 7,
+            bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            kind,
+            host: "sinnix-prime".to_string(),
+            started_at: Timestamp::from_unix_timestamp(10)
+                .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?,
+            ended_at: Timestamp::from_unix_timestamp(11)
+                .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?,
+            duration_ms: 1000,
+            data,
+        })
+    }
+
     #[sinex_test]
     async fn activitywatch_historical_start_row_prefers_checkpoint_when_present()
     -> xtask::sandbox::TestResult<()> {
@@ -1020,6 +1082,47 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             Some(0)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_window_event_rejects_missing_app_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry =
+            sample_activitywatch_entry(ActivityWatchEntryKind::Window, json!({ "title": "main.rs" }))?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("missing ActivityWatch app should fail honestly");
+
+        assert!(error.to_string().contains("missing required field 'app'"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_web_event_rejects_non_string_url_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Web,
+            json!({ "app": "Firefox", "title": "Docs", "url": 42 }),
+        )?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("non-string ActivityWatch url should fail honestly");
+
+        assert!(error.to_string().contains("field 'url' must be a string"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_afk_event_rejects_empty_status_field()
+    -> xtask::sandbox::TestResult<()> {
+        let entry =
+            sample_activitywatch_entry(ActivityWatchEntryKind::Afk, json!({ "status": "   " }))?;
+
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+            .expect_err("empty ActivityWatch status should fail honestly");
+
+        assert!(error.to_string().contains("field 'status' must not be empty"));
         Ok(())
     }
 }
