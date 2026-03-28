@@ -1,7 +1,7 @@
 //! Telemetry RPC request/response types
 //!
-//! These types map to the `sinex_telemetry.*` continuous-aggregate views
-//! exposed by the gateway under the `telemetry.*` method namespace.
+//! These types map to the `sinex_telemetry.*` read models exposed by the
+//! gateway under the `telemetry.*` method namespace.
 
 use serde::{Deserialize, Serialize};
 

@@ -5772,6 +5772,7 @@ dependencies = [
  "sinex-gateway",
  "sinex-node-sdk",
  "sinex-primitives",
+ "sinex-schema",
  "sinex-services",
  "socket2 0.5.10",
  "sqlx",

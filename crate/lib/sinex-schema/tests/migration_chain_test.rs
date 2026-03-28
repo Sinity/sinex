@@ -63,23 +63,44 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     .await?;
     assert_eq!(
         relation_state.0, "v",
-        "command_frequency_hourly must be restored as the Timescale continuous aggregate view surface, got relkind={} definition={}",
+        "command_frequency_hourly must be restored as the live event-time view surface, got relkind={} definition={}",
         relation_state.0, relation_state.1
     );
 
     let definition = sqlx::query_scalar::<_, String>(
         r#"
-        SELECT view_definition
-        FROM timescaledb_information.continuous_aggregates
-        WHERE view_schema = 'sinex_telemetry'
-          AND view_name = 'command_frequency_hourly'
+        SELECT pg_get_viewdef(c.oid, true)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'sinex_telemetry'
+          AND c.relname = 'command_frequency_hourly'
         "#,
     )
     .fetch_one(pool)
     .await?;
     assert!(
-        definition.contains("shell.command") && definition.contains("shell.command.canonical"),
+        definition.contains("shell.command")
+            && definition.contains("shell.command.canonical")
+            && definition.contains("time_bucket(")
+            && definition.contains("ts_orig"),
         "schema apply must restore the live command_frequency_hourly definition, got: {definition}"
+    );
+
+    let ca_exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM timescaledb_information.continuous_aggregates
+            WHERE view_schema = 'sinex_telemetry'
+              AND view_name = 'command_frequency_hourly'
+        )
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        !ca_exists,
+        "command_frequency_hourly must no longer be registered as a Timescale continuous aggregate"
     );
 
     let summary_exists = sqlx::query_scalar::<_, bool>(
@@ -477,6 +498,8 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
 async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
     ctx: TestContext,
 ) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
     let actual = sqlx::query_scalar::<_, String>(
         r#"
         SELECT view_name
@@ -492,10 +515,6 @@ async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
 
     let expected = BTreeSet::from([
         "assembly_stats_1h".to_string(),
-        "command_frequency_hourly".to_string(),
-        "current_system_state".to_string(),
-        "current_window_focus".to_string(),
-        "file_activity_summary".to_string(),
         "gateway_stats_1h".to_string(),
         "ingestd_batch_stats_1h".to_string(),
         "metric_counters_1h".to_string(),

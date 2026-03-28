@@ -451,7 +451,7 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_gitops_list_sources),
         )
-        // Telemetry continuous-aggregate views (ReadOnly)
+        // Telemetry read models (ReadOnly)
         .pool_rpc(
             "telemetry.window_focus",
             Role::ReadOnly,

@@ -11,7 +11,7 @@ use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 
-/// Telemetry data from continuous-aggregate views
+/// Telemetry data from event-time activity views and operator read models
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:

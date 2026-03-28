@@ -129,7 +129,7 @@ enum Commands {
         cmd: GitOpsCommands,
     },
 
-    /// Telemetry data from continuous-aggregate views
+    /// Telemetry data from event-time activity views and operator read models
     Telemetry {
         #[command(subcommand)]
         cmd: TelemetryCommands,

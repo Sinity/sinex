@@ -1,6 +1,6 @@
 //! Telemetry RPC handlers
 //!
-//! Queries the `sinex_telemetry.*` continuous-aggregate views and returns
+//! Queries the `sinex_telemetry.*` read models and returns
 //! structured responses for the `telemetry.*` RPC method namespace.
 
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -121,7 +121,7 @@ struct SystemStateRow {
 
 /// Handle `telemetry.window_focus`
 ///
-/// Queries `sinex_telemetry.current_window_focus` (5-minute CA) for the
+/// Queries `sinex_telemetry.current_window_focus` (event-time activity view) for the
 /// requested time range (default: last 3 hours).
 pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryWindowFocusRequest = super::parse_default_on_null(params)
@@ -173,7 +173,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
 
 /// Handle `telemetry.command_frequency`
 ///
-/// Queries `sinex_telemetry.command_frequency_hourly` (1-hour CA), aggregating
+/// Queries `sinex_telemetry.command_frequency_hourly` (event-time activity view), aggregating
 /// total invocation counts and bucket spans for the requested window (default: last 24 hours).
 pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryCommandFrequencyRequest = super::parse_default_on_null(params)
@@ -224,7 +224,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
 
 /// Handle `telemetry.file_activity`
 ///
-/// Queries `sinex_telemetry.file_activity_summary` (1-hour CA) for the
+/// Queries `sinex_telemetry.file_activity_summary` (event-time activity view) for the
 /// requested time range (default: last 24 hours).
 pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryFileActivityRequest = super::parse_default_on_null(params)
@@ -312,7 +312,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
 
 /// Handle `telemetry.system_state`
 ///
-/// Queries `sinex_telemetry.current_system_state` (5-minute CA) for the
+/// Queries `sinex_telemetry.current_system_state` (event-time activity view) for the
 /// requested time range (default: last 3 hours).
 pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetrySystemStateRequest = super::parse_default_on_null(params)

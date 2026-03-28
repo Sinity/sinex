@@ -341,7 +341,8 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
 
     recreate_telemetry_read_models(pool).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
-    execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
+    execute_sql(pool, OPERATOR_CONTINUOUS_AGGREGATES_SQL).await?;
+    execute_sql(pool, ACTIVITY_READ_MODELS_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
     execute_sql(pool, DERIVED_SCOPE_SUMMARY_SQL).await?;
@@ -365,19 +366,50 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
     execute_sql(
         pool,
         r#"
-        DROP VIEW IF EXISTS sinex_telemetry.recent_activity_summary;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.ingestd_batch_stats_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_system_state;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.file_activity_summary;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.command_frequency_hourly;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_window_focus;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.metric_counters_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.node_stats_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.assembly_stats_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.stream_stats_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.gateway_stats_1h;
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_device_state;
-        DROP VIEW IF EXISTS sinex_telemetry.current_health;
+        DO $$
+        DECLARE
+            relation_name text;
+            relation_kind "char";
+            is_continuous_aggregate boolean;
+        BEGIN
+            FOREACH relation_name IN ARRAY ARRAY[
+                'recent_activity_summary',
+                'ingestd_batch_stats_1h',
+                'current_system_state',
+                'file_activity_summary',
+                'command_frequency_hourly',
+                'current_window_focus',
+                'metric_counters_1h',
+                'node_stats_1h',
+                'assembly_stats_1h',
+                'stream_stats_1h',
+                'gateway_stats_1h',
+                'current_device_state',
+                'current_health'
+            ]
+            LOOP
+                SELECT c.relkind
+                INTO relation_kind
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'sinex_telemetry'
+                  AND c.relname = relation_name;
+
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM timescaledb_information.continuous_aggregates
+                    WHERE view_schema = 'sinex_telemetry'
+                      AND view_name = relation_name
+                )
+                INTO is_continuous_aggregate;
+
+                IF is_continuous_aggregate OR relation_kind = 'm' THEN
+                    EXECUTE format('DROP MATERIALIZED VIEW sinex_telemetry.%I', relation_name);
+                ELSIF relation_kind = 'v' THEN
+                    EXECUTE format('DROP VIEW sinex_telemetry.%I', relation_name);
+                END IF;
+            END LOOP;
+        END $$;
         "#,
     )
     .await
@@ -1005,7 +1037,7 @@ CREATE INDEX IF NOT EXISTS ix_current_device_state_state
     ON sinex_telemetry.current_device_state (state);
 ";
 
-const CONTINUOUS_AGGREGATES_SQL: &str = r"
+const OPERATOR_CONTINUOUS_AGGREGATES_SQL: &str = r"
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
@@ -1126,101 +1158,6 @@ SELECT add_continuous_aggregate_policy(
     if_not_exists => true
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_window_focus
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('5 minutes', id) AS bucket,
-    payload->>'workspace' AS workspace,
-    last(payload->>'window_class', ts_coided) AS window_class,
-    last(payload->>'window_title', ts_coided) AS window_title,
-    last(payload->>'window_id', ts_coided) AS window_id,
-    last(ts_orig, ts_coided) AS last_focus_time,
-    COUNT(*) AS focus_event_count
-FROM core.events
-WHERE event_type = 'focus.window'
-  AND source LIKE 'desktop.%'
-GROUP BY bucket, payload->>'workspace'
-WITH NO DATA;
-
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.current_window_focus',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '5 minutes',
-    schedule_interval => INTERVAL '5 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 hour', id) AS bucket,
-    payload->>'command' AS command,
-    payload->>'shell' AS shell,
-    COUNT(*) AS total_executions,
-    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int = 0) AS successful_executions,
-    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int != 0) AS failed_executions,
-    AVG((payload->>'duration_ms')::float) AS avg_duration_ms
-FROM core.events
-WHERE event_type IN ('shell.command', 'shell.command.canonical')
-  AND source LIKE 'terminal.%'
-GROUP BY bucket, payload->>'command', payload->>'shell'
-WITH NO DATA;
-
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.command_frequency_hourly',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.file_activity_summary
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 hour', id) AS bucket,
-    regexp_replace(payload->>'path', '/[^/]*$', '') AS directory,
-    event_type,
-    COUNT(*) AS total_events,
-    COUNT(DISTINCT payload->>'path') AS unique_files
-FROM core.events
-WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
-  AND source = 'fs-watcher'
-GROUP BY bucket, regexp_replace(payload->>'path', '/[^/]*$', ''), event_type
-WITH NO DATA;
-
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.file_activity_summary',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_system_state
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('5 minutes', id) AS bucket,
-    AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
-    MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
-    AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
-    MAX((payload->>'memory_percent')::float) AS max_memory_percent,
-    AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
-    last((payload->>'active_units')::int, ts_coided) AS current_active_units,
-    COUNT(*) AS sample_count
-FROM core.events
-WHERE event_type IN ('system.resources', 'systemd.units_summary')
-  AND source = 'system-ingestor'
-GROUP BY bucket
-WITH NO DATA;
-
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.current_system_state',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '5 minutes',
-    schedule_interval => INTERVAL '5 minutes',
-    if_not_exists => true
-);
-
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
@@ -1252,6 +1189,63 @@ SELECT add_continuous_aggregate_policy(
     schedule_interval => INTERVAL '10 minutes',
     if_not_exists => true
 );
+";
+
+const ACTIVITY_READ_MODELS_SQL: &str = r"
+CREATE OR REPLACE VIEW sinex_telemetry.current_window_focus AS
+SELECT
+    time_bucket('5 minutes', ts_orig) AS bucket,
+    payload->>'workspace' AS workspace,
+    last(payload->>'window_class', ts_orig) AS window_class,
+    last(payload->>'window_title', ts_orig) AS window_title,
+    last(payload->>'window_id', ts_orig) AS window_id,
+    MAX(ts_orig) AS last_focus_time,
+    COUNT(*) AS focus_event_count
+FROM core.events
+WHERE event_type = 'focus.window'
+  AND source LIKE 'desktop.%'
+GROUP BY bucket, payload->>'workspace';
+
+CREATE OR REPLACE VIEW sinex_telemetry.command_frequency_hourly AS
+SELECT
+    time_bucket('1 hour', ts_orig) AS bucket,
+    payload->>'command' AS command,
+    payload->>'shell' AS shell,
+    COUNT(*) AS total_executions,
+    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int = 0) AS successful_executions,
+    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int != 0) AS failed_executions,
+    AVG((payload->>'duration_ms')::float) AS avg_duration_ms
+FROM core.events
+WHERE event_type IN ('shell.command', 'shell.command.canonical')
+  AND source LIKE 'terminal.%'
+GROUP BY bucket, payload->>'command', payload->>'shell';
+
+CREATE OR REPLACE VIEW sinex_telemetry.file_activity_summary AS
+SELECT
+    time_bucket('1 hour', ts_orig) AS bucket,
+    regexp_replace(payload->>'path', '/[^/]*$', '') AS directory,
+    event_type,
+    COUNT(*) AS total_events,
+    COUNT(DISTINCT payload->>'path') AS unique_files
+FROM core.events
+WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
+  AND source = 'fs-watcher'
+GROUP BY bucket, regexp_replace(payload->>'path', '/[^/]*$', ''), event_type;
+
+CREATE OR REPLACE VIEW sinex_telemetry.current_system_state AS
+SELECT
+    time_bucket('5 minutes', ts_orig) AS bucket,
+    AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
+    MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
+    AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
+    MAX((payload->>'memory_percent')::float) AS max_memory_percent,
+    AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
+    last((payload->>'active_units')::int, ts_orig) FILTER (WHERE payload ? 'active_units') AS current_active_units,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE event_type IN ('system.resources', 'systemd.units_summary')
+  AND source = 'system-ingestor'
+GROUP BY bucket;
 ";
 
 const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"
