@@ -35,14 +35,7 @@ async fn publish_event_envelope(
     let payload_bytes =
         serde_json::to_vec(&envelope).wrap_err("failed to serialize event envelope")?;
 
-    let subject = env.nats_subject_with_namespace(
-        None,
-        &format!(
-            "events.raw.{}.{}",
-            source.replace('.', "_"),
-            event_type.replace('.', "_")
-        ),
-    );
+    let subject = env.nats_raw_event_subject_with_namespace(None, source, event_type);
 
     let js = async_nats::jetstream::new(nats_client.clone());
     let mut headers = async_nats::HeaderMap::new();
