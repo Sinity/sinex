@@ -13,7 +13,7 @@
 //! let graph = WorkspaceGraph::new()?;
 //!
 //! // Get all packages in the workspace
-//! let packages = graph.workspace_packages();
+//! let packages = graph.workspace_packages()?;
 //! println!("Workspace has {} packages", packages.len());
 //!
 //! // Analyze a specific package
@@ -94,7 +94,7 @@ pub struct DependencyInfo {
 /// let graph = WorkspaceGraph::new()?;
 ///
 /// // Find critical packages
-/// for pkg in graph.workspace_packages() {
+/// for pkg in graph.workspace_packages()? {
 ///     let metrics = graph.compute_impact_metrics(pkg.name())?;
 ///     if metrics.criticality > 0.5 {
 ///         println!("High-impact package: {} (criticality: {:.2})", pkg.name(), metrics.criticality);
@@ -133,7 +133,7 @@ impl WorkspaceGraph {
     /// use xtask::graph::WorkspaceGraph;
     ///
     /// let graph = WorkspaceGraph::new()?;
-    /// println!("Loaded workspace with {} packages", graph.workspace_packages().len());
+    /// println!("Loaded workspace with {} packages", graph.workspace_packages()?.len());
     /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn new() -> Result<Self> {
@@ -345,9 +345,17 @@ impl WorkspaceGraph {
         let resolved = query.resolve();
 
         // Check if target is reachable
-        let is_reachable = resolved
-            .package_ids(guppy::graph::DependencyDirection::Forward)
-            .any(|id| self.graph.metadata(id).is_ok_and(|p| p.name() == to));
+        let mut is_reachable = false;
+        for id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
+            let metadata = self
+                .graph
+                .metadata(id)
+                .with_context(|| format!("Failed to resolve package metadata while checking path from '{from}' to '{to}'"))?;
+            if metadata.name() == to {
+                is_reachable = true;
+                break;
+            }
+        }
 
         if is_reachable {
             // For now, return a simple direct path marker
@@ -377,16 +385,20 @@ impl WorkspaceGraph {
     /// let graph = WorkspaceGraph::new()?;
     ///
     /// println!("Workspace packages:");
-    /// for pkg in graph.workspace_packages() {
+    /// for pkg in graph.workspace_packages()? {
     ///     println!("  {} @ {}", pkg.name(), pkg.version());
     /// }
     /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
-    pub fn workspace_packages(&self) -> Vec<guppy::graph::PackageMetadata<'_>> {
+    pub fn workspace_packages(&self) -> Result<Vec<guppy::graph::PackageMetadata<'_>>> {
         self.graph
             .workspace()
             .member_ids()
-            .filter_map(|id| self.graph.metadata(id).ok())
+            .map(|id| {
+                self.graph
+                    .metadata(id)
+                    .with_context(|| format!("Failed to resolve metadata for workspace member '{id}'"))
+            })
             .collect()
     }
 
