@@ -89,24 +89,8 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
-        let home = dirs::home_dir()
-            .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
-            .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
-
-        let default_sources = vec![
-            HistorySourceConfig {
-                path: home.join(".bash_history"),
-                shell: "bash".to_string(),
-            },
-            HistorySourceConfig {
-                path: home.join(".zsh_history"),
-                shell: "zsh".to_string(),
-            },
-            HistorySourceConfig {
-                path: home.join(".local/share/atuin/history.db"),
-                shell: "atuin".to_string(),
-            },
-        ];
+        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok());
+        let default_sources = default_history_sources(home.as_ref());
 
         // Allow polling interval override via environment variable
         let polling_interval_secs = default_polling_interval();
@@ -117,6 +101,27 @@ impl Default for TerminalConfig {
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
+}
+
+fn default_history_sources(home: Option<&Utf8PathBuf>) -> Vec<HistorySourceConfig> {
+    let Some(home) = home else {
+        return Vec::new();
+    };
+
+    vec![
+        HistorySourceConfig {
+            path: home.join(".bash_history"),
+            shell: "bash".to_string(),
+        },
+        HistorySourceConfig {
+            path: home.join(".zsh_history"),
+            shell: "zsh".to_string(),
+        },
+        HistorySourceConfig {
+            path: home.join(".local/share/atuin/history.db"),
+            shell: "atuin".to_string(),
+        },
+    ]
 }
 
 impl TerminalConfig {
@@ -3032,6 +3037,24 @@ mod tests {
         }
 
         assert_eq!(config.polling_interval_secs, DEFAULT_POLLING_INTERVAL);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_history_sources_do_not_fabricate_tmp_paths_without_home() -> TestResult<()> {
+        let sources = default_history_sources(None);
+        assert!(sources.is_empty(), "missing home should not fabricate fallback paths");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_history_sources_follow_home_directory() -> TestResult<()> {
+        let home = Utf8PathBuf::from("/home/tester");
+        let sources = default_history_sources(Some(&home));
+        assert_eq!(sources.len(), 3);
+        assert_eq!(sources[0].path, home.join(".bash_history"));
+        assert_eq!(sources[1].path, home.join(".zsh_history"));
+        assert_eq!(sources[2].path, home.join(".local/share/atuin/history.db"));
         Ok(())
     }
 
