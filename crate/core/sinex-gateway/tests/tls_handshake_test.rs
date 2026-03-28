@@ -45,7 +45,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     }
 
     // Initialize ServiceContainer
-    let config = GatewayConfig::load().with_cli_overrides(
+    let config = GatewayConfig::load()?.with_cli_overrides(
         Some(ctx.database_url().to_string()),
         Some(format!("127.0.0.1:{port}")),
         None,

@@ -3,7 +3,7 @@
 use crate::NodeResult;
 use serde::Serialize;
 use sinex_primitives::{
-    JsonValue, Uuid,
+    JsonValue,
     environment::{SinexEnvironment, environment},
     events::{Event, OffsetKind, Provenance},
 };
@@ -82,19 +82,76 @@ impl NatsPublisher {
     ) -> NodeResult<()> {
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
-        let event_id = event.id.as_ref().map_or_else(
-            || Uuid::now_v7().to_string(),
-            std::string::ToString::to_string,
+        let (
+            source_material_id,
+            anchor_byte,
+            offset_start,
+            offset_end,
+            offset_kind,
+            source_event_ids,
+        ) = match event.provenance() {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => (
+                Some(id.to_string()),
+                Some(*anchor_byte),
+                *offset_start,
+                *offset_end,
+                Some(offset_kind_label(*offset_kind).to_string()),
+                None,
+            ),
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    source_event_ids
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        };
+
+        let (event_id, original_event_bytes) = build_publish_payload(
+            event,
+            source_material_id,
+            anchor_byte,
+            offset_start,
+            offset_end,
+            offset_kind,
+            source_event_ids,
+        )?;
+        let original_event =
+            serde_json::from_slice::<JsonValue>(&original_event_bytes).map_err(
+                sinex_primitives::SinexError::from,
+            )?;
+        let original_subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!(
+                "events.raw.{}.{}",
+                event.source.as_str().replace('.', "_"),
+                event.event_type.as_str().replace('.', "_")
+            ),
         );
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
             "event_id": event_id,
+            "nats_msg_id": event_id,
             "source": event.source.as_str(),
             "event_type": event.event_type.as_str(),
             "error": error,
             "node": node_name,
-            "original_payload": event.payload,
+            "original_event": original_event,
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
 
@@ -109,19 +166,8 @@ impl NatsPublisher {
         // Add headers for retry tracking
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", format!("dlq-{event_id}").as_str());
-        headers.insert(
-            "Original-Subject",
-            self.env
-                .nats_subject_with_namespace(
-                    self.namespace.as_deref(),
-                    &format!(
-                        "events.raw.{}.{}",
-                        event.source.as_str().replace('.', "_"),
-                        event.event_type.as_str().replace('.', "_")
-                    ),
-                )
-                .as_str(),
-        );
+        headers.insert("Event-Id", event_id.as_str());
+        headers.insert("Original-Subject", original_subject.as_str());
         headers.insert("Retry-Count", "0");
 
         let ack_future = js

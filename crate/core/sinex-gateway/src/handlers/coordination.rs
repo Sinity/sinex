@@ -13,14 +13,23 @@ use sinex_primitives::{
     temporal::Timestamp,
 };
 
-fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> InstanceInfo {
-    InstanceInfo {
+fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> Result<InstanceInfo> {
+    let hostname = HostName::new(&meta.hostname).map_err(|error| {
+        eyre!(
+            "Invalid coordination hostname '{}' for instance {}: {}",
+            meta.hostname,
+            meta.instance_id,
+            error
+        )
+    })?;
+
+    Ok(InstanceInfo {
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service,
-        hostname: HostName::new(&meta.hostname).ok(),
+        hostname: Some(hostname),
         last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,
-    }
+    })
 }
 
 pub async fn handle_coordination_list_instances(
@@ -35,7 +44,7 @@ pub async fn handle_coordination_list_instances(
         .map(|meta| {
             metadata_to_instance_info(meta, leader.as_deref() == Some(meta.instance_id.as_str()))
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     Ok(serde_json::to_value(ListInstancesResponse {
         instances: instance_infos,
@@ -52,7 +61,7 @@ pub async fn handle_coordination_get_leader(
                 .get_instance(&instance_id)
                 .await?
                 .ok_or_else(|| eyre!("Leader metadata missing for instance: {instance_id}"))?;
-            Some(metadata_to_instance_info(&metadata, true))
+            Some(metadata_to_instance_info(&metadata, true)?)
         }
         None => None,
     };
@@ -79,7 +88,7 @@ pub async fn handle_coordination_instance_health(
             let is_leader = leader.as_deref() == Some(meta.instance_id.as_str());
 
             Ok(serde_json::to_value(InstanceHealthResponse {
-                instance: metadata_to_instance_info(&meta, is_leader),
+                instance: metadata_to_instance_info(&meta, is_leader)?,
                 healthy: is_healthy,
                 last_error: None,
             })?)

@@ -62,8 +62,8 @@ pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use system::handle_system_health;
 pub use telemetry::{
     handle_telemetry_command_frequency, handle_telemetry_file_activity,
-    handle_telemetry_recent_activity, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
+    handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
+    handle_telemetry_system_state, handle_telemetry_window_focus,
 };
 
 fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>

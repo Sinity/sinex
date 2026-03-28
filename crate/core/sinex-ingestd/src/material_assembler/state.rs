@@ -29,6 +29,21 @@ pub(super) const WAL_FILE_NAME: &str = "state.wal";
 pub(super) const TEMP_FILE_NAME: &str = "material.bin";
 pub(super) const DLQ_CONSUMER: &str = "ingestd";
 
+pub(super) fn parse_material_started_at(
+    material_id: Uuid,
+    started_at: &str,
+    source: &str,
+) -> IngestdResult<Timestamp> {
+    Timestamp::parse_rfc3339(started_at).map_err(|error| {
+        SinexError::invalid_state(format!(
+            "Invalid started_at in material assembler {source}"
+        ))
+        .with_context("material_id", material_id.to_string())
+        .with_context("started_at", started_at)
+        .with_std_error(&error)
+    })
+}
+
 /// Message from `source_material.begin`
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct MaterialBeginMessage {
@@ -295,14 +310,7 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = Timestamp::parse_rfc3339(&begin.started_at).unwrap_or_else(|_| {
-        warn!(
-            material_id = %material_id,
-            started_at = %begin.started_at,
-            "Invalid started_at on begin message, defaulting to now"
-        );
-        Timestamp::now()
-    });
+    let started_at = parse_material_started_at(material_id, &begin.started_at, "begin message")?;
 
     if assembler.pool.is_closed() {
         return Err(SinexError::database(
@@ -489,6 +497,18 @@ mod tests {
 
         assert_eq!(result, buffer_path);
         assert!(state.buffered_slices.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_material_started_at_rejects_invalid_timestamp() -> TestResult<()> {
+        let material_id = Uuid::now_v7();
+
+        let error = parse_material_started_at(material_id, "not-a-timestamp", "begin message")
+            .expect_err("invalid started_at must fail honestly");
+
+        assert!(error.to_string().contains("Invalid started_at"));
+        assert!(error.to_string().contains("begin message"));
         Ok(())
     }
 }

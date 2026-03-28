@@ -463,6 +463,178 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
     Ok(())
 }
 
+#[sinex_test]
+async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 5,
+        enable_system_health_status: true,
+        enable_component_health_reports: false,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config,
+        ..Default::default()
+    };
+    let base_time = Timestamp::now() - Duration::seconds(1);
+    state.component_health.insert(
+        "service-a".to_string(),
+        sinex_health_automaton::ComponentHealth {
+            component_name: "service-a".to_string(),
+            current_status: ComponentHealthStatus::Healthy,
+            status_since: base_time,
+            last_seen: base_time,
+            last_check_emission: None,
+            transition_count: 0,
+            events: vec![sinex_health_automaton::HealthEvent {
+                timestamp: base_time,
+                previous_status: ComponentHealthStatus::Healthy,
+                current_status: ComponentHealthStatus::Healthy,
+                event_id: "not-a-uuid".to_string(),
+            }],
+        },
+    );
+
+    let error = process(
+        &mut aggregator,
+        &mut state,
+        json!({
+            "component": "service-b",
+            "previous_status": "healthy",
+            "current_status": "healthy",
+        }),
+        &make_context(Timestamp::now()),
+    )
+    .await
+    .expect_err("corrupt persisted event ids must fail honestly");
+
+    assert!(error.to_string().contains("invalid event_id"));
+    assert!(error.to_string().contains("system status"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 5,
+        enable_system_health_status: false,
+        enable_component_health_reports: true,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config,
+        ..Default::default()
+    };
+    let base_time = Timestamp::now() - Duration::seconds(1);
+    state.component_health.insert(
+        "service-a".to_string(),
+        sinex_health_automaton::ComponentHealth {
+            component_name: "service-a".to_string(),
+            current_status: ComponentHealthStatus::Healthy,
+            status_since: base_time,
+            last_seen: base_time,
+            last_check_emission: None,
+            transition_count: 0,
+            events: vec![sinex_health_automaton::HealthEvent {
+                timestamp: base_time,
+                previous_status: ComponentHealthStatus::Healthy,
+                current_status: ComponentHealthStatus::Healthy,
+                event_id: "not-a-uuid".to_string(),
+            }],
+        },
+    );
+
+    let error = process(
+        &mut aggregator,
+        &mut state,
+        json!({
+            "component": "service-a",
+            "previous_status": "healthy",
+            "current_status": "healthy",
+        }),
+        &make_context(Timestamp::now()),
+    )
+    .await
+    .expect_err("corrupt persisted event ids must fail honestly");
+
+    assert!(error.to_string().contains("invalid event_id"));
+    assert!(error.to_string().contains("component report"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_invalid_status_values(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "component": "service-a",
+        "previous_status": "healthy",
+        "current_status": "mystery-state",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("invalid health statuses must fail honestly");
+
+    assert!(error.to_string().contains("current_status"));
+    assert!(error.to_string().contains("mystery-state"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_missing_component(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("missing component names must fail honestly");
+
+    assert!(error.to_string().contains("missing required field 'component'"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_rejects_non_string_component(ctx: TestContext) -> TestResult<()> {
+    let _ = ctx;
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+    let context = make_context(Timestamp::now());
+    let input = json!({
+        "component": 42,
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let error = process(&mut aggregator, &mut state, input, &context)
+        .await
+        .expect_err("non-string component names must fail honestly");
+
+    assert!(error.to_string().contains("field 'component' must be a string"));
+    Ok(())
+}
+
 // ── Scope Reconciler Output Metadata ────────────────────────────────────
 
 #[sinex_test]

@@ -4,15 +4,16 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
     handle_telemetry_command_frequency, handle_telemetry_file_activity,
-    handle_telemetry_recent_activity, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
+    handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
+    handle_telemetry_system_state, handle_telemetry_window_focus,
 };
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::{
     TelemetryCommandFrequencyResponse, TelemetryFileActivityResponse,
-    TelemetryRecentActivityResponse, TelemetrySystemStateResponse,
-    TelemetryWindowFocusResponse,
+    TelemetryIngestdValidationResponse, TelemetryRecentActivityResponse,
+    TelemetrySystemStateResponse, TelemetryWindowFocusResponse,
 };
+use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
 
 async fn insert_event(
@@ -20,36 +21,31 @@ async fn insert_event(
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
+    ts_orig: Option<time::OffsetDateTime>,
 ) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some(source)).await?;
+    let event = {
+        let builder = DynamicPayload::new(source, event_type, payload).from_material(material_id);
+        match ts_orig {
+            Some(ts_orig) => builder.at_time(ts_orig.into()).build()?,
+            None => builder.build()?,
+        }
+    };
     ctx.pool()
         .events()
-        .insert(
-            DynamicPayload::new(source, event_type, payload)
-                .from_material(material_id)
-                .build()?,
-        )
+        .insert(event)
         .await?;
-    Ok(())
-}
-
-async fn refresh_telemetry_views(ctx: &TestContext) -> TestResult<()> {
-    for view in [
-        "sinex_telemetry.current_window_focus",
-        "sinex_telemetry.command_frequency_hourly",
-        "sinex_telemetry.file_activity_summary",
-        "sinex_telemetry.current_system_state",
-    ] {
-        sqlx::query("CALL refresh_continuous_aggregate($1, NULL, NULL)")
-            .bind(view)
-            .execute(ctx.pool())
-            .await?;
-    }
     Ok(())
 }
 
 #[sinex_test]
 async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(ctx.pool()).await?;
+
+    let now = time::OffsetDateTime::now_utc();
+    let from = (now - time::Duration::hours(1)).format(&Rfc3339)?;
+    let to = (now + time::Duration::hours(1)).format(&Rfc3339)?;
+
     insert_event(
         &ctx,
         "desktop.hyprland",
@@ -60,6 +56,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
             "window_title": "cargo test",
             "window_id": "0xabc",
         }),
+        None,
     )
     .await?;
     insert_event(
@@ -72,6 +69,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
             "exit_code": 0,
             "duration_ms": 123.0,
         }),
+        None,
     )
     .await?;
     insert_event(
@@ -81,6 +79,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
         json!({
             "path": "/tmp/telemetry-handlers/report.md",
         }),
+        None,
     )
     .await?;
     insert_event(
@@ -92,6 +91,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
             "memory_percent": 42.0,
             "disk_percent": 63.5,
         }),
+        None,
     )
     .await?;
     insert_event(
@@ -104,19 +104,20 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
             "memory_percent": 40.0,
             "disk_percent": 60.0,
         }),
+        None,
     )
     .await?;
 
-    refresh_telemetry_views(&ctx).await?;
+    let params = json!({ "from": from, "to": to, "limit": 10 });
 
     let window_focus: TelemetryWindowFocusResponse = serde_json::from_value(
-        handle_telemetry_window_focus(ctx.pool(), json!({ "limit": 10 })).await?,
+        handle_telemetry_window_focus(ctx.pool(), params.clone()).await?,
     )?;
     let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
-        handle_telemetry_command_frequency(ctx.pool(), json!({ "limit": 10 })).await?,
+        handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
     )?;
     let file_activity: TelemetryFileActivityResponse = serde_json::from_value(
-        handle_telemetry_file_activity(ctx.pool(), json!({ "limit": 10 })).await?,
+        handle_telemetry_file_activity(ctx.pool(), params.clone()).await?,
     )?;
     let recent_activity: TelemetryRecentActivityResponse = serde_json::from_value(
         handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 10 })).await?,
@@ -188,6 +189,112 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 }
 
 #[sinex_test]
+async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(ctx.pool()).await?;
+
+    let imported_at = time::OffsetDateTime::parse("2026-01-02T03:15:00Z", &Rfc3339)?;
+
+    insert_event(
+        &ctx,
+        "desktop.hyprland",
+        "focus.window",
+        json!({
+            "workspace": "retro",
+            "window_class": "kitty",
+            "window_title": "imported focus",
+            "window_id": "0x42",
+        }),
+        Some(imported_at),
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "terminal.zsh",
+        "shell.command",
+        json!({
+            "command": "git status",
+            "shell": "zsh",
+            "exit_code": 0,
+            "duration_ms": 15.0,
+        }),
+        Some(imported_at),
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "fs-watcher",
+        "file.modified",
+        json!({
+            "path": "/tmp/imported/session.log",
+        }),
+        Some(imported_at),
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "system-ingestor",
+        "system.resources",
+        json!({
+            "cpu_percent": 11.0,
+            "memory_percent": 33.0,
+            "disk_percent": 44.0,
+        }),
+        Some(imported_at),
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "system-ingestor",
+        "systemd.units_summary",
+        json!({
+            "active_units": 7,
+            "cpu_percent": 9.0,
+            "memory_percent": 31.0,
+            "disk_percent": 40.0,
+        }),
+        Some(imported_at),
+    )
+    .await?;
+
+    let params = json!({
+        "from": "2026-01-02T00:00:00Z",
+        "to": "2026-01-03T00:00:00Z",
+        "limit": 10
+    });
+
+    let window_focus: TelemetryWindowFocusResponse = serde_json::from_value(
+        handle_telemetry_window_focus(ctx.pool(), params.clone()).await?,
+    )?;
+    let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
+        handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
+    )?;
+    let file_activity: TelemetryFileActivityResponse = serde_json::from_value(
+        handle_telemetry_file_activity(ctx.pool(), params.clone()).await?,
+    )?;
+    let system_state: TelemetrySystemStateResponse = serde_json::from_value(
+        handle_telemetry_system_state(ctx.pool(), params).await?,
+    )?;
+
+    assert_eq!(window_focus.buckets.len(), 1);
+    assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("retro"));
+    assert_eq!(window_focus.buckets[0].window_class.as_deref(), Some("kitty"));
+
+    assert_eq!(command_frequency.entries.len(), 1);
+    assert_eq!(command_frequency.entries[0].command, "git status");
+    assert_eq!(command_frequency.entries[0].total_executions, 1);
+
+    assert_eq!(file_activity.entries.len(), 1);
+    assert_eq!(file_activity.entries[0].directory.as_deref(), Some("/tmp/imported"));
+    assert_eq!(file_activity.entries[0].event_type, "file.modified");
+
+    assert_eq!(system_state.buckets.len(), 1);
+    assert_eq!(system_state.buckets[0].current_active_units, Some(7));
+    assert_eq!(system_state.buckets[0].sample_count, 2);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> TestResult<()> {
     let error = handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 0 }))
         .await
@@ -208,5 +315,49 @@ async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> Tes
     .await
     .expect_err("inverted telemetry time ranges must be rejected");
     assert!(error.to_string().contains("from' must be earlier"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) -> TestResult<()> {
+    let now = time::OffsetDateTime::parse("2026-03-28T03:45:00Z", &Rfc3339)?;
+    insert_event(
+        &ctx,
+        "sinex.ingestd",
+        "batch.stats",
+        json!({
+            "batch_size": 8,
+            "fetch_to_ack_ms": 42,
+            "events_deferred": 1,
+            "events_failed": 0,
+            "had_synthesis": true,
+            "insert_path": "copy",
+            "validation_valid": 20,
+            "validation_skipped": 0,
+            "validation_no_schema": 2,
+            "validation_schema_not_found": 1,
+            "validation_invalid": 3,
+            "validation_coverage_pct": 87.5,
+            "suspicious_future_ts_orig": 4
+        }),
+        Some(now),
+    )
+    .await?;
+
+    let response: TelemetryIngestdValidationResponse =
+        serde_json::from_value(handle_telemetry_ingestd_validation(ctx.pool(), json!({})).await?)?;
+    let snapshot = response.snapshot.expect("expected latest validation snapshot");
+    assert_eq!(snapshot.batch_size, 8);
+    assert_eq!(snapshot.fetch_to_ack_ms, 42);
+    assert_eq!(snapshot.events_deferred, 1);
+    assert_eq!(snapshot.events_failed, 0);
+    assert!(snapshot.had_synthesis);
+    assert_eq!(snapshot.insert_path, "copy");
+    assert_eq!(snapshot.validation_valid, 20);
+    assert_eq!(snapshot.validation_no_schema, 2);
+    assert_eq!(snapshot.validation_schema_not_found, 1);
+    assert_eq!(snapshot.validation_invalid, 3);
+    assert_eq!(snapshot.validation_coverage_pct, 87.5);
+    assert_eq!(snapshot.suspicious_future_ts_orig, 4);
     Ok(())
 }

@@ -1380,10 +1380,27 @@ impl StateRepository<'_> {
     fn tombstone_operation_duration_ms(
         operation: &TombstoneOperation,
         finished_at: Timestamp,
-    ) -> Option<i32> {
-        let created_at = Timestamp::parse_rfc3339(&operation.created_at).ok()?;
+    ) -> DbResult<Option<i32>> {
+        let created_at = Timestamp::parse_rfc3339(&operation.created_at).map_err(|error| {
+            SinexError::invalid_state(format!(
+                "Tombstone operation {} has invalid created_at '{}': {error}",
+                operation.operation_id, operation.created_at
+            ))
+        })?;
         let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-        i32::try_from(elapsed_ms).ok()
+        if elapsed_ms < 0 {
+            return Err(SinexError::invalid_state(format!(
+                "Tombstone operation {} finished before its created_at timestamp",
+                operation.operation_id
+            )));
+        }
+        let duration_ms = i32::try_from(elapsed_ms).map_err(|_| {
+            SinexError::invalid_state(format!(
+                "Tombstone operation {} duration overflowed i32 milliseconds",
+                operation.operation_id
+            ))
+        })?;
+        Ok(Some(duration_ms))
     }
 
     fn tombstone_preview_summary_with_message(
@@ -1549,7 +1566,7 @@ impl StateRepository<'_> {
                     "Tombstone operation expired",
                 ),
                 Some("Tombstone operation expired"),
-                Self::tombstone_operation_duration_ms(&operation, now),
+                Self::tombstone_operation_duration_ms(&operation, now)?,
             )
             .await?;
 
@@ -1576,7 +1593,7 @@ impl StateRepository<'_> {
             serde_json::to_value(&operation)?,
             record.preview_summary,
             Some("Tombstone operation cancelled"),
-            Self::tombstone_operation_duration_ms(&operation, finished_at),
+            Self::tombstone_operation_duration_ms(&operation, finished_at)?,
         )
         .await?;
 

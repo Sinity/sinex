@@ -20,7 +20,7 @@ mod common {
     // SDK facade for common node types
     pub use sinex_node_sdk::{
         NodeResult, SinexError,
-        error_helpers::{parse_config_value, parse_typed_config, path_utils},
+        error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config, path_utils},
         runtime::stream::{
             Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },

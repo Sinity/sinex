@@ -8,10 +8,13 @@ mod common;
 
 use async_nats::jetstream;
 use common::{NatsHarness, admin_auth, ensure_dlq_stream};
+use futures::StreamExt;
 use serde_json::json;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
+use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse, DlqRequeueResponse};
+use sinex_primitives::Timestamp;
+use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
@@ -22,12 +25,13 @@ async fn publish_dlq_message(
     payload: &str,
     retry_count: u32,
 ) -> color_eyre::Result<()> {
+    let original_subject = env.nats_subject("events.raw.test-source");
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Retry-Count", retry_count.to_string().as_str());
-    headers.insert("Original-Subject", "events.raw.test-source");
+    headers.insert("Original-Subject", original_subject.as_str());
     headers.insert("Event-Id", event_id);
 
-    let subject = env.nats_subject(&format!("events.dlq.{event_id}"));
+    let subject = env.nats_subject(&format!("events.dlq.test-component.{event_id}"));
     client
         .publish_with_headers(subject, headers, payload.to_owned().into())
         .await?;
@@ -327,5 +331,93 @@ async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()
         .await
         .expect_err("requeue without selector should fail");
     assert!(err.to_string().contains("Must specify either"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+    let js = jetstream::new(harness.client.clone());
+    js.get_or_create_stream(jetstream::stream::Config {
+        name: harness.env.nats_stream_name("EVENTS_DLQ"),
+        subjects: vec![harness.env.nats_subject("events.dlq.ingestd")],
+        retention: jetstream::stream::RetentionPolicy::Limits,
+        max_messages: 1000,
+        storage: jetstream::stream::StorageType::Memory,
+        allow_direct: true,
+        ..Default::default()
+    })
+    .await?;
+
+    let event_id = uuid::Uuid::now_v7().to_string();
+    let original_subject = harness.env.nats_subject("events.raw.test_source.test_input");
+    js.get_or_create_stream(jetstream::stream::Config {
+        name: harness.env.nats_stream_name("EVENTS"),
+        subjects: vec![original_subject.clone()],
+        retention: jetstream::stream::RetentionPolicy::Limits,
+        max_messages: 1000,
+        storage: jetstream::stream::StorageType::Memory,
+        ..Default::default()
+    })
+    .await?;
+    let original_event = json!({
+        "id": event_id,
+        "source": "test.source",
+        "event_type": "test.input",
+        "ts_orig": Timestamp::now().format_rfc3339(),
+        "host": "test-host",
+        "payload": { "value": "gateway requeue proof" }
+    });
+    let dlq_entry = json!({
+        "nats_msg_id": event_id,
+        "error": "db failure",
+        "original_payload": original_event,
+        "failed_at": Timestamp::now().format_rfc3339()
+    });
+
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    headers.insert("Original-Subject", original_subject.as_str());
+    headers.insert("Retry-Count", "0");
+    headers.insert("Event-Id", event_id.as_str());
+
+    let mut original_sub = harness.client.subscribe(original_subject.clone()).await?;
+    harness
+        .client
+        .publish_with_headers(
+            harness.env.nats_subject("events.dlq.ingestd"),
+            headers,
+            serde_json::to_vec(&dlq_entry)?.into(),
+        )
+        .await?;
+    harness.client.flush().await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 1).await?;
+
+    let response: DlqRequeueResponse = serde_json::from_value(
+        handle_dlq_requeue(
+            &harness.services,
+            json!({"event_id": event_id}),
+            &admin_auth(),
+        )
+        .await?,
+    )?;
+    assert_eq!(response.status, "success");
+    assert_eq!(response.requeued_count, 1);
+
+    let requeued = tokio::time::timeout(Duration::from_secs(5), original_sub.next())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("timed out waiting for requeued gateway event"))?
+        .ok_or_else(|| color_eyre::eyre::eyre!("gateway requeue subscription closed"))?;
+    let payload: serde_json::Value = serde_json::from_slice(&requeued.payload)?;
+    assert_eq!(payload["id"].as_str(), Some(event_id.as_str()));
+    assert_eq!(
+        payload["payload"]["value"].as_str(),
+        Some("gateway requeue proof")
+    );
+
+    let after: DlqListResponse =
+        serde_json::from_value(handle_dlq_list(&harness.services, json!({})).await?)?;
+    assert_eq!(after.total_messages, 0);
+
     Ok(())
 }

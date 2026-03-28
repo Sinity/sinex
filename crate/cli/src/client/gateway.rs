@@ -41,9 +41,11 @@ use sinex_primitives::rpc::{
     },
     system::{SystemHealthRequest, SystemHealthResponse},
     telemetry::{
-        CommandFrequencyEntry, FileActivityEntry, RecentActivityEntry, SystemStateBucket,
-        TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
-        TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryRecentActivityRequest,
+        CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot,
+        RecentActivityEntry, SystemStateBucket, TelemetryCommandFrequencyRequest,
+        TelemetryCommandFrequencyResponse, TelemetryFileActivityRequest,
+        TelemetryFileActivityResponse, TelemetryIngestdValidationRequest,
+        TelemetryIngestdValidationResponse, TelemetryRecentActivityRequest,
         TelemetryRecentActivityResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
         TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
         WindowFocusBucket,
@@ -1100,6 +1102,19 @@ impl GatewayClient {
             .await?;
         let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
+    }
+
+    /// Query the latest ingestd validation snapshot.
+    pub async fn telemetry_ingestd_validation(&self) -> Result<Option<IngestdValidationSnapshot>> {
+        let req = TelemetryIngestdValidationRequest::default();
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_INGESTD_VALIDATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryIngestdValidationResponse = serde_json::from_value(result)?;
+        Ok(response.snapshot)
     }
 
     // ==================== SSE Event Stream ====================

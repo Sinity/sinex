@@ -993,6 +993,10 @@ impl HistoryDb {
     /// legitimate long-running operations. The `CommandContext` Drop guard
     /// handles most cases immediately; this is the safety net for SIGKILL.
     fn cleanup_stale_invocations(&self) -> Result<()> {
+        if !self.has_stale_invocations()? {
+            return Ok(());
+        }
+
         // First collect PIDs of stale background jobs before updating them
         let stale_pids = self.stale_background_invocation_pids()?;
 
@@ -1054,6 +1058,26 @@ impl HistoryDb {
         )
             .context("failed to mark stale background jobs as orphaned")?;
         Ok(())
+    }
+
+    fn has_stale_invocations(&self) -> Result<bool> {
+        let has_stale: i64 = self
+            .conn
+            .query_row(
+                r"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM invocations
+                    WHERE status = 'running'
+                      AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+                )
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .context("failed to detect stale invocations before cleanup")?;
+
+        Ok(has_stale != 0)
     }
 
     fn stale_background_invocation_pids(&self) -> Result<Vec<i64>> {
@@ -3830,6 +3854,52 @@ mod tests {
 
         let unlock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
         assert_eq!(unlock_result, 0, "cleanup lock should release cleanly");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_has_stale_invocations_ignores_recent_and_finished_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-has-stale-false.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background, finished_at
+            ) VALUES
+                (?1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'running', ?2, ?3, ?4, 1, NULL),
+                (?5, '2000-01-01T00:00:00Z', 'success', ?2, ?3, ?4, 0, '2000-01-01T00:05:00Z')
+            ",
+            params!["check", "localhost", "/tmp", std::process::id() as i64, "test"],
+        )?;
+
+        assert!(
+            !db.has_stale_invocations()?,
+            "recent running rows and finished rows should not count as stale"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_has_stale_invocations_detects_old_running_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-has-stale-true.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, '2000-01-01T00:00:00Z', 'running', ?2, ?3, ?4, 1)
+            ",
+            params!["check", "localhost", "/tmp", std::process::id() as i64],
+        )?;
+
+        assert!(
+            db.has_stale_invocations()?,
+            "old running rows should be detected as stale"
+        );
         Ok(())
     }
 

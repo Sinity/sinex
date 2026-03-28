@@ -124,23 +124,102 @@ impl CascadeAnalyzerConfig {
 }
 
 fn env_var_usize(var: &str, default: usize) -> usize {
-    std::env::var(var)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    default,
+                    "Invalid cascade analyzer override; expected a positive integer, using default"
+                );
+                default
+            }
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid cascade analyzer override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Cascade analyzer override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
 }
 
 fn env_var_u64(var: &str, default: u64) -> u64 {
-    std::env::var(var)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
+    match std::env::var(var) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    default,
+                    "Invalid cascade analyzer override; expected a positive integer, using default"
+                );
+                default
+            }
+            Err(error) => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    %error,
+                    default,
+                    "Invalid cascade analyzer override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Cascade analyzer override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
 }
 
 fn env_var_bool(var: &str, default: bool) -> bool {
-    std::env::var(var).ok().map_or(default, |s| {
-        matches!(s.to_lowercase().as_str(), "true" | "1" | "yes")
-    })
+    match std::env::var(var) {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => true,
+            "false" | "0" | "no" => false,
+            _ => {
+                warn!(
+                    variable = var,
+                    value = %raw,
+                    default,
+                    "Invalid cascade analyzer boolean override; using default"
+                );
+                default
+            }
+        },
+        Err(std::env::VarError::NotPresent) => default,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                default,
+                "Cascade analyzer boolean override is not valid UTF-8; using default"
+            );
+            default
+        }
+    }
 }
 
 /// Memory-efficient cascade analyzer using streaming algorithms
@@ -646,7 +725,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::temporal::now;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
 
     #[sinex_test]
     async fn session_id_validation_enforces_length() -> TestResult<()> {
@@ -680,6 +759,44 @@ mod tests {
 
         assert_eq!(dependencies.get(&source_id), Some(&vec![event_id]));
         assert_eq!(in_degree.get(&event_id), Some(&1));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn cascade_config_from_env_applies_valid_overrides() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_CASCADE_BATCH_SIZE", "128");
+        env.set("SINEX_CASCADE_MAX_DEPTH", "64");
+        env.set("SINEX_CASCADE_INCLUDE_WEAK", "yes");
+        env.set("SINEX_CASCADE_MEMORY_LIMIT_BYTES", "4096");
+        env.set("SINEX_CASCADE_TIMEOUT_SECS", "15");
+
+        let config = CascadeAnalyzerConfig::from_env();
+
+        assert_eq!(config.batch_size, 128);
+        assert_eq!(config.max_depth, 64);
+        assert!(config.include_weak_dependencies);
+        assert_eq!(config.memory_limit_bytes, Some(4096));
+        assert_eq!(config.timeout, Duration::from_secs(15));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn cascade_config_from_env_rejects_invalid_overrides() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_CASCADE_BATCH_SIZE", "0");
+        env.set("SINEX_CASCADE_MAX_DEPTH", "many");
+        env.set("SINEX_CASCADE_INCLUDE_WEAK", "sometimes");
+        env.set("SINEX_CASCADE_MEMORY_LIMIT_BYTES", "-1");
+        env.set("SINEX_CASCADE_TIMEOUT_SECS", "0");
+
+        let config = CascadeAnalyzerConfig::from_env();
+
+        assert_eq!(config.batch_size, DEFAULT_CASCADE_BATCH_SIZE);
+        assert_eq!(config.max_depth, DEFAULT_CASCADE_MAX_DEPTH);
+        assert!(!config.include_weak_dependencies);
+        assert_eq!(config.memory_limit_bytes, Some(DEFAULT_CASCADE_MEMORY_LIMIT));
+        assert_eq!(config.timeout, Duration::from_secs(DEFAULT_CASCADE_TIMEOUT_SECS));
         Ok(())
     }
 

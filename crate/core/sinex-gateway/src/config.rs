@@ -288,15 +288,14 @@ impl Default for GatewayConfig {
 
 impl GatewayConfig {
     /// Load configuration from defaults and environment variables.
-    #[must_use]
-    pub fn load() -> Self {
+    pub fn load() -> Result<Self, SinexError> {
         let mut config = Self {
             nats: NatsConnectionConfig::from_env(),
             ..Self::default()
         };
-        config.apply_gateway_env_overrides();
-        config.apply_manual_env_overrides();
-        config
+        config.apply_gateway_env_overrides()?;
+        config.apply_manual_env_overrides()?;
+        Ok(config)
     }
 
     /// Apply CLI overrides on top of loaded config.
@@ -427,177 +426,203 @@ impl GatewayConfig {
         self.nats.clone()
     }
 
-    fn apply_gateway_env_overrides(&mut self) {
-        self.tcp_listen = env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone());
+    fn apply_gateway_env_overrides(&mut self) -> Result<(), SinexError> {
+        self.tcp_listen =
+            env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone())?;
         self.cors_origins =
-            env_string_override("SINEX_GATEWAY_CORS_ORIGINS", self.cors_origins.clone());
+            env_string_override("SINEX_GATEWAY_CORS_ORIGINS", self.cors_origins.clone())?;
         self.pool_max_connections = env_u32_override(
             "SINEX_GATEWAY_POOL_MAX_CONNECTIONS",
             self.pool_max_connections,
-        );
+        )?;
         self.pool_min_connections = env_u32_override(
             "SINEX_GATEWAY_POOL_MIN_CONNECTIONS",
             self.pool_min_connections,
-        );
+        )?;
         self.pool_acquire_timeout_secs = env_u64_override(
             "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS",
             self.pool_acquire_timeout_secs,
-        );
-        self.annex_path = env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone());
-        self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take());
-        self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take());
-        self.tls_client_ca =
-            env_option_override("SINEX_GATEWAY_TLS_CLIENT_CA", self.tls_client_ca.take());
+        )?;
+        self.annex_path =
+            env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone())?;
+        self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take())?;
+        self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take())?;
+        self.tls_client_ca = env_option_override(
+            "SINEX_GATEWAY_TLS_CLIENT_CA",
+            self.tls_client_ca.take(),
+        )?;
         self.require_client_tls =
-            env_bool_override("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", self.require_client_tls);
+            env_bool_override("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", self.require_client_tls)?;
         self.max_concurrency =
-            env_usize_override("SINEX_GATEWAY_MAX_CONCURRENCY", self.max_concurrency);
+            env_usize_override("SINEX_GATEWAY_MAX_CONCURRENCY", self.max_concurrency)?;
         self.request_timeout_secs = env_u64_override(
             "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
             self.request_timeout_secs,
-        );
-        self.max_body_bytes = env_u64_override("SINEX_GATEWAY_MAX_BODY_BYTES", self.max_body_bytes);
+        )?;
+        self.max_body_bytes =
+            env_u64_override("SINEX_GATEWAY_MAX_BODY_BYTES", self.max_body_bytes)?;
         self.max_blob_bytes =
-            env_usize_override("SINEX_GATEWAY_MAX_BLOB_BYTES", self.max_blob_bytes);
+            env_usize_override("SINEX_GATEWAY_MAX_BLOB_BYTES", self.max_blob_bytes)?;
+        Ok(())
     }
 
-    fn apply_manual_env_overrides(&mut self) {
-        self.rpc_token = std::env::var("SINEX_RPC_TOKEN")
-            .ok()
+    fn apply_manual_env_overrides(&mut self) -> Result<(), SinexError> {
+        self.rpc_token = env_var_optional("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());
-        self.rpc_token_file = std::env::var("SINEX_RPC_TOKEN_FILE")
-            .ok()
-            .or(self.rpc_token_file.take());
-        self.admin_token_file = std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")
-            .ok()
+        self.rpc_token_file =
+            env_var_optional("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
+        self.admin_token_file = env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?
             .or(self.admin_token_file.take());
-        self.nats.url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| self.nats.url.clone());
-        self.nats.name = std::env::var("SINEX_NATS_NAME")
-            .ok()
-            .or(self.nats.name.take());
-        self.nats.require_tls = env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls);
-        self.nats.ca_cert = std::env::var("SINEX_NATS_CA_CERT")
-            .ok()
+        self.nats.url = env_string_override("SINEX_NATS_URL", self.nats.url.clone())?;
+        self.nats.name = env_var_optional("SINEX_NATS_NAME")?.or(self.nats.name.take());
+        self.nats.require_tls =
+            env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls)?;
+        self.nats.ca_cert = env_var_optional("SINEX_NATS_CA_CERT")?
             .map(PathBuf::from)
             .or(self.nats.ca_cert.take());
-        self.nats.client_cert = std::env::var("SINEX_NATS_CLIENT_CERT")
-            .ok()
+        self.nats.client_cert = env_var_optional("SINEX_NATS_CLIENT_CERT")?
             .map(PathBuf::from)
             .or(self.nats.client_cert.take());
-        self.nats.client_key = std::env::var("SINEX_NATS_CLIENT_KEY")
-            .ok()
+        self.nats.client_key = env_var_optional("SINEX_NATS_CLIENT_KEY")?
             .map(PathBuf::from)
             .or(self.nats.client_key.take());
-        self.nats.creds_file = std::env::var("SINEX_NATS_CREDS_FILE")
-            .ok()
+        self.nats.creds_file = env_var_optional("SINEX_NATS_CREDS_FILE")?
             .map(PathBuf::from)
             .or(self.nats.creds_file.take());
-        self.nats.nkey_seed_file = std::env::var("SINEX_NATS_NKEY_SEED_FILE")
-            .ok()
+        self.nats.nkey_seed_file = env_var_optional("SINEX_NATS_NKEY_SEED_FILE")?
             .map(PathBuf::from)
             .or(self.nats.nkey_seed_file.take());
-        self.nats.token = std::env::var("SINEX_NATS_TOKEN")
-            .ok()
-            .or(self.nats.token.take());
-        self.nats.token_file = std::env::var("SINEX_NATS_TOKEN_FILE")
-            .ok()
+        self.nats.token = env_var_optional("SINEX_NATS_TOKEN")?.or(self.nats.token.take());
+        self.nats.token_file = env_var_optional("SINEX_NATS_TOKEN_FILE")?
             .map(PathBuf::from)
             .or(self.nats.token_file.take());
 
         self.rpc_rate_limit_enabled =
-            env_bool_override("SINEX_RPC_RATE_LIMIT_ENABLED", self.rpc_rate_limit_enabled);
+            env_bool_override("SINEX_RPC_RATE_LIMIT_ENABLED", self.rpc_rate_limit_enabled)?;
         self.rpc_rate_limit_requests_per_sec = env_u32_override(
             "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC",
             self.rpc_rate_limit_requests_per_sec,
-        );
+        )?;
         self.rpc_rate_limit_burst =
-            env_u32_override("SINEX_RPC_RATE_LIMIT_BURST", self.rpc_rate_limit_burst);
+            env_u32_override("SINEX_RPC_RATE_LIMIT_BURST", self.rpc_rate_limit_burst)?;
         self.rpc_rate_limit_idle_timeout_secs = env_u64_override(
             "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS",
             self.rpc_rate_limit_idle_timeout_secs,
-        );
+        )?;
         self.rpc_rate_limit_window_secs = env_u64_override(
             "SINEX_RPC_RATE_LIMIT_WINDOW_SECS",
             self.rpc_rate_limit_window_secs,
-        );
+        )?;
         self.rpc_rate_limit_per_minute = env_u32_override(
             "SINEX_RPC_RATE_LIMIT_PER_MINUTE",
             self.rpc_rate_limit_per_minute,
-        );
+        )?;
         self.replay_control_timeout_secs = env_u64_override(
             "SINEX_REPLAY_CONTROL_TIMEOUT_SECS",
             self.replay_control_timeout_secs,
-        );
+        )?;
         self.nats_consumer_create_timeout_secs = env_u64_override(
             "SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS",
             self.nats_consumer_create_timeout_secs,
-        );
-        self.native_messaging_trusted_extensions =
-            std::env::var("SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS")
-                .ok()
-                .or(self.native_messaging_trusted_extensions.take());
-        self.native_messaging_trusted_hosts = std::env::var("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS")
-            .ok()
-            .or(self.native_messaging_trusted_hosts.take());
-        self.native_messaging_protocol_version =
-            std::env::var("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION")
-                .ok()
-                .or(self.native_messaging_protocol_version.take());
-        self.native_messaging_capabilities = std::env::var("SINEX_NATIVE_MESSAGING_CAPABILITIES")
-            .ok()
-            .or(self.native_messaging_capabilities.take());
-        self.native_messaging_extension_roles =
-            std::env::var("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES")
-                .ok()
-                .or(self.native_messaging_extension_roles.take());
+        )?;
+        self.native_messaging_trusted_extensions = env_var_optional(
+            "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+        )?
+        .or(self.native_messaging_trusted_extensions.take());
+        self.native_messaging_trusted_hosts =
+            env_var_optional("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS")?
+                .or(self.native_messaging_trusted_hosts.take());
+        self.native_messaging_protocol_version = env_var_optional(
+            "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION",
+        )?
+        .or(self.native_messaging_protocol_version.take());
+        self.native_messaging_capabilities =
+            env_var_optional("SINEX_NATIVE_MESSAGING_CAPABILITIES")?
+                .or(self.native_messaging_capabilities.take());
+        self.native_messaging_extension_roles = env_var_optional(
+            "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES",
+        )?
+        .or(self.native_messaging_extension_roles.take());
         self.native_messaging_read_timeout_secs = env_u64_override(
             "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS",
             self.native_messaging_read_timeout_secs,
-        );
+        )?;
         self.native_messaging_max_size_bytes = env_usize_override(
             "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES",
             self.native_messaging_max_size_bytes,
-        );
+        )?;
+        Ok(())
     }
 }
 
-fn env_string_override(name: &str, current: String) -> String {
-    std::env::var(name).unwrap_or(current)
+fn env_var_optional(name: &str) -> Result<Option<String>, SinexError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable {name} is not valid UTF-8"
+        ))),
+    }
 }
 
-fn env_option_override(name: &str, current: Option<String>) -> Option<String> {
-    std::env::var(name).ok().or(current)
+fn env_string_override(name: &str, current: String) -> Result<String, SinexError> {
+    Ok(env_var_optional(name)?.unwrap_or(current))
 }
 
-fn env_u32_override(name: &str, current: u32) -> u32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse::<u32>().ok())
-        .unwrap_or(current)
+fn env_option_override(
+    name: &str,
+    current: Option<String>,
+) -> Result<Option<String>, SinexError> {
+    Ok(env_var_optional(name)?.or(current))
 }
 
-fn env_u64_override(name: &str, current: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .unwrap_or(current)
+fn env_u32_override(name: &str, current: u32) -> Result<u32, SinexError> {
+    let Some(raw) = env_var_optional(name)? else {
+        return Ok(current);
+    };
+
+    raw.parse::<u32>().map_err(|error| {
+        SinexError::configuration(format!(
+            "Environment variable {name} has invalid value `{raw}`: {error}"
+        ))
+    })
 }
 
-fn env_usize_override(name: &str, current: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(current)
+fn env_u64_override(name: &str, current: u64) -> Result<u64, SinexError> {
+    let Some(raw) = env_var_optional(name)? else {
+        return Ok(current);
+    };
+
+    raw.parse::<u64>().map_err(|error| {
+        SinexError::configuration(format!(
+            "Environment variable {name} has invalid value `{raw}`: {error}"
+        ))
+    })
 }
 
-fn env_bool_override(name: &str, current: bool) -> bool {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| match raw.to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" => Some(true),
-            "0" | "false" | "no" => Some(false),
-            _ => None,
-        })
-        .unwrap_or(current)
+fn env_usize_override(name: &str, current: usize) -> Result<usize, SinexError> {
+    let Some(raw) = env_var_optional(name)? else {
+        return Ok(current);
+    };
+
+    raw.parse::<usize>().map_err(|error| {
+        SinexError::configuration(format!(
+            "Environment variable {name} has invalid value `{raw}`: {error}"
+        ))
+    })
+}
+
+fn env_bool_override(name: &str, current: bool) -> Result<bool, SinexError> {
+    let Some(raw) = env_var_optional(name)? else {
+        return Ok(current);
+    };
+
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(SinexError::configuration(format!(
+            "Environment variable {name} has invalid boolean value `{raw}`"
+        ))),
+    }
 }

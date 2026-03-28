@@ -5,9 +5,10 @@ use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::units::Seconds;
 use sqlx::pool::PoolConnection;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Postgres};
 use std::env;
+use std::str::FromStr;
 use std::sync::OnceLock;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -211,11 +212,13 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
 }
 
 pub fn resolve_effective_database_url(base_url: &str) -> Result<String> {
-    use sinex_primitives::environment::environment;
-
-    environment().database_url(base_url).map_err(|e| {
-        SinexError::configuration("failed to construct database URL").with_std_error(&e)
-    })
+    if base_url.trim().is_empty() {
+        return Err(SinexError::configuration("DATABASE_URL cannot be empty"));
+    }
+    PgConnectOptions::from_str(base_url).map_err(|error| {
+        SinexError::configuration("failed to parse DATABASE_URL").with_std_error(&error)
+    })?;
+    Ok(base_url.to_string())
 }
 
 pub fn get_database_url() -> Result<String> {

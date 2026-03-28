@@ -193,6 +193,9 @@ features = [
     "testing",
 ]
 
+[dev-dependencies.sinex-schema]
+path = "../../lib/sinex-schema"
+
 [build-dependencies]
 shadow-rs = "0.35"
 

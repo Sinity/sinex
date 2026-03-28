@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
         args.annex_path,
         args.assembler_state_dir,
         args.namespace,
-    );
+    )?;
 
     if args.validate_config {
         config.validate_and_exit().await;

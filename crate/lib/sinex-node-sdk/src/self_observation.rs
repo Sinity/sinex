@@ -556,6 +556,7 @@ impl SelfObserver {
         validation_schema_not_found: u64,
         validation_invalid: u64,
         validation_coverage_pct: f64,
+        suspicious_future_ts_orig: u64,
     ) -> Result<(), SelfObservationError> {
         self.publish(IngestdBatchStatsPayload {
             batch_size,
@@ -570,6 +571,7 @@ impl SelfObserver {
             validation_schema_not_found,
             validation_invalid,
             validation_coverage_pct,
+            suspicious_future_ts_orig,
         })
         .await
     }

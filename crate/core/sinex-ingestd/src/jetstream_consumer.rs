@@ -229,6 +229,7 @@ const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
 const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
+const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
 /// before `JetStream` redelivers the event. Used by both the proactive ready-set
@@ -236,6 +237,10 @@ const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
 const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_millis(200);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
 const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
+
+fn is_suspicious_future_ts_orig(ts_orig: Timestamp, now: Timestamp) -> bool {
+    ts_orig > now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW
+}
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -311,6 +316,7 @@ struct ConsumerStats {
     events_processed: AtomicU64,
     events_failed: AtomicU64,
     events_deferred: AtomicU64,
+    suspicious_future_ts_orig: AtomicU64,
     validation_failures: AtomicU64,
     dlq_routed: AtomicU64,
     confirmation_failures: AtomicU64,
@@ -327,6 +333,7 @@ impl ConsumerStats {
             events_processed = self.events_processed.load(Ordering::Relaxed),
             events_failed = self.events_failed.load(Ordering::Relaxed),
             events_deferred = self.events_deferred.load(Ordering::Relaxed),
+            suspicious_future_ts_orig = self.suspicious_future_ts_orig.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
@@ -355,6 +362,40 @@ impl JetStreamConsumer {
             && let Err(error) = observer.emit_gauge(metric, value, labels).await
         {
             Self::log_observer_error(metric, &error);
+        }
+    }
+
+    async fn record_suspicious_ts_orig(&self, event: &Event<JsonValue>) {
+        let Some(ts_orig) = event.ts_orig else {
+            return;
+        };
+
+        let now = Timestamp::now();
+        if !is_suspicious_future_ts_orig(ts_orig, now) {
+            return;
+        }
+        let latest_expected = now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW;
+
+        self.stats
+            .suspicious_future_ts_orig
+            .fetch_add(1, Ordering::Relaxed);
+
+        warn!(
+            event_id = ?event.id,
+            source = %event.source,
+            event_type = %event.event_type,
+            ts_orig = %ts_orig,
+            latest_expected = %latest_expected,
+            skew_seconds = (ts_orig - now).whole_seconds(),
+            "Event ts_orig is implausibly far in the future"
+        );
+
+        if let Some(ref observer) = self.observer
+            && let Err(error) = observer
+                .emit_counter("suspicious_future_ts_orig_total", 1, None)
+                .await
+        {
+            Self::log_observer_error("ingestd.suspicious_ts_orig", &error);
         }
     }
 
@@ -572,6 +613,7 @@ impl JetStreamConsumer {
                 max_age: Duration::from_hours(720), // 30 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
+                allow_direct: true,
                 ..Default::default()
             })
             .await
@@ -766,6 +808,10 @@ impl JetStreamConsumer {
                 "query_builder"
             };
             let val_stats = self.validator.read().await.stats();
+            let suspicious_future_ts_orig = self
+                .stats
+                .suspicious_future_ts_orig
+                .load(Ordering::Relaxed);
             if let Err(error) = observer
                 .emit_ingestd_batch_stats(
                     batch_size,
@@ -780,6 +826,7 @@ impl JetStreamConsumer {
                     val_stats.schema_not_found,
                     val_stats.invalid,
                     val_stats.coverage_pct(),
+                    suspicious_future_ts_orig,
                 )
                 .await
             {
@@ -810,6 +857,8 @@ impl JetStreamConsumer {
                 return Ok(None);
             }
         };
+
+        self.record_suspicious_ts_orig(&event).await;
 
         // Validate event using EventValidator; capture the matched schema_id for persistence.
         let validated_schema_id = match self.validate_event(&event).await {
@@ -1580,6 +1629,10 @@ impl JetStreamConsumer {
         };
         let dlq_publish_msg_id =
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
+        let original_event_id = original_payload
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
 
         let dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id.unwrap_or_else(|| "unknown".to_string()),
@@ -1593,6 +1646,11 @@ impl JetStreamConsumer {
         })?;
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", dlq_publish_msg_id.as_str());
+        headers.insert("Original-Subject", msg.subject.as_str());
+        headers.insert("Retry-Count", "0");
+        if let Some(event_id) = original_event_id.as_deref() {
+            headers.insert("Event-Id", event_id);
+        }
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
@@ -1794,6 +1852,20 @@ mod tests {
             err.to_string().contains("Event repository omitted inserted_ids"),
             "unexpected error: {err}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn suspicious_future_ts_orig_has_one_hour_soft_threshold() -> TestResult<()> {
+        let now = Timestamp::now();
+        assert!(!is_suspicious_future_ts_orig(
+            now + time::Duration::minutes(59),
+            now
+        ));
+        assert!(is_suspicious_future_ts_orig(
+            now + time::Duration::minutes(61),
+            now
+        ));
         Ok(())
     }
 }

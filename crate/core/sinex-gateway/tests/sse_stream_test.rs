@@ -249,6 +249,31 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
     Ok(())
 }
 
+#[sinex_test]
+async fn bus_retries_when_subscription_closes_after_startup(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let pool = ctx.pool().clone();
+    let nats = ctx.nats_client();
+    let env = ctx.env().clone();
+
+    let bus = Arc::new(SubscriptionBus::new());
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool, env).await?;
+
+    ctx.nats_handle()?.shutdown().await?;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        !bus_task.is_finished(),
+        "closing the live NATS subscription should keep the bus in reconnect mode instead of exiting"
+    );
+
+    let _ = shutdown_tx.send(true);
+    tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Tests: Bus data flow (NATS + DB)
 // ─────────────────────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
 use sinex_ingestd::IngestdConfig;
-use sinex_primitives::environment::environment;
 use sinex_primitives::validation::config_validation::ConfigValidation;
 use xtask::sandbox::prelude::*;
 
@@ -41,7 +40,7 @@ async fn constructs_from_args() -> TestResult<()> {
         None,
         None,
         None,
-    );
+    )?;
 
     assert_eq!(config.database_url, "postgresql://custom/db");
     assert_eq!(config.nats.url, "nats://custom:4222");
@@ -60,11 +59,8 @@ async fn defaults_read_process_environment() -> TestResult<()> {
     env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-env-config");
 
     let config = IngestdConfig::default();
-    let expected_database_url = environment()
-        .database_url("postgresql://env/example")
-        .unwrap_or_else(|_| "postgresql://env/example".to_string());
 
-    assert_eq!(config.database_url, expected_database_url);
+    assert_eq!(config.database_url, "postgresql://env/example");
     assert_eq!(config.nats.url, "tls://env-nats:4222");
     assert!(config.nats.require_tls);
     assert_eq!(
@@ -81,7 +77,6 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
     env.set("SINEX_NATS_URL", "nats://env-default:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "0");
     env.set("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS", "45");
-
     let config = IngestdConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "tls://cli-nats:4222".to_string(),
@@ -95,7 +90,7 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
         None,
         None,
         None,
-    );
+    )?;
 
     assert_eq!(config.database_url, "postgresql://cli/override");
     assert_eq!(config.nats.url, "tls://cli-nats:4222");
@@ -115,5 +110,32 @@ async fn requires_tls_when_enabled() -> TestResult<()> {
     config.nats.url = "tls://localhost:4222".to_string();
     assert!(config.validate_config().is_ok());
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn rejects_invalid_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS", "soon");
+
+    let error = IngestdConfig::from_args(
+        Some("postgresql://cli/override".to_string()),
+        "nats://localhost:4222".to_string(),
+        false,
+        16,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect_err("invalid ingestd env should fail config construction");
+
+    let message = error.to_string();
+    assert!(message.contains("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS"));
+    assert!(message.contains("soon"));
     Ok(())
 }

@@ -507,9 +507,47 @@ impl From<serde_json::Error> for SinexError {
 }
 
 #[cfg(feature = "sqlx")]
+fn classify_sqlx_error(error: &sqlx::Error, message: impl Into<String>) -> SinexError {
+    use sqlx::error::ErrorKind;
+
+    let message = message.into();
+    let mut sinex_error = match error {
+        sqlx::Error::RowNotFound => SinexError::not_found(message),
+        sqlx::Error::PoolTimedOut => {
+            SinexError::timeout(message).with_context("timeout_reason", "pool_exhausted")
+        }
+        sqlx::Error::Database(db_err) => {
+            let mut err = match db_err.kind() {
+                ErrorKind::UniqueViolation => SinexError::already_exists(message),
+                ErrorKind::ForeignKeyViolation
+                | ErrorKind::NotNullViolation
+                | ErrorKind::CheckViolation => SinexError::validation(message),
+                ErrorKind::Other | _ => SinexError::database(message),
+            };
+
+            if let Some(code) = db_err.code() {
+                err = err.with_context("sqlstate", code.as_ref());
+            }
+            if let Some(constraint) = db_err.constraint() {
+                err = err.with_context("constraint", constraint);
+            }
+            if let Some(table) = db_err.table() {
+                err = err.with_context("table", table);
+            }
+
+            err.with_context("database_error_kind", format!("{:?}", db_err.kind()))
+        }
+        _ => SinexError::database(message),
+    };
+
+    sinex_error = sinex_error.with_std_error(error);
+    sinex_error
+}
+
+#[cfg(feature = "sqlx")]
 impl From<sqlx::Error> for SinexError {
     fn from(e: sqlx::Error) -> Self {
-        SinexError::Database(ErrorDetails::new(e.to_string())).with_std_error(&e)
+        classify_sqlx_error(&e, e.to_string())
     }
 }
 

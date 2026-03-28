@@ -157,6 +157,59 @@ async fn coordination_list_instances_without_leader_marks_all_non_leader(
 }
 
 #[sinex_test]
+async fn coordination_list_instances_rejects_invalid_hostname_metadata(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-invalid-hostname")?;
+    let now = temporal::now().unix_timestamp();
+
+    kv_client
+        .register_instance(&InstanceMetadata {
+            instance_id: "instance-a".to_string(),
+            hostname: "bad host name".to_string(),
+            version: "1.0.0-test".to_string(),
+            started_at: now - 30,
+            last_heartbeat: now,
+        })
+        .await?;
+
+    let error = handle_coordination_list_instances(&kv_client, json!({}))
+        .await
+        .expect_err("invalid coordination metadata must fail honestly");
+    assert!(error.to_string().contains("Invalid coordination hostname"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn coordination_instance_health_rejects_invalid_hostname_metadata(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let kv_client = build_coordination_client(&ctx, "gateway-health-invalid-hostname")?;
+    let now = temporal::now().unix_timestamp();
+    let metadata = InstanceMetadata {
+        instance_id: "instance-a".to_string(),
+        hostname: "bad host name".to_string(),
+        version: "1.0.0-test".to_string(),
+        started_at: now - 120,
+        last_heartbeat: now - 30,
+    };
+    kv_client.register_instance(&metadata).await?;
+
+    let error = handle_coordination_instance_health(
+        &kv_client,
+        json!({ "instance_id": metadata.instance_id }),
+    )
+    .await
+    .expect_err("invalid coordination metadata must fail honestly");
+    assert!(error.to_string().contains("Invalid coordination hostname"));
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn coordination_get_leader_rejects_missing_leader_metadata(
     ctx: TestContext,
 ) -> TestResult<()> {

@@ -46,6 +46,9 @@ use crate::watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 /// Can be overridden via `SINEX_JOURNAL_MAX_LINE_BYTES` environment variable.
 const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
+/// Preview length for malformed or oversized journal lines in logs and DLQ payloads.
+const JOURNAL_LINE_PREVIEW_LIMIT: usize = 512;
+
 /// Required keys in a systemd journal cursor string.
 /// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
 const CURSOR_REQUIRED_KEYS: &[&str] = &["s", "i", "b", "m", "t", "x"];
@@ -170,6 +173,134 @@ pub struct UnifiedJournalWatcher {
 }
 
 impl UnifiedJournalWatcher {
+    fn parse_optional_field<T>(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        cursor: &str,
+    ) -> NodeResult<Option<T>>
+    where
+        T: std::str::FromStr,
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
+        let Some(raw) = entry.get(field).and_then(serde_json::Value::as_str) else {
+            return Ok(None);
+        };
+        raw.parse::<T>().map(Some).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has invalid {field}"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("field", field.to_string())
+            .with_context("value", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn require_entry_string_field(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        context: &str,
+    ) -> NodeResult<String> {
+        entry
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .map(std::string::ToString::to_string)
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "{context} is missing required {field}"
+                ))
+            })
+    }
+
+    fn require_nonempty_entry_string_field(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        context: &str,
+    ) -> NodeResult<String> {
+        let value = Self::require_entry_string_field(entry, field, context)?;
+        if value.trim().is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(format!(
+                "{context} has empty {field}"
+            )));
+        }
+        Ok(value)
+    }
+
+    fn parse_journal_timestamp_us(
+        entry: &serde_json::Map<String, serde_json::Value>,
+        cursor: &str,
+    ) -> NodeResult<u64> {
+        let raw = entry
+            .get("__REALTIME_TIMESTAMP")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Journal entry {cursor} is missing __REALTIME_TIMESTAMP"
+                ))
+                .with_context("cursor", cursor.to_string())
+            })?;
+        raw.parse::<u64>().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has invalid __REALTIME_TIMESTAMP"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn journal_timestamp_from_micros(timestamp_us: u64, cursor: &str) -> NodeResult<Timestamp> {
+        Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000).ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has out-of-range __REALTIME_TIMESTAMP"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+        })
+    }
+
+    fn parse_realtime_timestamp_us(
+        entry: &serde_json::Value,
+        unit_name: &str,
+    ) -> NodeResult<u64> {
+        let raw = entry["__REALTIME_TIMESTAMP"].as_str().ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} is missing __REALTIME_TIMESTAMP"
+            ))
+        })?;
+        raw.parse::<u64>().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} has invalid __REALTIME_TIMESTAMP"
+            ))
+            .with_context("unit_name", unit_name.to_string())
+            .with_context("timestamp_us", raw.to_string())
+            .with_source(error)
+        })
+    }
+
+    fn timestamp_from_micros(timestamp_us: u64, unit_name: &str) -> NodeResult<Timestamp> {
+        Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000).ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Systemd journal entry for {unit_name} has out-of-range __REALTIME_TIMESTAMP"
+            ))
+            .with_context("unit_name", unit_name.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+        })
+    }
+
+    fn serialize_systemd_event<T: serde::Serialize>(
+        mut event: Event<T>,
+        uuid: uuid::Uuid,
+        ts_orig: Timestamp,
+    ) -> NodeResult<Event<JsonValue>> {
+        event.id = Some(sinex_primitives::Id::from_uuid(uuid));
+        event.ts_orig = Some(ts_orig);
+        event.to_json_event().map_err(|error| {
+            sinex_node_sdk::SinexError::processing("Failed to serialize systemd journal entry")
+                .with_source(error)
+        })
+    }
+
     /// Create new unified journal watcher
     pub async fn new(
         journal_config: JournalConfig,
@@ -256,20 +387,68 @@ impl UnifiedJournalWatcher {
         })
     }
 
+    fn journal_line_preview(line: &str) -> (String, bool) {
+        let preview: String = line.chars().take(JOURNAL_LINE_PREVIEW_LIMIT).collect();
+        let preview_truncated = line.chars().count() > JOURNAL_LINE_PREVIEW_LIMIT;
+        (preview, preview_truncated)
+    }
+
+    fn parse_oversized_line_metadata(
+        line: &str,
+    ) -> Result<(String, Option<String>), serde_json::Error> {
+        let entry: serde_json::Value = serde_json::from_str(line)?;
+        let cursor = entry
+            .get("__CURSOR")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let unit = entry
+            .get("_SYSTEMD_UNIT")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        Ok((cursor, unit))
+    }
+
+    fn require_sync_end_cursor(entries_count: u64, last_cursor: Option<String>) -> NodeResult<String> {
+        last_cursor.ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Historical journal import processed {entries_count} entries without a terminal cursor"
+            ))
+        })
+    }
+
+    fn record_malformed_journal_line(
+        &self,
+        phase: &'static str,
+        line: &str,
+        error: &serde_json::Error,
+    ) {
+        let (line_preview, line_preview_truncated) = Self::journal_line_preview(line);
+        let message = format!("Failed to parse journal {phase} line: {error}");
+        self.record_error(message);
+        warn!(
+            phase,
+            line_bytes = line.len(),
+            line_preview = %line_preview,
+            line_preview_truncated,
+            error = %error,
+            "Ignoring malformed journal line"
+        );
+    }
+
     async fn route_oversized_line_to_dlq(
         &self,
         material: &WatcherMaterialContext,
         line: &str,
         cursor: &str,
         unit: Option<&str>,
+        metadata_parse_error: Option<&str>,
     ) -> NodeResult<bool> {
         let Some(publisher) = self.dlq_publisher.as_ref() else {
             return Ok(false);
         };
 
-        let preview_limit = 512usize;
-        let preview: String = line.chars().take(preview_limit).collect();
-        let preview_truncated = line.chars().count() > preview_limit;
+        let (preview, preview_truncated) = Self::journal_line_preview(line);
         let event = Event::new_json(
             "system-watcher",
             "journal.line.rejected",
@@ -281,6 +460,7 @@ impl UnifiedJournalWatcher {
                 "journal_unit": unit,
                 "line_preview": preview,
                 "line_preview_truncated": preview_truncated,
+                "metadata_parse_error": metadata_parse_error,
             }),
             material.initial_provenance(),
         )
@@ -424,7 +604,7 @@ impl UnifiedJournalWatcher {
 
                         // Check if this is a systemd event and emit systemd-specific event
                         if self.systemd_enabled
-                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
+                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
                             && let Some(tx) = systemd_tx.as_ref()
                         {
                             self.send_event(tx, systemd_event, "systemd_batch", material)
@@ -432,7 +612,8 @@ impl UnifiedJournalWatcher {
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to parse journal entry: {}", e);
+                        let raw_line = String::from_utf8_lossy(line);
+                        self.record_malformed_journal_line("historical", raw_line.as_ref(), &e);
                     }
                 }
             }
@@ -452,10 +633,11 @@ impl UnifiedJournalWatcher {
 
         // Send sync event
         if entries_count > 0 {
+            let end_cursor = Self::require_sync_end_cursor(entries_count, last_cursor)?;
             let sync_payload = JournalSyncPayload {
                 sync_type: JournalSyncType::InitialImport,
                 start_cursor: first_cursor,
-                end_cursor: last_cursor.unwrap_or_default(),
+                end_cursor,
                 entries_count,
                 time_start: None,
                 time_end: None,
@@ -588,26 +770,27 @@ impl UnifiedJournalWatcher {
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
                     if line.len() > self.max_line_bytes {
-                        // Extract cursor and unit name for DLQ metadata if possible
-                        let (cursor, unit) = line
-                            .trim()
-                            .parse::<serde_json::Value>()
-                            .ok()
-                            .and_then(|entry| {
-                                let cursor = entry
-                                    .get("__CURSOR")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-                                let unit = entry
-                                    .get("_SYSTEMD_UNIT")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-                                cursor.map(|c| (c, unit))
-                            })
-                            .unwrap_or_else(|| ("unknown".to_string(), None));
+                        let (cursor, unit, metadata_parse_error) =
+                            match Self::parse_oversized_line_metadata(line.trim()) {
+                                Ok((cursor, unit)) => (cursor, unit, None),
+                                Err(error) => {
+                                    self.record_malformed_journal_line(
+                                        "oversized",
+                                        line.trim(),
+                                        &error,
+                                    );
+                                    ("unknown".to_string(), None, Some(error.to_string()))
+                                }
+                            };
 
                         match self
-                            .route_oversized_line_to_dlq(material, &line, &cursor, unit.as_deref())
+                            .route_oversized_line_to_dlq(
+                                material,
+                                &line,
+                                &cursor,
+                                unit.as_deref(),
+                                metadata_parse_error.as_deref(),
+                            )
                             .await
                         {
                             Ok(true) => {
@@ -669,7 +852,7 @@ impl UnifiedJournalWatcher {
                                 // Emit systemd event if applicable
                                 if self.systemd_enabled
                                     && let Some(systemd_event) =
-                                        self.parse_systemd_entry(&entry, material)
+                                        self.parse_systemd_entry(&entry, material)?
                                     && let Some(ref tx) = systemd_tx
                                 {
                                     self.send_event(
@@ -682,7 +865,7 @@ impl UnifiedJournalWatcher {
                                 }
                             }
                             Err(e) => {
-                                debug!("Failed to parse journal entry: {}", e);
+                                self.record_malformed_journal_line("follow", &line, &e);
                             }
                         }
                     }
@@ -713,37 +896,20 @@ impl UnifiedJournalWatcher {
         })?;
 
         // Extract required fields
-        let cursor = obj
-            .get("__CURSOR")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| sinex_node_sdk::SinexError::processing("Missing cursor".to_string()))?;
+        let cursor =
+            Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Journal entry")?;
 
-        let timestamp_us = obj
-            .get("__REALTIME_TIMESTAMP")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<i64>().ok())
-            .ok_or_else(|| {
-                sinex_node_sdk::SinexError::processing("Missing timestamp".to_string())
-            })?;
+        let timestamp_us = Self::parse_journal_timestamp_us(obj, &cursor)?;
 
-        let message = obj
-            .get("MESSAGE")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                privacy::engine()
-                    .process(s, ProcessingContext::Journal)
-                    .text
-                    .into_owned()
-            })
-            .unwrap_or_default();
+        let message = privacy::engine()
+            .process(
+                &Self::require_entry_string_field(obj, "MESSAGE", "Journal entry")?,
+                ProcessingContext::Journal,
+            )
+            .text
+            .into_owned();
 
-        // Parse timestamp
-        let timestamp: Timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
-                .unwrap_or_else(Timestamp::now)
-        } else {
-            sinex_primitives::temporal::now()
-        };
+        let timestamp = Self::journal_timestamp_from_micros(timestamp_us, &cursor)?;
 
         // Extract optional fields
         let hostname = obj
@@ -758,18 +924,9 @@ impl UnifiedJournalWatcher {
             .get("SYSLOG_IDENTIFIER")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        let pid = obj
-            .get("_PID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
-        let uid = obj
-            .get("_UID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
-        let gid = obj
-            .get("_GID")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
+        let pid = Self::parse_optional_field(obj, "_PID", &cursor)?;
+        let uid = Self::parse_optional_field(obj, "_UID", &cursor)?;
+        let gid = Self::parse_optional_field(obj, "_GID", &cursor)?;
         let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
             privacy::engine()
                 .process(s, ProcessingContext::Command)
@@ -780,10 +937,7 @@ impl UnifiedJournalWatcher {
             .get("_EXE")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        let priority = obj
-            .get("PRIORITY")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok());
+        let priority = Self::parse_optional_field(obj, "PRIORITY", &cursor)?;
         let facility = obj
             .get("SYSLOG_FACILITY")
             .and_then(|v| v.as_str())
@@ -842,9 +996,18 @@ impl UnifiedJournalWatcher {
             }
         }
 
+        let timestamp_us_i64 = i64::try_from(timestamp_us).map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Journal entry {cursor} has out-of-range microsecond timestamp"
+            ))
+            .with_context("cursor", cursor.to_string())
+            .with_context("timestamp_us", timestamp_us.to_string())
+            .with_source(error)
+        })?;
+
         let payload = JournalEntryPayload {
             cursor: cursor.to_string(),
-            timestamp_us,
+            timestamp_us: timestamp_us_i64,
             timestamp,
             hostname,
             unit,
@@ -867,7 +1030,7 @@ impl UnifiedJournalWatcher {
         let mut event = Event::new(
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
-                timestamp_us: Microseconds::from_micros(payload.timestamp_us),
+                timestamp_us: Microseconds::from_micros(timestamp_us_i64),
                 timestamp: payload.timestamp,
                 hostname: payload.hostname,
                 unit: payload.unit,
@@ -911,37 +1074,39 @@ impl UnifiedJournalWatcher {
         &self,
         entry: &serde_json::Value,
         material: &WatcherMaterialContext,
-    ) -> Option<Event<JsonValue>> {
-        let message = entry["MESSAGE"].as_str().unwrap_or("");
-        let unit_name = entry["_SYSTEMD_UNIT"].as_str()?;
-        let cursor = entry["__CURSOR"].as_str().unwrap_or("unknown");
+    ) -> NodeResult<Option<Event<JsonValue>>> {
+        let Some(unit_name) = entry["_SYSTEMD_UNIT"].as_str() else {
+            return Ok(None);
+        };
+        let obj = entry.as_object().ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing("Invalid systemd journal entry".to_string())
+        })?;
+        let message =
+            Self::require_entry_string_field(obj, "MESSAGE", "Systemd journal entry")?;
+        let cursor =
+            Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Systemd journal entry")?;
 
         // Filter by tracked units if configured
         if !self.systemd_units.is_empty() && !self.systemd_units.contains(unit_name) {
-            return None;
+            return Ok(None);
         }
 
-        // Parse timestamp once
-        let timestamp_us = entry["__REALTIME_TIMESTAMP"]
-            .as_str()
-            .and_then(|t| t.parse::<u64>().ok())
-            .unwrap_or_else(|| {
-                (sinex_primitives::temporal::now().unix_timestamp_nanos() / 1000) as u64
-            });
+        let timestamp_us = Self::parse_realtime_timestamp_us(entry, unit_name)?;
+        let ts_orig = Self::timestamp_from_micros(timestamp_us, unit_name)?;
 
         // Helper to construct deterministic ID
         // timestamp (48 bits) | entropy (80 bits)
-        let id_entropy = Self::calculate_entropy(cursor, 1);
+        let id_entropy = Self::calculate_entropy(&cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
         let id_val = u128::from(timestamp_ms) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
         let uuid = uuid::Uuid::from_bytes(id_val.to_be_bytes());
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
-        let ts_orig = Some(sinex_primitives::temporal::now());
-
         // Construct payload based on classified systemd event kind
-        let event_kind = classify_systemd_event(entry, message)?;
+        let Some(event_kind) = classify_systemd_event(entry, &message) else {
+            return Ok(None);
+        };
         let event = match event_kind {
             SystemdEventKind::Started => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
@@ -949,7 +1114,7 @@ impl UnifiedJournalWatcher {
                     .as_str()
                     .and_then(|s| s.parse::<u32>().ok())
                     .map(ProcessId::from_raw);
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitStartedPayload {
                         unit_name: unit_name.to_string(),
                         unit_type,
@@ -959,13 +1124,11 @@ impl UnifiedJournalWatcher {
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Stopped => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitStoppedPayload {
                         unit_name: unit_name.to_string(),
                         unit_type,
@@ -975,82 +1138,56 @@ impl UnifiedJournalWatcher {
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Failed => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitFailedPayload {
                         unit_name: unit_name.to_string(),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Reloaded => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdUnitReloadedPayload {
                         unit_name: Some(unit_name.to_string()),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Triggered => {
-                let mut e = Event::new(
+                let e = Event::new(
                     SystemdTimerTriggeredPayload {
                         unit_name: Some(unit_name.to_string()),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: sinex_primitives::temporal::now(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .map(|us| {
-                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                    .unwrap_or_else(Timestamp::now)
-                            }),
+                        timestamp: ts_orig,
+                        journal_timestamp: Some(ts_orig),
                     },
                     material.initial_provenance(),
                 );
-                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-                e.ts_orig = ts_orig;
-                e.to_json_event().ok()?
+                Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
         };
 
-        Some(event)
+        Ok(Some(event))
     }
 
     /// Calculate deterministic entropy from cursor and discriminator
@@ -1114,7 +1251,13 @@ impl UnifiedJournalWatcher {
         {
             // Create parent directory if needed
             if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
+                tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                    sinex_node_sdk::SinexError::processing(format!(
+                        "Failed to create cursor directory {}",
+                        parent
+                    ))
+                    .with_source(error)
+                })?;
             }
 
             atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
@@ -1155,13 +1298,14 @@ impl UnifiedJournalWatcher {
                     err
                 );
             }
+        } else {
+            self.record_event();
         }
         Ok(())
     }
 
     /// Update event tracking.
     /// Reserved for metrics and diagnostics integration.
-    #[allow(dead_code)]
     fn record_event(&self) {
         if let Ok(mut last_event) = self.last_event_time.lock() {
             *last_event = Some(Instant::now());
@@ -1171,7 +1315,6 @@ impl UnifiedJournalWatcher {
 
     /// Record an error.
     /// Reserved for metrics and diagnostics integration.
-    #[allow(dead_code)]
     fn record_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.lock() {
             *last_error = Some(error);
@@ -1239,5 +1382,292 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
 
     fn cancellation_token(&self) -> &CancellationToken {
         &self.cancel_token
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::material_context::MaterialContext;
+    use async_trait::async_trait;
+    use sinex_primitives::events::Provenance;
+    use sinex_primitives::{Id, JsonValue};
+    use xtask::sandbox::prelude::*;
+
+    #[derive(Debug)]
+    struct TestMaterialContext;
+
+    #[async_trait]
+    impl MaterialContext for TestMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            Ok(())
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
+    fn test_watcher() -> UnifiedJournalWatcher {
+        UnifiedJournalWatcher {
+            journal_config: JournalConfig::default(),
+            systemd_enabled: true,
+            systemd_units: HashSet::new(),
+            last_cursor: None,
+            max_line_bytes: DEFAULT_MAX_JOURNAL_LINE_BYTES,
+            cancel_token: CancellationToken::new(),
+            last_event_time: Arc::new(Mutex::new(None)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            last_error: Arc::new(Mutex::new(None)),
+            child_process: None,
+            pending_cursor: Arc::new(Mutex::new(None)),
+            cursor_save_count: Arc::new(AtomicU64::new(0)),
+            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            channel_drops: Arc::new(AtomicU64::new(0)),
+            dlq_publisher: None,
+        }
+    }
+
+    fn test_material() -> WatcherMaterialContext {
+        Arc::new(TestMaterialContext)
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "not-a-timestamp",
+        });
+
+        let error = watcher
+            .parse_journal_entry(&entry, &material)
+            .expect_err("invalid journal timestamps must fail honestly");
+
+        assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
+        assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_rejects_invalid_pid(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "not-a-pid",
+        });
+
+        let error = watcher
+            .parse_journal_entry(&entry, &material)
+            .expect_err("invalid journal pid must fail honestly");
+
+        assert!(error.to_string().contains("invalid _PID"));
+        assert!(error.to_string().contains("s=abc;i=1;b=boot;m=1;t=1;x=1"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_preserves_journal_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "hello from the journal",
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "123",
+        });
+
+        let event = watcher
+            .parse_journal_entry(&entry, &material)?
+            .expect("valid journal entry should produce an event");
+
+        let expected =
+            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_journal_entry_rejects_missing_message(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+        });
+
+        let error = watcher
+            .parse_journal_entry(&entry, &material)
+            .expect_err("missing journal MESSAGE must fail honestly");
+
+        assert!(error.to_string().contains("missing required MESSAGE"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_rejects_invalid_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "not-a-timestamp",
+        });
+
+        let error = watcher
+            .parse_systemd_entry(&entry, &material)
+            .expect_err("invalid systemd timestamps must fail honestly");
+
+        assert!(error.to_string().contains("invalid __REALTIME_TIMESTAMP"));
+        assert!(error.to_string().contains("test.service"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_rejects_missing_cursor(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+        });
+
+        let error = watcher
+            .parse_systemd_entry(&entry, &material)
+            .expect_err("missing systemd cursor must fail honestly");
+
+        assert!(error.to_string().contains("missing required __CURSOR"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_entry_preserves_journal_timestamp(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "MESSAGE": "Started test.service",
+            "_SYSTEMD_UNIT": "test.service",
+            "__CURSOR": "s=abc",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_PID": "123",
+        });
+
+        let event = watcher
+            .parse_systemd_entry(&entry, &material)?
+            .expect("matching systemd entry should produce an event");
+
+        let expected =
+            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        assert_eq!(event.ts_orig, Some(expected));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_oversized_line_metadata_preserves_cursor_and_unit(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let (cursor, unit) = UnifiedJournalWatcher::parse_oversized_line_metadata(
+            r#"{"__CURSOR":"s=abc","_SYSTEMD_UNIT":"test.service"}"#,
+        )?;
+
+        assert_eq!(cursor, "s=abc");
+        assert_eq!(unit.as_deref(), Some("test.service"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_sync_end_cursor_rejects_missing_cursor_after_entries(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let error = UnifiedJournalWatcher::require_sync_end_cursor(3, None)
+            .expect_err("sync events must not fabricate an empty end cursor");
+
+        assert!(error
+            .to_string()
+            .contains("processed 3 entries without a terminal cursor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_cursor_reports_parent_directory_creation_failure(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let mut watcher = test_watcher();
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let blocker = runtime_dir.join("blocker");
+        std::fs::write(&blocker, b"not-a-directory")?;
+        watcher.journal_config.cursor_file =
+            Some(blocker.join("cursor.state").to_string_lossy().into_owned());
+        watcher
+            .pending_cursor
+            .lock()
+            .expect("pending cursor lock should not be poisoned")
+            .replace("s=abc".to_string());
+
+        let error = watcher
+            .flush_cursor()
+            .await
+            .expect_err("directory creation failures must surface honestly");
+
+        assert!(error
+            .to_string()
+            .contains("Failed to create cursor directory"));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn send_event_updates_health_snapshot(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let (tx, mut rx) = mpsc::channel(1);
+        let event = Event::new_json(
+            "system-watcher",
+            "journal.entry.written",
+            json!({"cursor": "s=abc"}),
+            material.initial_provenance(),
+        );
+
+        watcher.send_event(&tx, event, "test_send", &material).await?;
+        let _received = rx.recv().await.expect("event should reach the channel");
+
+        let snapshot = watcher.health_snapshot();
+        assert_eq!(snapshot.events_processed, 1);
+        assert!(snapshot.last_event.is_some());
+        Ok(())
     }
 }

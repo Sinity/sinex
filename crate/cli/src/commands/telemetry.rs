@@ -1,8 +1,8 @@
 use clap::Subcommand;
 use console::style;
 use sinex_primitives::rpc::telemetry::{
-    CommandFrequencyEntry, FileActivityEntry, RecentActivityEntry, SystemStateBucket,
-    WindowFocusBucket,
+    CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot, RecentActivityEntry,
+    SystemStateBucket, WindowFocusBucket,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -11,7 +11,7 @@ use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 
-/// Telemetry data from continuous-aggregate views
+/// Telemetry data from event-time activity views and operator read models
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:
@@ -29,6 +29,9 @@ EXAMPLES:
 
     # System state as JSON for piping
     sinexctl telemetry system-state --from 1h -f json
+
+    # Latest ingestd validation snapshot
+    sinexctl telemetry ingestd-validation
 ")]
 pub enum TelemetryCommands {
     /// Window focus aggregates (5-minute buckets)
@@ -113,6 +116,13 @@ pub enum TelemetryCommands {
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
 
+        /// Output format
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Latest ingestd validation and plausibility snapshot
+    IngestdValidation {
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
@@ -207,6 +217,18 @@ impl TelemetryCommands {
                 )
                 .display(format)?;
             }
+
+            Self::IngestdValidation { format } => match client.telemetry_ingestd_validation().await?
+            {
+                Some(snapshot) => {
+                    CommandOutput::single(snapshot, format_ingestd_validation_table)
+                        .display(format)?;
+                }
+                None => CommandOutput::<IngestdValidationSnapshot>::empty(
+                    "No ingestd-validation data found.",
+                )
+                .display(format)?,
+            },
         }
         Ok(())
     }
@@ -373,6 +395,40 @@ fn format_system_state_table(buckets: &[SystemStateBucket]) -> String {
             b.sample_count.to_string(),
         ]);
     }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_ingestd_validation_table(snapshot: &IngestdValidationSnapshot) -> String {
+    let mut builder = Builder::new();
+    builder.push_record(["FIELD", "VALUE"]);
+    builder.push_record(["Observed At", snapshot.observed_at.as_str()]);
+    builder.push_record(["Batch Size", &snapshot.batch_size.to_string()]);
+    builder.push_record(["Fetch→Ack ms", &snapshot.fetch_to_ack_ms.to_string()]);
+    builder.push_record(["Deferred", &snapshot.events_deferred.to_string()]);
+    builder.push_record(["Failed", &snapshot.events_failed.to_string()]);
+    builder.push_record([
+        "Had Synthesis",
+        if snapshot.had_synthesis { "yes" } else { "no" },
+    ]);
+    builder.push_record(["Insert Path", snapshot.insert_path.as_str()]);
+    builder.push_record(["Valid", &snapshot.validation_valid.to_string()]);
+    builder.push_record(["Skipped", &snapshot.validation_skipped.to_string()]);
+    builder.push_record(["No Schema", &snapshot.validation_no_schema.to_string()]);
+    builder.push_record([
+        "Schema Not Found",
+        &snapshot.validation_schema_not_found.to_string(),
+    ]);
+    builder.push_record(["Invalid", &snapshot.validation_invalid.to_string()]);
+    builder.push_record([
+        "Coverage %",
+        &format!("{:.2}", snapshot.validation_coverage_pct),
+    ]);
+    builder.push_record([
+        "Suspicious Future ts_orig",
+        &snapshot.suspicious_future_ts_orig.to_string(),
+    ]);
     let mut table = builder.build();
     table.with(Style::rounded());
     table.to_string()

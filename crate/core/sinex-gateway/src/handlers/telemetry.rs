@@ -1,16 +1,16 @@
 //! Telemetry RPC handlers
 //!
-//! Queries the `sinex_telemetry.*` continuous-aggregate views and returns
+//! Queries the `sinex_telemetry.*` read models and returns
 //! structured responses for the `telemetry.*` RPC method namespace.
 
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use serde_json::Value;
 use sinex_primitives::rpc::telemetry::{
-    CommandFrequencyEntry, FileActivityEntry, RecentActivityEntry, SystemStateBucket,
-    TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
-    TelemetryFileActivityRequest, TelemetryFileActivityResponse,
-    TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-    TelemetrySystemStateRequest, TelemetrySystemStateResponse,
+    CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot, RecentActivityEntry,
+    SystemStateBucket, TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
+    TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryIngestdValidationRequest,
+    TelemetryIngestdValidationResponse, TelemetryRecentActivityRequest,
+    TelemetryRecentActivityResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
     TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, WindowFocusBucket,
 };
 use sqlx::PgPool;
@@ -121,7 +121,7 @@ struct SystemStateRow {
 
 /// Handle `telemetry.window_focus`
 ///
-/// Queries `sinex_telemetry.current_window_focus` (5-minute CA) for the
+/// Queries `sinex_telemetry.current_window_focus` (event-time activity view) for the
 /// requested time range (default: last 3 hours).
 pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryWindowFocusRequest = super::parse_default_on_null(params)
@@ -173,7 +173,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
 
 /// Handle `telemetry.command_frequency`
 ///
-/// Queries `sinex_telemetry.command_frequency_hourly` (1-hour CA), aggregating
+/// Queries `sinex_telemetry.command_frequency_hourly` (event-time activity view), aggregating
 /// total invocation counts and bucket spans for the requested window (default: last 24 hours).
 pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryCommandFrequencyRequest = super::parse_default_on_null(params)
@@ -224,7 +224,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
 
 /// Handle `telemetry.file_activity`
 ///
-/// Queries `sinex_telemetry.file_activity_summary` (1-hour CA) for the
+/// Queries `sinex_telemetry.file_activity_summary` (event-time activity view) for the
 /// requested time range (default: last 24 hours).
 pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetryFileActivityRequest = super::parse_default_on_null(params)
@@ -312,7 +312,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
 
 /// Handle `telemetry.system_state`
 ///
-/// Queries `sinex_telemetry.current_system_state` (5-minute CA) for the
+/// Queries `sinex_telemetry.current_system_state` (event-time activity view) for the
 /// requested time range (default: last 3 hours).
 pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Result<Value> {
     let req: TelemetrySystemStateRequest = super::parse_default_on_null(params)
@@ -362,4 +362,59 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         .collect();
 
     Ok(serde_json::to_value(TelemetrySystemStateResponse { buckets })?)
+}
+
+/// Handle `telemetry.ingestd_validation`
+///
+/// Returns the latest ingestd batch / validation snapshot for operator visibility.
+pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -> Result<Value> {
+    let _req: TelemetryIngestdValidationRequest = super::parse_default_on_null(params)
+        .wrap_err("failed to parse telemetry.ingestd_validation request")?;
+
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            ts_coided AS "observed_at!: time::OffsetDateTime",
+            (payload->>'batch_size')::bigint AS "batch_size!",
+            (payload->>'fetch_to_ack_ms')::bigint AS "fetch_to_ack_ms!",
+            (payload->>'events_deferred')::bigint AS "events_deferred!",
+            (payload->>'events_failed')::bigint AS "events_failed!",
+            (payload->>'had_synthesis')::boolean AS "had_synthesis!",
+            payload->>'insert_path' AS "insert_path!",
+            (payload->>'validation_valid')::bigint AS "validation_valid!",
+            (payload->>'validation_skipped')::bigint AS "validation_skipped!",
+            (payload->>'validation_no_schema')::bigint AS "validation_no_schema!",
+            (payload->>'validation_schema_not_found')::bigint AS "validation_schema_not_found!",
+            (payload->>'validation_invalid')::bigint AS "validation_invalid!",
+            (payload->>'validation_coverage_pct')::float8 AS "validation_coverage_pct!",
+            COALESCE((payload->>'suspicious_future_ts_orig')::bigint, 0) AS "suspicious_future_ts_orig!"
+        FROM core.events
+        WHERE source = 'sinex.ingestd'
+          AND event_type = 'batch.stats'
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(pool)
+    .await
+    .wrap_err("failed to query latest ingestd validation stats")?;
+
+    let snapshot = row.map(|row| IngestdValidationSnapshot {
+        observed_at: fmt_rfc3339(row.observed_at),
+        batch_size: row.batch_size,
+        fetch_to_ack_ms: row.fetch_to_ack_ms,
+        events_deferred: row.events_deferred,
+        events_failed: row.events_failed,
+        had_synthesis: row.had_synthesis,
+        insert_path: row.insert_path,
+        validation_valid: row.validation_valid,
+        validation_skipped: row.validation_skipped,
+        validation_no_schema: row.validation_no_schema,
+        validation_schema_not_found: row.validation_schema_not_found,
+        validation_invalid: row.validation_invalid,
+        validation_coverage_pct: row.validation_coverage_pct,
+        suspicious_future_ts_orig: row.suspicious_future_ts_orig,
+    });
+
+    Ok(serde_json::to_value(TelemetryIngestdValidationResponse { snapshot })?)
 }

@@ -148,7 +148,7 @@ sinex_proptest! {
         assert!(config.validate_config().is_ok());
 
         // Test environment-based loading doesn't panic
-        let env_config = NodeConfig::load_from_env(&service_name);
+        let env_config = NodeConfig::load_from_env(&service_name)?;
         assert_eq!(env_config.service_name, service_name);
 
         Ok::<(), color_eyre::Report>(())

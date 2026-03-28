@@ -61,7 +61,7 @@ impl LiveGateway {
         let port = listener.local_addr()?.port();
         drop(listener);
 
-        let mut config = GatewayConfig::load();
+        let mut config = GatewayConfig::load()?;
         config.database_url = database_url.to_string();
         config.tcp_listen = format!("127.0.0.1:{port}");
         config.rpc_rate_limit_enabled = false;

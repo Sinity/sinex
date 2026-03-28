@@ -121,11 +121,12 @@ fn parse_bus_type(bus_type: &str) -> DBusBus {
 }
 
 /// Parse playback status string to `PlaybackStatus` enum
-fn parse_playback_status(s: &str) -> PlaybackStatus {
+fn parse_playback_status(s: &str) -> Option<PlaybackStatus> {
     match s {
-        "Playing" => PlaybackStatus::Playing,
-        "Paused" => PlaybackStatus::Paused,
-        _ => PlaybackStatus::Stopped,
+        "Playing" => Some(PlaybackStatus::Playing),
+        "Paused" => Some(PlaybackStatus::Paused),
+        "Stopped" => Some(PlaybackStatus::Stopped),
+        _ => None,
     }
 }
 
@@ -451,9 +452,9 @@ impl DbusWatcher {
         config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
-        let interface = interface.unwrap_or_default();
-        let path = path.unwrap_or_default();
-        let member = member.unwrap_or_default();
+        let interface = Self::require_message_field(interface, "interface")?;
+        let path = Self::require_message_field(path, "path")?;
+        let member = Self::require_message_field(member, "member")?;
 
         // Apply filtering
         if !Self::passes_filters(&interface, config) {
@@ -492,6 +493,20 @@ impl DbusWatcher {
         Ok(())
     }
 
+    fn require_message_field(value: Option<String>, field: &str) -> NodeResult<String> {
+        let value = value.ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(format!(
+                "D-Bus message is missing required field '{field}'"
+            ))
+        })?;
+        if value.trim().is_empty() {
+            return Err(sinex_node_sdk::SinexError::validation(format!(
+                "D-Bus message field '{field}' must not be empty"
+            )));
+        }
+        Ok(value)
+    }
+
     /// Process D-Bus signals with specialized event extraction
     #[allow(clippy::too_many_arguments)]
     async fn process_signal(
@@ -506,12 +521,14 @@ impl DbusWatcher {
         config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let sender = Self::require_message_field(sender.clone(), "sender")?;
+
         // Extract specialized events based on interface
         if config.extract_notifications
             && interface == "org.freedesktop.Notifications"
             && member == "Notify"
         {
-            let payload = Self::parse_notification_args(args, timestamp);
+            let payload = Self::parse_notification_args(args, timestamp)?;
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_notification", material).await?;
         }
@@ -520,13 +537,19 @@ impl DbusWatcher {
             && interface.starts_with("org.mpris.MediaPlayer2")
             && member == "PropertiesChanged"
         {
-            let player = sender
-                .as_deref()
-                .and_then(|s| s.split('.').next_back())
-                .unwrap_or("unknown");
+            let player = sender.split('.').next_back().ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(
+                    "MPRIS PropertiesChanged signal is missing sender".to_string(),
+                )
+            })?;
 
-            let payload = Self::parse_mpris_properties(args, player, sender, timestamp)
-                .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp));
+            let payload = Self::parse_mpris_properties(args, player, &sender, timestamp)?
+                .ok_or_else(|| {
+                    sinex_node_sdk::SinexError::validation(
+                        "MPRIS PropertiesChanged signal did not contain changed properties"
+                            .to_string(),
+                    )
+                })?;
 
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_media_playback", material).await?;
@@ -645,7 +668,7 @@ impl DbusWatcher {
         let event = Event::new(
             DbusSignalPayload {
                 bus: parse_bus_type(bus_type),
-                sender: sender.as_deref().unwrap_or_default().to_string(),
+                sender,
                 path: path.to_string(),
                 interface: interface.to_string(),
                 signal: member.to_string(),
@@ -675,11 +698,13 @@ impl DbusWatcher {
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let sender = Self::require_message_field(sender.clone(), "sender")?;
+        let destination = Self::require_message_field(destination.clone(), "destination")?;
         let event = Event::new(
             DbusMethodCalledPayload {
                 bus: parse_bus_type(bus_type),
-                sender: sender.as_deref().unwrap_or_default().to_string(),
-                destination: destination.as_deref().unwrap_or_default().to_string(),
+                sender,
+                destination,
                 path: path.to_string(),
                 interface: interface.to_string(),
                 method: member.to_string(),
@@ -832,183 +857,261 @@ impl DbusWatcher {
     fn parse_notification_args(
         args: &serde_json::Value,
         timestamp: Timestamp,
-    ) -> DbusNotificationSentPayload {
-        if let serde_json::Value::Array(arg_array) = args {
-            let app_name = arg_array
-                .first()
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown")
-                .to_string();
+    ) -> NodeResult<DbusNotificationSentPayload> {
+        let arg_array = args.as_array().ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(
+                "notification D-Bus arguments must be an array".to_string(),
+            )
+        })?;
 
-            let summary = arg_array
-                .get(3)
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    privacy::engine()
-                        .process(s, ProcessingContext::Notification)
-                        .text
-                        .into_owned()
+        let app_name = Self::notification_string_arg(arg_array, 0, "app_name")?;
+        let summary = privacy::engine()
+            .process(
+                Self::notification_string_arg(arg_array, 3, "summary")?,
+                ProcessingContext::Notification,
+            )
+            .text
+            .into_owned();
+        let body = privacy::engine()
+            .process(
+                Self::notification_string_arg(arg_array, 4, "body")?,
+                ProcessingContext::Notification,
+            )
+            .text
+            .into_owned();
+
+        let actions = arg_array
+            .get(5)
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(
+                    "notification D-Bus arguments are missing required field 'actions'"
+                        .to_string(),
+                )
+            })?
+            .as_array()
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(
+                    "notification actions must be an array".to_string(),
+                )
+            })?
+            .iter()
+            .map(|value| {
+                value.as_str().map(std::string::ToString::to_string).ok_or_else(|| {
+                    sinex_node_sdk::SinexError::validation(
+                        "notification actions must contain only strings".to_string(),
+                    )
                 })
-                .unwrap_or_default();
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let body = arg_array
-                .get(4)
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    privacy::engine()
-                        .process(s, ProcessingContext::Notification)
-                        .text
-                        .into_owned()
-                })
-                .unwrap_or_default();
+        let hints = Self::parse_notification_hints(arg_array.get(6).ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(
+                "notification D-Bus arguments are missing required field 'hints'".to_string(),
+            )
+        })?)?;
 
-            let actions = arg_array
-                .get(5)
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(std::string::ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let hints = arg_array
-                .get(6)
-                .and_then(Self::parse_notification_hints)
-                .unwrap_or_default();
-
-            let timeout = arg_array
+        let timeout = i32::try_from(
+            arg_array
                 .get(7)
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(-1) as i32;
+                .ok_or_else(|| {
+                    sinex_node_sdk::SinexError::validation(
+                        "notification D-Bus arguments are missing required field 'timeout'"
+                            .to_string(),
+                    )
+                })?
+                .as_i64()
+                .ok_or_else(|| {
+                    sinex_node_sdk::SinexError::validation(
+                        "notification timeout must be an integer".to_string(),
+                    )
+                })?,
+        )
+        .map_err(|error| {
+            sinex_node_sdk::SinexError::validation(format!(
+                "notification timeout is out of range for i32: {error}"
+            ))
+        })?;
 
-            let urgency = hints
+        let urgency = u8::try_from(
+            hints
                 .get("urgency")
                 .and_then(serde_json::Value::as_u64)
-                .unwrap_or(1) as u8;
+                .unwrap_or(1),
+        )
+        .map_err(|error| {
+            sinex_node_sdk::SinexError::validation(format!(
+                "notification urgency is out of range for u8: {error}"
+            ))
+        })?;
 
-            DbusNotificationSentPayload {
-                app_name,
-                summary,
-                body,
-                urgency,
-                timeout,
-                actions,
-                hints,
-                timestamp,
-            }
-        } else {
-            DbusNotificationSentPayload {
-                app_name: "Unknown".to_string(),
-                summary: "Failed to parse".to_string(),
-                body: String::new(),
-                urgency: 1,
-                timeout: -1,
-                actions: vec![],
-                hints: HashMap::with_capacity(4), // Typical notification hints: urgency, category, desktop-entry, etc.
-                timestamp,
-            }
-        }
+        Ok(DbusNotificationSentPayload {
+            app_name: app_name.to_string(),
+            summary,
+            body,
+            urgency,
+            timeout,
+            actions,
+            hints,
+            timestamp,
+        })
+    }
+
+    fn notification_string_arg<'a>(
+        args: &'a [serde_json::Value],
+        index: usize,
+        field: &str,
+    ) -> NodeResult<&'a str> {
+        args.get(index)
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(format!(
+                    "notification D-Bus arguments are missing required field '{field}'"
+                ))
+            })?
+            .as_str()
+            .ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(format!(
+                    "notification field '{field}' must be a string"
+                ))
+            })
     }
 
     /// Parse notification hints from D-Bus arguments, redacting sensitive string values
     fn parse_notification_hints(
         hints_value: &serde_json::Value,
-    ) -> Option<HashMap<String, serde_json::Value>> {
-        if let serde_json::Value::Array(dict_entries) = hints_value {
-            Some(
-                dict_entries
-                    .iter()
-                    .filter_map(|entry| entry.as_object())
-                    .flat_map(|obj| obj.iter())
-                    .map(|(k, v)| {
-                        let redacted = if let Some(s) = v.as_str() {
-                            serde_json::Value::String(
-                                privacy::engine()
-                                    .process(s, ProcessingContext::Notification)
-                                    .text
-                                    .into_owned(),
-                            )
-                        } else {
-                            v.clone()
-                        };
-                        (k.clone(), redacted)
-                    })
-                    .collect(),
+    ) -> NodeResult<HashMap<String, serde_json::Value>> {
+        let dict_entries = hints_value.as_array().ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(
+                "notification hints must be an array of key/value objects".to_string(),
             )
-        } else {
-            None
-        }
+        })?;
+        dict_entries
+            .iter()
+            .map(|entry| {
+                let obj = entry.as_object().ok_or_else(|| {
+                    sinex_node_sdk::SinexError::validation(
+                        "notification hints must contain only objects".to_string(),
+                    )
+                })?;
+                if obj.len() != 1 {
+                    return Err(sinex_node_sdk::SinexError::validation(
+                        "notification hint objects must contain exactly one entry".to_string(),
+                    ));
+                }
+                let (key, value) = obj.iter().next().expect("validated single-entry object");
+                let redacted = if let Some(s) = value.as_str() {
+                    serde_json::Value::String(
+                        privacy::engine()
+                            .process(s, ProcessingContext::Notification)
+                            .text
+                            .into_owned(),
+                    )
+                } else {
+                    value.clone()
+                };
+                Ok((key.clone(), redacted))
+            })
+            .collect()
     }
 
     /// Parse MPRIS properties into media playback payload
     fn parse_mpris_properties(
         args: &serde_json::Value,
         player: &str,
-        sender: &Option<String>,
+        sender: &str,
         timestamp: Timestamp,
-    ) -> Option<DbusMediaStateChangedPayload> {
-        if let serde_json::Value::Array(arg_array) = args {
-            if let Some(changed_props) = arg_array.get(1) {
-                let mut payload = Self::default_media_payload(player, sender, timestamp);
+    ) -> NodeResult<Option<DbusMediaStateChangedPayload>> {
+        let arg_array = args.as_array().ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(
+                "MPRIS D-Bus arguments must be an array".to_string(),
+            )
+        })?;
+        let Some(changed_props) = arg_array.get(1) else {
+            return Ok(None);
+        };
 
-                if let serde_json::Value::Array(props) = changed_props {
-                    for prop_entry in props {
-                        if let serde_json::Value::Object(obj) = prop_entry {
-                            for (key, value) in obj {
-                                match key.as_str() {
-                                    "PlaybackStatus" => {
-                                        payload.status = parse_playback_status(
-                                            value.as_str().unwrap_or("Stopped"),
-                                        );
-                                    }
-                                    "Volume" => {
-                                        payload.volume = value.as_f64();
-                                    }
-                                    "Position" => {
-                                        payload.position = value.as_i64();
-                                    }
-                                    "CanGoNext" => {
-                                        payload.can_go_next = value.as_bool().unwrap_or(false);
-                                    }
-                                    "CanGoPrevious" => {
-                                        payload.can_go_previous = value.as_bool().unwrap_or(false);
-                                    }
-                                    "CanPlay" => {
-                                        payload.can_play = value.as_bool().unwrap_or(false);
-                                    }
-                                    "CanPause" => {
-                                        payload.can_pause = value.as_bool().unwrap_or(false);
-                                    }
-                                    "CanSeek" => {
-                                        payload.can_seek = value.as_bool().unwrap_or(false);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
+        let mut payload = Self::default_media_payload(player, sender, timestamp);
+        let props = changed_props.as_array().ok_or_else(|| {
+            sinex_node_sdk::SinexError::validation(
+                "MPRIS changed properties must be an array of objects".to_string(),
+            )
+        })?;
+        for prop_entry in props {
+            let obj = prop_entry.as_object().ok_or_else(|| {
+                sinex_node_sdk::SinexError::validation(
+                    "MPRIS changed properties must contain only objects".to_string(),
+                )
+            })?;
+            for (key, value) in obj {
+                match key.as_str() {
+                    "PlaybackStatus" => {
+                        let status = value.as_str().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS PlaybackStatus must be a string".to_string(),
+                            )
+                        })?;
+                        payload.status = parse_playback_status(status).ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(format!(
+                                "MPRIS PlaybackStatus has invalid value '{status}'"
+                            ))
+                        })?;
                     }
+                    "Volume" => {
+                        payload.volume = value.as_f64();
+                    }
+                    "Position" => {
+                        payload.position = value.as_i64();
+                    }
+                    "CanGoNext" => {
+                        payload.can_go_next = value.as_bool().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS CanGoNext must be a boolean".to_string(),
+                            )
+                        })?;
+                    }
+                    "CanGoPrevious" => {
+                        payload.can_go_previous = value.as_bool().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS CanGoPrevious must be a boolean".to_string(),
+                            )
+                        })?;
+                    }
+                    "CanPlay" => {
+                        payload.can_play = value.as_bool().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS CanPlay must be a boolean".to_string(),
+                            )
+                        })?;
+                    }
+                    "CanPause" => {
+                        payload.can_pause = value.as_bool().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS CanPause must be a boolean".to_string(),
+                            )
+                        })?;
+                    }
+                    "CanSeek" => {
+                        payload.can_seek = value.as_bool().ok_or_else(|| {
+                            sinex_node_sdk::SinexError::validation(
+                                "MPRIS CanSeek must be a boolean".to_string(),
+                            )
+                        })?;
+                    }
+                    _ => {}
                 }
-
-                Some(payload)
-            } else {
-                None
             }
-        } else {
-            None
         }
+        Ok(Some(payload))
     }
 
     /// Create default media payload
     fn default_media_payload(
         player: &str,
-        sender: &Option<String>,
+        sender: &str,
         timestamp: Timestamp,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),
-            player_instance: sender.as_deref().unwrap_or_default().to_string(),
+            player_instance: sender.to_string(),
             status: PlaybackStatus::Stopped,
             track_id: None,
             title: None,
@@ -1042,6 +1145,100 @@ impl DbusWatcher {
         if let Err(err) = tx.send(event).await {
             warn!("Event channel closed while sending {}: {}", context, err);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DbusWatcher;
+    use serde_json::json;
+    use sinex_primitives::events::enums::PlaybackStatus;
+    use sinex_primitives::temporal::Timestamp;
+    use xtask::sandbox::prelude::*;
+
+    // Inline because these exercise private D-Bus parsing helpers directly.
+
+    #[sinex_test]
+    async fn require_message_field_rejects_missing_values() -> TestResult<()> {
+        let error = DbusWatcher::require_message_field(None, "interface")
+            .expect_err("missing required fields should fail honestly");
+        assert!(error.to_string().contains("missing required field 'interface'"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_message_field_rejects_empty_values() -> TestResult<()> {
+        let error = DbusWatcher::require_message_field(Some("  ".to_string()), "member")
+            .expect_err("empty required fields should fail honestly");
+        assert!(error.to_string().contains("field 'member' must not be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_notification_args_rejects_non_array() -> TestResult<()> {
+        let error = DbusWatcher::parse_notification_args(&json!({"bad": true}), Timestamp::now())
+            .expect_err("non-array notification payloads should fail honestly");
+        assert!(error.to_string().contains("arguments must be an array"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_notification_args_rejects_invalid_timeout() -> TestResult<()> {
+        let args = json!([
+            "notify-send",
+            0,
+            "dialog-information",
+            "Summary",
+            "Body",
+            [],
+            [],
+            "later"
+        ]);
+        let error = DbusWatcher::parse_notification_args(&args, Timestamp::now())
+            .expect_err("invalid timeout values should fail honestly");
+        assert!(error.to_string().contains("timeout must be an integer"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_mpris_properties_rejects_invalid_playback_status() -> TestResult<()> {
+        let args = json!([
+            "org.mpris.MediaPlayer2.Player",
+            [{"PlaybackStatus": "Exploding"}]
+        ]);
+        let error = DbusWatcher::parse_mpris_properties(
+            &args,
+            "player",
+            "org.mpris.MediaPlayer2.spotify",
+            Timestamp::now(),
+        )
+        .expect_err("invalid playback statuses should fail honestly");
+        assert!(error.to_string().contains("PlaybackStatus has invalid value"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_mpris_properties_accepts_valid_payload() -> TestResult<()> {
+        let args = json!([
+            "org.mpris.MediaPlayer2.Player",
+            [
+                {"PlaybackStatus": "Playing"},
+                {"CanPause": true},
+                {"CanSeek": false}
+            ]
+        ]);
+        let payload = DbusWatcher::parse_mpris_properties(
+            &args,
+            "spotify",
+            "org.mpris.MediaPlayer2.spotify",
+            Timestamp::now(),
+        )?
+        .expect("valid payload should parse");
+
+        assert_eq!(payload.status, PlaybackStatus::Playing);
+        assert!(payload.can_pause);
+        assert!(!payload.can_seek);
         Ok(())
     }
 }

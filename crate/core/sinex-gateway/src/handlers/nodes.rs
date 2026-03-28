@@ -9,6 +9,7 @@
 use serde_json::{Value, json};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{SinexError, domain::OperationStatus, environment::SinexEnvironment};
+use std::error::Error as _;
 
 // Re-export shared types for use by other modules
 pub use sinex_primitives::rpc::nodes::{
@@ -17,6 +18,30 @@ pub use sinex_primitives::rpc::nodes::{
 };
 
 type Result<T> = std::result::Result<T, SinexError>;
+
+fn is_missing_node_state_bucket(error: &async_nats::jetstream::context::KeyValueError) -> bool {
+    use async_nats::jetstream::context::{
+        GetStreamError, GetStreamErrorKind, KeyValueErrorKind,
+    };
+    use async_nats::jetstream::ErrorCode;
+
+    if error.kind() != KeyValueErrorKind::GetBucket {
+        return false;
+    }
+
+    let Some(source) = error.source() else {
+        return false;
+    };
+    let Some(stream_error) = source.downcast_ref::<GetStreamError>() else {
+        return false;
+    };
+
+    matches!(
+        stream_error.kind(),
+        GetStreamErrorKind::JetStream(js_error)
+            if js_error.error_code() == ErrorCode::STREAM_NOT_FOUND
+    )
+}
 
 /// Handle GET /nodes request - list all nodes
 pub async fn handle_nodes_list(
@@ -29,13 +54,23 @@ pub async fn handle_nodes_list(
 
     let kv_bucket_name = env.nats_kv_bucket_name("sinex_node_state");
 
-    // Try to get the KV bucket - if it doesn't exist, return empty list
-    let Ok(kv) = js.get_key_value(&kv_bucket_name).await else {
-        // Bucket doesn't exist yet, return empty node list
-        return serde_json::to_value(NodesListResponse { nodes: Vec::new() }).map_err(|e| {
-            SinexError::serialization("failed to serialize node list response")
-                .with_std_error(&e)
-        });
+    // Treat the missing bucket as an honest empty registry, but surface every
+    // other JetStream failure instead of pretending there are no nodes.
+    let kv = match js.get_key_value(&kv_bucket_name).await {
+        Ok(kv) => kv,
+        Err(error) if is_missing_node_state_bucket(&error) => {
+            return serde_json::to_value(NodesListResponse { nodes: Vec::new() }).map_err(|e| {
+                SinexError::serialization("failed to serialize node list response")
+                    .with_std_error(&e)
+            });
+        }
+        Err(error) => {
+            return Err(
+                SinexError::kv("Failed to open node state bucket")
+                    .with_context("bucket", kv_bucket_name)
+                    .with_source(error),
+            );
+        }
     };
 
     // Get all keys in the bucket (each key is a node ID)
@@ -52,12 +87,30 @@ pub async fn handle_nodes_list(
         let key = key.map_err(|e| SinexError::kv("Failed to read key").with_source(e))?;
 
         // Get the value for this key
-        if let Ok(Some(entry)) = kv.get(&key).await
-            && let Ok(state_json) = String::from_utf8(entry.to_vec())
-            && let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json)
-        {
-            nodes.push(state);
-        }
+        let entry = kv
+            .get(&key)
+            .await
+            .map_err(|e| {
+                SinexError::kv("Failed to fetch node state")
+                    .with_context("node_state_key", key.clone())
+                    .with_source(e)
+            })?
+            .ok_or_else(|| {
+                SinexError::not_found("Node state disappeared during listing")
+                    .with_context("node_state_key", key.clone())
+            })?;
+
+        let state_json = String::from_utf8(entry.to_vec()).map_err(|error| {
+            SinexError::serialization("Node state is not valid UTF-8")
+                .with_context("node_state_key", key.clone())
+                .with_std_error(&error)
+        })?;
+        let state = serde_json::from_str::<NodeStatus>(&state_json).map_err(|error| {
+            SinexError::serialization("Node state is not valid JSON")
+                .with_context("node_state_key", key.clone())
+                .with_std_error(&error)
+        })?;
+        nodes.push(state);
     }
 
     serde_json::to_value(NodesListResponse { nodes }).map_err(|e| {
