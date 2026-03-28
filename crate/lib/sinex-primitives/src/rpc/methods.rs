@@ -74,6 +74,7 @@ pub const TELEMETRY_COMMAND_FREQUENCY: &str = "telemetry.command_frequency";
 pub const TELEMETRY_FILE_ACTIVITY: &str = "telemetry.file_activity";
 pub const TELEMETRY_RECENT_ACTIVITY: &str = "telemetry.recent_activity";
 pub const TELEMETRY_SYSTEM_STATE: &str = "telemetry.system_state";
+pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
 
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";

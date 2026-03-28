@@ -295,6 +295,8 @@ pub struct IngestdBatchStatsPayload {
     pub validation_invalid: u64,
     /// Schema coverage percentage: events with a schema / total validated (excluding skipped)
     pub validation_coverage_pct: f64,
+    /// Cumulative count of events whose `ts_orig` is implausibly far in the future.
+    pub suspicious_future_ts_orig: u64,
 }
 
 // Test helpers for external tests

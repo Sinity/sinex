@@ -6,6 +6,7 @@ use serde_json::json;
 use sinex_gateway::handlers::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };
+use sinex_primitives::nats::create_or_open_kv_store;
 use xtask::sandbox::prelude::*;
 
 async fn expect_single_control_message(
@@ -124,5 +125,29 @@ async fn nodes_set_horizon_validates_timestamp(ctx: TestContext) -> TestResult<(
     assert_eq!(payload["horizon"], "2024-01-15T10:00:00Z");
     assert!(payload["timestamp"].as_str().is_some());
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn nodes_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+    let js = async_nats::jetstream::new(harness.client.clone());
+    let bucket_name = harness.env.nats_kv_bucket_name("sinex_node_state");
+    let kv = create_or_open_kv_store(
+        &js,
+        async_nats::jetstream::kv::Config {
+            bucket: bucket_name,
+            ..Default::default()
+        },
+    )
+    .await?;
+    kv.put("broken-node", br#"{ definitely not valid json"#.as_slice().into())
+        .await?;
+
+    let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
+        .await
+        .expect_err("invalid node state should surface");
+    assert!(error.to_string().contains("Node state is not valid JSON"));
+    assert!(error.to_string().contains("broken-node"));
     Ok(())
 }

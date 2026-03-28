@@ -4,14 +4,14 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
     handle_telemetry_command_frequency, handle_telemetry_file_activity,
-    handle_telemetry_recent_activity, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
+    handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
+    handle_telemetry_system_state, handle_telemetry_window_focus,
 };
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::{
     TelemetryCommandFrequencyResponse, TelemetryFileActivityResponse,
-    TelemetryRecentActivityResponse, TelemetrySystemStateResponse,
-    TelemetryWindowFocusResponse,
+    TelemetryIngestdValidationResponse, TelemetryRecentActivityResponse,
+    TelemetrySystemStateResponse, TelemetryWindowFocusResponse,
 };
 use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
@@ -315,5 +315,49 @@ async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> Tes
     .await
     .expect_err("inverted telemetry time ranges must be rejected");
     assert!(error.to_string().contains("from' must be earlier"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) -> TestResult<()> {
+    let now = time::OffsetDateTime::parse("2026-03-28T03:45:00Z", &Rfc3339)?;
+    insert_event(
+        &ctx,
+        "sinex.ingestd",
+        "batch.stats",
+        json!({
+            "batch_size": 8,
+            "fetch_to_ack_ms": 42,
+            "events_deferred": 1,
+            "events_failed": 0,
+            "had_synthesis": true,
+            "insert_path": "copy",
+            "validation_valid": 20,
+            "validation_skipped": 0,
+            "validation_no_schema": 2,
+            "validation_schema_not_found": 1,
+            "validation_invalid": 3,
+            "validation_coverage_pct": 87.5,
+            "suspicious_future_ts_orig": 4
+        }),
+        Some(now),
+    )
+    .await?;
+
+    let response: TelemetryIngestdValidationResponse =
+        serde_json::from_value(handle_telemetry_ingestd_validation(ctx.pool(), json!({})).await?)?;
+    let snapshot = response.snapshot.expect("expected latest validation snapshot");
+    assert_eq!(snapshot.batch_size, 8);
+    assert_eq!(snapshot.fetch_to_ack_ms, 42);
+    assert_eq!(snapshot.events_deferred, 1);
+    assert_eq!(snapshot.events_failed, 0);
+    assert!(snapshot.had_synthesis);
+    assert_eq!(snapshot.insert_path, "copy");
+    assert_eq!(snapshot.validation_valid, 20);
+    assert_eq!(snapshot.validation_no_schema, 2);
+    assert_eq!(snapshot.validation_schema_not_found, 1);
+    assert_eq!(snapshot.validation_invalid, 3);
+    assert_eq!(snapshot.validation_coverage_pct, 87.5);
+    assert_eq!(snapshot.suspicious_future_ts_orig, 4);
     Ok(())
 }

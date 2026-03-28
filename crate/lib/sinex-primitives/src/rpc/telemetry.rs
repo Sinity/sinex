@@ -205,3 +205,51 @@ pub struct SystemStateBucket {
 pub struct TelemetrySystemStateResponse {
     pub buckets: Vec<SystemStateBucket>,
 }
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.ingestd_validation
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.ingestd_validation` (returns the latest ingestd batch snapshot).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryIngestdValidationRequest {}
+
+/// Latest ingestd validation / batch snapshot emitted via `sinex.ingestd batch.stats`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestdValidationSnapshot {
+    /// When the batch stats event was persisted (RFC 3339).
+    pub observed_at: String,
+    /// Number of events in the observed batch.
+    pub batch_size: i64,
+    /// End-to-end latency from fetch to ack in milliseconds.
+    pub fetch_to_ack_ms: i64,
+    /// Number of events deferred for retry in the batch.
+    pub events_deferred: i64,
+    /// Number of events that failed processing in the batch.
+    pub events_failed: i64,
+    /// Whether this batch contained synthesis events.
+    pub had_synthesis: bool,
+    /// Insert path used by ingestd for the batch.
+    pub insert_path: String,
+    /// Cumulative count of events that passed schema validation.
+    pub validation_valid: i64,
+    /// Cumulative count of events where validation was skipped.
+    pub validation_skipped: i64,
+    /// Cumulative count of events without a registered schema.
+    pub validation_no_schema: i64,
+    /// Cumulative count of events whose schema ID was not found.
+    pub validation_schema_not_found: i64,
+    /// Cumulative count of events that failed validation.
+    pub validation_invalid: i64,
+    /// Coverage percentage for events with a schema (excluding skipped validation).
+    pub validation_coverage_pct: f64,
+    /// Cumulative count of events whose `ts_orig` was implausibly far in the future.
+    pub suspicious_future_ts_orig: i64,
+}
+
+/// Response: `telemetry.ingestd_validation`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryIngestdValidationResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<IngestdValidationSnapshot>,
+}

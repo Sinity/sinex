@@ -52,12 +52,30 @@ pub async fn handle_nodes_list(
         let key = key.map_err(|e| SinexError::kv("Failed to read key").with_source(e))?;
 
         // Get the value for this key
-        if let Ok(Some(entry)) = kv.get(&key).await
-            && let Ok(state_json) = String::from_utf8(entry.to_vec())
-            && let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json)
-        {
-            nodes.push(state);
-        }
+        let entry = kv
+            .get(&key)
+            .await
+            .map_err(|e| {
+                SinexError::kv("Failed to fetch node state")
+                    .with_context("node_state_key", key.clone())
+                    .with_source(e)
+            })?
+            .ok_or_else(|| {
+                SinexError::not_found("Node state disappeared during listing")
+                    .with_context("node_state_key", key.clone())
+            })?;
+
+        let state_json = String::from_utf8(entry.to_vec()).map_err(|error| {
+            SinexError::serialization("Node state is not valid UTF-8")
+                .with_context("node_state_key", key.clone())
+                .with_std_error(&error)
+        })?;
+        let state = serde_json::from_str::<NodeStatus>(&state_json).map_err(|error| {
+            SinexError::serialization("Node state is not valid JSON")
+                .with_context("node_state_key", key.clone())
+                .with_std_error(&error)
+        })?;
+        nodes.push(state);
     }
 
     serde_json::to_value(NodesListResponse { nodes }).map_err(|e| {

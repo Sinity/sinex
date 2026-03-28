@@ -367,7 +367,8 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
         handle_system_health, handle_telemetry_command_frequency, handle_telemetry_file_activity,
-        handle_telemetry_recent_activity, handle_telemetry_system_state,
+        handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
+        handle_telemetry_system_state,
         handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
         handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
         handle_tombstone_status,
@@ -476,6 +477,11 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "telemetry.system_state",
             Role::ReadOnly,
             boxed!(handle_telemetry_system_state),
+        )
+        .pool_rpc(
+            "telemetry.ingestd_validation",
+            Role::ReadOnly,
+            boxed!(handle_telemetry_ingestd_validation),
         )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
