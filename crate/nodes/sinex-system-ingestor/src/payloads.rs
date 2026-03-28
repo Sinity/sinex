@@ -8,17 +8,30 @@ use sinex_primitives::Seconds;
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
+use tracing::warn;
 
 // Default configuration values for systemd journal monitoring
 const DEFAULT_JOURNAL_BATCH_SIZE: usize = 1000;
 
+fn optional_utf8_env(var: &'static str) -> Option<String> {
+    match std::env::var(var) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                variable = var,
+                "Environment variable is not valid UTF-8; ignoring value for journal cursor defaults"
+            );
+            None
+        }
+    }
+}
+
 fn default_journal_cursor_path() -> String {
-    std::env::var("SINEX_JOURNAL_CURSOR_FILE")
-        .or_else(|_| {
-            std::env::var("SINEX_STATE_DIR").map(|state_dir| format!("{state_dir}/journal.cursor"))
-        })
-        .or_else(|_| std::env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex/journal.cursor")))
-        .unwrap_or_else(|_| "/var/lib/sinex/journal.cursor".to_string())
+    optional_utf8_env("SINEX_JOURNAL_CURSOR_FILE")
+        .or_else(|| optional_utf8_env("SINEX_STATE_DIR").map(|state_dir| format!("{state_dir}/journal.cursor")))
+        .or_else(|| optional_utf8_env("XDG_STATE_HOME").map(|d| format!("{d}/sinex/journal.cursor")))
+        .unwrap_or_else(|| "/var/lib/sinex/journal.cursor".to_string())
 }
 
 // ============================================================================
@@ -441,5 +454,111 @@ impl Default for SystemdConfig {
             monitor_all_units: false, // Start conservative
             monitor_timeout_secs: Seconds::from_secs(5),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these helpers only exist to derive payload defaults from local env state.
+    use super::{default_journal_cursor_path, optional_utf8_env};
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    use xtask::sandbox::sinex_test;
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&mut self, key: &str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[sinex_test]
+    async fn default_journal_cursor_path_prefers_explicit_env()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_JOURNAL_CURSOR_FILE",
+            "SINEX_STATE_DIR",
+            "XDG_STATE_HOME",
+        ]);
+        env.set("SINEX_JOURNAL_CURSOR_FILE", "/tmp/custom.cursor");
+        env.set("SINEX_STATE_DIR", "/tmp/state");
+        env.set("XDG_STATE_HOME", "/tmp/xdg");
+
+        assert_eq!(default_journal_cursor_path(), "/tmp/custom.cursor");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_journal_cursor_path_uses_state_dir_when_present()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_JOURNAL_CURSOR_FILE",
+            "SINEX_STATE_DIR",
+            "XDG_STATE_HOME",
+        ]);
+        env.remove("SINEX_JOURNAL_CURSOR_FILE");
+        env.set("SINEX_STATE_DIR", "/tmp/state");
+        env.set("XDG_STATE_HOME", "/tmp/xdg");
+
+        assert_eq!(default_journal_cursor_path(), "/tmp/state/journal.cursor");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn optional_utf8_env_rejects_non_utf8_values() -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&["SINEX_STATE_DIR"]);
+        env.set("SINEX_STATE_DIR", OsString::from_vec(vec![0xff]));
+
+        assert_eq!(optional_utf8_env("SINEX_STATE_DIR"), None);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn default_journal_cursor_path_ignores_non_utf8_state_dir()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_JOURNAL_CURSOR_FILE",
+            "SINEX_STATE_DIR",
+            "XDG_STATE_HOME",
+        ]);
+        env.remove("SINEX_JOURNAL_CURSOR_FILE");
+        env.set("SINEX_STATE_DIR", OsString::from_vec(vec![0xff]));
+        env.remove("XDG_STATE_HOME");
+
+        assert_eq!(default_journal_cursor_path(), "/var/lib/sinex/journal.cursor");
+        Ok(())
     }
 }

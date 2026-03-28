@@ -65,6 +65,20 @@ pub struct DesktopConfig {
     pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
+fn default_activitywatch_db_path_from(home_dir: Option<std::path::PathBuf>) -> Option<Utf8PathBuf> {
+    let home_dir = home_dir?;
+    match Utf8PathBuf::from_path_buf(home_dir.clone()) {
+        Ok(home) => Some(home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
+        Err(path) => {
+            warn!(
+                path = %path.display(),
+                "Home directory path is not valid UTF-8; default ActivityWatch history path is unavailable"
+            );
+            None
+        }
+    }
+}
+
 impl Default for DesktopConfig {
     fn default() -> Self {
         Self {
@@ -76,9 +90,7 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
-            activitywatch_db_path: dirs::home_dir()
-                .and_then(|path| Utf8PathBuf::from_path_buf(path).ok())
-                .map(|home| home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
+            activitywatch_db_path: default_activitywatch_db_path_from(dirs::home_dir()),
         }
     }
 }
@@ -1115,6 +1127,31 @@ mod tests {
             duration_ms: 1000,
             data,
         })
+    }
+
+    #[sinex_test]
+    async fn desktop_default_activitywatch_db_path_uses_utf8_home_dir()
+    -> xtask::sandbox::TestResult<()> {
+        let path = default_activitywatch_db_path_from(Some(std::path::PathBuf::from("/tmp/home")))
+            .ok_or_else(|| color_eyre::eyre::eyre!("default ActivityWatch path should exist"))?;
+
+        assert_eq!(
+            path,
+            Utf8PathBuf::from("/tmp/home/.local/share/activitywatch/aw-server-rust/sqlite.db")
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn desktop_default_activitywatch_db_path_rejects_non_utf8_home_dir()
+    -> xtask::sandbox::TestResult<()> {
+        let invalid_home = std::path::PathBuf::from(OsString::from_vec(vec![
+            b'/', b't', b'm', b'p', b'/', 0xff,
+        ]));
+
+        assert_eq!(default_activitywatch_db_path_from(Some(invalid_home)), None);
+        Ok(())
     }
 
     #[sinex_test]
