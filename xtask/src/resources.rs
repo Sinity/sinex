@@ -2,7 +2,7 @@
 //!
 //! Provides memory and CPU load checks to warn users before heavy operations.
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 
 /// Minimum recommended memory in GB for various operations.
 pub mod thresholds {
@@ -33,7 +33,7 @@ impl ResourceStatus {
         // S7 fix: when /proc/meminfo is unreadable (non-Linux), assume ample memory
         // so callers don't emit spurious low-memory warnings.
         let (available_kb, total_kb) = memory_info().unwrap_or((u64::MAX, u64::MAX));
-        let load = load_1min();
+        let load = load_1min()?;
         let cpu_count = num_cpus::get();
 
         Ok(Self {
@@ -125,11 +125,26 @@ fn memory_info() -> Option<(u64, u64)> {
 }
 
 /// Read 1-minute load average from /proc/loadavg.
-fn load_1min() -> f64 {
-    std::fs::read_to_string("/proc/loadavg")
-        .ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse().ok()))
-        .unwrap_or(0.0)
+fn load_1min() -> Result<f64> {
+    let content = match std::fs::read_to_string("/proc/loadavg") {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0.0),
+        Err(error) => {
+            return Err(eyre!(error).wrap_err("failed to read /proc/loadavg"));
+        }
+    };
+
+    parse_load_1min(&content)
+}
+
+fn parse_load_1min(content: &str) -> Result<f64> {
+    let raw = content
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| eyre!("/proc/loadavg did not contain a 1-minute load value"))?;
+
+    raw.parse::<f64>()
+        .map_err(|error| eyre!(error).wrap_err("failed to parse 1-minute load average"))
 }
 
 #[cfg(test)]
@@ -185,6 +200,22 @@ mod tests {
             cpu_count: 8,
         };
         assert!(status.warning(8).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_load_1min_rejects_invalid_first_field() -> TestResult<()> {
+        let error = parse_load_1min("not-a-number 0.00 0.00 1/1 1").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to parse 1-minute load average"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_load_1min_rejects_missing_first_field() -> TestResult<()> {
+        let error = parse_load_1min("").unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("/proc/loadavg did not contain a 1-minute load value"));
         Ok(())
     }
 }
