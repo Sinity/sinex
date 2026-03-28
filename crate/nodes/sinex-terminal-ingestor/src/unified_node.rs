@@ -870,6 +870,19 @@ impl HistoryWatcherContext {
             .await
     }
 
+    fn history_state_temp_path(path: &std::path::Path, suffix: Uuid) -> std::path::PathBuf {
+        let mut file_name = path
+            .file_name()
+            .map_or_else(|| std::ffi::OsString::from("history_state"), std::ffi::OsStr::to_os_string);
+        file_name.push(".");
+        file_name.push(suffix.to_string());
+        file_name.push(".tmp");
+
+        path.parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(file_name)
+    }
+
     fn sqlite_history_state(sqlite_row_id: i64, recent_hashes: VecDeque<u64>) -> HistoryState {
         HistoryState {
             sqlite_row_id: Some(sqlite_row_id),
@@ -1331,14 +1344,7 @@ impl HistoryWatcherContext {
                     );
                 }
 
-                let file_name = path.file_name().map_or_else(
-                    || std::borrow::Cow::Borrowed("history_state"),
-                    |name| name.to_string_lossy(),
-                );
-                let temp_path = path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .join(format!("{}.{}.tmp", file_name, Uuid::now_v7()));
+                let temp_path = Self::history_state_temp_path(path, Uuid::now_v7());
 
                 match fs::OpenOptions::new()
                     .create_new(true)
@@ -3094,6 +3100,34 @@ mod tests {
         TestIngestdConfig, TestRuntime, TestRuntimeBuilder, prelude::*,
         start_test_ingestd_with_config,
     };
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn history_state_temp_path_preserves_non_utf8_filenames() -> TestResult<()> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = std::path::PathBuf::from("/tmp").join(std::ffi::OsString::from_vec(vec![
+            b'h', b'i', b's', b't', 0xff, b'.', b's', b't', b'a', b't', b'e',
+        ]));
+        let suffix = Uuid::from_u128(0x1234);
+        let temp_path = HistoryWatcherContext::history_state_temp_path(&path, suffix);
+        let file_name = temp_path.file_name().expect("temp path file name");
+        let expected_prefix = [
+            b'h', b'i', b's', b't', 0xff, b'.', b's', b't', b'a', b't', b'e', b'.',
+        ];
+
+        assert!(
+            file_name.as_bytes().starts_with(&expected_prefix),
+            "unexpected temp file prefix: {:?}",
+            file_name
+        );
+        assert!(
+            file_name.as_bytes().ends_with(b".tmp"),
+            "unexpected temp file suffix: {:?}",
+            file_name
+        );
+        Ok(())
+    }
 
     #[sinex_test]
     async fn terminal_config_validation_allows_valid_configuration() -> TestResult<()> {

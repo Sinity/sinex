@@ -86,7 +86,13 @@ impl SystemdMonitor {
         if service_path.exists() {
             for entry in std::fs::read_dir(&service_path)? {
                 let entry = entry?;
-                let name = entry.file_name().to_string_lossy().to_string();
+                let name = entry.file_name().into_string().map_err(|name| {
+                    eyre!(
+                        "Failed to decode systemd unit name as UTF-8 in '{}': {:?}",
+                        service_path.display(),
+                        name
+                    )
+                })?;
                 if name.ends_with(".service") {
                     services.push(name);
                 }
@@ -615,6 +621,33 @@ mod tests {
 
         assert!(error.to_string().contains("Failed to parse unit CPU usage"));
         assert!(error.to_string().contains("nope"));
+        std::fs::remove_dir_all(&temp_dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn systemd_monitor_rejects_non_utf8_unit_names() -> TestResult<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp_dir = temp_path("sinex-systemd-units");
+        let service_dir = temp_dir.join("system.slice");
+        std::fs::create_dir_all(&service_dir)?;
+        let invalid_name = std::ffi::OsString::from_vec(vec![
+            b's', b'i', b'n', b'e', b'x', b'-', 0xff, b'.', b's', b'e', b'r', b'v', b'i', b'c',
+            b'e',
+        ]);
+        std::fs::write(service_dir.join(invalid_name), [])?;
+
+        let monitor = SystemdMonitor {
+            cgroup_base: temp_dir.clone(),
+        };
+
+        let error = monitor
+            .list_service_units()
+            .expect_err("non-utf8 unit names must fail honestly");
+
+        assert!(error.to_string().contains("decode systemd unit name as UTF-8"));
         std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
     }
