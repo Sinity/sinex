@@ -156,14 +156,19 @@ fn validate_journal_cursor(cursor: &str) -> bool {
         return false;
     }
 
-    let parts: HashMap<&str, &str> = cursor
-        .split(';')
-        .filter_map(|segment| segment.split_once('='))
-        .collect();
+    let mut parts = HashSet::new();
+    for segment in cursor.split(';') {
+        let Some((key, value)) = segment.split_once('=') else {
+            return false;
+        };
+        if key.is_empty() || value.is_empty() || !parts.insert(key) {
+            return false;
+        }
+    }
 
     CURSOR_REQUIRED_KEYS
         .iter()
-        .all(|key| parts.contains_key(key))
+        .all(|key| parts.contains(key))
 }
 
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
@@ -1968,6 +1973,26 @@ mod tests {
 
         assert!(error.to_string().contains("cursor file is invalid"));
         let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_journal_cursor_rejects_malformed_segments(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+
+        assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1;x=1;garbage"));
+        assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1"));
+        assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1;x="));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_journal_cursor_rejects_duplicate_keys(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+
+        assert!(!validate_journal_cursor(
+            "s=abc;i=1;b=boot;m=1;t=1;x=1;s=duplicate"
+        ));
         Ok(())
     }
 
