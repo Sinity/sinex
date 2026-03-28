@@ -30,7 +30,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material,
     SqliteHistoryImportError, SqliteHistoryRowOutcome,
-    watcher_handle::WatcherHandle,
+    watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use sinex_primitives::{
     HostName, Seconds, Timestamp, Uuid,
@@ -43,7 +43,7 @@ use sinex_primitives::{
     },
     privacy::{self, ProcessingContext},
 };
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
 
 const MATERIAL_REASON_ACTIVITYWATCH_HISTORY: &str = "desktop-activitywatch-history";
@@ -564,6 +564,21 @@ impl Default for DesktopNode {
 }
 
 impl DesktopNode {
+    fn record_watcher_error(health: &Arc<RwLock<WatcherHealth>>, error: &SinexError) {
+        match health.write() {
+            Ok(mut watcher_health) => {
+                watcher_health.last_error = Some(error.to_string());
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn live_watcher_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
+        handle.and_then(|watcher| watcher.health().last_error)
+    }
+
     fn env_string_override(name: &str) -> NodeResult<Option<String>> {
         match std::env::var(name) {
             Ok(value) => Ok(Some(value)),
@@ -877,12 +892,15 @@ impl IngestorNode for DesktopNode {
             .await
             {
                 Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("clipboard");
+                    let health = handle.health_tracker();
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Clipboard monitoring failed: {}", e);
+                            Self::record_watcher_error(&health, &e);
                         }
                     });
-                    *handle = WatcherHandle::running("clipboard", task, None, None);
+                    handle.start(task, None)?;
                     state.health.clipboard_active = true;
                     state.health.clipboard_last_error = None;
                 }
@@ -913,12 +931,15 @@ impl IngestorNode for DesktopNode {
             .await
             {
                 Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("window_manager");
+                    let health = handle.health_tracker();
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Window manager monitoring failed: {}", e);
+                            Self::record_watcher_error(&health, &e);
                         }
                     });
-                    *handle = WatcherHandle::running("window_manager", task, None, None);
+                    handle.start(task, None)?;
                     state.health.window_manager_active = true;
                     state.health.window_manager_last_error = None;
                 }
@@ -1005,6 +1026,12 @@ impl IngestorNode for DesktopNode {
         .count() as u64;
         let healthy = active_sources > 0 && connected_sources == active_sources;
         let is_connected = active_sources > 0 && connected_sources > 0;
+        let clipboard_error =
+            Self::live_watcher_error(self.clipboard_watcher.as_ref())
+                .or_else(|| state.health.clipboard_last_error.clone());
+        let window_manager_error =
+            Self::live_watcher_error(self.window_manager_watcher.as_ref())
+                .or_else(|| state.health.window_manager_last_error.clone());
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -1012,7 +1039,9 @@ impl IngestorNode for DesktopNode {
             "watcher_health".to_string(),
             json!({
                 "clipboard_active": self.clipboard_connected(),
+                "clipboard_error": clipboard_error,
                 "window_manager_active": self.window_manager_connected(),
+                "window_manager_error": window_manager_error,
             }),
         );
         let description = if active_sources == 0 {
@@ -1333,7 +1362,9 @@ mod tests {
             source.metadata.get("watcher_health"),
             Some(&json!({
                 "clipboard_active": false,
+                "clipboard_error": serde_json::Value::Null,
                 "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
             }))
         );
         Ok(())
@@ -1364,7 +1395,31 @@ mod tests {
             source.metadata.get("watcher_health"),
             Some(&json!({
                 "clipboard_active": true,
+                "clipboard_error": serde_json::Value::Null,
                 "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_surfaces_live_watcher_errors()
+    -> xtask::sandbox::TestResult<()> {
+        let mut node = DesktopNode::new();
+        let handle = WatcherHandle::initialized("clipboard");
+        handle.record_error("clipboard watcher crashed".to_string());
+        node.clipboard_watcher = Some(handle);
+
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "clipboard_active": false,
+                "clipboard_error": "clipboard watcher crashed",
+                "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
             }))
         );
         Ok(())
