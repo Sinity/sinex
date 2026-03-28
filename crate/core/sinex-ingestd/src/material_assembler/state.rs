@@ -44,6 +44,21 @@ pub(super) fn parse_material_started_at(
     })
 }
 
+pub(super) fn parse_material_ended_at(
+    material_id: Uuid,
+    ended_at: &str,
+    source: &str,
+) -> IngestdResult<Timestamp> {
+    Timestamp::parse_rfc3339(ended_at).map_err(|error| {
+        SinexError::invalid_state(format!(
+            "Invalid ended_at in material assembler {source}"
+        ))
+        .with_context("material_id", material_id.to_string())
+        .with_context("ended_at", ended_at)
+        .with_std_error(&error)
+    })
+}
+
 /// Message from `source_material.begin`
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct MaterialBeginMessage {
