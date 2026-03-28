@@ -312,6 +312,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
     Ok(())
 }
 
+
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = uuid::Uuid::now_v7();

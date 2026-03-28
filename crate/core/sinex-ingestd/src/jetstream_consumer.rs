@@ -871,6 +871,13 @@ impl JetStreamConsumer {
             }
         };
 
+        if event.ts_orig.is_none() {
+            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig");
+            self.route_validation_failure(&msg, "Validation failed: missing ts_orig".to_string())
+                .await?;
+            return Ok(None);
+        }
+
         self.record_suspicious_ts_orig(&event).await;
 
         // Validate event using EventValidator; capture the matched schema_id for persistence.
@@ -1335,9 +1342,12 @@ impl JetStreamConsumer {
                     id: prepared.parsed_id,
                     source: event.source.clone(),
                     event_type: event.event_type.clone(),
-                    ts_orig: event
-                        .ts_orig
-                        .unwrap_or_else(sinex_primitives::Timestamp::now),
+                    ts_orig: event.ts_orig.ok_or_else(|| {
+                        SinexError::validation("validated event missing ts_orig")
+                            .with_context("event_id", prepared.parsed_id.to_string())
+                            .with_context("source", event.source.as_str().to_string())
+                            .with_context("event_type", event.event_type.as_str().to_string())
+                    })?,
                     host: event.host.clone(),
                     payload: event.payload.clone(),
                     source_material_id,
