@@ -6,7 +6,7 @@
 //! by the health aggregator automaton.
 
 use crate::runtime::stream::NodeRuntimeState;
-use crate::error_helpers::env_parse_with_default;
+use crate::error_helpers::{elapsed_seconds_with_warning, env_parse_with_default};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::NodeName;
@@ -345,7 +345,7 @@ impl HeartbeatEmitter {
         &self,
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
-        let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
+        let uptime = elapsed_seconds_with_warning(self.start_time, "heartbeat uptime");
         let recent_errors = self.errors_count.get();
 
         let events_processed = {

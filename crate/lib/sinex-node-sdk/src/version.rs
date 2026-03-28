@@ -4,6 +4,7 @@
 //! by shadow-rs, including semantic versioning, git metadata, and
 //! build information for node coordination and handoff.
 
+use crate::error_helpers::elapsed_seconds_with_warning;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -180,7 +181,7 @@ impl NodeInstance {
     /// Get instance uptime in seconds
     #[must_use]
     pub fn uptime_seconds(&self) -> u64 {
-        self.start_time.elapsed().unwrap_or_default().as_secs()
+        elapsed_seconds_with_warning(self.start_time, "node instance uptime")
     }
 
     /// Check if this instance should be leader over another
