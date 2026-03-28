@@ -264,6 +264,38 @@ impl SystemNode {
         Ok(Arc::new(context))
     }
 
+    fn dbus_connected(&self) -> bool {
+        self.config.dbus_enabled
+            && self
+                .dbus_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn journal_connected(&self) -> bool {
+        self.config.journal_enabled
+            && self
+                .unified_journal_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn udev_connected(&self) -> bool {
+        self.config.udev_enabled
+            && self
+                .udev_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn systemd_connected(&self) -> bool {
+        self.config.systemd_enabled
+            && self
+                .unified_journal_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
     fn apply_config_overrides<S: ConfigAccessor>(
         config: &mut SystemConfig,
         source: &S,
@@ -322,7 +354,7 @@ impl SystemNode {
                     .iter()
                     .map(std::string::ToString::to_string)
                     .collect(),
-                connection_active: self.dbus_watcher.is_some(),
+                connection_active: self.dbus_connected(),
                 recent_signal_count: self
                     .dbus_watcher
                     .as_ref()
@@ -334,7 +366,7 @@ impl SystemNode {
         if self.config.journal_enabled {
             enabled_sources.push("journal".to_string());
             journal_status = Some(JournalStatus {
-                following_active: self.unified_journal_watcher.is_some(),
+                following_active: self.journal_connected(),
                 cursor_position: None, // Would need to track this
                 recent_entry_count: self
                     .unified_journal_watcher
@@ -347,7 +379,7 @@ impl SystemNode {
         if self.config.udev_enabled {
             enabled_sources.push("udev".to_string());
             udev_status = Some(UdevStatus {
-                monitoring_active: self.udev_watcher.is_some(),
+                monitoring_active: self.udev_connected(),
                 recent_device_events: self
                     .udev_watcher
                     .as_ref()
@@ -359,7 +391,7 @@ impl SystemNode {
         if self.config.systemd_enabled {
             enabled_sources.push("systemd".to_string());
             systemd_status = Some(SystemdStatus {
-                monitoring_active: self.unified_journal_watcher.is_some(),
+                monitoring_active: self.systemd_connected(),
                 units_tracked: 0,        // Would need to query systemd
                 recent_state_changes: 0, // Systemd events are mixed in journal watcher, hard to separate without filter
             });
@@ -382,12 +414,11 @@ impl SystemNode {
     /// Expose watcher readiness for tests and diagnostics.
     #[must_use]
     pub fn watcher_snapshot(&self) -> WatcherSnapshot {
-        let unified_ready = self.unified_journal_watcher.is_some();
         WatcherSnapshot {
-            dbus_ready: self.dbus_watcher.is_some(),
-            journal_ready: unified_ready,
-            udev_ready: self.udev_watcher.is_some(),
-            systemd_ready: unified_ready,
+            dbus_ready: self.dbus_connected(),
+            journal_ready: self.journal_connected(),
+            udev_ready: self.udev_connected(),
+            systemd_ready: self.systemd_connected(),
         }
     }
 
@@ -955,10 +986,10 @@ impl IngestorNode for SystemNode {
         .filter(|&&enabled| enabled)
         .count() as u64;
         let connected_sources = [
-            state.health.dbus_active,
-            state.health.journal_active,
-            state.health.udev_active,
-            state.health.systemd_active,
+            self.dbus_connected(),
+            self.journal_connected(),
+            self.udev_connected(),
+            self.systemd_connected(),
         ]
         .iter()
         .filter(|&&active| active)
@@ -970,10 +1001,10 @@ impl IngestorNode for SystemNode {
         metadata.insert(
             "watcher_health".to_string(),
             json!({
-                "dbus_active": state.health.dbus_active,
-                "journal_active": state.health.journal_active,
-                "udev_active": state.health.udev_active,
-                "systemd_active": state.health.systemd_active,
+                "dbus_active": self.dbus_connected(),
+                "journal_active": self.journal_connected(),
+                "udev_active": self.udev_connected(),
+                "systemd_active": self.systemd_connected(),
             }),
         );
         let description = if active_sources == 0 {
@@ -1203,6 +1234,94 @@ mod tests {
                 .get("connected_sources")
                 .and_then(serde_json::Value::as_u64),
             Some(0)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_ignores_stale_persisted_watcher_flags() -> TestResult<()> {
+        let node = SystemNode::new();
+        let state = SystemPersistentState {
+            health: SystemMonitorHealth {
+                dbus_active: true,
+                journal_active: true,
+                udev_active: true,
+                systemd_active: true,
+            },
+            ..SystemPersistentState::default()
+        };
+
+        let source = IngestorNode::get_source_state(&node, &state)?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": false,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn watcher_snapshot_requires_live_tasks() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        node.dbus_watcher = Some(WatcherHandle::initialized("dbus"));
+        node.unified_journal_watcher = Some(WatcherHandle::initialized("unified_journal"));
+        node.udev_watcher = Some(WatcherHandle::initialized("udev"));
+
+        let snapshot = node.watcher_snapshot();
+
+        assert_eq!(
+            snapshot,
+            WatcherSnapshot {
+                dbus_ready: false,
+                journal_ready: false,
+                udev_ready: false,
+                systemd_ready: false,
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_source_state_reports_live_watcher_handles() -> TestResult<()> {
+        let mut node = SystemNode::new();
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        node.dbus_watcher = Some(WatcherHandle::running("dbus", task, None, None));
+
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+
+        assert!(source.is_connected);
+        assert!(source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "dbus_active": true,
+                "journal_active": false,
+                "udev_active": false,
+                "systemd_active": false,
+            }))
         );
         Ok(())
     }

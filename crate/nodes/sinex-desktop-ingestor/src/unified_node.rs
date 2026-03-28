@@ -589,6 +589,22 @@ impl DesktopNode {
 
         Ok(())
     }
+
+    fn clipboard_connected(&self) -> bool {
+        self.config.clipboard_enabled
+            && self
+                .clipboard_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
+
+    fn window_manager_connected(&self) -> bool {
+        self.config.window_manager_enabled
+            && self
+                .window_manager_watcher
+                .as_ref()
+                .is_some_and(WatcherHandle::is_active)
+    }
 }
 
 impl IngestorNode for DesktopNode {
@@ -809,12 +825,6 @@ impl IngestorNode for DesktopNode {
             // Create actual watcher
             let watcher_shutdown_rx = shutdown_rx.clone(); // Clone for this watcher
 
-            // We need to create the watcher task.
-            // The trick is WatcherHandle expects us to give it the task.
-            // But we also need to keep the Watcher object alive if it has state?
-            // Verify WatcherHandle design: it holds material.
-            // ClipboardWatcher holds state.
-
             match ClipboardWatcher::new(
                 self.config.clipboard_poll_interval_secs,
                 stage_context.clone(),
@@ -828,8 +838,9 @@ impl IngestorNode for DesktopNode {
                             error!("Clipboard monitoring failed: {}", e);
                         }
                     });
-                    let _ = handle.start(task, None);
+                    *handle = WatcherHandle::running("clipboard", task, None, None);
                     state.health.clipboard_active = true;
+                    state.health.clipboard_last_error = None;
                 }
                 Err(e) => {
                     if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
@@ -863,8 +874,9 @@ impl IngestorNode for DesktopNode {
                             error!("Window manager monitoring failed: {}", e);
                         }
                     });
-                    let _ = handle.start(task, None);
+                    *handle = WatcherHandle::running("window_manager", task, None, None);
                     state.health.window_manager_active = true;
+                    state.health.window_manager_last_error = None;
                 }
                 Err(e) => {
                     if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
@@ -930,8 +942,8 @@ impl IngestorNode for DesktopNode {
         .filter(|&&enabled| enabled)
         .count() as u64;
         let connected_sources = [
-            state.health.clipboard_active,
-            state.health.window_manager_active,
+            self.clipboard_connected(),
+            self.window_manager_connected(),
         ]
         .iter()
         .filter(|&&active| active)
@@ -943,8 +955,8 @@ impl IngestorNode for DesktopNode {
         metadata.insert(
             "watcher_health".to_string(),
             json!({
-                "clipboard_active": state.health.clipboard_active,
-                "window_manager_active": state.health.window_manager_active,
+                "clipboard_active": self.clipboard_connected(),
+                "window_manager_active": self.window_manager_connected(),
             }),
         );
         let description = if active_sources == 0 {
@@ -996,6 +1008,7 @@ impl IngestorNode for DesktopNode {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
     use xtask::sandbox::sinex_test;
 
     fn sample_activitywatch_entry(
@@ -1139,6 +1152,70 @@ mod tests {
                 .get("connected_sources")
                 .and_then(serde_json::Value::as_u64),
             Some(0)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_ignores_stale_persisted_watcher_flags()
+    -> xtask::sandbox::TestResult<()> {
+        let node = DesktopNode::new();
+        let state = DesktopPersistentState {
+            health: DesktopMonitorHealth {
+                clipboard_active: true,
+                window_manager_active: true,
+                ..DesktopMonitorHealth::default()
+            },
+            ..DesktopPersistentState::default()
+        };
+
+        let source = IngestorNode::get_source_state(&node, &state)?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "clipboard_active": false,
+                "window_manager_active": false,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_reports_live_watcher_handle_activity()
+    -> xtask::sandbox::TestResult<()> {
+        let mut node = DesktopNode::new();
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        node.clipboard_watcher = Some(WatcherHandle::running("clipboard", task, None, None));
+
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert!(source.is_connected);
+        assert!(source.healthy);
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "clipboard_active": true,
+                "window_manager_active": false,
+            }))
         );
         Ok(())
     }
