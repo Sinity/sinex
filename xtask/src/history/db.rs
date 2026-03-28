@@ -48,6 +48,16 @@ fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -
     }
 }
 
+fn validate_finite_duration_secs(context: &str, duration_secs: f64) -> Result<()> {
+    if duration_secs.is_finite() {
+        return Ok(());
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "{context} has non-finite duration_secs: {duration_secs}"
+    ))
+}
+
 fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
     error.chain().any(|cause| {
         cause
@@ -2578,7 +2588,22 @@ impl HistoryDb {
         invocation_id: i64,
         report: &crate::commands::exercise::ExerciseReport,
     ) -> Result<()> {
-        let report_json = serde_json::to_string(report).ok();
+        validate_finite_duration_secs("exercise report", report.duration_secs)?;
+        for entry in &report.results {
+            validate_finite_duration_secs(
+                &format!("exercise result '{}'", entry.id),
+                entry.duration_secs,
+            )?;
+            for step in &entry.steps {
+                validate_finite_duration_secs(
+                    &format!("exercise step '{}' for '{}'", step.label, entry.id),
+                    step.duration_secs,
+                )?;
+            }
+        }
+
+        let report_json = serde_json::to_string(report)
+            .wrap_err("failed to serialize exercise report for history persistence")?;
         // Infer tier from results: if mixed, leave NULL (multi-tier run).
         let tier: Option<&str> = {
             let tiers: std::collections::HashSet<&str> =
@@ -2603,7 +2628,7 @@ impl HistoryDb {
                 report.failed as i64,
                 report.skipped as i64,
                 report.duration_secs,
-                report_json,
+                Some(report_json),
             ],
             |row| row.get::<_, i64>(0),
         ).context("failed to insert exercise_run row")?;
@@ -3751,6 +3776,7 @@ fn parse_sandbox_meta(output: &str) -> SandboxMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::exercise::{ExerciseReport, ReportEntry, StepEntry};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
@@ -4923,6 +4949,49 @@ mod tests {
         assert_eq!(
             job.stderr_path.as_ref().unwrap(),
             &new_stderr.display().to_string()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_record_exercise_run_rejects_non_finite_duration() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-record-exercise-run-invalid-report.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("exercise", None, None, None)?;
+
+        let report = ExerciseReport {
+            status: "failed".to_string(),
+            total: 1,
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            duration_secs: f64::NAN,
+            output_dir: "/tmp/exercise".to_string(),
+            results: vec![ReportEntry {
+                id: "t1.example".to_string(),
+                tier: "t1".to_string(),
+                passed: false,
+                duration_secs: 1.0,
+                error: Some("boom".to_string()),
+                steps: vec![StepEntry {
+                    label: "exercise".to_string(),
+                    passed: false,
+                    exit_code: 1,
+                    duration_secs: 1.0,
+                    validation_errors: vec!["bad".to_string()],
+                }],
+            }],
+        };
+
+        let error = db
+            .record_exercise_run(invocation_id, &report)
+            .expect_err("non-finite exercise report must fail history persistence");
+        let rendered = format!("{error:#}");
+
+        assert!(
+            rendered.contains("exercise report has non-finite duration_secs"),
+            "expected explicit non-finite duration error, got: {rendered}"
         );
         Ok(())
     }
