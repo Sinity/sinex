@@ -658,16 +658,11 @@ pub(super) async fn handle_slice(
                     "Ignoring duplicate buffered slice"
                 );
             } else if state.buffered_slices.len() >= assembler.max_buffered_slices {
-                // ... error handling for max buffer ...
-                // (Truncated for brevity in this single-tool edit, but I should preserve the logic)
-                // I will assume logic is similar but we need to route error.
-                // Re-implementing simplified logic for this massive replace:
-                // Actually I must preserve the logic.
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
                 let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
                 state.phase = AssemblyPhase::Finalizing;
-                drop(state); // unlock
+                drop(state);
 
                 assembler
                     .route_material_error(
@@ -926,6 +921,8 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::sync::Arc;
+    use tokio::time::timeout;
+    use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;
 
     async fn test_assembler(
@@ -1091,6 +1088,61 @@ mod tests {
         assert!(
             assembler.get_state_handle(&material_id).await.is_none(),
             "oversized material should be failed and cleaned up"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_slice_routes_buffered_slice_limit_overflow_to_dlq(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let annex_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
+        GitAnnex::init(&repo_path, Some("io-test")).await?;
+        let annex = Arc::new(GitAnnex::new(AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        })?);
+
+        let state_dir = tempfile::tempdir()?;
+        let assembler = MaterialAssembler::new(
+            ctx.nats_client(),
+            ctx.pool.clone(),
+            annex,
+            state_dir.path().to_path_buf(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+            1_000,
+            50,
+            Some(MaterialReadySet::default()),
+            1,
+            512 * 1024 * 1024,
+            300,
+            3_600,
+            90,
+        )?;
+
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+        let material_id = Uuid::now_v7();
+
+        handle_slice(&assembler, material_id, 4, b"late".to_vec()).await?;
+        handle_slice(&assembler, material_id, 8, b"later".to_vec()).await?;
+
+        let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+        let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
+        assert_eq!(payload["error"], "buffered_slice_limit_exceeded");
+        assert_eq!(payload["material_id"], material_id.to_string());
+        assert_eq!(payload["context"]["offset"], 8);
+        assert_eq!(payload["context"]["buffered_count"], 1);
+
+        assert!(
+            assembler.get_state_handle(&material_id).await.is_none(),
+            "buffered slice overflow should fail the material instead of leaving retry state behind"
         );
         Ok(())
     }
