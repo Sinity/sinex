@@ -228,8 +228,7 @@ impl NodeConfig {
                 .unwrap_or_else(default_log_level),
             #[cfg(feature = "messaging")]
             nats: nats_config_from_env(&env_prefix),
-            database_url: service_or_global_env_string(&env_prefix, "DATABASE_URL")
-                .map(|url| environment().database_url(&url).unwrap_or(url)),
+            database_url: service_or_global_env_string(&env_prefix, "DATABASE_URL"),
             database_pool_size: service_or_global_env_parse(&env_prefix, "DB_POOL_SIZE")
                 .or_else(|| service_or_global_env_parse(&env_prefix, "DATABASE_POOL_SIZE"))
                 .unwrap_or(defaults.database_pool_size),

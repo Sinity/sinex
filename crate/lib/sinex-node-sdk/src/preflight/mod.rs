@@ -11,7 +11,6 @@ use crate::{NodeResult, SinexError};
 pub use services::verify_service_dependencies;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::constants::timeouts;
-use sinex_primitives::environment::environment;
 use std::process::Output;
 
 /// Run an external command with a timeout to prevent indefinite hangs during preflight.
@@ -66,11 +65,7 @@ pub fn resolve_database_url() -> NodeResult<String> {
     })?;
 
     sinex_db::resolve_effective_database_url(&base_url).map_err(|err| {
-        SinexError::configuration(format!(
-            "Failed to resolve effective database URL for Sinex environment '{}'",
-            environment().name()
-        ))
-        .with_std_error(&err)
+        SinexError::configuration("Failed to validate DATABASE_URL").with_std_error(&err)
     })
 }
 

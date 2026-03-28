@@ -1,5 +1,4 @@
 use sinex_ingestd::IngestdConfig;
-use sinex_primitives::environment::environment;
 use sinex_primitives::validation::config_validation::ConfigValidation;
 use xtask::sandbox::prelude::*;
 
@@ -28,9 +27,6 @@ async fn validates_database_urls() -> TestResult<()> {
 
 #[sinex_test]
 async fn constructs_from_args() -> TestResult<()> {
-    let expected_database_url = environment()
-        .database_url("postgresql://custom/db")
-        .unwrap_or_else(|_| "postgresql://custom/db".to_string());
     let config = IngestdConfig::from_args(
         Some("postgresql://custom/db".to_string()),
         "nats://custom:4222".to_string(),
@@ -46,7 +42,7 @@ async fn constructs_from_args() -> TestResult<()> {
         None,
     );
 
-    assert_eq!(config.database_url, expected_database_url);
+    assert_eq!(config.database_url, "postgresql://custom/db");
     assert_eq!(config.nats.url, "nats://custom:4222");
     assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 50);
@@ -63,11 +59,8 @@ async fn defaults_read_process_environment() -> TestResult<()> {
     env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-env-config");
 
     let config = IngestdConfig::default();
-    let expected_database_url = environment()
-        .database_url("postgresql://env/example")
-        .unwrap_or_else(|_| "postgresql://env/example".to_string());
 
-    assert_eq!(config.database_url, expected_database_url);
+    assert_eq!(config.database_url, "postgresql://env/example");
     assert_eq!(config.nats.url, "tls://env-nats:4222");
     assert!(config.nats.require_tls);
     assert_eq!(
@@ -84,10 +77,6 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
     env.set("SINEX_NATS_URL", "nats://env-default:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "0");
     env.set("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS", "45");
-    let expected_database_url = environment()
-        .database_url("postgresql://cli/override")
-        .unwrap_or_else(|_| "postgresql://cli/override".to_string());
-
     let config = IngestdConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "tls://cli-nats:4222".to_string(),
@@ -103,7 +92,7 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
         None,
     );
 
-    assert_eq!(config.database_url, expected_database_url);
+    assert_eq!(config.database_url, "postgresql://cli/override");
     assert_eq!(config.nats.url, "tls://cli-nats:4222");
     assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 64);

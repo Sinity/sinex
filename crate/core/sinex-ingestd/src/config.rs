@@ -277,7 +277,7 @@ impl IngestdConfig {
         nats_config.require_tls = nats_require_tls;
         let nats_config_clone = nats_config;
 
-        let db_url = database_url.map(resolve_database_url).unwrap_or_else(default_database_url);
+        let db_url = database_url.unwrap_or_else(default_database_url);
         let mut config = Self::default();
         config.database_url = db_url;
         config.database_pool_size = pool_size;
@@ -532,19 +532,18 @@ impl Default for IngestdConfig {
 
 // Helper functions
 
-/// Default database URL with environment namespacing
+/// Default database URL with environment namespacing.
+///
+/// Explicit `DATABASE_URL` values are treated as exact operator input and are
+/// no longer rewritten through the ambient Sinex environment.
 fn default_database_url() -> String {
     if let Ok(url) = std::env::var("DATABASE_URL") {
-        resolve_database_url(url)
+        url
     } else {
         let env = environment();
         let base_name = env.database_name("sinex");
         format!("postgresql:///{base_name}?host=/run/postgresql")
     }
-}
-
-fn resolve_database_url(url: String) -> String {
-    environment().database_url(&url).unwrap_or(url)
 }
 
 /// Default work directory for ingestd with environment namespacing

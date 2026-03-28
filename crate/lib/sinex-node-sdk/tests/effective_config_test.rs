@@ -1,5 +1,5 @@
 use sinex_node_sdk::{AutomatonConfig, EventSourceConfig, NodeConfig};
-use sinex_primitives::{Seconds, environment::environment};
+use sinex_primitives::Seconds;
 use xtask::sandbox::prelude::*;
 
 struct ScopedEnvGuard {
@@ -55,9 +55,6 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
     env.set("DATABASE_URL", "postgresql://global/db");
 
     let config = NodeConfig::load_from_env("test-node");
-    let expected_database_url = environment()
-        .database_url("postgresql://global/db")
-        .unwrap_or_else(|_| "postgresql://global/db".to_string());
     assert_eq!(config.service_name, "test-node");
     assert_eq!(config.log_level, "debug");
     assert_eq!(config.nats.url, "tls://global-nats:4222");
@@ -67,7 +64,7 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
     assert!(config.dry_run);
     assert_eq!(
         config.database_url.as_deref(),
-        Some(expected_database_url.as_str())
+        Some("postgresql://global/db")
     );
     config.validate_config()?;
     Ok(())

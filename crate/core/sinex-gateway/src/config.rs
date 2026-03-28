@@ -156,9 +156,7 @@ pub struct GatewayConfig {
 }
 
 fn default_database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .map(resolve_database_url)
-        .unwrap_or_default()
+    std::env::var("DATABASE_URL").unwrap_or_default()
 }
 
 fn default_tcp_listen() -> String {
@@ -310,7 +308,7 @@ impl GatewayConfig {
         cors_origins: Option<String>,
     ) -> Self {
         if let Some(url) = database_url {
-            self.database_url = resolve_database_url(url);
+            self.database_url = url;
         }
         if let Some(listen) = tcp_listen {
             self.tcp_listen = listen;
@@ -562,10 +560,6 @@ impl GatewayConfig {
             self.native_messaging_max_size_bytes,
         );
     }
-}
-
-fn resolve_database_url(url: String) -> String {
-    sinex_db::resolve_effective_database_url(&url).unwrap_or(url)
 }
 
 fn env_string_override(name: &str, current: String) -> String {
