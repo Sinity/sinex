@@ -174,6 +174,21 @@ pub fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u6
     }
 }
 
+#[must_use]
+pub fn unix_timestamp_secs_with_warning(timestamp: SystemTime, context: &str) -> u64 {
+    match timestamp.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(error) => {
+            warn!(
+                context,
+                error = %error,
+                "System clock is before the unix epoch; clamping wall-clock timestamp to zero"
+            );
+            0
+        }
+    }
+}
+
 pub fn env_string_optional(var: &str, context: &str) -> Option<String> {
     match std::env::var(var) {
         Ok(raw) => Some(raw),
@@ -355,7 +370,7 @@ mod tests {
     // Inline because these helpers are local implementation detail and only exercised via env-driven call sites.
     use super::{
         elapsed_seconds_with_warning, env_bool_with_default, env_nonempty_string_optional,
-        env_parse_with_default, env_string_optional,
+        env_parse_with_default, env_string_optional, unix_timestamp_secs_with_warning,
     };
     #[cfg(unix)]
     use std::ffi::OsString;
@@ -456,6 +471,28 @@ mod tests {
             .expect("future timestamp");
         assert_eq!(
             elapsed_seconds_with_warning(start_time, "test elapsed"),
+            0
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_unix_timestamp_secs_with_warning_preserves_valid_timestamps() -> xtask::sandbox::TestResult<()> {
+        let timestamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(42);
+        assert_eq!(
+            unix_timestamp_secs_with_warning(timestamp, "test timestamp"),
+            42
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_unix_timestamp_secs_with_warning_clamps_pre_epoch_clock() -> xtask::sandbox::TestResult<()> {
+        let timestamp = SystemTime::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("pre-epoch timestamp");
+        assert_eq!(
+            unix_timestamp_secs_with_warning(timestamp, "test timestamp"),
             0
         );
         Ok(())
