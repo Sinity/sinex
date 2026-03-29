@@ -291,14 +291,20 @@ async fn try_recover_slot_connection(
 /// Returns a formatted string (empty if query fails) for inclusion in timeout errors.
 async fn query_advisory_lock_holders() -> String {
     // Best-effort: connect to the admin DB and query lock holders.
-    // If this fails, return empty string — the timeout error is still useful without it.
-    let base_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        crate::infra::stack::StackConfig::for_current_checkout()
-            .map(|c| c.database_url())
-            .unwrap_or_default()
-    });
+    // If this fails, include the probe failure in the timeout error instead of suppressing it.
+    let base_url = match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => match crate::infra::stack::StackConfig::for_current_checkout() {
+            Ok(config) => config.database_url(),
+            Err(error) => {
+                return format!(
+                    "\nAdvisory lock holder probe unavailable: failed to resolve stack config: {error}"
+                );
+            }
+        },
+    };
     if base_url.is_empty() {
-        return String::new();
+        return "\nAdvisory lock holder probe unavailable: database url is empty".to_string();
     }
 
     let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) \
@@ -335,7 +341,14 @@ async fn query_advisory_lock_holders() -> String {
                 .collect();
             format!("\nAdvisory lock holders:\n{}", entries.join("\n"))
         }
-        _ => String::new(),
+        Ok(Ok(_)) => String::new(),
+        Ok(Err(error)) => format!(
+            "\nAdvisory lock holder probe unavailable: failed to query pg_stat_activity: {error}"
+        ),
+        Err(_) => {
+            "\nAdvisory lock holder probe unavailable: timed out querying pg_stat_activity after 3s"
+                .to_string()
+        }
     }
 }
 
@@ -1237,6 +1250,7 @@ impl DatabasePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::EnvGuard;
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
@@ -1255,6 +1269,23 @@ mod tests {
         let msg = format_acquisition_timeout_message(Duration::from_secs(30), 5, lock_holders);
         assert!(msg.contains("Lock holders"), "got: {msg}");
         assert!(msg.contains("pg_advisory_lock"), "got: {msg}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_query_advisory_lock_holders_surfaces_probe_failures() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "postgres://127.0.0.1:1/definitely_missing");
+        let probe = query_advisory_lock_holders().await;
+        assert!(
+            probe.contains("Advisory lock holder probe unavailable"),
+            "unexpected probe output: {probe}"
+        );
+        assert!(
+            probe.contains("failed to query pg_stat_activity")
+                || probe.contains("timed out querying pg_stat_activity"),
+            "unexpected probe output: {probe}"
+        );
         Ok(())
     }
 }
