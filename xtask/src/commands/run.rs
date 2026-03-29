@@ -71,6 +71,13 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, run_identity:
     }
 }
 
+fn target_binary_path(release: bool, binary: &str) -> PathBuf {
+    let target_dir = if release { "release" } else { "debug" };
+    crate::orchestrator::get_target_dir(&crate::config::workspace_root())
+        .join(target_dir)
+        .join(binary)
+}
+
 fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
     dev_journal_path.map_or_else(
         || "Inspect the process output above".to_string(),
@@ -668,6 +675,30 @@ impl RunCommand {
         args
     }
 
+    async fn build_packages(&self, packages: &[&str], ctx: &CommandContext) -> Result<()> {
+        let mut build_cmd = Command::new("cargo");
+        build_cmd.arg("build");
+        for package in packages {
+            build_cmd.arg("-p").arg(package);
+        }
+        if self.release {
+            build_cmd.arg("--release");
+        }
+
+        if ctx.is_human() {
+            println!("Building {}...", packages.join(", "));
+        }
+
+        let status = build_cmd
+            .status()
+            .await
+            .with_context(|| format!("Failed to build packages: {}", packages.join(", ")))?;
+        if !status.success() {
+            bail!("Failed to build packages: {}", packages.join(", "));
+        }
+        Ok(())
+    }
+
     async fn run_binary(
         &self,
         name: &str,
@@ -691,7 +722,7 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if ctx.is_background() {
-            return self.run_background(package, binary, &instance_id, ctx);
+            return self.run_background(package, binary, &instance_id, ctx).await;
         }
 
         if self.dry_run {
@@ -730,34 +761,51 @@ impl RunCommand {
         }
 
         if ctx.is_background() {
-            return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
+            return self
+                .run_bundle_background(binaries, instance_prefix.as_deref(), ctx)
+                .await;
         }
 
         self.run_bundle_foreground(binaries, instance_prefix.as_deref(), ctx)
             .await
     }
 
-    fn run_bundle_background(
+    async fn run_bundle_background(
         &self,
         binaries: &[&str],
         instance_prefix: Option<&str>,
-        _ctx: &CommandContext,
+        ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
         let runtime_env = self.local_run_env_vars();
+        let packages: Vec<&str> = binaries
+            .iter()
+            .map(|name| {
+                BINARIES
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, package, _)| *package)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.build_packages(&packages, ctx).await?;
 
         for name in binaries {
-            let (_, package, _binary) = BINARIES
+            let (_, package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
-            let args = self.build_cargo_run_args(package, &instance_id);
+            let binary_command = target_binary_path(self.release, binary)
+                .to_string_lossy()
+                .into_owned();
+            let args = runtime_cli_args(package, &instance_id);
 
-            let job = manager.spawn_with_env("cargo", &args, &runtime_env)?;
+            let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
         }
 
@@ -779,31 +827,17 @@ impl RunCommand {
             println!("Starting {} binaries...", binaries.len());
         }
 
-        // Build all packages in a single cargo invocation for parallelism
-        {
-            let mut build_cmd = Command::new("cargo");
-            build_cmd.arg("build");
-            for name in binaries {
-                let (_, package, _) = BINARIES
+        let packages: Vec<&str> = binaries
+            .iter()
+            .map(|name| {
+                BINARIES
                     .iter()
                     .find(|(n, _, _)| n == name)
-                    .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
-                build_cmd.arg("-p").arg(package);
-            }
-            if self.release {
-                build_cmd.arg("--release");
-            }
-
-            if ctx.is_human() {
-                let names: Vec<_> = binaries.to_vec();
-                println!("Building {}...", names.join(", "));
-            }
-
-            let status = build_cmd.status().await?;
-            if !status.success() {
-                bail!("Failed to build binaries");
-            }
-        }
+                    .map(|(_, package, _)| *package)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.build_packages(&packages, ctx).await?;
 
         // Start all
         let mut children: HashMap<String, Child> = HashMap::new();
@@ -821,8 +855,7 @@ impl RunCommand {
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
-            let target_dir = if self.release { "release" } else { "debug" };
-            let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
+            let binary_path = target_binary_path(self.release, binary);
 
             if ctx.is_human() {
                 println!("Starting {name} (instance: {instance_id})...");
@@ -1003,8 +1036,7 @@ impl RunCommand {
         }
 
         // Step 2: spawn binary directly
-        let target_dir = if self.release { "release" } else { "debug" };
-        let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
+        let binary_path = target_binary_path(self.release, binary);
 
         let mut cmd = Command::new(&binary_path);
         cmd.args(runtime_cli_args(package, instance_id));
@@ -1086,20 +1118,24 @@ impl RunCommand {
         }
     }
 
-    fn run_background(
+    async fn run_background(
         &self,
         package: &str,
-        _binary: &str,
+        binary: &str,
         instance_id: &str,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
+        self.build_packages(&[package], ctx).await?;
 
-        let args = self.build_cargo_run_args(package, instance_id);
+        let binary_command = target_binary_path(self.release, binary)
+            .to_string_lossy()
+            .into_owned();
+        let args = runtime_cli_args(package, instance_id);
         let runtime_env = self.local_run_env_vars();
 
-        let job = manager.spawn_with_env("cargo", &args, &runtime_env)?;
+        let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))
@@ -1392,6 +1428,21 @@ mod tests {
                 "--service-name=terminal-ingestor-123".to_string(),
                 "service".to_string(),
             ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_target_binary_path_uses_debug_and_release_profiles()
+    -> ::xtask::sandbox::TestResult<()> {
+        let target_root = crate::orchestrator::get_target_dir(&crate::config::workspace_root());
+        assert_eq!(
+            target_binary_path(false, "sinex-terminal-ingestor"),
+            target_root.join("debug/sinex-terminal-ingestor")
+        );
+        assert_eq!(
+            target_binary_path(true, "sinex-terminal-ingestor"),
+            target_root.join("release/sinex-terminal-ingestor")
         );
         Ok(())
     }
