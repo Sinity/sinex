@@ -642,6 +642,10 @@ impl RunCommand {
         });
     }
 
+    fn local_run_env_vars(&self) -> Vec<(String, String)> {
+        crate::preflight::local_runtime_env_overrides()
+    }
+
     fn build_cargo_run_args(&self, package: &str, instance_id: &str) -> Vec<String> {
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
         if self.release {
@@ -729,6 +733,7 @@ impl RunCommand {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
+        let runtime_env = self.local_run_env_vars();
 
         for name in binaries {
             let (_, package, _binary) = BINARIES
@@ -739,7 +744,7 @@ impl RunCommand {
             let instance_id = make_instance_id(name, instance_prefix);
             let args = self.build_cargo_run_args(package, &instance_id);
 
-            let job = manager.spawn("cargo", &args)?;
+            let job = manager.spawn_with_env("cargo", &args, &runtime_env)?;
             job_ids.push(job.id);
         }
 
@@ -794,6 +799,7 @@ impl RunCommand {
             Vec::new();
         // Pipe stdout/stderr when --logs (prefix display) or --dev-journal (journal write)
         let pipe_output = self.logs || self.dev_journal;
+        let runtime_env = self.local_run_env_vars();
 
         for name in binaries {
             let (_, _package, binary) = BINARIES
@@ -823,6 +829,7 @@ impl RunCommand {
             };
 
             let mut child = cmd
+                .envs(runtime_env.iter().cloned())
                 .stdout(stdout_io)
                 .stderr(stderr_io)
                 .kill_on_drop(true)
@@ -922,9 +929,11 @@ impl RunCommand {
         let args = self.build_cargo_run_args(package, instance_id);
 
         self.maybe_spawn_metrics_overlay(ctx);
+        let runtime_env = self.local_run_env_vars();
 
         let status = Command::new("cargo")
             .args(&args)
+            .envs(runtime_env)
             .status()
             .await
             .with_context(|| format!("Failed to run {package}"))?;
@@ -994,6 +1003,7 @@ impl RunCommand {
         } else if package == "sinex-gateway" {
             cmd.arg("rpc-server");
         }
+        cmd.envs(self.local_run_env_vars());
 
         let mut child = cmd
             .stdout(Stdio::piped())
@@ -1082,8 +1092,9 @@ impl RunCommand {
         let manager = JobManager::new(cfg.jobs_dir())?;
 
         let args = self.build_cargo_run_args(package, instance_id);
+        let runtime_env = self.local_run_env_vars();
 
-        let job = manager.spawn("cargo", &args)?;
+        let job = manager.spawn_with_env("cargo", &args, &runtime_env)?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))
@@ -1122,7 +1133,7 @@ impl RunCommand {
             tether: None,
             checkpoint: None,
             args: extra_args,
-            env_vars: vec![],
+            env_vars: self.local_run_env_vars(),
         };
 
         let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
