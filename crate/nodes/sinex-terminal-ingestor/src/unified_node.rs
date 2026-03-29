@@ -2034,7 +2034,11 @@ fn prepare_command_for_capture(
         recent_hashes.push_back(command_hash);
     }
 
-    let processed = privacy::engine().process(command, ProcessingContext::Command);
+    let processed = privacy::process(command, ProcessingContext::Command).map_err(|error| {
+        SinexError::configuration("failed to initialize privacy engine".to_string())
+            .with_context("component", "terminal_command_capture")
+            .with_std_error(error)
+    })?;
     if processed.any_matched() {
         tracing::info!(
             rules = ?processed.matched_rules,

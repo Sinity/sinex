@@ -576,7 +576,14 @@ impl WindowManagerWatcher {
     async fn handle_window_focused(&mut self, data: &str) -> NodeResult<()> {
         // Format: "class,title"
         if let Some((class, raw_title)) = data.split_once(',') {
-            let title = privacy::engine()
+            let privacy_engine = privacy::engine().map_err(|error| {
+                sinex_node_sdk::SinexError::configuration(
+                    "failed to initialize privacy engine".to_string(),
+                )
+                .with_context("component", "desktop_window_focus")
+                .with_std_error(error)
+            })?;
+            let title = privacy_engine
                 .process(raw_title, ProcessingContext::WindowTitle)
                 .text;
             // Try to find existing window by class and title, otherwise use deterministic hash
@@ -664,10 +671,17 @@ impl WindowManagerWatcher {
         // Format: "address,workspace,class,title"
         let parts: Vec<&str> = data.split(',').collect();
         if parts.len() >= 4 {
+            let privacy_engine = privacy::engine().map_err(|error| {
+                sinex_node_sdk::SinexError::configuration(
+                    "failed to initialize privacy engine".to_string(),
+                )
+                .with_context("component", "desktop_window_open")
+                .with_std_error(error)
+            })?;
             let window_address = parts[0].to_string();
             let workspace_id = parts[1].to_string();
             let window_class = parts[2].to_string();
-            let window_title = privacy::engine()
+            let window_title = privacy_engine
                 .process(&parts[3..].join(","), ProcessingContext::WindowTitle)
                 .text
                 .into_owned(); // Title might contain commas

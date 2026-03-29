@@ -1172,8 +1172,15 @@ impl UnifiedJournalWatcher {
             Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Journal entry")?;
 
         let timestamp_us = Self::parse_journal_timestamp_us(obj, &cursor)?;
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "journal_entry_redaction")
+            .with_std_error(error)
+        })?;
 
-        let message = privacy::engine()
+        let message = privacy_engine
             .process(
                 &Self::require_entry_string_field(obj, "MESSAGE", "Journal entry")?,
                 ProcessingContext::Journal,
@@ -1200,7 +1207,7 @@ impl UnifiedJournalWatcher {
         let uid = Self::parse_optional_field(obj, "_UID", &cursor)?;
         let gid = Self::parse_optional_field(obj, "_GID", &cursor)?;
         let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
-            privacy::engine()
+            privacy_engine
                 .process(s, ProcessingContext::Command)
                 .text
                 .into_owned()
@@ -1260,7 +1267,7 @@ impl UnifiedJournalWatcher {
             {
                 fields.insert(
                     key.clone(),
-                    privacy::engine()
+                    privacy_engine
                         .process(s, ProcessingContext::Journal)
                         .text
                         .into_owned(),
