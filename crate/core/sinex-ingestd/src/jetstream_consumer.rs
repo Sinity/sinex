@@ -231,7 +231,8 @@ const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
-const MAIN_CONSUMER_MAX_DELIVER: i64 = 10;
+const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = -1;
+const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
@@ -665,7 +666,7 @@ impl JetStreamConsumer {
         consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
-        consumer_spec.max_deliver = MAIN_CONSUMER_MAX_DELIVER;
+        consumer_spec.max_deliver = MAIN_CONSUMER_JETSTREAM_MAX_DELIVER;
         let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
@@ -1205,7 +1206,7 @@ impl JetStreamConsumer {
                     error!("Failed to persist batch: {}", e);
                     let mut settlement_errors = Vec::new();
                     for prepared in &batch {
-                        match self.should_route_terminal_persistence_failure(&prepared.message) {
+                        match self.should_route_terminal_persistence_failure(&prepared.message, &e) {
                             Ok(true) => {
                                 if let Err(err) = self
                                     .route_to_dlq_and_ack(
@@ -1486,24 +1487,34 @@ impl JetStreamConsumer {
     fn should_route_terminal_persistence_failure(
         &self,
         msg: &jetstream::Message,
+        err: &SinexError,
     ) -> IngestdResult<bool> {
         let delivery_attempt = msg
             .info()
             .map(|info| info.delivered)
             .map_err(|error| error.to_string());
-        Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt)
+        Self::should_route_persistence_failure(
+            self.route_db_errors_to_dlq,
+            delivery_attempt,
+            err,
+        )
     }
 
     fn should_route_persistence_failure(
         route_db_errors_to_dlq: bool,
         delivery_attempt: std::result::Result<i64, String>,
+        err: &SinexError,
     ) -> IngestdResult<bool> {
         if route_db_errors_to_dlq {
             return Ok(true);
         }
 
+        if sinex_db::query_helpers::is_retryable_db_error(err) {
+            return Ok(false);
+        }
+
         match delivery_attempt {
-            Ok(delivered) => Ok(delivered >= MAIN_CONSUMER_MAX_DELIVER),
+            Ok(delivered) => Ok(delivered >= MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
             Err(error) => Err(
                 SinexError::processing(
                     "Failed to inspect JetStream delivery metadata for persistence failure",
@@ -2081,19 +2092,34 @@ mod tests {
         assert!(JetStreamConsumer::should_route_persistence_failure(
             true,
             Err("delivery metadata unavailable".to_string()),
+            &SinexError::database("forced failure"),
         )?);
         Ok(())
     }
 
     #[sinex_test]
-    async fn persistence_failure_routing_uses_delivery_attempts_when_available() -> TestResult<()> {
+    async fn persistence_failure_routing_uses_delivery_attempts_for_non_retryable_errors()
+    -> TestResult<()> {
         assert!(!JetStreamConsumer::should_route_persistence_failure(
             false,
-            Ok(MAIN_CONSUMER_MAX_DELIVER - 1),
+            Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD - 1),
+            &SinexError::database("forced persistent failure"),
         )?);
         assert!(JetStreamConsumer::should_route_persistence_failure(
             false,
-            Ok(MAIN_CONSUMER_MAX_DELIVER),
+            Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
+            &SinexError::database("forced persistent failure"),
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn persistence_failure_routing_never_dlqs_retryable_db_errors() -> TestResult<()> {
+        let retryable = SinexError::database("serialization failure").with_context("sqlstate", "40001");
+        assert!(!JetStreamConsumer::should_route_persistence_failure(
+            false,
+            Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
+            &retryable,
         )?);
         Ok(())
     }
@@ -2103,6 +2129,7 @@ mod tests {
         let error = JetStreamConsumer::should_route_persistence_failure(
             false,
             Err("metadata missing".to_string()),
+            &SinexError::database("forced persistent failure"),
         )
         .expect_err("missing delivery metadata must fail honestly");
         assert!(
