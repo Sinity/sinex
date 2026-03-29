@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::stack::StackConfig;
@@ -493,24 +493,12 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             continue;
         }
 
-        let git_obj = format!("{base}:{file}");
-        let cat_file = Command::new("git")
-            .arg("cat-file")
-            .arg("-e")
-            .arg(&git_obj)
-            .status()
-            .unwrap_or_else(|_| Command::new("false").status().unwrap());
-        if !cat_file.success() {
+        let Some(old_contents) = read_base_contract_contents(base.as_str(), file)? else {
             if ctx.is_human() {
                 println!("➕ New contract {file} (no base comparison required)");
             }
             continue;
-        }
-
-        let old_contents = ProcessBuilder::git()
-            .args(["show", &git_obj])
-            .with_description(format!("reading {git_obj}"))
-            .run()?;
+        };
 
         let new_contents =
             std::fs::read_to_string(path).with_context(|| format!("failed to read {file}"))?;
@@ -519,7 +507,7 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             println!("Comparing {file} against {base}...");
         }
 
-        let success = check_schema_contract_guard(&old_contents.stdout, &new_contents)
+        let success = check_schema_contract_guard(&old_contents, &new_contents)
             .with_context(|| format!("failed to compare schema contract for {file}"))?;
 
         if success {
@@ -547,6 +535,42 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
         .with_message("Contract regression check passed")
         .with_details(checked)
         .with_duration(ctx.elapsed()))
+}
+
+fn read_base_contract_contents(base: &str, file: &str) -> Result<Option<String>> {
+    let git_obj = format!("{base}:{file}");
+    read_base_contract_contents_with(
+        &git_obj,
+        Command::new("git").arg("show").arg(&git_obj).output(),
+    )
+}
+
+fn read_base_contract_contents_with(git_obj: &str, output: std::io::Result<Output>) -> Result<Option<String>> {
+    match output {
+        Ok(output) if output.status.success() => Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned())),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if git_show_reports_missing_object(&stderr) {
+                return Ok(None);
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("git show exited with status {}", output.status)
+            };
+            bail!("failed to read base contract {git_obj}: {detail}");
+        }
+        Err(error) => Err(error).with_context(|| format!("failed to spawn git show for {git_obj}")),
+    }
+}
+
+fn git_show_reports_missing_object(stderr: &str) -> bool {
+    stderr.contains("exists on disk, but not in")
+        || stderr.contains("pathspec")
+        || stderr.contains("unknown revision or path not in the working tree")
 }
 
 fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result<bool> {
@@ -638,6 +662,10 @@ fn default_checkout_database_url() -> String {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::process::Output;
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
 
     #[sinex_test]
     async fn test_check_schema_contract_guard_reports_invalid_base_schema()
@@ -676,6 +704,46 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("cwd exploded"));
         assert!(message.contains("socket dir"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_base_contract_contents_treats_missing_object_as_new_contract()
+    -> ::xtask::sandbox::TestResult<()> {
+        #[cfg(unix)]
+        {
+            let result = read_base_contract_contents_with(
+                "main:schemas/foo.json",
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(32768),
+                    stdout: Vec::new(),
+                    stderr: b"fatal: path 'schemas/foo.json' exists on disk, but not in 'main'\n"
+                        .to_vec(),
+                }),
+            )?;
+            assert!(result.is_none());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_base_contract_contents_reports_git_show_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        #[cfg(unix)]
+        {
+            let error = read_base_contract_contents_with(
+                "main:schemas/foo.json",
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(512),
+                    stdout: Vec::new(),
+                    stderr: b"fatal: repository exploded\n".to_vec(),
+                }),
+            )
+            .expect_err("git show failures should surface");
+            let message = format!("{error:#}");
+            assert!(message.contains("failed to read base contract"));
+            assert!(message.contains("repository exploded"));
+        }
         Ok(())
     }
 }

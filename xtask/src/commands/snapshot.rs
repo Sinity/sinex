@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::process::ProcessBuilder;
@@ -64,15 +64,24 @@ impl XtaskCommand for SnapshotCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Check if repomix is available
-        let repomix_check = Command::new("which").arg("repomix").output();
-        if repomix_check.is_err() || !repomix_check.unwrap().status.success() {
-            return Ok(CommandResult::failure(crate::output::StructuredError {
-                code: "TOOL_NOT_FOUND".to_string(),
-                message: "repomix not found. Install with: npm install -g repomix".to_string(),
-                location: Some("snapshot".to_string()),
-                suggestion: Some("Install: npm install -g repomix".to_string()),
-            }));
+        match probe_repomix(Command::new("which").arg("repomix").output()) {
+            RepomixProbe::Available => {}
+            RepomixProbe::Missing => {
+                return Ok(CommandResult::failure(crate::output::StructuredError {
+                    code: "TOOL_NOT_FOUND".to_string(),
+                    message: "repomix not found. Install with: npm install -g repomix".to_string(),
+                    location: Some("snapshot".to_string()),
+                    suggestion: Some("Install: npm install -g repomix".to_string()),
+                }));
+            }
+            RepomixProbe::ProbeFailed(detail) => {
+                return Ok(CommandResult::failure(crate::output::StructuredError {
+                    code: "TOOL_PROBE_FAILED".to_string(),
+                    message: format!("failed to probe repomix availability: {detail}"),
+                    location: Some("snapshot".to_string()),
+                    suggestion: Some("Inspect the repomix/which installation and PATH".to_string()),
+                }));
+            }
         }
 
         let output_path = self.output.as_ref().map_or_else(
@@ -248,6 +257,33 @@ impl XtaskCommand for SnapshotCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::build()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RepomixProbe {
+    Available,
+    Missing,
+    ProbeFailed(String),
+}
+
+fn probe_repomix(output: std::io::Result<Output>) -> RepomixProbe {
+    match output {
+        Ok(output) if output.status.success() => RepomixProbe::Available,
+        Ok(output) if output.status.code() == Some(1) => RepomixProbe::Missing,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("which exited with status {}", output.status)
+            };
+            RepomixProbe::ProbeFailed(detail)
+        }
+        Err(error) => RepomixProbe::ProbeFailed(error.to_string()),
     }
 }
 
@@ -769,6 +805,10 @@ mod tests {
     use ::xtask::sandbox::EnvGuard;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Output;
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
 
     fn write_executable_script(
         path: &std::path::Path,
@@ -962,6 +1002,37 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         let error = read_snapshot_output(&missing).expect_err("missing snapshot should error");
         assert!(error.to_string().contains("failed to read snapshot output"));
         assert!(error.to_string().contains("missing.xml"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_repomix_reports_probe_failures() -> ::xtask::sandbox::TestResult<()> {
+        #[cfg(unix)]
+        {
+            let probe = probe_repomix(Ok(Output {
+                status: std::process::ExitStatus::from_raw(512),
+                stdout: Vec::new(),
+                stderr: b"which exploded".to_vec(),
+            }));
+            assert_eq!(
+                probe,
+                RepomixProbe::ProbeFailed("which exploded".to_string())
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_probe_repomix_reports_missing_binary() -> ::xtask::sandbox::TestResult<()> {
+        #[cfg(unix)]
+        {
+            let probe = probe_repomix(Ok(Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }));
+            assert_eq!(probe, RepomixProbe::Missing);
+        }
         Ok(())
     }
 
