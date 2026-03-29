@@ -400,7 +400,7 @@ impl From<&Recommendation> for RecommendationOutput {
 struct CommitInfo {
     hash: String,
     message: String,
-    age_mins: i64,
+    age_mins: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1236,7 +1236,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         last_commit: data.git.last_commit_hash.as_ref().map(|hash| CommitInfo {
             hash: hash.clone(),
             message: data.git.last_commit_message.clone().unwrap_or_default(),
-            age_mins: data.git.last_commit_age_mins.unwrap_or(0),
+            age_mins: data.git.last_commit_age_mins,
         }),
         stash_count: data.git.stash_count.filter(|count| *count > 0),
         files_changed: data.git.files_changed.clone(),
@@ -2564,7 +2564,7 @@ mod tests {
             last_commit: Some(CommitInfo {
                 hash: "aafd524".into(),
                 message: "fix(xtask): correct estimate_package_count".into(),
-                age_mins: 32,
+                age_mins: Some(32),
             }),
             stash_count: None,
             files_changed: Some("2 files changed".into()),
@@ -2617,6 +2617,66 @@ mod tests {
         assert_eq!(json["uncommitted_count"], 5);
         // stash_count=None should be absent
         assert!(json.get("stash_count").is_none() || json["stash_count"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_output_preserves_missing_commit_age() -> ::xtask::sandbox::TestResult<()> {
+        let output = SummaryOutput {
+            health: "healthy".into(),
+            health_indicator: "ok".into(),
+            summary: "infra:ok".into(),
+            infrastructure: SummaryInfraHealth {
+                postgres: true,
+                nats: true,
+            },
+            last_commands: SummaryLastCommands {
+                check: None,
+                test: None,
+                build: None,
+            },
+            diagnostics: SummaryDiagnostics {
+                errors: 0,
+                warnings: 0,
+                fixable: 0,
+                flaky_tests: 0,
+            },
+            active_jobs: 0,
+            git: SummaryGitState {
+                branch: Some("master".into()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                message: None,
+            },
+            warnings: Vec::new(),
+            history: HistoryStatusOutput {
+                status: "healthy".into(),
+                synthetic: false,
+                recent_invocations: 0,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            health_score: None,
+            velocity: None,
+            recommendations: None,
+            runtime: None,
+            services: None,
+            last_commit: Some(CommitInfo {
+                hash: "abc1234".into(),
+                message: "status contract test".into(),
+                age_mins: None,
+            }),
+            stash_count: None,
+            files_changed: None,
+            uncommitted_count: None,
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["last_commit"]["age_mins"].is_null());
         Ok(())
     }
 
