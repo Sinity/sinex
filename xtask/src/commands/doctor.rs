@@ -1955,7 +1955,7 @@ async fn check_schema_apply(
 
     let pool = match PgPoolOptions::new()
         .max_connections(1)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .acquire_timeout(crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT)
         .connect_with(connect_options)
         .await
     {
@@ -1968,11 +1968,24 @@ async fn check_schema_apply(
         }
     };
 
-    match sqlx::query("SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'core'")
-        .fetch_one(&pool)
-        .await
+    match tokio::time::timeout(
+        crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT,
+        sqlx::query("SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'core'")
+            .fetch_one(&pool),
+    )
+    .await
     {
-        Ok(row) => {
+        Err(_) => DeploymentReadinessItem::fail(
+            "schema-apply",
+            format!(
+                "Database query timed out after {:?}",
+                crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT
+            ),
+        ),
+        Ok(Err(e)) => {
+            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
+        }
+        Ok(Ok(row)) => {
             let count: i64 = row.get(0);
             if count > 0 {
                 DeploymentReadinessItem::pass(
@@ -1985,9 +1998,6 @@ async fn check_schema_apply(
                     "Database reachable but 'core' schema is missing — schema-apply may not have run",
                 )
             }
-        }
-        Err(e) => {
-            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
         }
     }
 }

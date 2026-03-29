@@ -91,6 +91,19 @@ fn cache_path() -> std::path::PathBuf {
 
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
+pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
+pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
+const SCHEMA_READINESS_PROBE_SQL: &str = "SET statement_timeout = '5s';
+SELECT CASE
+         WHEN to_regclass('core.events') IS NULL THEN 1
+         WHEN to_regclass('core.operations_log') IS NULL THEN 1
+         WHEN NOT EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema='core' AND table_name='events' AND column_name='ts_persisted'
+         ) THEN 1
+         ELSE 0
+     END";
 
 fn unix_timestamp_secs(now: SystemTime, context: &str) -> Result<u64> {
     now.duration_since(UNIX_EPOCH)
@@ -508,23 +521,14 @@ pub fn has_pending_schema_apply() -> Result<bool> {
     }
 
     // Strategy 2: check core declarative objects exist
+    let connect_timeout = SCHEMA_READINESS_PROBE_TIMEOUT_SECS.to_string();
     let output = std::process::Command::new("psql")
         .env("PGHOST", config.run_dir())
         .env("PGPORT", config.postgres.port.to_string())
         .env("PGUSER", &config.postgres.user)
         .env("PGDATABASE", &config.postgres.database)
-        .args([
-            "-tAc",
-            "SELECT CASE
-                 WHEN to_regclass('core.events') IS NULL THEN 1
-                 WHEN to_regclass('core.operations_log') IS NULL THEN 1
-                 WHEN NOT EXISTS (
-                     SELECT 1 FROM information_schema.columns
-                     WHERE table_schema='core' AND table_name='events' AND column_name='ts_persisted'
-                 ) THEN 1
-                 ELSE 0
-             END",
-        ])
+        .env("PGCONNECT_TIMEOUT", &connect_timeout)
+        .args(["-tAc", SCHEMA_READINESS_PROBE_SQL])
         .output();
 
     match output {
@@ -1437,6 +1441,13 @@ mod tests {
         })
         .unwrap_err();
         assert!(format!("{error:#}").contains("schema readiness probe returned invalid output"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_schema_readiness_probe_sql_sets_statement_timeout() -> TestResult<()> {
+        assert!(SCHEMA_READINESS_PROBE_SQL.contains("SET statement_timeout = '5s'"));
+        assert!(SCHEMA_READINESS_PROBE_SQL.contains("to_regclass('core.events')"));
         Ok(())
     }
 
