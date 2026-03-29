@@ -1,6 +1,6 @@
 //! Forbidden pattern scanning command - enforces project coding standards
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -178,14 +178,14 @@ impl XtaskCommand for LintForbiddenCommand {
 /// Check for a pattern strictly (no test directory exceptions)
 fn check_pattern_strict(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .map(|matches| filter_allowlist(matches, allow, |_| false))
+        .and_then(|matches| filter_allowlist(matches, allow, |_| false))
         .with_context(|| format!("failed to scan for {label}"))
 }
 
 /// Check for a pattern allowing test directories
 fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .map(|matches| filter_allowlist(matches, allow, is_tests_path))
+        .and_then(|matches| filter_allowlist(matches, allow, is_tests_path))
         .with_context(|| format!("failed to scan for {label}"))
 }
 
@@ -222,17 +222,29 @@ fn ensure_rg_completed(output: &std::process::Output, context: &str) -> Result<(
 }
 
 /// Filter matches against allowlist and skip function
-fn filter_allowlist<F>(matches: Vec<String>, allow: &[&str], mut skip: F) -> Vec<String>
+fn parse_match_file(line: &str) -> Result<&str> {
+    let (file, _) = line
+        .split_once(':')
+        .ok_or_else(|| eyre!("ripgrep match line is missing a file prefix: {line}"))?;
+    let file = file.trim();
+    if file.is_empty() {
+        bail!("ripgrep match line reported an empty file path: {line}");
+    }
+    Ok(file)
+}
+
+fn filter_allowlist<F>(matches: Vec<String>, allow: &[&str], mut skip: F) -> Result<Vec<String>>
 where
     F: FnMut(&str) -> bool,
 {
-    matches
-        .into_iter()
-        .filter(|line| {
-            let file = line.split(':').next().unwrap_or_default();
-            !allow.contains(&file) && !skip(file)
-        })
-        .collect()
+    let mut filtered = Vec::new();
+    for line in matches {
+        let file = parse_match_file(&line)?;
+        if !allow.contains(&file) && !skip(file) {
+            filtered.push(line);
+        }
+    }
+    Ok(filtered)
 }
 
 /// Check if a path is a test directory or build tooling.
@@ -246,7 +258,7 @@ fn is_tests_path(path: &str) -> bool {
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
 fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .map(|matches| {
+        .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, build scripts, CLI, examples
                 path.starts_with("xtask/")
@@ -264,7 +276,7 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
 /// Check for println! in library code (use tracing instead)
 fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .map(|matches| {
+        .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, CLI, examples, build scripts
                 path.starts_with("xtask/")
@@ -289,21 +301,9 @@ fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     ];
 
     let matches = run_rg(r"use sinex_test_utils")?;
-    let filtered: Vec<String> = matches
-        .into_iter()
-        .filter(|line| {
-            let file = line.split(':').next().unwrap_or_default();
-            // Skip if in allow list
-            if allow_prefixes.iter().any(|a| file.starts_with(a)) {
-                return false;
-            }
-            // Skip if in tests/ directory
-            if is_tests_path(file) {
-                return false;
-            }
-            true
-        })
-        .collect();
+    let filtered = filter_allowlist(matches, &[], |file| {
+        allow_prefixes.iter().any(|a| file.starts_with(a)) || is_tests_path(file)
+    })?;
 
     // Note: Many of these may be in inline #[cfg(test)] modules, which is fine.
     // We report the count for awareness but don't block builds.
@@ -423,10 +423,28 @@ mod tests {
             "tests/integration.rs:30:test".to_string(),
         ];
         let allow = ["crate/foo/src/main.rs"];
-        let filtered = filter_allowlist(matches, &allow, is_tests_path);
+        let filtered = filter_allowlist(matches, &allow, is_tests_path)?;
 
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].contains("crate/bar/src/lib.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_filter_allowlist_rejects_malformed_match_lines()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = filter_allowlist(vec!["malformed line".to_string()], &[], |_| false)
+            .expect_err("malformed ripgrep output should fail");
+        assert!(format!("{error:#}").contains("missing a file prefix"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_filter_allowlist_rejects_empty_match_paths()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = filter_allowlist(vec![":10:test".to_string()], &[], |_| false)
+            .expect_err("empty file path should fail");
+        assert!(format!("{error:#}").contains("empty file path"));
         Ok(())
     }
 
