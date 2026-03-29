@@ -634,6 +634,15 @@ impl RunCommand {
             bail!("--metrics is incompatible with --bg");
         }
 
+        if let RunSubcommand::Tether {
+            from_beginning: true,
+            from_sequence: Some(_),
+            ..
+        } = &self.subcommand
+        {
+            bail!("--from-beginning and --from-sequence are mutually exclusive");
+        }
+
         Ok(())
     }
 
@@ -1262,8 +1271,7 @@ async fn execute_tether(
         Some(filter.to_string())
     };
     config.from_beginning = from_beginning;
-    // Note: from_sequence not yet supported in TetherConfig
-    let _ = from_sequence;
+    config.from_sequence = from_sequence;
 
     if ctx.is_human() {
         println!("Connecting to {target} via The Tether...");
@@ -1271,7 +1279,9 @@ async fn execute_tether(
         if let Some(ref f) = config.subject_filter {
             println!("  Filter: {f}");
         }
-        if from_beginning {
+        if let Some(sequence) = config.from_sequence {
+            println!("  Starting from: stream sequence {sequence}");
+        } else if from_beginning {
             println!("  Starting from: beginning of stream");
         } else {
             println!("  Starting from: new events only");
@@ -1551,6 +1561,23 @@ mod tests {
             .validate_flag_compatibility(&ctx)
             .expect_err("metrics on tether must be rejected");
         assert!(err.to_string().contains("--metrics only supports local binary or bundle runs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_tether_rejects_conflicting_start_flags() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(false);
+        let command = base_command(RunSubcommand::Tether {
+            target: "prod".to_string(),
+            filter: "events.>".to_string(),
+            from_beginning: true,
+            from_sequence: Some(42),
+        });
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("conflicting tether start flags must be rejected");
+        assert!(err.to_string().contains("--from-beginning and --from-sequence are mutually exclusive"));
         Ok(())
     }
 

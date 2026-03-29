@@ -31,6 +31,8 @@ pub struct TetherConfig {
     pub consumer_prefix: String,
     /// Start from beginning of stream
     pub from_beginning: bool,
+    /// Start from a specific stream sequence
+    pub from_sequence: Option<u64>,
     /// NATS connection URL
     pub nats_url: String,
     /// NATS credentials (optional)
@@ -85,6 +87,7 @@ impl TetherConfig {
             subject_filter: None,
             consumer_prefix: format!("dev-{consumer_prefix}"),
             from_beginning: false,
+            from_sequence: None,
             nats_url,
             nats_creds,
             nats_ca,
@@ -231,14 +234,7 @@ impl TetherClient {
             consumer_name, self.config.target
         );
 
-        let mut params = serde_json::json!({
-            "consumer_name": consumer_name,
-            "from_beginning": self.config.from_beginning,
-        });
-
-        if let Some(ref filter) = self.config.subject_filter {
-            params["subject_filter"] = serde_json::json!(filter);
-        }
+        let params = self.shadow_create_params(&consumer_name);
 
         let result = self.rpc_call("shadow.create", params).await?;
         let info: ShadowConsumerInfo =
@@ -276,6 +272,22 @@ impl TetherClient {
         .await?;
 
         Ok(())
+    }
+
+    fn shadow_create_params(&self, consumer_name: &str) -> serde_json::Value {
+        let mut params = serde_json::json!({
+            "consumer_name": consumer_name,
+            "from_beginning": self.config.from_beginning,
+        });
+
+        if let Some(ref filter) = self.config.subject_filter {
+            params["subject_filter"] = serde_json::json!(filter);
+        }
+        if let Some(from_sequence) = self.config.from_sequence {
+            params["from_sequence"] = serde_json::json!(from_sequence);
+        }
+
+        params
     }
 }
 
@@ -603,6 +615,7 @@ mod tests {
             subject_filter: None,
             consumer_prefix: "dev-testuser".to_string(),
             from_beginning: false,
+            from_sequence: None,
             nats_url: "nats://localhost:4222".to_string(),
             nats_creds: None,
             nats_ca: None,
@@ -617,6 +630,33 @@ mod tests {
         let suffix = name.trim_start_matches("dev-testuser-");
         assert_eq!(suffix.len(), 15);
         assert!(suffix.chars().all(|c| c.is_ascii_digit() || c == 'T'));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_shadow_create_params_include_from_sequence()
+    -> ::xtask::sandbox::TestResult<()> {
+        let config = TetherConfig {
+            target: "prod".to_string(),
+            gateway_url: "https://localhost:9999".to_string(),
+            auth_token: "test-token".to_string(),
+            subject_filter: Some("events.>".to_string()),
+            consumer_prefix: "dev-testuser".to_string(),
+            from_beginning: false,
+            from_sequence: Some(42),
+            nats_url: "nats://localhost:4222".to_string(),
+            nats_creds: None,
+            nats_ca: None,
+            nats_cert: None,
+            nats_key: None,
+        };
+        let client = TetherClient::new(config)?;
+
+        let params = client.shadow_create_params("dev-testuser-20260329T094800");
+        assert_eq!(params["consumer_name"], serde_json::json!("dev-testuser-20260329T094800"));
+        assert_eq!(params["subject_filter"], serde_json::json!("events.>"));
+        assert_eq!(params["from_beginning"], serde_json::json!(false));
+        assert_eq!(params["from_sequence"], serde_json::json!(42));
         Ok(())
     }
 
