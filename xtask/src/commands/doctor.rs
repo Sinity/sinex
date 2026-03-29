@@ -789,11 +789,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
                 style("✓").green()
             };
             println!("  {} Consumer lag:       {:.0} pending", lag_icon, lag);
-        } else if metrics.consumer_lag_is_stale() {
+        } else if let Some(note) = metrics.consumer_lag_stale_note() {
             println!(
-                "  {} Consumer lag:       stale telemetry (last sample {}s ago)",
+                "  {} Consumer lag:       stale telemetry ({})",
                 style("⚠").yellow(),
-                metrics.consumer_lag_age_secs.unwrap_or_default()
+                note
             );
         }
 
@@ -805,11 +805,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
                 style("✓").green()
             };
             println!("  {} Batch latency:      {:.0}ms", lat_icon, latency);
-        } else if metrics.batch_latency_is_stale() {
+        } else if let Some(note) = metrics.batch_latency_stale_note() {
             println!(
-                "  {} Batch latency:      stale telemetry (last sample {}s ago)",
+                "  {} Batch latency:      stale telemetry ({})",
                 style("⚠").yellow(),
-                metrics.last_batch_latency_age_secs.unwrap_or_default()
+                note
             );
         }
 
@@ -1370,24 +1370,31 @@ fn activitywatch_db_for_target(
 fn runtime_dir_for_target(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
-) -> PathBuf {
+) -> Result<PathBuf> {
     if let Some(descriptor) = descriptor {
-        return descriptor
+        return Ok(descriptor
             .desktop
             .runtime_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)));
+            .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid))));
     }
 
-    std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+    if let Some(runtime_dir) = std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| {
-            current_process_uid()
-                .filter(|uid| *uid == target.uid)
-                .and_then(|_| std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from))
-        })
-        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", target.uid)))
+    {
+        return Ok(runtime_dir);
+    }
+
+    let current_uid =
+        current_process_uid().wrap_err("failed to resolve current principal for Hyprland runtime selection")?;
+    if current_uid == target.uid
+        && let Some(runtime_dir) = std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from)
+    {
+        return Ok(runtime_dir);
+    }
+
+    Ok(PathBuf::from(format!("/run/user/{}", target.uid)))
 }
 
 fn configured_hyprland_sockets(
@@ -1422,15 +1429,20 @@ fn configured_hyprland_instance_signature(
         .or_else(|| std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok())
 }
 
-fn current_process_uid() -> Option<u32> {
-    std::env::var("UID")
+fn current_process_uid() -> Result<u32> {
+    if let Some(uid) = std::env::var("UID")
         .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .or_else(|| {
-            command_output("id", &["-u"], "current process UID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-        })
+        .filter(|value| !value.trim().is_empty())
+    {
+        return uid
+            .parse::<u32>()
+            .wrap_err("failed to parse UID environment variable for the current principal");
+    }
+
+    let uid = command_output("id", &["-u"], "current process UID")
+        .wrap_err("failed to determine the current principal via `id -u`")?;
+    uid.parse::<u32>()
+        .wrap_err_with(|| format!("failed to parse `id -u` output as a UID: {uid}"))
 }
 
 async fn check_node_entrypoints(
@@ -1518,14 +1530,17 @@ fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadinessItem {
         return DeploymentReadinessItem::fail("realm-accessible", "/realm does not exist");
     }
 
-    let Some(current_uid) = current_process_uid() else {
-        return DeploymentReadinessItem::skip_blocking(
-            "realm-accessible",
-            format!(
-                "Could not determine the current principal; rerun as {} or root to validate /realm access honestly",
-                target.user
-            ),
-        );
+    let current_uid = match current_process_uid() {
+        Ok(uid) => uid,
+        Err(error) => {
+            return DeploymentReadinessItem::skip_blocking(
+                "realm-accessible",
+                format!(
+                    "Could not determine the current principal: {error:#}; rerun as {} or root to validate /realm access honestly",
+                    target.user
+                ),
+            );
+        }
     };
 
     if current_uid != target.uid && current_uid != 0 {
@@ -1661,7 +1676,12 @@ fn check_hyprland_socket(
         );
     }
 
-    let hypr_dir = runtime_dir_for_target(target, descriptor).join("hypr");
+    let hypr_dir = match runtime_dir_for_target(target, descriptor) {
+        Ok(runtime_dir) => runtime_dir.join("hypr"),
+        Err(error) => {
+            return DeploymentReadinessItem::fail("hyprland-socket", format!("{error:#}"));
+        }
+    };
     if !hypr_dir.exists() {
         return DeploymentReadinessItem::fail(
             "hyprland-socket",
@@ -1955,7 +1975,7 @@ async fn check_schema_apply(
 
     let pool = match PgPoolOptions::new()
         .max_connections(1)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .acquire_timeout(crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT)
         .connect_with(connect_options)
         .await
     {
@@ -1968,11 +1988,24 @@ async fn check_schema_apply(
         }
     };
 
-    match sqlx::query("SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'core'")
-        .fetch_one(&pool)
-        .await
+    match tokio::time::timeout(
+        crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT,
+        sqlx::query("SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'core'")
+            .fetch_one(&pool),
+    )
+    .await
     {
-        Ok(row) => {
+        Err(_) => DeploymentReadinessItem::fail(
+            "schema-apply",
+            format!(
+                "Database query timed out after {:?}",
+                crate::preflight::SCHEMA_READINESS_PROBE_TIMEOUT
+            ),
+        ),
+        Ok(Err(e)) => {
+            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
+        }
+        Ok(Ok(row)) => {
             let count: i64 = row.get(0);
             if count > 0 {
                 DeploymentReadinessItem::pass(
@@ -1985,9 +2018,6 @@ async fn check_schema_apply(
                     "Database reachable but 'core' schema is missing — schema-apply may not have run",
                 )
             }
-        }
-        Err(e) => {
-            DeploymentReadinessItem::fail("schema-apply", format!("Database query failed: {e}"))
         }
     }
 }
@@ -3847,7 +3877,7 @@ mod tests {
                 home: PathBuf::from("/home/probe-user"),
             },
             None,
-        );
+        )?;
 
         assert_eq!(runtime_dir, PathBuf::from("/run/user/1000"));
         Ok(())
@@ -3876,9 +3906,54 @@ mod tests {
                 desktop: sinex_primitives::DesktopDeploymentSurface::default(),
                 ..Default::default()
             }),
-        );
+        )?;
 
         assert_eq!(runtime_dir, PathBuf::from("/run/user/1000"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_dir_for_target_rejects_invalid_uid_env()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("UID", "not-a-uid");
+        env.clear("SINEX_HYPRLAND_RUNTIME_DIR");
+        env.clear("XDG_RUNTIME_DIR");
+
+        let error = runtime_dir_for_target(
+            &TargetIdentity {
+                user: "probe-user".to_string(),
+                uid: 1000,
+                home: PathBuf::from("/home/probe-user"),
+            },
+            None,
+        )
+        .expect_err("invalid UID should fail honestly");
+
+        let detail = format!("{error:#}");
+        assert!(detail.contains("failed to resolve current principal for Hyprland runtime selection"));
+        assert!(detail.contains("failed to parse UID environment variable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_realm_accessible_surfaces_current_principal_resolution_failure()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("UID", "not-a-uid");
+
+        let item = check_realm_accessible(&TargetIdentity {
+            user: "probe-user".to_string(),
+            uid: 4242,
+            home: PathBuf::from("/tmp/probe-home"),
+        });
+
+        assert_eq!(item.status, "skip");
+        assert!(item.blocking);
+        assert!(item.description.contains("Could not determine the current principal:"));
+        assert!(item
+            .description
+            .contains("failed to parse UID environment variable"));
         Ok(())
     }
 

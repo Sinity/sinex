@@ -291,17 +291,23 @@ async fn try_recover_slot_connection(
 /// Returns a formatted string (empty if query fails) for inclusion in timeout errors.
 async fn query_advisory_lock_holders() -> String {
     // Best-effort: connect to the admin DB and query lock holders.
-    // If this fails, return empty string — the timeout error is still useful without it.
-    let base_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        crate::infra::stack::StackConfig::for_current_checkout()
-            .map(|c| c.database_url())
-            .unwrap_or_default()
-    });
+    // If this fails, include the probe failure in the timeout error instead of suppressing it.
+    let base_url = match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => match crate::infra::stack::StackConfig::for_current_checkout() {
+            Ok(config) => config.database_url(),
+            Err(error) => {
+                return format!(
+                    "\nAdvisory lock holder probe unavailable: failed to resolve stack config: {error}"
+                );
+            }
+        },
+    };
     if base_url.is_empty() {
-        return String::new();
+        return "\nAdvisory lock holder probe unavailable: database url is empty".to_string();
     }
 
-    let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) \
+    let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) AS query_preview \
                  FROM pg_stat_activity a \
                  JOIN pg_locks l ON l.pid = a.pid \
                  WHERE l.locktype = 'advisory' AND a.pid <> pg_backend_pid() \
@@ -320,22 +326,42 @@ async fn query_advisory_lock_holders() -> String {
 
     match result {
         Ok(Ok(rows)) if !rows.is_empty() => {
-            use sqlx::Row;
-            let entries: Vec<String> = rows
-                .iter()
-                .map(|r| {
-                    format!(
-                        "  pid={} user={} state={} query={}",
-                        r.try_get::<i32, _>("pid").unwrap_or(0),
-                        r.try_get::<&str, _>("usename").unwrap_or("?"),
-                        r.try_get::<&str, _>("state").unwrap_or("?"),
-                        r.try_get::<&str, _>("left").unwrap_or("?"),
-                    )
-                })
-                .collect();
+            let entries: Vec<String> = rows.iter().map(format_lock_holder_row).collect();
             format!("\nAdvisory lock holders:\n{}", entries.join("\n"))
         }
-        _ => String::new(),
+        Ok(Ok(_)) => String::new(),
+        Ok(Err(error)) => format!(
+            "\nAdvisory lock holder probe unavailable: failed to query pg_stat_activity: {error}"
+        ),
+        Err(_) => {
+            "\nAdvisory lock holder probe unavailable: timed out querying pg_stat_activity after 3s"
+                .to_string()
+        }
+    }
+}
+
+fn format_lock_holder_row(row: &sqlx::postgres::PgRow) -> String {
+    use sqlx::Row;
+
+    format!(
+        "  pid={} user={} state={} query={}",
+        format_lock_holder_field("pid", row.try_get::<i32, _>("pid")),
+        format_lock_holder_field("usename", row.try_get::<&str, _>("usename")),
+        format_lock_holder_field("state", row.try_get::<&str, _>("state")),
+        format_lock_holder_field(
+            "query_preview",
+            row.try_get::<&str, _>("query_preview")
+        ),
+    )
+}
+
+fn format_lock_holder_field<T: std::fmt::Display>(
+    field: &str,
+    value: std::result::Result<T, sqlx::Error>,
+) -> String {
+    match value {
+        Ok(value) => value.to_string(),
+        Err(error) => format!("<unavailable: {field} ({error})>"),
     }
 }
 
@@ -952,7 +978,24 @@ impl DatabasePool {
         .await
         {
             Ok(Ok(meta)) => meta,
-            Ok(Err(_)) | Err(_) => None,
+            Ok(Err(error)) => {
+                slog!(
+                    Level::Warn,
+                    "slot_meta_load_failed",
+                    slot = slot.name,
+                    error = error.to_string()
+                );
+                None
+            }
+            Err(_) => {
+                slog!(
+                    Level::Warn,
+                    "slot_meta_load_timed_out",
+                    slot = slot.name,
+                    timeout_secs = 2
+                );
+                None
+            }
         };
 
         let expected_fp = self.expected_fingerprint.clone();
@@ -1220,6 +1263,7 @@ impl DatabasePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::EnvGuard;
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
@@ -1238,6 +1282,41 @@ mod tests {
         let msg = format_acquisition_timeout_message(Duration::from_secs(30), 5, lock_holders);
         assert!(msg.contains("Lock holders"), "got: {msg}");
         assert!(msg.contains("pg_advisory_lock"), "got: {msg}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_query_advisory_lock_holders_surfaces_probe_failures() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "postgres://127.0.0.1:1/definitely_missing");
+        let probe = query_advisory_lock_holders().await;
+        assert!(
+            probe.contains("Advisory lock holder probe unavailable"),
+            "unexpected probe output: {probe}"
+        );
+        assert!(
+            probe.contains("failed to query pg_stat_activity")
+                || probe.contains("timed out querying pg_stat_activity"),
+            "unexpected probe output: {probe}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_lock_holder_field_preserves_sqlx_errors() -> TestResult<()> {
+        let rendered = format_lock_holder_field::<i32>(
+            "pid",
+            Err(sqlx::Error::ColumnNotFound("pid".into())),
+        );
+        assert!(rendered.contains("<unavailable: pid"));
+        assert!(rendered.contains("no column found"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_lock_holder_field_renders_values() -> TestResult<()> {
+        let rendered = format_lock_holder_field("state", Ok("active"));
+        assert_eq!(rendered, "active");
         Ok(())
     }
 }

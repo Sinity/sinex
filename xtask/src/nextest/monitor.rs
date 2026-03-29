@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
@@ -67,10 +68,9 @@ impl TestMonitor {
                 let cpu_global = sys.global_cpu_usage();
                 let mem_used = sys.used_memory();
 
-                if let Ok(mut m) = metrics_clone.lock() {
-                    m.cpu_samples.push(cpu_global);
-                    m.mem_samples.push(mem_used);
-                }
+                let mut metrics = metrics_clone.lock();
+                metrics.cpu_samples.push(cpu_global);
+                metrics.mem_samples.push(mem_used);
                 // 250ms sampling: ~4x resolution vs 1s, negligible overhead
                 // (sysinfo refresh is µs-scale). Short test runs (< 5s) now
                 // get 16-20 samples instead of 2-4.
@@ -93,6 +93,35 @@ impl TestMonitor {
             let _ = handle.join();
         }
 
-        self.metrics.lock().expect("metrics lock poisoned").clone()
+        self.metrics.lock().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SystemMetrics, TestMonitor};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn system_metrics_compute_averages() {
+        let metrics = SystemMetrics {
+            cpu_samples: vec![25.0, 75.0],
+            mem_samples: vec![1024 * 1024, 2 * 1024 * 1024],
+        };
+
+        assert_eq!(metrics.avg_cpu(), 50.0);
+        assert_eq!(metrics.max_mem_mb(), 2.0);
+    }
+
+    #[test]
+    fn test_monitor_collects_samples_before_stop() {
+        let mut monitor = TestMonitor::start();
+        thread::sleep(Duration::from_millis(350));
+
+        let metrics = monitor.stop();
+
+        assert!(!metrics.cpu_samples.is_empty(), "expected at least one CPU sample");
+        assert_eq!(metrics.cpu_samples.len(), metrics.mem_samples.len());
     }
 }

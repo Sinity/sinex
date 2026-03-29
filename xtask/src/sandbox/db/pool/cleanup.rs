@@ -88,40 +88,62 @@ impl CleanupManager {
 
         match clean_result {
             Ok(Ok(())) => {
-                if let Some(conn) = lock_conn.as_mut()
-                    && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
-                {
-                    meta.dirty = false;
-                    meta.last_error = None;
-                    meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                    if let Err(error) =
-                        store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
-                    {
-                        slog!(
-                            Level::Warn,
-                            "cleanup_meta_persist_failed",
-                            slot = task.slot_name,
-                            error = error.to_string()
-                        );
+                if let Some(conn) = lock_conn.as_mut() {
+                    match load_pool_meta(conn.as_mut(), &task.slot_name).await {
+                        Ok(Some(mut meta)) => {
+                            meta.dirty = false;
+                            meta.last_error = None;
+                            meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
+                            if let Err(error) =
+                                store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
+                            {
+                                slog!(
+                                    Level::Warn,
+                                    "cleanup_meta_persist_failed",
+                                    slot = task.slot_name,
+                                    error = error.to_string()
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            slog!(
+                                Level::Warn,
+                                "cleanup_meta_load_failed",
+                                slot = task.slot_name,
+                                error = error.to_string()
+                            );
+                        }
                     }
                 }
             }
             Ok(Err(e)) => {
-                if let Some(conn) = lock_conn.as_mut()
-                    && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
-                {
-                    meta.dirty = true;
-                    meta.last_error = Some(e.to_string());
-                    meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                    if let Err(error) =
-                        store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
-                    {
-                        slog!(
-                            Level::Warn,
-                            "cleanup_meta_persist_failed",
-                            slot = task.slot_name,
-                            error = error.to_string()
-                        );
+                if let Some(conn) = lock_conn.as_mut() {
+                    match load_pool_meta(conn.as_mut(), &task.slot_name).await {
+                        Ok(Some(mut meta)) => {
+                            meta.dirty = true;
+                            meta.last_error = Some(e.to_string());
+                            meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
+                            if let Err(error) =
+                                store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
+                            {
+                                slog!(
+                                    Level::Warn,
+                                    "cleanup_meta_persist_failed",
+                                    slot = task.slot_name,
+                                    error = error.to_string()
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            slog!(
+                                Level::Warn,
+                                "cleanup_meta_load_failed",
+                                slot = task.slot_name,
+                                error = error.to_string()
+                            );
+                        }
                     }
                 }
             }

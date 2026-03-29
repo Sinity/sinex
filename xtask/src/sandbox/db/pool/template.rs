@@ -373,7 +373,15 @@ async fn check_template_reuse(
         return Ok(None);
     }
 
-    let meta = load_template_meta(admin_conn, template_name).await?;
+    let meta = match load_template_meta(admin_conn, template_name).await {
+        Ok(meta) => meta,
+        Err(error) => {
+            eprintln!(
+                "♻️  Template metadata is unreadable for {template_name}; recreating template ({error:#})"
+            );
+            return Ok(None);
+        }
+    };
 
     let extensions = match (&desired_fingerprint, meta) {
         (Some(fp), Some(m)) if m.fingerprint == *fp && !m.extensions.is_empty() => {

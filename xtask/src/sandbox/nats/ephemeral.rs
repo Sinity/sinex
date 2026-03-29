@@ -42,6 +42,15 @@ pub struct EphemeralNats {
 }
 
 impl EphemeralNats {
+    fn poll_child_exit_status(
+        result: std::io::Result<Option<std::process::ExitStatus>>,
+        context: &str,
+    ) -> Result<Option<std::process::ExitStatus>> {
+        result.map_err(|error| {
+            eyre!("failed to poll nats-server child status during {context}: {error}")
+        })
+    }
+
     /// Start a fresh NATS server using default configuration.
     pub async fn start() -> Result<Self> {
         EphemeralNatsBuilder::default().start().await
@@ -593,7 +602,8 @@ impl EphemeralNats {
         let addr = format!("127.0.0.1:{port}");
         let mut last_err = None;
         for _ in 0..50 {
-            if let Ok(Some(status)) = child.try_wait() {
+            if let Some(status) = Self::poll_child_exit_status(child.try_wait(), "startup readiness")?
+            {
                 return Err(eyre!(
                     "nats-server process exited before becoming ready (status: {status})"
                 ));
@@ -634,20 +644,32 @@ impl Drop for EphemeralNats {
                 // try_wait() is non-blocking on tokio::process::Child.
                 // If the process hasn't exited yet, spawn an OS thread (NOT a
                 // tokio task — the runtime may be shutting down) to poll until reaped.
-                match child.try_wait() {
+                match Self::poll_child_exit_status(child.try_wait(), "drop cleanup") {
                     Ok(Some(_)) => {} // Already exited, reaped
-                    _ => {
+                    Ok(None) => {
                         // SIGKILL sent but process not yet exited — poll in OS thread
                         std::thread::spawn(move || {
                             for _ in 0..40 {
-                                match child.try_wait() {
+                                match Self::poll_child_exit_status(
+                                    child.try_wait(),
+                                    "drop cleanup reap loop",
+                                ) {
                                     Ok(Some(_)) => return,
-                                    _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+                                    Ok(None) => {
+                                        std::thread::sleep(std::time::Duration::from_millis(50));
+                                    }
+                                    Err(error) => {
+                                        warn!(error = %error, "Failed to poll NATS child during drop cleanup");
+                                        return;
+                                    }
                                 }
                             }
                             // After 2s of polling, give up. Process will be reaped
                             // when the test process exits (init inherits zombies).
                         });
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "Failed to poll NATS child during drop cleanup");
                     }
                 }
             }
@@ -826,6 +848,21 @@ mod tests {
         let err = nats.log_tail(20).expect_err("missing log should surface an error");
         assert!(
             err.to_string().contains("failed to read NATS log"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_poll_child_exit_status_surfaces_try_wait_failures() -> Result<()> {
+        let err = EphemeralNats::poll_child_exit_status(
+            Err(std::io::Error::other("probe exploded")),
+            "startup readiness",
+        )
+        .expect_err("try_wait failures must not be flattened");
+        assert!(
+            err.to_string()
+                .contains("failed to poll nats-server child status during startup readiness"),
             "unexpected error: {err:#}"
         );
         Ok(())

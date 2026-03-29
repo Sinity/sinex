@@ -10,7 +10,8 @@ mod build {
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{Result, eyre};
-use tracing::{info, warn};
+use std::io;
+use tracing::{error, info, warn};
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -132,6 +133,29 @@ fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
     }
 }
 
+async fn wait_for_shutdown_signal() -> io::Result<&'static str> {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await?;
+        Ok("SIGINT (Ctrl+C)")
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        sigterm.recv().await;
+        Ok("SIGTERM")
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<io::Result<&'static str>>();
+
+    tokio::select! {
+        result = ctrl_c => result,
+        result = terminate => result,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     human_panic::setup_panic!();
@@ -154,32 +178,14 @@ async fn main() -> Result<()> {
 
     let shutdown_task = {
         let shutdown_tx = shutdown_tx.clone();
-        #[allow(clippy::expect_used)] // Fatal: signal handlers must be installable
         tokio::spawn(async move {
-            let ctrl_c = async {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("failed to install Ctrl+C handler");
-            };
-
-            #[cfg(unix)]
-            let terminate = async {
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to install SIGTERM handler")
-                    .recv()
-                    .await;
-            };
-
-            #[cfg(not(unix))]
-            let terminate = std::future::pending::<()>();
-
-            tokio::select! {
-                () = ctrl_c => {
-                    info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
-                },
-                () = terminate => {
-                    info!("Received SIGTERM, initiating graceful shutdown");
-                },
+            match wait_for_shutdown_signal().await {
+                Ok(signal_name) => {
+                    info!(signal = signal_name, "Received shutdown signal, initiating graceful shutdown");
+                }
+                Err(error) => {
+                    error!(error = %error, "Failed to listen for gateway shutdown signal");
+                }
             }
 
             if shutdown_tx.send(true).is_err() {

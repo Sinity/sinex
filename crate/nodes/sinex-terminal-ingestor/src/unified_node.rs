@@ -3061,17 +3061,25 @@ impl ExplorationProvider for TerminalNode {
             }
         }
 
-        let active_watchers = match self.watch_handles.try_lock() {
-            Ok(guard) if guard.is_empty() => None,
-            Ok(guard) => Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
-            Err(_) => None,
+        let (active_watchers, watcher_registry_busy) = match self.watch_handles.try_lock() {
+            Ok(guard) if guard.is_empty() => (None, false),
+            Ok(guard) => (
+                Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
+                false,
+            ),
+            Err(_) => (None, true),
         };
-        let healthy = usable_sources > 0
+        let healthy = !watcher_registry_busy
+            && usable_sources > 0
             && configured_failures.is_empty()
             && active_watchers.is_none_or(|count| count == usable_sources);
-        let is_connected = usable_sources > 0 && active_watchers.is_none_or(|count| count > 0);
+        let is_connected = !watcher_registry_busy
+            && usable_sources > 0
+            && active_watchers.is_none_or(|count| count > 0);
         let description = if self.config.history_sources.is_empty() {
             "No terminal history sources configured".to_string()
+        } else if watcher_registry_busy {
+            "Terminal history monitoring status unavailable (watcher registry busy)".to_string()
         } else if let Some(active_watchers) = active_watchers {
             if active_watchers == 0 {
                 format!(
@@ -3109,6 +3117,9 @@ impl ExplorationProvider for TerminalNode {
         );
         if let Some(active_watchers) = active_watchers {
             metadata.insert("active_watchers".to_string(), json!(active_watchers));
+        }
+        if watcher_registry_busy {
+            metadata.insert("watcher_registry_busy".to_string(), json!(true));
         }
 
         Ok(SourceState {
@@ -5468,6 +5479,44 @@ mod tests {
         for handle in guard.drain(..) {
             handle.abort();
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn get_source_state_marks_busy_watcher_registry_unhealthy() -> TestResult<()> {
+        let node = TerminalNode::with_config(TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: Utf8PathBuf::from("/tmp/.bash_history"),
+                shell: "bash".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        });
+
+        let guard = node.watch_handles.lock().await;
+        let state = ExplorationProvider::get_source_state(&node)?;
+        drop(guard);
+
+        assert!(
+            !state.is_connected,
+            "busy watcher registry must not be reported as connected"
+        );
+        assert!(
+            !state.healthy,
+            "busy watcher registry must degrade terminal source health"
+        );
+        assert!(
+            state.description.contains("watcher registry busy"),
+            "description should surface watcher registry contention: {}",
+            state.description
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("watcher_registry_busy")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
         Ok(())
     }
 

@@ -10,13 +10,14 @@
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr, eyre};
 
 use crate::cargo_diagnostics::{DiagnosticSummary, estimate_package_count};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use crate::process::ProcessBuilder;
 use crate::resources;
+use crate::tools::{ToolInfo, ToolManager};
 
 /// Check command configuration
 #[derive(Debug, Clone, Default, clap::Args)]
@@ -56,7 +57,7 @@ pub struct CheckCommand {
     pub by_file: bool,
 
     /// Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full.
-    /// Skipped silently when `nix` is not on PATH.
+    /// Fails if `nix` is unavailable or unhealthy.
     #[arg(long)]
     pub nix: bool,
 }
@@ -479,22 +480,20 @@ impl XtaskCommand for CheckCommand {
 
         // 4. Nix flake evaluation (Q6 — optional, off by default, ON with --nix or --full)
         if this.nix {
-            if which_nix_on_path() {
-                let stage = ctx.start_stage("nix-check");
-                if ctx.is_human() {
-                    println!("Evaluating nix flake (--no-build)...");
-                }
-                let nix_result = ProcessBuilder::new("nix")
-                    .args(["flake", "check", "--no-build"])
-                    .with_description("nix flake check --no-build")
-                    .inherit_output()
-                    .run_ok();
-                ctx.finish_stage(stage, nix_result.is_ok());
-                nix_result?;
-                result = result.with_detail("nix flake check passed");
-            } else if ctx.is_human() {
-                eprintln!("  ℹ nix not found on PATH — skipping nix flake check");
+            ensure_nix_tool_ready_with(ToolManager::check_tool)?;
+
+            let stage = ctx.start_stage("nix-check");
+            if ctx.is_human() {
+                println!("Evaluating nix flake (--no-build)...");
             }
+            let nix_result = ProcessBuilder::nix()
+                .args(["flake", "check", "--no-build"])
+                .with_description("nix flake check --no-build")
+                .inherit_output()
+                .run_ok();
+            ctx.finish_stage(stage, nix_result.is_ok());
+            nix_result?;
+            result = result.with_detail("nix flake check passed");
         }
 
         // Q5: if NixOS modules are dirty, suggest running the NixOS compatibility gate
@@ -516,22 +515,28 @@ impl XtaskCommand for CheckCommand {
         }
 
         // H1: Post-check fixable diagnostic hint
-        let fixable_count = ctx
-            .with_history_db(|db| db.get_fixable_diagnostic_count())
-            .unwrap_or(0);
+        let (fixable_count, fixable_warning) = resolve_fixable_diagnostic_count(ctx);
+        if let Some(warning) = fixable_warning {
+            if ctx.is_human() {
+                eprintln!("→ {warning}");
+            }
+            result = result.with_warning(warning);
+        }
 
         // Merge diagnostic counts into any existing breakdown data already in result.
         // with_data() replaces — so we must merge here to preserve lint_breakdown/file_breakdown.
         let mut final_data = result.data.take().unwrap_or(serde_json::json!({}));
         final_data["diagnostics_recorded"] = serde_json::json!(ctx.invocation_id().is_some());
-        final_data["fixable"] = serde_json::json!(fixable_count);
+        if let Some(fixable_count) = fixable_count {
+            final_data["fixable"] = serde_json::json!(fixable_count);
+        }
         result = result.with_data(final_data);
 
-        if ctx.is_human() && fixable_count > 0 {
+        if ctx.is_human() && fixable_count.is_some_and(|count| count > 0) {
             eprintln!(
                 "→ {} auto-fixable warning{} detected. Run: xtask check --fix --smart",
-                fixable_count,
-                if fixable_count == 1 { "" } else { "s" }
+                fixable_count.unwrap_or_default(),
+                if fixable_count == Some(1) { "" } else { "s" }
             );
         }
 
@@ -551,11 +556,28 @@ impl XtaskCommand for CheckCommand {
     }
 }
 
+fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
+    match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
+        Some(Ok(count)) => (Some(count), None),
+        Some(Err(error)) => (
+            None,
+            Some(format!(
+                "Failed to query auto-fixable diagnostic count from history DB: {error:#}"
+            )),
+        ),
+        None if ctx.invocation_id().is_some() => (
+            None,
+            Some("Failed to open history DB for auto-fixable diagnostic count".to_string()),
+        ),
+        None => (None, None),
+    }
+}
+
 /// R3: Spawn `cargo test --no-run` in the background when the check→test transition
 /// probability exceeds 70% in recent history within a 5-minute window.
 ///
 /// This pre-warms the test binary compilation so `xtask test` starts faster.
-/// Fire-and-forget: errors are silently ignored since this is a pure optimization.
+/// Spawn failures are surfaced as warnings because this remains a pure optimization.
 fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
     let probability = ctx
         .with_history_db(|db| db.get_transition_probability("check", "test", 5, 20))
@@ -570,26 +592,39 @@ fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
         if ctx.is_human() {
             eprintln!("  ⚡ Pre-compiling tests ({probability:.0}% chance you'll run them next)");
         }
-        // Spawn cargo test --no-run as a detached background process.
-        // This is intentionally a raw cargo call (not via xtask) since we want
-        // fire-and-forget semantics without history tracking or coordinator overhead.
-        let _ = std::process::Command::new("cargo")
-            .args(["test", "--no-run", "--workspace"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn(); // Don't wait — just warm the compiler cache
+        if let Err(error) = spawn_compilation_prefetch_with("cargo") {
+            tracing::warn!(
+                target: "xtask::coordinator",
+                error = %error,
+                "R3: failed to spawn test pre-compilation"
+            );
+            if ctx.is_human() {
+                eprintln!("  ⚠ Failed to start test pre-compilation: {error:#}");
+            }
+        }
     }
 }
 
-/// Returns true when `nix` is found on the system PATH (Q6).
-fn which_nix_on_path() -> bool {
-    std::process::Command::new("nix")
-        .arg("--version")
+fn spawn_compilation_prefetch_with(program: &str) -> Result<()> {
+    std::process::Command::new(program)
+        .args(["test", "--no-run", "--workspace"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .spawn()
+        .map(|_| ())
+        .wrap_err("failed to spawn `cargo test --no-run --workspace` prefetch")
+}
+
+fn ensure_nix_tool_ready_with(check_tool: impl FnOnce(&str) -> Result<ToolInfo>) -> Result<()> {
+    let nix = check_tool("nix")
+        .map_err(|error| eyre!("xtask check --nix requires `nix` on PATH: {error:#}"))?;
+    if let Some(probe_issue) = nix.probe_issue {
+        return Err(eyre!(
+            "`nix` is present at {} but failed readiness probe: {probe_issue}",
+            nix.path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -681,6 +716,21 @@ mod tests {
         .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
     }
 
+    fn mock_ctx_with_history(
+        runner: Arc<MockCargoRunner>,
+        invocation_id: Option<i64>,
+        db_path: std::path::PathBuf,
+    ) -> CommandContext {
+        CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            invocation_id,
+            "check",
+            db_path,
+        )
+        .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
+    }
+
     fn error_summary() -> DiagnosticSummary {
         DiagnosticSummary {
             errors: 1,
@@ -720,6 +770,46 @@ mod tests {
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_success(), "clean check should succeed: {result:?}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_check_warns_when_fixable_count_is_unavailable(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let temp = tempfile::tempdir()?;
+        let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        let data = result
+            .data
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected structured data"));
+        assert!(result.is_success(), "clean check should still succeed: {result:?}");
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("auto-fixable diagnostic count")));
+        assert!(data.get("fixable").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(result.is_success(), "clean check should succeed: {result:?}");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("auto-fixable diagnostic count")),
+            "unexpected auto-fixable warning: {:?}",
+            result.warnings
+        );
         Ok(())
     }
 
@@ -816,6 +906,56 @@ mod tests {
         // If the callback fires correctly, execute completes without panic.
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_success());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_nix_tool_ready_accepts_healthy_tool() -> ::xtask::sandbox::TestResult<()> {
+        let healthy_tool = ToolInfo {
+            path: "/run/current-system/sw/bin/nix".into(),
+            version: "nix (Nix) 2.0".to_string(),
+            probe_issue: None,
+        };
+        ensure_nix_tool_ready_with(|tool| {
+            assert_eq!(tool, "nix");
+            Ok(healthy_tool)
+        })?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_nix_tool_ready_rejects_missing_tool() -> ::xtask::sandbox::TestResult<()> {
+        let error = ensure_nix_tool_ready_with(|_| Err(eyre!("Tool 'nix' not found in PATH")))
+            .expect_err("missing nix should fail");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("xtask check --nix requires `nix` on PATH"));
+        assert!(rendered.contains("Tool 'nix' not found in PATH"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_nix_tool_ready_rejects_probe_issue() -> ::xtask::sandbox::TestResult<()> {
+        let error = ensure_nix_tool_ready_with(|_| {
+            Ok(ToolInfo {
+                path: "/tmp/nix".into(),
+                version: "unknown".to_string(),
+                probe_issue: Some("failed to run `nix --version`".to_string()),
+            })
+        })
+        .expect_err("broken nix probe should fail");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed readiness probe"));
+        assert!(rendered.contains("failed to run `nix --version`"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_spawn_compilation_prefetch_surfaces_spawn_failure() -> ::xtask::sandbox::TestResult<()> {
+        let error = spawn_compilation_prefetch_with("nonexistent-cargo-xyz-12345")
+            .expect_err("missing cargo should fail");
+        assert!(
+            format!("{error:#}").contains("failed to spawn `cargo test --no-run --workspace` prefetch")
+        );
         Ok(())
     }
 }

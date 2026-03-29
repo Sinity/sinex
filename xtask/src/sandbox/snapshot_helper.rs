@@ -37,8 +37,9 @@ struct ContextSnapshot {
     name: String,
     baseline_events: i64,
     elapsed_ms: u128,
-    background_pending: usize,
+    background_pending: Option<usize>,
     background_labels: Vec<String>,
+    background_busy: bool,
 }
 
 #[derive(Serialize)]
@@ -75,26 +76,34 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
 
     let (ctx_snapshot, logs) = match ctx {
         FailureContext::None => (None, None),
-        FailureContext::Borrowed(ctx) => (
-            Some(ContextSnapshot {
-                name: ctx.test_name().to_string(),
-                baseline_events: ctx.baseline_event_count(),
-                elapsed_ms: ctx.elapsed().as_millis(),
-                background_pending: ctx.background_snapshot().pending,
-                background_labels: ctx.background_snapshot().labels,
-            }),
-            Some(ctx.captured_logs()),
-        ),
-        FailureContext::Snapshot(snapshot) => (
-            Some(ContextSnapshot {
-                name: snapshot.test_name().to_string(),
-                baseline_events: snapshot.baseline_event_count(),
-                elapsed_ms: snapshot.elapsed_ms(),
-                background_pending: snapshot.background_snapshot().pending,
-                background_labels: snapshot.background_snapshot().labels,
-            }),
-            Some(snapshot.captured_logs()),
-        ),
+        FailureContext::Borrowed(ctx) => {
+            let background = ctx.background_snapshot();
+            (
+                Some(ContextSnapshot {
+                    name: ctx.test_name().to_string(),
+                    baseline_events: ctx.baseline_event_count(),
+                    elapsed_ms: ctx.elapsed().as_millis(),
+                    background_pending: background.pending,
+                    background_labels: background.labels,
+                    background_busy: background.busy,
+                }),
+                Some(ctx.captured_logs()),
+            )
+        }
+        FailureContext::Snapshot(snapshot) => {
+            let background = snapshot.background_snapshot();
+            (
+                Some(ContextSnapshot {
+                    name: snapshot.test_name().to_string(),
+                    baseline_events: snapshot.baseline_event_count(),
+                    elapsed_ms: snapshot.elapsed_ms(),
+                    background_pending: background.pending,
+                    background_labels: background.labels,
+                    background_busy: background.busy,
+                }),
+                Some(snapshot.captured_logs()),
+            )
+        }
     };
 
     let slot_detail: Option<Vec<SlotSnapshot>> = {

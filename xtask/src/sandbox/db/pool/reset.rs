@@ -92,8 +92,15 @@ pub(super) async fn clean_database(
                 {
                     if attempt >= 2 {
                         POOL_METRICS.record_cleanup_failure();
-                        residuals = log_remaining_rows(&working_pool).await;
-                        let err = eyre!(format!("Database {db_name} cleanup failed: {verify_err}"));
+                        let residual_probe = log_remaining_rows(&working_pool).await;
+                        residuals = residual_probe.as_ref().ok().cloned();
+                        let residual_probe_suffix = residual_probe
+                            .err()
+                            .map(|error| format!("; residual row probe failed: {error}"))
+                            .unwrap_or_default();
+                        let err = eyre!(format!(
+                            "Database {db_name} cleanup failed: {verify_err}{residual_probe_suffix}"
+                        ));
                         slot.record_clean_result(Err(err.to_string()), residuals.clone());
                         slot.quarantined.store(true, Ordering::SeqCst);
                         slot.schema_verified.store(false, Ordering::SeqCst);
@@ -175,12 +182,17 @@ pub(super) async fn clean_database(
                     error = e
                 );
                 POOL_METRICS.record_cleanup_failure();
-                residuals = log_remaining_rows(&working_pool).await;
+                let residual_probe = log_remaining_rows(&working_pool).await;
+                residuals = residual_probe.as_ref().ok().cloned();
+                let residual_probe_suffix = residual_probe
+                    .err()
+                    .map(|error| format!("; residual row probe failed: {error}"))
+                    .unwrap_or_default();
 
                 // Attempt one last forced cleanup focusing on stubborn event/material rows.
                 if let Err(force_err) = force_event_material_cleanup(&working_pool).await {
                     let err = eyre!(format!(
-                        "Database {db_name} cleanup failed: {e}; forced cleanup also failed: {force_err}"
+                        "Database {db_name} cleanup failed: {e}{residual_probe_suffix}; forced cleanup also failed: {force_err}"
                     ));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
@@ -213,20 +225,28 @@ pub(super) async fn clean_database(
 
 // ── Diagnostics ─────────────────────────────────────────────────────────────
 
-async fn log_remaining_rows(pool: &DbPool) -> Option<Vec<(String, i64)>> {
-    match crate::sandbox::db::common::get_row_counts(pool).await {
-        Ok(counts) => {
-            let mut residuals = Vec::new();
-            for (table, count) in counts {
-                if count > 0 {
-                    slog!(Level::Warn, "residual_rows", table = table, count = count);
-                    residuals.push((table, count));
-                }
-            }
-            Some(residuals)
+async fn log_remaining_rows(pool: &DbPool) -> TestResult<Vec<(String, i64)>> {
+    let counts = crate::sandbox::db::common::get_row_counts(pool)
+        .await
+        .map_err(|error| eyre!("failed to inspect residual row counts: {error}"))?;
+    let mut residuals = Vec::new();
+    for (table, count) in counts {
+        if count > 0 {
+            slog!(Level::Warn, "residual_rows", table = table, count = count);
+            residuals.push((table, count));
         }
-        Err(_) => None,
     }
+    Ok(residuals)
+}
+
+async fn inspect_force_cleanup_counts(pool: &DbPool) -> TestResult<(i64, i64)> {
+    let counts = crate::sandbox::db::common::get_row_counts(pool)
+        .await
+        .map_err(|error| eyre!("forced cleanup could not inspect remaining row counts: {error}"))?;
+    Ok((
+        *counts.get("core.events").unwrap_or(&0),
+        *counts.get("raw.source_material_registry").unwrap_or(&0),
+    ))
 }
 
 // ── Trigger management ──────────────────────────────────────────────────────
@@ -503,13 +523,10 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
                     "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
                 )
                 .execute(&pool_for_chunks)
-                .await;
+                .await
+                .map_err(|error| eyre!("forced cleanup drop_chunks failed: {error}"))?;
 
-                let counts = crate::sandbox::db::common::get_row_counts(&pool_for_chunks)
-                    .await
-                    .unwrap_or_default();
-                last_events = *counts.get("core.events").unwrap_or(&0);
-                last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
+                (last_events, last_materials) = inspect_force_cleanup_counts(&pool_for_chunks).await?;
                 if last_events == 0 && last_materials <= 1 {
                     break;
                 }
@@ -523,6 +540,8 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
                 let _ = sqlx::query("DELETE FROM raw.source_material_registry")
                     .execute(conn.as_mut())
                     .await;
+
+                (last_events, last_materials) = inspect_force_cleanup_counts(&pool_for_chunks).await?;
             }
 
             if last_events != 0 || last_materials > 1 {
@@ -539,4 +558,63 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
     .map_err(|e| eyre!(e.to_string()))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{force_event_material_cleanup, log_remaining_rows, seed_test_fixtures};
+    use crate::sandbox::sinex_test;
+    use sinex_primitives::Uuid;
+
+    #[sinex_test]
+    async fn log_remaining_rows_reports_extra_source_materials(
+        ctx: crate::sandbox::Sandbox,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let source_identifier = format!("force-cleanup-test-{}", Uuid::now_v7());
+        sqlx::query(
+            "INSERT INTO raw.source_material_registry \
+                (id, material_kind, source_identifier, status, timing_info_type) \
+             VALUES ($1, 'annex', $2, 'completed', 'realtime')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(&source_identifier)
+        .execute(ctx.pool())
+        .await?;
+
+        let residuals = log_remaining_rows(ctx.pool()).await?;
+
+        assert!(residuals
+            .iter()
+            .any(|(table, count)| table == "raw.source_material_registry" && *count >= 2));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn force_event_material_cleanup_clears_extra_source_materials(
+        ctx: crate::sandbox::Sandbox,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let source_identifier = format!("force-cleanup-test-{}", Uuid::now_v7());
+        sqlx::query(
+            "INSERT INTO raw.source_material_registry \
+                (id, material_kind, source_identifier, status, timing_info_type) \
+             VALUES ($1, 'annex', $2, 'completed', 'realtime')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(&source_identifier)
+        .execute(ctx.pool())
+        .await?;
+
+        force_event_material_cleanup(ctx.pool()).await?;
+
+        let counts = crate::sandbox::db::common::get_row_counts(ctx.pool()).await?;
+        assert_eq!(counts.get("core.events").copied().unwrap_or_default(), 0);
+        assert!(counts
+            .get("raw.source_material_registry")
+            .copied()
+            .unwrap_or_default()
+            <= 1);
+
+        seed_test_fixtures(ctx.pool()).await?;
+        Ok(())
+    }
 }

@@ -478,8 +478,8 @@ impl HistoryDb {
             .query_map(rusqlite::params![pattern_like, package_like], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to read stored test trend rows")?;
 
         // Group by test name and take first `runs` entries per test
         let mut grouped: std::collections::HashMap<(String, String), Vec<(f64, String)>> =
@@ -1680,6 +1680,32 @@ mod tests {
             .expect_err("corrupted output rows should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to read stored sandbox metadata rows for invocation"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_test_trends_surfaces_corrupted_rows() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO test_results (
+                invocation_id,
+                test_name,
+                package,
+                status,
+                duration_secs,
+                attempt
+            ) VALUES (?1, 'test_corrupt_trend', 'pkg-a', 'pass', zeroblob(4), 1)
+            ",
+            rusqlite::params![inv_id],
+        )?;
+
+        let error = db
+            .get_test_trends(None, None, 10)
+            .expect_err("corrupted trend rows should surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read stored test trend rows"));
         Ok(())
     }
 

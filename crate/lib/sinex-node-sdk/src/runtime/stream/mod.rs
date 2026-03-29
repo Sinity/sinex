@@ -49,8 +49,10 @@ use sinex_primitives::{
     non_empty::NonEmptyVec,
 };
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -79,6 +81,51 @@ pub struct SchemaBroadcastEntry {
     pub schema_id: String,
 }
 const CONFIRMED_EVENT_CHANNEL_CAPACITY: usize = 1024;
+const LISTENER_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, HandleFut>(
+    listener: &'static str,
+    subject: &str,
+    retry_delay: Duration,
+    mut subscribe: Subscribe,
+    mut handle_subscription: Handle,
+) where
+    Subscribe: FnMut() -> SubscribeFut,
+    SubscribeFut: Future<Output = Result<S, E>>,
+    E: std::fmt::Display,
+    Handle: FnMut(S) -> HandleFut,
+    HandleFut: Future<Output = bool>,
+{
+    loop {
+        let subscription = match subscribe().await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(
+                    listener,
+                    subject,
+                    error = %error,
+                    retry_delay_ms = retry_delay.as_millis(),
+                    "Listener subscribe failed; retrying"
+                );
+                tokio::time::sleep(retry_delay).await;
+                continue;
+            }
+        };
+        info!(listener, subject, "Listener subscribed");
+
+        if handle_subscription(subscription).await {
+                warn!(
+                    listener,
+                    subject,
+                    retry_delay_ms = retry_delay.as_millis(),
+                    "Listener subscription closed; reconnecting"
+                );
+                tokio::time::sleep(retry_delay).await;
+        } else {
+            break;
+        }
+    }
+}
 
 struct RunnerConfirmedEventHandler {
     sender: mpsc::Sender<ProvisionalEvent>,
@@ -315,17 +362,8 @@ async fn maybe_start_schema_listener(
     };
     let env = sinex_primitives::environment::environment();
     let subject = env.nats_subject("system.schemas.active");
-    let sub = match client.subscribe(subject.clone()).await {
-        Ok(sub) => sub,
-        Err(e) => {
-            debug!("Schema broadcast subscription unavailable (edge mode): {e}");
-            return Ok((None, None, None));
-        }
-    };
-    let mut sub = sub;
-
     // Get KV bucket for fetching full schemas - if unavailable, skip schema validation
-    let js = async_nats::jetstream::new(client);
+    let js = async_nats::jetstream::new(client.clone());
     let env = sinex_primitives::environment::environment();
     let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
     let kv = match js.get_key_value(&schema_bucket).await {
@@ -343,29 +381,47 @@ async fn maybe_start_schema_listener(
     let validator_clone = validator.clone();
 
     // Background task to update cache and validator
+    let listener_subject = subject.clone();
     let handle = tokio::spawn(async move {
-        while let Some(msg) = sub.next().await {
-            match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
-                Ok(entries) => {
-                    // Update metadata cache
-                    cache_clone.update(entries.clone()).await;
-
-                    // Update validator with full schemas from KV
-                    match validator_clone.update_from_broadcast(entries, &kv).await {
-                        Ok(count) => {
-                            debug!(count, "Updated schema validator from broadcast");
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "Failed to update schema validator");
+        let subscribe_subject = listener_subject.clone();
+        let subscribe_client = client.clone();
+        run_resubscribing_listener(
+            "schema broadcast listener",
+            &listener_subject,
+            LISTENER_RETRY_DELAY,
+            move || {
+                let client = subscribe_client.clone();
+                let subject = subscribe_subject.clone();
+                async move { client.subscribe(subject).await }
+            },
+            move |mut sub| {
+                let cache = cache_clone.clone();
+                let validator = validator_clone.clone();
+                let kv = kv.clone();
+                async move {
+                    while let Some(msg) = sub.next().await {
+                        match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
+                            Ok(entries) => {
+                                cache.update(entries.clone()).await;
+                                match validator.update_from_broadcast(entries, &kv).await {
+                                    Ok(count) => {
+                                        debug!(count, "Updated schema validator from broadcast");
+                                    }
+                                    Err(err) => {
+                                        warn!(error = %err, "Failed to update schema validator");
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                warn!(error = %err, "Failed to decode schema broadcast payload");
+                            }
                         }
                     }
+                    true
                 }
-                Err(err) => {
-                    warn!(error = %err, "Failed to decode schema broadcast payload");
-                }
-            }
-        }
-        debug!("Schema broadcast listener task ended");
+            },
+        )
+        .await;
     });
 
     info!("Started schema broadcast listener and validator for {subject}");
@@ -567,7 +623,7 @@ impl Default for ScanEstimate {
 /// ```text
 /// Created ──► Initializing ──► Initialized ──► Running ──► ShutDown
 ///                                                  │
-///                                                  └──► ShutDown (via shutdown())
+///                                                  └──► ShutdownFailed
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerLifecycle {
@@ -579,6 +635,8 @@ pub enum RunnerLifecycle {
     Initialized,
     /// `run_service` or `run_scan` is executing.
     Running,
+    /// `shutdown` failed and the runner is in a partially torn-down state.
+    ShutdownFailed,
     /// `shutdown` has completed (or was never initialized).
     ShutDown,
 }
@@ -590,6 +648,7 @@ impl std::fmt::Display for RunnerLifecycle {
             Self::Initializing => write!(f, "Initializing"),
             Self::Initialized => write!(f, "Initialized"),
             Self::Running => write!(f, "Running"),
+            Self::ShutdownFailed => write!(f, "ShutdownFailed"),
             Self::ShutDown => write!(f, "ShutDown"),
         }
     }
@@ -619,6 +678,7 @@ pub struct NodeRunner<T: Node> {
 struct LeaderState {
     kv_client: sinex_primitives::coordination::CoordinationKvClient,
     instance_id: String,
+    heartbeat_shutdown: tokio::sync::oneshot::Sender<()>,
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -979,7 +1039,10 @@ impl<T: Node + 'static> NodeRunner<T> {
                         .to_string(),
                 ));
             }
-            RunnerLifecycle::Initialized | RunnerLifecycle::Running | RunnerLifecycle::ShutDown => {
+            RunnerLifecycle::Initialized
+            | RunnerLifecycle::Running
+            | RunnerLifecycle::ShutdownFailed
+            | RunnerLifecycle::ShutDown => {
                 return Err(SinexError::lifecycle(format!(
                     "Cannot initialize node: runner is in '{}' state (expected 'Created')",
                     self.lifecycle,
@@ -1425,294 +1488,309 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let handle = tokio::spawn(async move {
             let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
-
-            let mut sub = match nats_client.subscribe(subject.clone()).await {
-                Ok(sub) => sub,
-                Err(err) => {
-                    warn!(error = %err, subject = %subject, "Failed to subscribe to scan command subject");
-                    return;
-                }
-            };
-
-            info!(subject = %subject, "Command listener started for node-dispatch replay");
-
             let active_scan = Arc::new(AtomicBool::new(false));
+            let subscribe_client = nats_client.clone();
+            let subscribe_subject = subject.clone();
 
-            while let Some(msg) = sub.next().await {
-                let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
-                    Ok(cmd) => cmd,
-                    Err(err) => {
-                    warn!(error = %err, "Failed to deserialize NodeScanCommand");
-                        if let Some(reply) = msg.reply {
-                            let nack = NodeScanAck {
-                                operation_id: Uuid::now_v7(),
-                                node_name: node_name.clone(),
-                                accepted: false,
-                                error: Some(format!("Failed to deserialize command: {err}")),
+            run_resubscribing_listener(
+                "command listener",
+                &subject,
+                LISTENER_RETRY_DELAY,
+                move || {
+                    let client = subscribe_client.clone();
+                    let subject = subscribe_subject.clone();
+                    async move { client.subscribe(subject).await }
+                },
+                move |mut sub| {
+                    let loop_client = nats_client.clone();
+                    let loop_env = env.clone();
+                    let loop_node_name = node_name.clone();
+                    let loop_handles = handles.clone();
+                    let loop_service_info = service_info.clone();
+                    let loop_raw_config = raw_config.clone();
+                    let loop_work_dir_utf8 = work_dir_utf8.clone();
+                    let loop_node_factory = node_factory.clone();
+                    let loop_active_scan = active_scan.clone();
+                    async move {
+                        while let Some(msg) = sub.next().await {
+                            let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
+                                Ok(cmd) => cmd,
+                                Err(err) => {
+                                    warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                                    if let Some(reply) = msg.reply {
+                                        let nack = NodeScanAck {
+                                            operation_id: Uuid::now_v7(),
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some(format!("Failed to deserialize command: {err}")),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply), &nack).await
+                                        {
+                                            warn!(
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish malformed-command rejection"
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                            };
+
+                            let operation_id = command.operation_id;
+                            let Some(reply) = msg.reply.clone() else {
+                                warn!(
+                                    operation_id = %operation_id,
+                                    node = %loop_node_name,
+                                    "Ignoring scan command without reply subject"
+                                );
+                                continue;
+                            };
+
+                            if node_type != NodeType::Ingestor {
+                                let ack = NodeScanAck {
+                                    operation_id,
+                                    node_name: loop_node_name.clone(),
+                                    accepted: false,
+                                    error: Some(format!(
+                                        "Node '{loop_node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
+                                    )),
+                                };
+                                if let Err(error) =
+                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                {
+                                    warn!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        error = %error,
+                                        "Failed to publish scan rejection"
+                                    );
+                                }
+                                continue;
+                            }
+
+                            if !supports_historical {
+                                let ack = NodeScanAck {
+                                    operation_id,
+                                    node_name: loop_node_name.clone(),
+                                    accepted: false,
+                                    error: Some(format!(
+                                        "Node '{loop_node_name}' does not support historical scans (supports_historical = false)"
+                                    )),
+                                };
+                                if let Err(error) =
+                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                {
+                                    warn!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        error = %error,
+                                        "Failed to publish scan rejection"
+                                    );
+                                }
+                                continue;
+                            }
+
+                            if dry_run {
+                                let ack = NodeScanAck {
+                                    operation_id,
+                                    node_name: loop_node_name.clone(),
+                                    accepted: false,
+                                    error: Some(
+                                        "Node is running in dry-run mode and cannot execute replay scans"
+                                            .to_string(),
+                                    ),
+                                };
+                                if let Err(error) =
+                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                {
+                                    warn!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        error = %error,
+                                        "Failed to publish scan rejection"
+                                    );
+                                }
+                                continue;
+                            }
+
+                            let Some(factory) = loop_node_factory.clone() else {
+                                let ack = NodeScanAck {
+                                    operation_id,
+                                    node_name: loop_node_name.clone(),
+                                    accepted: false,
+                                    error: Some("Node was started without a replay worker factory".to_string()),
+                                };
+                                if let Err(error) =
+                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                {
+                                    warn!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        error = %error,
+                                        "Failed to publish scan rejection"
+                                    );
+                                }
+                                continue;
+                            };
+
+                            if loop_active_scan.swap(true, Ordering::SeqCst) {
+                                let ack = NodeScanAck {
+                                    operation_id,
+                                    node_name: loop_node_name.clone(),
+                                    accepted: false,
+                                    error: Some("A scan is already in progress on this node".to_string()),
+                                };
+                                if let Err(error) =
+                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                {
+                                    warn!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        error = %error,
+                                        "Failed to publish scan rejection"
+                                    );
+                                }
+                                continue;
+                            }
+
+                            let ack = NodeScanAck {
+                                operation_id,
+                                node_name: loop_node_name.clone(),
+                                accepted: true,
+                                error: None,
                             };
                             if let Err(error) =
-                                Self::publish_scan_ack(&nats_client, Some(reply), &nack).await
+                                Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
                             {
-                                warn!(
-                                    node = %node_name,
+                                error!(
+                                    operation_id = %operation_id,
+                                    node = %loop_node_name,
                                     error = %error,
-                                    "Failed to publish malformed-command rejection"
+                                    "Failed to publish scan acceptance; aborting dispatched scan"
                                 );
+                                loop_active_scan.store(false, Ordering::SeqCst);
+                                continue;
                             }
-                        }
-                        continue;
-                    }
-                };
 
-                let operation_id = command.operation_id;
-                let Some(reply) = msg.reply.clone() else {
-                    warn!(
-                        operation_id = %operation_id,
-                        node = %node_name,
-                        "Ignoring scan command without reply subject"
-                    );
-                    continue;
-                };
-
-                if node_type != NodeType::Ingestor {
-                    let ack = NodeScanAck {
-                        operation_id,
-                        node_name: node_name.clone(),
-                        accepted: false,
-                        error: Some(format!(
-                            "Node '{node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
-                        )),
-                    };
-                    if let Err(error) =
-                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %node_name,
-                            error = %error,
-                            "Failed to publish scan rejection"
-                        );
-                    }
-                    continue;
-                }
-
-                if !supports_historical {
-                    let ack = NodeScanAck {
-                        operation_id,
-                        node_name: node_name.clone(),
-                        accepted: false,
-                        error: Some(format!(
-                            "Node '{node_name}' does not support historical scans (supports_historical = false)"
-                        )),
-                    };
-                    if let Err(error) =
-                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %node_name,
-                            error = %error,
-                            "Failed to publish scan rejection"
-                        );
-                    }
-                    continue;
-                }
-
-                if dry_run {
-                    let ack = NodeScanAck {
-                        operation_id,
-                        node_name: node_name.clone(),
-                        accepted: false,
-                        error: Some(
-                            "Node is running in dry-run mode and cannot execute replay scans"
-                                .to_string(),
-                        ),
-                    };
-                    if let Err(error) =
-                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %node_name,
-                            error = %error,
-                            "Failed to publish scan rejection"
-                        );
-                    }
-                    continue;
-                }
-
-                let Some(factory) = node_factory.clone() else {
-                    let ack = NodeScanAck {
-                        operation_id,
-                        node_name: node_name.clone(),
-                        accepted: false,
-                        error: Some("Node was started without a replay worker factory".to_string()),
-                    };
-                    if let Err(error) =
-                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %node_name,
-                            error = %error,
-                            "Failed to publish scan rejection"
-                        );
-                    }
-                    continue;
-                };
-
-                if active_scan.swap(true, Ordering::SeqCst) {
-                    let ack = NodeScanAck {
-                        operation_id,
-                        node_name: node_name.clone(),
-                        accepted: false,
-                        error: Some("A scan is already in progress on this node".to_string()),
-                    };
-                    if let Err(error) =
-                        Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                    {
-                        warn!(
-                            operation_id = %operation_id,
-                            node = %node_name,
-                            error = %error,
-                            "Failed to publish scan rejection"
-                        );
-                    }
-                    continue;
-                }
-
-                let ack = NodeScanAck {
-                    operation_id,
-                    node_name: node_name.clone(),
-                    accepted: true,
-                    error: None,
-                };
-                if let Err(error) =
-                    Self::publish_scan_ack(&nats_client, Some(reply.clone()), &ack).await
-                {
-                    error!(
-                        operation_id = %operation_id,
-                        node = %node_name,
-                        error = %error,
-                        "Failed to publish scan acceptance; aborting dispatched scan"
-                    );
-                    active_scan.store(false, Ordering::SeqCst);
-                    continue;
-                }
-
-                info!(
-                    operation_id = %operation_id,
-                    node = %node_name,
-                    "Accepted scan command, spawning historical scan task"
-                );
-
-                let scan_client = nats_client.clone();
-                let scan_env = env.clone();
-                let scan_node_name = node_name.clone();
-                let scan_active = active_scan.clone();
-                let scan_handles = handles.clone();
-                let scan_service_info = service_info.clone();
-                let scan_raw_config = raw_config.clone();
-                let scan_work_dir_utf8 = work_dir_utf8.clone();
-                let scan_command = command.clone();
-
-                tokio::spawn(async move {
-                    struct ActiveScanGuard(Arc<AtomicBool>);
-
-                    impl Drop for ActiveScanGuard {
-                        fn drop(&mut self) {
-                            self.0.store(false, Ordering::SeqCst);
-                        }
-                    }
-
-                    let _active_scan_guard = ActiveScanGuard(scan_active.clone());
-                    let progress_subject = scan_env
-                        .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
-
-                    let start_progress = NodeScanProgress {
-                        operation_id,
-                        node_name: scan_node_name.clone(),
-                        events_processed: 0,
-                        events_emitted: 0,
-                        final_report: None,
-                        error: None,
-                    };
-                    if let Err(error) = Self::publish_scan_progress(
-                        &scan_client,
-                        progress_subject.clone(),
-                        &start_progress,
-                    )
-                    .await
-                    {
-                        error!(
-                            operation_id = %operation_id,
-                            node = %scan_node_name,
-                            error = %error,
-                            "Failed to publish initial scan progress; aborting dispatched scan"
-                        );
-                        return;
-                    }
-
-                    let scan_outcome = Self::execute_dispatched_scan(
-                        factory,
-                        scan_handles,
-                        scan_service_info,
-                        scan_raw_config,
-                        scan_work_dir_utf8,
-                        scan_command,
-                    )
-                    .await;
-
-                    let final_progress = match scan_outcome {
-                        Ok(outcome) => {
-                            let mut report = outcome.report;
-                            report
-                                .node_stats
-                                .entry("events_emitted".to_string())
-                                .or_insert(outcome.events_emitted);
-                            NodeScanProgress {
-                                operation_id,
-                                node_name: scan_node_name.clone(),
-                                events_processed: report.events_processed,
-                                events_emitted: outcome.events_emitted,
-                                final_report: Some(report),
-                                error: None,
-                            }
-                        }
-                        Err(outcome) => {
-                            warn!(
+                            info!(
                                 operation_id = %operation_id,
-                                node = %scan_node_name,
-                                error = %outcome.error,
-                                events_emitted = outcome.events_emitted,
-                                "Dispatched scan failed"
+                                node = %loop_node_name,
+                                "Accepted scan command, spawning historical scan task"
                             );
-                            NodeScanProgress {
-                                operation_id,
-                                node_name: scan_node_name.clone(),
-                                events_processed: outcome.events_emitted,
-                                events_emitted: outcome.events_emitted,
-                                final_report: None,
-                                error: Some(outcome.error.to_string()),
-                            }
+
+                            let scan_client = loop_client.clone();
+                            let scan_env = loop_env.clone();
+                            let scan_node_name = loop_node_name.clone();
+                            let scan_active = loop_active_scan.clone();
+                            let scan_handles = loop_handles.clone();
+                            let scan_service_info = loop_service_info.clone();
+                            let scan_raw_config = loop_raw_config.clone();
+                            let scan_work_dir_utf8 = loop_work_dir_utf8.clone();
+                            let scan_command = command.clone();
+
+                            tokio::spawn(async move {
+                                struct ActiveScanGuard(Arc<AtomicBool>);
+
+                                impl Drop for ActiveScanGuard {
+                                    fn drop(&mut self) {
+                                        self.0.store(false, Ordering::SeqCst);
+                                    }
+                                }
+
+                                let _active_scan_guard = ActiveScanGuard(scan_active.clone());
+                                let progress_subject = scan_env
+                                    .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                                let start_progress = NodeScanProgress {
+                                    operation_id,
+                                    node_name: scan_node_name.clone(),
+                                    events_processed: 0,
+                                    events_emitted: 0,
+                                    final_report: None,
+                                    error: None,
+                                };
+                                if let Err(error) = Self::publish_scan_progress(
+                                    &scan_client,
+                                    progress_subject.clone(),
+                                    &start_progress,
+                                )
+                                .await
+                                {
+                                    error!(
+                                        operation_id = %operation_id,
+                                        node = %scan_node_name,
+                                        error = %error,
+                                        "Failed to publish initial scan progress; aborting dispatched scan"
+                                    );
+                                    return;
+                                }
+
+                                let scan_outcome = Self::execute_dispatched_scan(
+                                    factory,
+                                    scan_handles,
+                                    scan_service_info,
+                                    scan_raw_config,
+                                    scan_work_dir_utf8,
+                                    scan_command,
+                                )
+                                .await;
+
+                                let final_progress = match scan_outcome {
+                                    Ok(outcome) => {
+                                        let mut report = outcome.report;
+                                        report
+                                            .node_stats
+                                            .entry("events_emitted".to_string())
+                                            .or_insert(outcome.events_emitted);
+                                        NodeScanProgress {
+                                            operation_id,
+                                            node_name: scan_node_name.clone(),
+                                            events_processed: report.events_processed,
+                                            events_emitted: outcome.events_emitted,
+                                            final_report: Some(report),
+                                            error: None,
+                                        }
+                                    }
+                                    Err(outcome) => {
+                                        warn!(
+                                            operation_id = %operation_id,
+                                            node = %scan_node_name,
+                                            error = %outcome.error,
+                                            events_emitted = outcome.events_emitted,
+                                            "Dispatched scan failed"
+                                        );
+                                        NodeScanProgress {
+                                            operation_id,
+                                            node_name: scan_node_name.clone(),
+                                            events_processed: outcome.events_emitted,
+                                            events_emitted: outcome.events_emitted,
+                                            final_report: None,
+                                            error: Some(outcome.error.to_string()),
+                                        }
+                                    }
+                                };
+
+                                if let Err(error) =
+                                    Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                                        .await
+                                {
+                                    error!(
+                                        operation_id = %operation_id,
+                                        node = %scan_node_name,
+                                        error = %error,
+                                        "Failed to publish final scan progress"
+                                    );
+                                }
+                            });
                         }
-                    };
 
-                    if let Err(error) =
-                        Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
-                            .await
-                    {
-                        error!(
-                            operation_id = %operation_id,
-                            node = %scan_node_name,
-                            error = %error,
-                            "Failed to publish final scan progress"
-                        );
+                        true
                     }
-                });
-            }
-
-            info!("Command listener subscription closed");
+                },
+            )
+            .await;
         });
 
         self.command_listener_handle = Some(handle);
@@ -2101,12 +2179,20 @@ impl<T: Node + 'static> NodeRunner<T> {
             let kv_clone = kv_client.clone();
             let instance_id_clone = instance_id.clone();
             let heartbeat_interval = kv_client.heartbeat_interval();
+            let (heartbeat_shutdown, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
             let heartbeat_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(heartbeat_interval);
+                let mut heartbeat_shutdown_rx = heartbeat_shutdown_rx;
                 loop {
-                    interval.tick().await;
-                    if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                        warn!("Heartbeat failed: {e}");
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
+                                warn!("Heartbeat failed: {e}");
+                            }
+                        }
+                        _ = &mut heartbeat_shutdown_rx => {
+                            break;
+                        }
                     }
                 }
             });
@@ -2114,6 +2200,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             self.leader_state = Some(LeaderState {
                 kv_client,
                 instance_id,
+                heartbeat_shutdown,
                 heartbeat_handle,
             });
         }
@@ -2652,7 +2739,6 @@ impl<T: Node + 'static> NodeRunner<T> {
             self.lifecycle = RunnerLifecycle::ShutDown;
             return Ok(());
         }
-        self.lifecycle = RunnerLifecycle::ShutDown;
 
         info!("Shutting down stream node runner");
 
@@ -2693,7 +2779,16 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
         Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
 
-        Self::collapse_shutdown_errors(shutdown_errors)
+        match Self::collapse_shutdown_errors(shutdown_errors) {
+            Ok(()) => {
+                self.lifecycle = RunnerLifecycle::ShutDown;
+                Ok(())
+            }
+            Err(error) => {
+                self.lifecycle = RunnerLifecycle::ShutdownFailed;
+                Err(error)
+            }
+        }
     }
 
     async fn abort_task(
@@ -2711,7 +2806,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn shutdown_leader_state(&mut self) -> NodeResult<()> {
         if let Some(state) = self.leader_state.take() {
             let mut shutdown_errors = Vec::new();
-            state.heartbeat_handle.abort();
+            Self::signal_shutdown_channel(state.heartbeat_shutdown, "coordination heartbeat");
             Self::push_shutdown_error(
                 &mut shutdown_errors,
                 "coordination heartbeat",
@@ -2756,6 +2851,9 @@ mod tests {
     #[derive(Default)]
     struct RuntimeTestNode;
 
+    #[derive(Default)]
+    struct FailingShutdownNode;
+
     impl Node for RuntimeTestNode {
         type Config = ();
 
@@ -2791,6 +2889,48 @@ mod tests {
 
         async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
             Ok(Checkpoint::None)
+        }
+    }
+
+    impl Node for FailingShutdownNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "failing-shutdown-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn shutdown(&mut self) -> NodeResult<()> {
+            Err(SinexError::processing("node shutdown failed"))
         }
     }
 
@@ -3069,6 +3209,89 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn run_resubscribing_listener_retries_after_subscribe_error() -> TestResult<()> {
+        let subscribe_attempts = Arc::new(AtomicU64::new(0));
+        let handled_subscriptions = Arc::new(AtomicU64::new(0));
+
+        run_resubscribing_listener(
+            "test listener",
+            "sinex.test.subject",
+            Duration::from_millis(1),
+            {
+                let subscribe_attempts = subscribe_attempts.clone();
+                move || {
+                    let subscribe_attempts = subscribe_attempts.clone();
+                    async move {
+                        let attempt = subscribe_attempts.fetch_add(1, Ordering::SeqCst);
+                        if attempt == 0 {
+                            Err(SinexError::processing("subscribe failed".to_string()))
+                        } else {
+                            Ok("subscription")
+                        }
+                    }
+                }
+            },
+            {
+                let handled_subscriptions = handled_subscriptions.clone();
+                move |subscription| {
+                    let handled_subscriptions = handled_subscriptions.clone();
+                    async move {
+                        assert_eq!(subscription, "subscription");
+                        handled_subscriptions.fetch_add(1, Ordering::SeqCst);
+                        false
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(subscribe_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(handled_subscriptions.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_resubscribing_listener_retries_after_subscription_exit() -> TestResult<()> {
+        let subscribe_attempts = Arc::new(AtomicU64::new(0));
+        let handled_subscriptions = Arc::new(AtomicU64::new(0));
+
+        run_resubscribing_listener(
+            "test listener",
+            "sinex.test.subject",
+            Duration::from_millis(1),
+            {
+                let subscribe_attempts = subscribe_attempts.clone();
+                move || {
+                    let subscribe_attempts = subscribe_attempts.clone();
+                    async move {
+                        let attempt = subscribe_attempts.fetch_add(1, Ordering::SeqCst);
+                        Ok::<u64, SinexError>(attempt)
+                    }
+                }
+            },
+            {
+                let handled_subscriptions = handled_subscriptions.clone();
+                move |_subscription| {
+                    let handled_subscriptions = handled_subscriptions.clone();
+                    async move {
+                        let handled = handled_subscriptions.fetch_add(1, Ordering::SeqCst);
+                        if handled == 0 {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(subscribe_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(handled_subscriptions.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
         let handle = tokio::spawn(async move {
             panic!("batcher panic");
@@ -3100,6 +3323,21 @@ mod tests {
         assert!(message.contains("primary shutdown failure"));
         assert!(message.contains("event batcher"));
         assert!(message.contains("secondary shutdown failure"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_marks_runner_failed_when_cleanup_errors() -> TestResult<()> {
+        let mut runner = NodeRunner::new(FailingShutdownNode);
+        runner.lifecycle = RunnerLifecycle::Initialized;
+
+        let error = runner
+            .shutdown()
+            .await
+            .expect_err("failing shutdowns must surface as errors");
+
+        assert!(error.to_string().contains("node shutdown failed"));
+        assert_eq!(runner.lifecycle(), RunnerLifecycle::ShutdownFailed);
         Ok(())
     }
 }

@@ -161,6 +161,32 @@ async fn test_window_capped_at_1000() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn test_window_counts_follow_eviction_not_total_history() -> TestResult<()> {
+    let mut automaton = AnalyticsAutomaton;
+    let mut state = AnalyticsState::default();
+
+    for i in 0..1050 {
+        let ctx = make_context(&format!("event.type.{}", i % 10));
+        process(&mut automaton, &mut state, serde_json::json!({}), &ctx).await?;
+    }
+
+    assert_eq!(state.recent_events.len(), 1000);
+    assert_eq!(
+        state.event_counts.values().copied().sum::<u64>(),
+        1000,
+        "frequency counts must describe the retained sliding window only"
+    );
+    for event_index in 0..10 {
+        assert_eq!(
+            state.event_counts.get(&format!("event.type.{event_index}")),
+            Some(&100),
+            "each event type should reflect only the last 1000 events"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_window_preserves_event_type() -> TestResult<()> {
     let mut automaton = AnalyticsAutomaton;
     let mut state = AnalyticsState::default();

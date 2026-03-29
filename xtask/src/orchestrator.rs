@@ -485,28 +485,21 @@ mod tests {
 
     #[sinex_test]
     async fn test_stream_reader_lines_collects_utf8_lines() -> ::xtask::sandbox::TestResult<()> {
+        use parking_lot::Mutex;
         use tokio::io::AsyncWriteExt;
 
         let (reader, mut writer) = tokio::io::duplex(64);
         writer.write_all(b"alpha\nbeta\n").await?;
         drop(writer);
 
-        let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collected = std::sync::Arc::new(Mutex::new(Vec::new()));
         let collected_clone = collected.clone();
         stream_reader_lines(reader, "test stdout", move |line| {
-            collected_clone
-                .lock()
-                .expect("collector lock should not be poisoned")
-                .push(line);
+            collected_clone.lock().push(line);
         })
         .await?;
 
-        assert_eq!(
-            *collected
-                .lock()
-                .expect("collector lock should not be poisoned"),
-            vec!["alpha".to_string(), "beta".to_string()]
-        );
+        assert_eq!(*collected.lock(), vec!["alpha".to_string(), "beta".to_string()]);
         Ok(())
     }
 

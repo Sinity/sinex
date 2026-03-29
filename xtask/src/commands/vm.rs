@@ -590,6 +590,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     let mut valid = 0usize;
     let mut missing = 0usize;
     let mut failed = 0usize;
+    let mut probe_failures = 0usize;
 
     for file in &test_files {
         if !file.exists() {
@@ -601,8 +602,8 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
         }
 
         let status = Command::new("nix-instantiate")
+            .arg(file)
             .args([
-                file.to_str().unwrap_or_default(),
                 "--arg",
                 "pkgs",
                 "import <nixpkgs> {}",
@@ -639,34 +640,55 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
                     println!(
                         "  {} OK: {}",
                         style("✓").green(),
-                        file.file_name().unwrap_or_default().to_string_lossy()
+                        display_vm_test_label(file)
                     );
                 }
                 valid += 1;
             }
-            _ => {
+            Ok(_) => {
                 if ctx.is_human() {
                     println!("  {} Syntax error: {}", style("✗").red(), file.display());
                 }
                 failed += 1;
+            }
+            Err(error) => {
+                if ctx.is_human() {
+                    println!(
+                        "  {} Probe failure: {} ({error})",
+                        style("⚠").yellow(),
+                        file.display()
+                    );
+                }
+                probe_failures += 1;
             }
         }
     }
 
     if ctx.is_human() {
         println!();
-        println!("  {} valid, {} missing, {} failed", valid, missing, failed);
-        if failed == 0 {
+        println!(
+            "  {} valid, {} missing, {} failed, {} probe failures",
+            valid, missing, failed, probe_failures
+        );
+        if failed == 0 && probe_failures == 0 {
             println!("  VM test infrastructure is ready.");
         }
     }
 
-    if failed > 0 {
-        bail!("{failed} test file(s) have syntax errors");
+    if failed > 0 || probe_failures > 0 {
+        bail!(
+            "{failed} test file(s) have syntax errors; {probe_failures} validation probe(s) failed"
+        );
     }
 
     Ok(CommandResult::success()
         .with_message(format!("validated {valid} files ({missing} missing)")))
+}
+
+fn display_vm_test_label(file: &Path) -> String {
+    file.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file.display().to_string())
 }
 
 fn discover_vm_test_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
@@ -947,6 +969,14 @@ mod tests {
                 "tests/e2e/nixos-vm/test-scenarios/b-test.nix",
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_display_vm_test_label_falls_back_to_full_path()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = Path::new("/");
+        assert_eq!(display_vm_test_label(root), root.display().to_string());
         Ok(())
     }
 

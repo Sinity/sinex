@@ -70,8 +70,15 @@ impl WindowedNode for AnalyticsAutomaton {
         });
 
         // Prune window (keep last 1000)
-        if state.recent_events.len() > 1000 {
-            state.recent_events.pop_front();
+        if state.recent_events.len() > 1000
+            && let Some(evicted) = state.recent_events.pop_front()
+            && let Some(count) = state.event_counts.get_mut(&evicted.event_type)
+        {
+            if *count > 1 {
+                *count -= 1;
+            } else {
+                state.event_counts.remove(&evicted.event_type);
+            }
         }
 
         Ok(())
