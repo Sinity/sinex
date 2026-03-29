@@ -619,6 +619,7 @@ pub struct NodeRunner<T: Node> {
 struct LeaderState {
     kv_client: sinex_primitives::coordination::CoordinationKvClient,
     instance_id: String,
+    heartbeat_shutdown: tokio::sync::oneshot::Sender<()>,
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -2101,12 +2102,20 @@ impl<T: Node + 'static> NodeRunner<T> {
             let kv_clone = kv_client.clone();
             let instance_id_clone = instance_id.clone();
             let heartbeat_interval = kv_client.heartbeat_interval();
+            let (heartbeat_shutdown, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
             let heartbeat_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(heartbeat_interval);
+                let mut heartbeat_shutdown_rx = heartbeat_shutdown_rx;
                 loop {
-                    interval.tick().await;
-                    if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                        warn!("Heartbeat failed: {e}");
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
+                                warn!("Heartbeat failed: {e}");
+                            }
+                        }
+                        _ = &mut heartbeat_shutdown_rx => {
+                            break;
+                        }
                     }
                 }
             });
@@ -2114,6 +2123,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             self.leader_state = Some(LeaderState {
                 kv_client,
                 instance_id,
+                heartbeat_shutdown,
                 heartbeat_handle,
             });
         }
@@ -2711,7 +2721,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn shutdown_leader_state(&mut self) -> NodeResult<()> {
         if let Some(state) = self.leader_state.take() {
             let mut shutdown_errors = Vec::new();
-            state.heartbeat_handle.abort();
+            Self::signal_shutdown_channel(state.heartbeat_shutdown, "coordination heartbeat");
             Self::push_shutdown_error(
                 &mut shutdown_errors,
                 "coordination heartbeat",
