@@ -6121,6 +6121,7 @@ dependencies = [
  "mimalloc",
  "nix 0.27.1",
  "notify",
+ "parking_lot",
  "regex",
  "rusqlite",
  "serde",

@@ -18,6 +18,7 @@ use sinex_primitives::{Seconds, Timestamp};
 use crate::material_context::RealWatcherMaterialContext;
 use crate::watcher_factory::{RealWatcherFactory, WatcherFactory};
 use crate::{UnifiedJournalWatcher, WatcherMaterialContext};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
@@ -26,7 +27,7 @@ use sinex_node_sdk::{
     watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::{
     sync::mpsc,
     sync::watch,
@@ -722,14 +723,7 @@ impl SystemNode {
         let watcher_material = material.clone();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
-                match health.write() {
-                    Ok(mut watcher_health) => {
-                        watcher_health.last_error = Some(err.to_string());
-                    }
-                    Err(poisoned) => {
-                        poisoned.into_inner().last_error = Some(err.to_string());
-                    }
-                }
+                health.write().last_error = Some(err.to_string());
                 warn!(error = %err, "D-Bus watcher terminated");
             }
         });
@@ -782,14 +776,7 @@ impl SystemNode {
                 .start_streaming_with_systemd(journal_tx, systemd_tx_opt, watcher_material)
                 .await
             {
-                match health.write() {
-                    Ok(mut watcher_health) => {
-                        watcher_health.last_error = Some(err.to_string());
-                    }
-                    Err(poisoned) => {
-                        poisoned.into_inner().last_error = Some(err.to_string());
-                    }
-                }
+                health.write().last_error = Some(err.to_string());
                 warn!(error = %err, "Unified journal watcher terminated");
             }
         });
@@ -828,14 +815,7 @@ impl SystemNode {
         let watcher_material = material.clone();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
-                match health.write() {
-                    Ok(mut watcher_health) => {
-                        watcher_health.last_error = Some(err.to_string());
-                    }
-                    Err(poisoned) => {
-                        poisoned.into_inner().last_error = Some(err.to_string());
-                    }
-                }
+                health.write().last_error = Some(err.to_string());
                 warn!(error = %err, "udev watcher terminated");
             }
         });
@@ -1241,14 +1221,7 @@ fn record_forwarder_health_error(
     health: &Arc<RwLock<WatcherHealth>>,
     error: &SinexError,
 ) {
-    match health.write() {
-        Ok(mut watcher_health) => {
-            watcher_health.last_error = Some(error.to_string());
-        }
-        Err(poisoned) => {
-            poisoned.into_inner().last_error = Some(error.to_string());
-        }
-    }
+    health.write().last_error = Some(error.to_string());
 }
 
 fn spawn_forwarder<E>(
@@ -1964,7 +1937,7 @@ mod tests {
         drop(tx);
 
         handle.await?;
-        let watcher_health = health.read().expect("test health lock should not be poisoned");
+        let watcher_health = health.read();
         let error = watcher_health
             .last_error
             .as_deref()

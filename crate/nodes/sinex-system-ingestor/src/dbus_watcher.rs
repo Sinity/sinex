@@ -10,6 +10,7 @@ use crate::payloads::DbusConfig; // Only import what we need
 use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
+use parking_lot::Mutex;
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_primitives::events::{
@@ -81,24 +82,18 @@ impl FromStr for DBusType {
 }
 
 fn record_activity_timestamp(
-    activity_tracker: &Arc<std::sync::Mutex<std::time::Instant>>,
+    activity_tracker: &Arc<Mutex<std::time::Instant>>,
 ) -> std::time::Instant {
-    let mut last_activity = activity_tracker.lock().unwrap_or_else(|poisoned| {
-        warn!("D-Bus activity tracker lock poisoned while recording activity; recovering");
-        poisoned.into_inner()
-    });
+    let mut last_activity = activity_tracker.lock();
     let now = std::time::Instant::now();
     *last_activity = now;
     now
 }
 
 fn activity_elapsed(
-    activity_tracker: &Arc<std::sync::Mutex<std::time::Instant>>,
+    activity_tracker: &Arc<Mutex<std::time::Instant>>,
 ) -> std::time::Duration {
-    let last_activity = activity_tracker.lock().unwrap_or_else(|poisoned| {
-        warn!("D-Bus activity tracker lock poisoned while checking health; recovering");
-        poisoned.into_inner()
-    });
+    let last_activity = activity_tracker.lock();
     last_activity.elapsed()
 }
 
@@ -388,7 +383,7 @@ impl DbusWatcher {
         // Create bounded channel for D-Bus messages to prevent task explosion
         let (msg_tx, msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
         // Activity tracker for connection health monitoring
-        let activity_tracker = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+        let activity_tracker = Arc::new(Mutex::new(std::time::Instant::now()));
 
         // Spawn a single worker to process messages (Receiver is not clonable)
         {
@@ -1214,7 +1209,7 @@ impl DbusWatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbusWatcher, activity_elapsed, record_activity_timestamp};
+    use super::DbusWatcher;
     use crate::{WatcherMaterialContext, material_context::MaterialContext};
     use async_trait::async_trait;
     use serde_json::json;
@@ -1222,8 +1217,7 @@ mod tests {
     use sinex_node_sdk::NodeResult;
     use sinex_primitives::events::enums::PlaybackStatus;
     use sinex_primitives::{Id, JsonValue, temporal::Timestamp};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::sync::Arc;
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
 
@@ -1402,32 +1396,4 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn record_activity_timestamp_recovers_from_poisoned_lock() -> TestResult<()> {
-        let tracker = Arc::new(Mutex::new(std::time::Instant::now() - Duration::from_secs(5)));
-        let poison = tracker.clone();
-        let _ = std::panic::catch_unwind(move || {
-            let _guard = poison.lock().expect("lock should acquire before poison");
-            panic!("poison activity tracker");
-        });
-
-        let recorded_at = record_activity_timestamp(&tracker);
-        assert!(recorded_at.elapsed() < Duration::from_secs(1));
-        assert!(activity_elapsed(&tracker) < Duration::from_secs(1));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn activity_elapsed_recovers_from_poisoned_lock() -> TestResult<()> {
-        let tracker = Arc::new(Mutex::new(std::time::Instant::now() - Duration::from_secs(2)));
-        let poison = tracker.clone();
-        let _ = std::panic::catch_unwind(move || {
-            let _guard = poison.lock().expect("lock should acquire before poison");
-            panic!("poison activity tracker");
-        });
-
-        let elapsed = activity_elapsed(&tracker);
-        assert!(elapsed >= Duration::from_secs(2));
-        Ok(())
-    }
 }

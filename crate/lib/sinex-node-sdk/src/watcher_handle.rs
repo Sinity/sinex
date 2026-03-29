@@ -42,11 +42,12 @@
 //! # }
 //! ```
 
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use tokio::task::{JoinError, JoinHandle};
 
 use sinex_primitives::{Result as SinexResult, SinexError};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -132,31 +133,9 @@ impl<M> WatcherHandle<M> {
         Err(error)
     }
 
-    fn recover_health_read(&self) -> WatcherHealth {
-        match self.health.read() {
-            Ok(health) => health.clone(),
-            Err(poisoned) => {
-                warn!(
-                    watcher = self.name,
-                    "Watcher health lock was poisoned during read; recovering last known state"
-                );
-                poisoned.into_inner().clone()
-            }
-        }
-    }
-
     fn with_health_write<R>(&self, update: impl FnOnce(&mut WatcherHealth) -> R) -> R {
-        match self.health.write() {
-            Ok(mut health) => update(&mut health),
-            Err(poisoned) => {
-                warn!(
-                    watcher = self.name,
-                    "Watcher health lock was poisoned during write; recovering mutable state"
-                );
-                let mut health = poisoned.into_inner();
-                update(&mut health)
-            }
-        }
+        let mut health = self.health.write();
+        update(&mut health)
     }
 
     /// Create a new watcher in the initialized state.
@@ -270,7 +249,7 @@ impl<M> WatcherHandle<M> {
 
     /// Get current health status snapshot.
     pub fn health(&self) -> WatcherHealth {
-        self.recover_health_read()
+        self.health.read().clone()
     }
 
     /// Get a handle to the health tracker for external updates.
