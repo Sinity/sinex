@@ -82,19 +82,6 @@ pub struct IngestdConfig {
     ))]
     pub material_slices_max_ack_pending: i64,
 
-    /// Maximum concurrent material assemblies (semaphore limit)
-    ///
-    /// Controls how many materials can be assembled simultaneously.
-    /// Higher values increase throughput but consume more memory.
-    /// Set via: `SINEX_INGESTD_MAX_CONCURRENT_ASSEMBLIES=50`
-    #[builder(default = default_max_concurrent_assemblies())]
-    #[validate(range(
-        min = 1,
-        max = 500,
-        message = "max_concurrent_assemblies must be between 1 and 500"
-    ))]
-    pub max_concurrent_assemblies: usize,
-
     /// Enable dry-run mode (no database writes)
     #[builder(default = false)]
     pub dry_run: bool,
@@ -578,7 +565,6 @@ impl Default for IngestdConfig {
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),
             material_slices_max_ack_pending: default_material_slices_max_ack_pending(),
-            max_concurrent_assemblies: default_max_concurrent_assemblies(),
             dry_run: false,
             validate_schemas: true,
             skip_schema_sync: false,
@@ -678,10 +664,6 @@ fn default_consumer_max_ack_pending() -> i64 {
 
 fn default_material_slices_max_ack_pending() -> i64 {
     1_000
-}
-
-fn default_max_concurrent_assemblies() -> usize {
-    50
 }
 
 fn default_max_message_size() -> Bytes {

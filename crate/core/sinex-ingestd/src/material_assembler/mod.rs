@@ -208,7 +208,6 @@ impl DiskSpaceMonitor {
 /// - one material may serialize on its own `Mutex`, but unrelated materials must not
 /// - the per-material lock is for state mutation and snapshots only
 /// - filesystem, git-annex, and database work must run after dropping that lock
-/// - the semaphore bounds total in-flight assemblies; it is not a substitute for finer lock scope
 pub struct MaterialAssembler {
     js: jetstream::Context,
     nats_client: NatsClient,
@@ -220,7 +219,6 @@ pub struct MaterialAssembler {
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
-    active_assemblies: Arc<tokio::sync::Semaphore>,
     ready_set: Option<MaterialReadySet>,
     /// Self-observer for emitting assembly metrics
     observer: Option<Arc<SelfObserver>>,
@@ -247,7 +245,6 @@ impl MaterialAssembler {
         state_root: PathBuf,
         namespace: Option<String>,
         slices_max_ack_pending: i64,
-        max_concurrent_assemblies: usize,
         ready_set: Option<MaterialReadySet>,
         max_buffered_slices: usize,
         max_material_size_bytes: u64,
@@ -271,9 +268,6 @@ impl MaterialAssembler {
             &format!("events.dlq.{DLQ_CONSUMER}"),
         );
 
-        // Cap concurrent assemblies to prevent memory exhaustion
-        let active_assemblies = Arc::new(tokio::sync::Semaphore::new(max_concurrent_assemblies));
-
         let disk_monitor = Arc::new(DiskSpaceMonitor::new(
             state_root.clone(),
             disk_threshold_percent,
@@ -291,7 +285,6 @@ impl MaterialAssembler {
             state_root,
             dlq_subject,
             slices_max_ack_pending,
-            active_assemblies,
             ready_set,
             observer: None,
             stats: Arc::new(AssemblyStats::default()),
@@ -517,13 +510,6 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
 
-        // Limit concurrent assemblies
-        let permit = self
-            .active_assemblies
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| SinexError::service("Too many active assemblies (semaphore exhausted)"))?;
-
         Ok(AssemblerState {
             material_id,
             temp_path,
@@ -544,7 +530,6 @@ impl MaterialAssembler {
             pending_write: None,
             pending_end: None,
             last_slice_received: Timestamp::now(),
-            _permit: Some(permit),
         })
     }
 
@@ -614,7 +599,6 @@ impl MaterialAssembler {
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
             slices_max_ack_pending: self.slices_max_ack_pending,
-            active_assemblies: self.active_assemblies.clone(),
             ready_set: self.ready_set.clone(),
             observer: self.observer.clone(),
             stats: self.stats.clone(),
@@ -1086,7 +1070,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             512 * 1024 * 1024,
@@ -1218,7 +1201,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             u64::MAX,

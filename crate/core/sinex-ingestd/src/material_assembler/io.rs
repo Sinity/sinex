@@ -303,18 +303,22 @@ async fn restore_state_params(
     prune_stale_buffered_slices(material_id, state_snapshot.expected_offset, &mut buffered_slices)
         .await?;
     let buffered_bytes = buffered_slice_bytes(&buffered_slices).await?;
+    let last_slice_received = restore_last_slice_received(material_id, &wal_path)?;
 
-    // Acquire semaphore permit for restored assemblies (same as new assemblies)
-    let permit = assembler
-        .active_assemblies
-        .clone()
-        .try_acquire_owned()
-        .map_err(|e| {
-            SinexError::service(format!(
-                "Too many active assemblies during restore (material {material_id})"
-            ))
-            .with_source(e)
-        })?;
+    if restored_state_is_stale(
+        &state_snapshot,
+        &buffered_slices,
+        last_slice_received,
+        assembler.slice_arrival_timeout,
+    ) {
+        info!(
+            material_id = %material_id,
+            elapsed_secs = (Timestamp::now() - last_slice_received).whole_seconds(),
+            "Restored assembly already exceeds slice arrival timeout; cleaning it up before startup"
+        );
+        cleanup_state(assembler, material_id).await;
+        return Ok(None);
+    }
 
     Ok(Some(AssemblerState {
         material_id,
@@ -339,9 +343,35 @@ async fn restore_state_params(
         hasher,
         pending_write: None,
         pending_end: state_snapshot.pending_end,
-        last_slice_received: Timestamp::now(),
-        _permit: Some(permit),
+        last_slice_received,
     }))
+}
+
+fn restore_last_slice_received(material_id: Uuid, wal_path: &Path) -> IngestdResult<Timestamp> {
+    let modified = std::fs::metadata(wal_path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| {
+            SinexError::io(format!(
+                "Failed to read WAL modification time during restore (material {material_id})"
+            ))
+            .with_source(error)
+        })?;
+    Ok(Timestamp::from(modified))
+}
+
+fn restored_state_is_stale(
+    state_snapshot: &ReplayedState,
+    buffered_slices: &BTreeMap<i64, PathBuf>,
+    last_slice_received: Timestamp,
+    slice_arrival_timeout: std::time::Duration,
+) -> bool {
+    if state_snapshot.phase == AssemblyPhase::Finalizing {
+        return false;
+    }
+
+    let elapsed = Timestamp::now() - last_slice_received;
+    elapsed.whole_seconds() > slice_arrival_timeout.as_secs() as i64
+        && (state_snapshot.pending_end.is_none() || !buffered_slices.is_empty())
 }
 
 fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
@@ -1008,6 +1038,13 @@ mod tests {
     async fn test_assembler(
         ctx: &TestContext,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
+        test_assembler_with_config(ctx, 300).await
+    }
+
+    async fn test_assembler_with_config(
+        ctx: &TestContext,
+        slice_timeout_secs: u64,
+    ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
         let annex_dir = tempfile::tempdir()?;
         let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
@@ -1026,11 +1063,10 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             512 * 1024 * 1024,
-            300,
+            slice_timeout_secs,
             3_600,
             90,
         )?;
@@ -1048,7 +1084,13 @@ mod tests {
             crc: crc32fast::hash(&entry_json),
             entry,
         };
-        tokio::fs::write(wal_path, format!("{}\n", serde_json::to_string(&envelope)?)).await?;
+        let mut wal = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(wal_path)
+            .await?;
+        wal.write_all(format!("{}\n", serde_json::to_string(&envelope)?).as_bytes())
+            .await?;
         Ok(())
     }
 
@@ -1127,7 +1169,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             512 * 1024 * 1024,
@@ -1174,7 +1215,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             8,
@@ -1217,7 +1257,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             1,
             512 * 1024 * 1024,
@@ -1296,6 +1335,76 @@ mod tests {
 
         assert!(error.contains("failed to parse WAL envelope JSON"));
         assert!(error.contains("wal_line={\"invalid\":"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_uses_wal_activity_for_last_slice_received(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        let wal_path = material_dir.join(WAL_FILE_NAME);
+        write_wal_entry(
+            &wal_path,
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+        let wal_modified = Timestamp::from(tokio::fs::metadata(&wal_path).await?.modified()?);
+
+        restore_state(&assembler).await?;
+
+        let state = assembler
+            .get_state_handle(&material_id)
+            .await
+            .expect("valid WAL state must restore");
+        assert_eq!(state.lock().await.last_slice_received, wal_modified);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_cleans_up_assemblies_already_past_slice_timeout(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "startup restore should drop assemblies already past the slice timeout"
+        );
+        assert!(
+            assembler.assembler_state.is_empty(),
+            "stale restored assemblies must not occupy the active set"
+        );
         Ok(())
     }
 

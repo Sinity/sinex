@@ -155,8 +155,6 @@ pub(super) struct AssemblerState {
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
     pub last_slice_received: Timestamp,
-    /// Semaphore permit held for the duration of the assembly
-    pub _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -486,7 +484,6 @@ mod tests {
             pending_write: None,
             pending_end: None,
             last_slice_received: Timestamp::now(),
-            _permit: None,
         }
     }
 
