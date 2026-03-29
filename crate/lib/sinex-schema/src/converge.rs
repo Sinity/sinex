@@ -366,11 +366,19 @@ async fn drop_obsolete_indexes(pool: &PgPool) -> Result<(), ApplyError> {
 ///
 /// Panics if `qualified_name` is not registered — this is a programmer error,
 /// not a runtime condition.
-fn find_meta(qualified_name: &str) -> &'static TableMeta {
-    crate::schema::all_tables()
+fn find_meta_in<'a>(tables: &'a [TableMeta], qualified_name: &str) -> Result<&'a TableMeta, ApplyError> {
+    tables
         .iter()
         .find(|m| m.qualified_name == qualified_name)
-        .unwrap_or_else(|| panic!("TableMeta '{qualified_name}' not found in ALL_TABLES"))
+        .ok_or_else(|| {
+            ApplyError::Internal(format!(
+                "convergence registry references unknown table metadata: {qualified_name}"
+            ))
+        })
+}
+
+fn find_meta(qualified_name: &str) -> Result<&'static TableMeta, ApplyError> {
+    find_meta_in(crate::schema::all_tables(), qualified_name)
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -381,10 +389,10 @@ fn find_meta(qualified_name: &str) -> &'static TableMeta {
 /// Add a table here when its `create_table_statement()` is the single source of
 /// truth and you want column additions to propagate automatically to existing
 /// databases without manual `ALTER TABLE` statements.
-pub fn convergible_tables() -> Vec<ConvergibleTable> {
-    vec![
+pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
+    Ok(vec![
         ConvergibleTable {
-            meta: find_meta("core.events"),
+            meta: find_meta("core.events")?,
             statement_fn: Events::create_table_statement,
             // Named provenance constraints — identified and idempotently recreated
             // by name. Anonymous CREATE TABLE CHECKs (the XOR provenance invariant)
@@ -453,14 +461,43 @@ pub fn convergible_tables() -> Vec<ConvergibleTable> {
             }),
         },
         ConvergibleTable {
-            meta: find_meta("core.node_manifests"),
+            meta: find_meta("core.node_manifests")?,
             statement_fn: NodeManifests::create_table_statement,
             named_constraints: vec![],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
         },
-    ]
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    // Exception to per-crate tests/: this exercises private registry lookup helpers
+    // without widening the convergence API.
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn find_meta_surfaces_missing_registry_entries() -> TestResult<()> {
+        let tables: &[TableMeta] = &[];
+        let err = find_meta_in(tables, "core.missing").expect_err("missing table should fail");
+        assert!(matches!(err, ApplyError::Internal(_)));
+        assert_eq!(
+            err.to_string(),
+            "convergence registry references unknown table metadata: core.missing"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
+        let tables = convergible_tables()?;
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].meta.qualified_name, "core.events");
+        assert_eq!(tables[1].meta.qualified_name, "core.node_manifests");
+        Ok(())
+    }
 }
 
 /// Converges each registered table against the live database.

@@ -5,6 +5,7 @@ use tracing::info;
 const SQLSTATE_UNDEFINED_FILE: &str = "58P01";
 const ERROR_CLASS_TIMESCALEDB_MISSING_LIBRARY: &str = "timescaledb_missing_library";
 const ERROR_CLASS_MISSING_REQUIRED_EXTENSIONS: &str = "missing_required_extensions";
+const ERROR_CLASS_SCHEMA_APPLY_INTERNAL: &str = "schema_apply_internal";
 
 fn map_apply_error(err: sinex_schema::apply::ApplyError) -> SinexError {
     match err {
@@ -29,6 +30,11 @@ fn map_apply_error(err: sinex_schema::apply::ApplyError) -> SinexError {
                 }
             }
             mapped
+        }
+        sinex_schema::apply::ApplyError::Internal(message) => {
+            SinexError::database("Schema apply failed")
+                .with_context("error_class", ERROR_CLASS_SCHEMA_APPLY_INTERNAL)
+                .with_context("cause", message)
         }
     }
 }
