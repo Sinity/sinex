@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_db::{PoolConfig, resolve_effective_database_url};
 use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::nats::NatsConnectionConfig;
 use std::num::NonZeroU32;
@@ -610,7 +611,7 @@ pub(crate) fn env_bool_optional(name: &str) -> Result<Option<bool>, SinexError> 
 }
 
 fn env_string_override(name: &str, current: String) -> Result<String, SinexError> {
-    Ok(env_var_optional(name)?.unwrap_or(current))
+    Ok(shared_env::strict_var(name)?.unwrap_or(current))
 }
 
 fn env_option_override(

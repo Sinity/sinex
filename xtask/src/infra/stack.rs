@@ -493,8 +493,11 @@ pub fn sync_event_payload_schemas_for_database_url(
                 .wrap_err("Failed to connect for event payload schema synchronization")?;
 
             let repo = SchemaManagementRepository::new(&pool);
+            let discovered_schemas = generate_all_schemas()
+                .map_err(|error| color_eyre::eyre::eyre!("{error}"))
+                .wrap_err("Failed to generate discovered event payload schemas")?;
             let result = repo
-                .sync_discovered_schemas(generate_all_schemas())
+                .sync_discovered_schemas(discovered_schemas)
                 .await
                 .wrap_err("Failed to synchronize discovered event payload schemas")?;
             pool.close().await;

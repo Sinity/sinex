@@ -718,6 +718,13 @@ impl DbusWatcher {
         }
 
         // Always emit generic signal events (with redacted args)
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "dbus_signal_redaction")
+            .with_std_error(error)
+        })?;
         let event = Event::new(
             DbusSignalPayload {
                 bus: parse_bus_type(bus_type),
@@ -725,7 +732,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 signal: member.to_string(),
-                args: privacy::engine().process_json(args, ProcessingContext::Dbus),
+                args: privacy_engine.process_json(args, ProcessingContext::Dbus),
                 timestamp,
             },
             material.initial_provenance(),
@@ -753,6 +760,13 @@ impl DbusWatcher {
     ) -> NodeResult<()> {
         let sender = Self::require_message_field(sender.clone(), "sender")?;
         let destination = Self::require_message_field(destination.clone(), "destination")?;
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "dbus_method_redaction")
+            .with_std_error(error)
+        })?;
         let event = Event::new(
             DbusMethodCalledPayload {
                 bus: parse_bus_type(bus_type),
@@ -761,7 +775,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 method: member.to_string(),
-                args: privacy::engine().process_json(args, ProcessingContext::Dbus),
+                args: privacy_engine.process_json(args, ProcessingContext::Dbus),
                 timestamp,
             },
             material.initial_provenance(),
@@ -911,6 +925,13 @@ impl DbusWatcher {
         args: &serde_json::Value,
         timestamp: Timestamp,
     ) -> NodeResult<DbusNotificationSentPayload> {
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "dbus_notification_redaction")
+            .with_std_error(error)
+        })?;
         let arg_array = args.as_array().ok_or_else(|| {
             sinex_node_sdk::SinexError::validation(
                 "notification D-Bus arguments must be an array".to_string(),
@@ -918,14 +939,14 @@ impl DbusWatcher {
         })?;
 
         let app_name = Self::notification_string_arg(arg_array, 0, "app_name")?;
-        let summary = privacy::engine()
+        let summary = privacy_engine
             .process(
                 Self::notification_string_arg(arg_array, 3, "summary")?,
                 ProcessingContext::Notification,
             )
             .text
             .into_owned();
-        let body = privacy::engine()
+        let body = privacy_engine
             .process(
                 Self::notification_string_arg(arg_array, 4, "body")?,
                 ProcessingContext::Notification,
@@ -1032,6 +1053,13 @@ impl DbusWatcher {
     fn parse_notification_hints(
         hints_value: &serde_json::Value,
     ) -> NodeResult<HashMap<String, serde_json::Value>> {
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "dbus_notification_hint_redaction")
+            .with_std_error(error)
+        })?;
         let dict_entries = hints_value.as_array().ok_or_else(|| {
             sinex_node_sdk::SinexError::validation(
                 "notification hints must be an array of key/value objects".to_string(),
@@ -1057,7 +1085,7 @@ impl DbusWatcher {
                 };
                 let redacted = if let Some(s) = value.as_str() {
                     serde_json::Value::String(
-                        privacy::engine()
+                        privacy_engine
                             .process(s, ProcessingContext::Notification)
                             .text
                             .into_owned(),

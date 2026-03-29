@@ -36,7 +36,7 @@ fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u1
 }
 
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
-/// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
+/// Nodes expose `--service-name`; core services don't.
 fn is_node_package(name: &str) -> bool {
     name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
 }
@@ -49,13 +49,33 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     )
 }
 
-/// Append `--instance-id` (for nodes) or `rpc-server` (for gateway) to cargo args.
-fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: &str) {
+fn runtime_cli_args(package: &str, run_identity: &str) -> Vec<String> {
     if is_node_package(package) {
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        vec![
+            format!("--service-name={run_identity}"),
+            "service".to_string(),
+        ]
     } else if package.contains("gateway") {
-        args.extend(["--".to_string(), "rpc-server".to_string()]);
+        vec!["rpc-server".to_string()]
+    } else {
+        Vec::new()
     }
+}
+
+/// Append node/gateway runtime args after the cargo `--` separator when needed.
+fn append_binary_extra_args(args: &mut Vec<String>, package: &str, run_identity: &str) {
+    let extra_args = runtime_cli_args(package, run_identity);
+    if !extra_args.is_empty() {
+        args.push("--".to_string());
+        args.extend(extra_args);
+    }
+}
+
+fn target_binary_path(release: bool, binary: &str) -> PathBuf {
+    let target_dir = if release { "release" } else { "debug" };
+    crate::orchestrator::get_target_dir(&crate::config::workspace_root())
+        .join(target_dir)
+        .join(binary)
 }
 
 fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
@@ -614,6 +634,15 @@ impl RunCommand {
             bail!("--metrics is incompatible with --bg");
         }
 
+        if let RunSubcommand::Tether {
+            from_beginning: true,
+            from_sequence: Some(_),
+            ..
+        } = &self.subcommand
+        {
+            bail!("--from-beginning and --from-sequence are mutually exclusive");
+        }
+
         Ok(())
     }
 
@@ -642,6 +671,10 @@ impl RunCommand {
         });
     }
 
+    fn local_run_env_vars(&self) -> Vec<(String, String)> {
+        crate::preflight::local_runtime_env_overrides()
+    }
+
     fn build_cargo_run_args(&self, package: &str, instance_id: &str) -> Vec<String> {
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
         if self.release {
@@ -649,6 +682,30 @@ impl RunCommand {
         }
         append_binary_extra_args(&mut args, package, instance_id);
         args
+    }
+
+    async fn build_packages(&self, packages: &[&str], ctx: &CommandContext) -> Result<()> {
+        let mut build_cmd = Command::new("cargo");
+        build_cmd.arg("build");
+        for package in packages {
+            build_cmd.arg("-p").arg(package);
+        }
+        if self.release {
+            build_cmd.arg("--release");
+        }
+
+        if ctx.is_human() {
+            println!("Building {}...", packages.join(", "));
+        }
+
+        let status = build_cmd
+            .status()
+            .await
+            .with_context(|| format!("Failed to build packages: {}", packages.join(", ")))?;
+        if !status.success() {
+            bail!("Failed to build packages: {}", packages.join(", "));
+        }
+        Ok(())
     }
 
     async fn run_binary(
@@ -674,7 +731,7 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if ctx.is_background() {
-            return self.run_background(package, binary, &instance_id, ctx);
+            return self.run_background(package, binary, &instance_id, ctx).await;
         }
 
         if self.dry_run {
@@ -713,33 +770,51 @@ impl RunCommand {
         }
 
         if ctx.is_background() {
-            return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
+            return self
+                .run_bundle_background(binaries, instance_prefix.as_deref(), ctx)
+                .await;
         }
 
         self.run_bundle_foreground(binaries, instance_prefix.as_deref(), ctx)
             .await
     }
 
-    fn run_bundle_background(
+    async fn run_bundle_background(
         &self,
         binaries: &[&str],
         instance_prefix: Option<&str>,
-        _ctx: &CommandContext,
+        ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
+        let runtime_env = self.local_run_env_vars();
+        let packages: Vec<&str> = binaries
+            .iter()
+            .map(|name| {
+                BINARIES
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, package, _)| *package)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.build_packages(&packages, ctx).await?;
 
         for name in binaries {
-            let (_, package, _binary) = BINARIES
+            let (_, package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
-            let args = self.build_cargo_run_args(package, &instance_id);
+            let binary_command = target_binary_path(self.release, binary)
+                .to_string_lossy()
+                .into_owned();
+            let args = runtime_cli_args(package, &instance_id);
 
-            let job = manager.spawn("cargo", &args)?;
+            let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
         }
 
@@ -761,31 +836,17 @@ impl RunCommand {
             println!("Starting {} binaries...", binaries.len());
         }
 
-        // Build all packages in a single cargo invocation for parallelism
-        {
-            let mut build_cmd = Command::new("cargo");
-            build_cmd.arg("build");
-            for name in binaries {
-                let (_, package, _) = BINARIES
+        let packages: Vec<&str> = binaries
+            .iter()
+            .map(|name| {
+                BINARIES
                     .iter()
                     .find(|(n, _, _)| n == name)
-                    .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
-                build_cmd.arg("-p").arg(package);
-            }
-            if self.release {
-                build_cmd.arg("--release");
-            }
-
-            if ctx.is_human() {
-                let names: Vec<_> = binaries.to_vec();
-                println!("Building {}...", names.join(", "));
-            }
-
-            let status = build_cmd.status().await?;
-            if !status.success() {
-                bail!("Failed to build binaries");
-            }
-        }
+                    .map(|(_, package, _)| *package)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.build_packages(&packages, ctx).await?;
 
         // Start all
         let mut children: HashMap<String, Child> = HashMap::new();
@@ -794,27 +855,23 @@ impl RunCommand {
             Vec::new();
         // Pipe stdout/stderr when --logs (prefix display) or --dev-journal (journal write)
         let pipe_output = self.logs || self.dev_journal;
+        let runtime_env = self.local_run_env_vars();
 
         for name in binaries {
-            let (_, _package, binary) = BINARIES
+            let (_, package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
-            let target_dir = if self.release { "release" } else { "debug" };
-            let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
+            let binary_path = target_binary_path(self.release, binary);
 
             if ctx.is_human() {
                 println!("Starting {name} (instance: {instance_id})...");
             }
 
             let mut cmd = Command::new(&binary_path);
-            if is_node_package(name) {
-                cmd.arg(format!("--instance-id={instance_id}"));
-            } else if *name == "gateway" {
-                cmd.arg("rpc-server");
-            }
+            cmd.args(runtime_cli_args(package, &instance_id));
 
             let (stdout_io, stderr_io) = if pipe_output {
                 (Stdio::piped(), Stdio::piped())
@@ -823,6 +880,7 @@ impl RunCommand {
             };
 
             let mut child = cmd
+                .envs(runtime_env.iter().cloned())
                 .stdout(stdout_io)
                 .stderr(stderr_io)
                 .kill_on_drop(true)
@@ -922,9 +980,11 @@ impl RunCommand {
         let args = self.build_cargo_run_args(package, instance_id);
 
         self.maybe_spawn_metrics_overlay(ctx);
+        let runtime_env = self.local_run_env_vars();
 
         let status = Command::new("cargo")
             .args(&args)
+            .envs(runtime_env)
             .status()
             .await
             .with_context(|| format!("Failed to run {package}"))?;
@@ -985,15 +1045,11 @@ impl RunCommand {
         }
 
         // Step 2: spawn binary directly
-        let target_dir = if self.release { "release" } else { "debug" };
-        let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
+        let binary_path = target_binary_path(self.release, binary);
 
         let mut cmd = Command::new(&binary_path);
-        if is_node_package(package) {
-            cmd.arg(format!("--instance-id={instance_id}"));
-        } else if package == "sinex-gateway" {
-            cmd.arg("rpc-server");
-        }
+        cmd.args(runtime_cli_args(package, instance_id));
+        cmd.envs(self.local_run_env_vars());
 
         let mut child = cmd
             .stdout(Stdio::piped())
@@ -1071,19 +1127,24 @@ impl RunCommand {
         }
     }
 
-    fn run_background(
+    async fn run_background(
         &self,
         package: &str,
-        _binary: &str,
+        binary: &str,
         instance_id: &str,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
+        self.build_packages(&[package], ctx).await?;
 
-        let args = self.build_cargo_run_args(package, instance_id);
+        let binary_command = target_binary_path(self.release, binary)
+            .to_string_lossy()
+            .into_owned();
+        let args = runtime_cli_args(package, instance_id);
+        let runtime_env = self.local_run_env_vars();
 
-        let job = manager.spawn("cargo", &args)?;
+        let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))
@@ -1122,7 +1183,7 @@ impl RunCommand {
             tether: None,
             checkpoint: None,
             args: extra_args,
-            env_vars: vec![],
+            env_vars: self.local_run_env_vars(),
         };
 
         let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
@@ -1210,8 +1271,7 @@ async fn execute_tether(
         Some(filter.to_string())
     };
     config.from_beginning = from_beginning;
-    // Note: from_sequence not yet supported in TetherConfig
-    let _ = from_sequence;
+    config.from_sequence = from_sequence;
 
     if ctx.is_human() {
         println!("Connecting to {target} via The Tether...");
@@ -1219,7 +1279,9 @@ async fn execute_tether(
         if let Some(ref f) = config.subject_filter {
             println!("  Filter: {f}");
         }
-        if from_beginning {
+        if let Some(sequence) = config.from_sequence {
+            println!("  Starting from: stream sequence {sequence}");
+        } else if from_beginning {
             println!("  Starting from: beginning of stream");
         } else {
             println!("  Starting from: new events only");
@@ -1337,6 +1399,65 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_runtime_cli_args_use_service_name_for_nodes()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            vec![
+                "--service-name=terminal-ingestor-123".to_string(),
+                "service".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_cli_args_use_rpc_server_for_gateway()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            runtime_cli_args("sinex-gateway", "gateway-123"),
+            vec!["rpc-server".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_cargo_run_args_use_service_name_for_nodes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = base_command(RunSubcommand::Node {
+            name: "terminal-ingestor".to_string(),
+            instance_id: None,
+        });
+        assert_eq!(
+            command.build_cargo_run_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            vec![
+                "run".to_string(),
+                "-p".to_string(),
+                "sinex-terminal-ingestor".to_string(),
+                "--".to_string(),
+                "--service-name=terminal-ingestor-123".to_string(),
+                "service".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_target_binary_path_uses_debug_and_release_profiles()
+    -> ::xtask::sandbox::TestResult<()> {
+        let target_root = crate::orchestrator::get_target_dir(&crate::config::workspace_root());
+        assert_eq!(
+            target_binary_path(false, "sinex-terminal-ingestor"),
+            target_root.join("debug/sinex-terminal-ingestor")
+        );
+        assert_eq!(
+            target_binary_path(true, "sinex-terminal-ingestor"),
+            target_root.join("release/sinex-terminal-ingestor")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
         let ingestors: Vec<_> = BINARIES
             .iter()
@@ -1440,6 +1561,23 @@ mod tests {
             .validate_flag_compatibility(&ctx)
             .expect_err("metrics on tether must be rejected");
         assert!(err.to_string().contains("--metrics only supports local binary or bundle runs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_tether_rejects_conflicting_start_flags() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = test_context(false);
+        let command = base_command(RunSubcommand::Tether {
+            target: "prod".to_string(),
+            filter: "events.>".to_string(),
+            from_beginning: true,
+            from_sequence: Some(42),
+        });
+
+        let err = command
+            .validate_flag_compatibility(&ctx)
+            .expect_err("conflicting tether start flags must be rejected");
+        assert!(err.to_string().contains("--from-beginning and --from-sequence are mutually exclusive"));
         Ok(())
     }
 

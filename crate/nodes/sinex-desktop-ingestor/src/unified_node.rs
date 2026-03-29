@@ -34,6 +34,7 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::{
     HostName, Seconds, Timestamp, Uuid,
+    env as shared_env,
     events::{
         payload::PayloadExt,
         payloads::{
@@ -350,18 +351,30 @@ impl DesktopNode {
         Ok((acquisition.as_ref(), stage_context))
     }
 
-    fn redact_window_title(value: &str) -> String {
-        privacy::engine()
-            .process(value, ProcessingContext::WindowTitle)
-            .text
-            .into_owned()
+    fn redact_window_title(value: &str) -> NodeResult<String> {
+        Ok(
+            privacy::process(value, ProcessingContext::WindowTitle)
+                .map_err(|error| {
+                    SinexError::configuration("failed to initialize privacy engine".to_string())
+                        .with_context("component", "desktop_window_title_redaction")
+                        .with_std_error(error)
+                })?
+                .text
+                .into_owned(),
+        )
     }
 
-    fn redact_document(value: &str) -> String {
-        privacy::engine()
-            .process(value, ProcessingContext::Document)
-            .text
-            .into_owned()
+    fn redact_document(value: &str) -> NodeResult<String> {
+        Ok(
+            privacy::process(value, ProcessingContext::Document)
+                .map_err(|error| {
+                    SinexError::configuration("failed to initialize privacy engine".to_string())
+                        .with_context("component", "desktop_document_redaction")
+                        .with_std_error(error)
+                })?
+                .text
+                .into_owned(),
+        )
     }
 
     fn require_activitywatch_string_field(
@@ -442,7 +455,7 @@ impl DesktopNode {
 
                 ActivityWatchWindowActivePayload {
                     app,
-                    title: Self::redact_window_title(&title),
+                    title: Self::redact_window_title(&title)?,
                     duration_ms: entry.duration_ms,
                     bucket_id: entry.bucket_id.clone(),
                 }
@@ -476,8 +489,8 @@ impl DesktopNode {
 
                 ActivityWatchBrowserTabActivePayload {
                     browser,
-                    title: Self::redact_window_title(&title),
-                    url: Self::redact_document(&url),
+                    title: Self::redact_window_title(&title)?,
+                    url: Self::redact_document(&url)?,
                     duration_ms: entry.duration_ms,
                     bucket_id: entry.bucket_id.clone(),
                 }
@@ -575,13 +588,7 @@ impl DesktopNode {
     }
 
     fn env_string_override(name: &str) -> NodeResult<Option<String>> {
-        match std::env::var(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-                "Environment variable '{name}' is not valid UTF-8"
-            ))),
-        }
+        shared_env::strict_var(name)
     }
 
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {

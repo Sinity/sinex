@@ -1,6 +1,7 @@
 //! Database connection pool management for Sinex
 
 use serde::{Deserialize, Serialize};
+use sinex_primitives::env as shared_env;
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::units::Seconds;
@@ -74,38 +75,7 @@ where
     T: FromStr,
     T::Err: std::fmt::Display,
 {
-    match env::var(var) {
-        Ok(raw) => parse_env_override_value(var, &raw, context),
-        Err(env::VarError::NotPresent) => None,
-        Err(env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                context,
-                "Environment override is not valid UTF-8; ignoring value"
-            );
-            None
-        }
-    }
-}
-
-fn parse_env_override_value<T>(var: &str, raw: &str, context: &str) -> Option<T>
-where
-    T: FromStr,
-    T::Err: std::fmt::Display,
-{
-    match raw.parse::<T>() {
-        Ok(value) => Some(value),
-        Err(error) => {
-            warn!(
-                variable = var,
-                value = %raw,
-                %error,
-                context,
-                "Invalid environment override; ignoring value"
-            );
-            None
-        }
-    }
+    shared_env::parse_optional(var, context)
 }
 
 fn env_parse_with_default<T>(var: &str, default: T, context: &str) -> T
@@ -113,7 +83,7 @@ where
     T: FromStr + Clone,
     T::Err: std::fmt::Display,
 {
-    env_parse_override(var, context).unwrap_or(default)
+    shared_env::parse_or(var, default, context)
 }
 
 fn pool_acquire_warn_threshold() -> std::time::Duration {

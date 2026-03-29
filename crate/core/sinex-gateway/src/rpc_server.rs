@@ -31,6 +31,7 @@ use serde_json::Value;
 use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Uuid};
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -1205,6 +1206,16 @@ fn warn_if_remote_bind(bind_address: &BindAddress) {
     }
 }
 
+fn request_id_for_span<'a, B>(request: &'a Request<B>) -> Cow<'a, str> {
+    match request.headers().get("x-request-id") {
+        Some(value) => match value.to_str() {
+            Ok(request_id) => Cow::Borrowed(request_id),
+            Err(_) => Cow::Borrowed("<invalid x-request-id>"),
+        },
+        None => Cow::Borrowed("unknown"),
+    }
+}
+
 fn apply_rpc_layers<S>(
     router: Router<S>,
     limits: &RpcServerLimits,
@@ -1247,16 +1258,11 @@ where
         )
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                let request_id = request
-                    .headers()
-                    .get("x-request-id")
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("unknown");
                 tracing::info_span!(
                     "rpc.request",
                     method = %request.method(),
                     uri = %request.uri(),
-                    request_id = request_id
+                    request_id = %request_id_for_span(request)
                 )
             }),
         )
@@ -1674,7 +1680,7 @@ impl RpcServer {
                 } => {
                     match task_result {
                         Ok(()) => {
-                            if shutdown.has_changed().unwrap_or(true) || *shutdown.borrow() {
+                            if *shutdown.borrow() {
                                 Ok(())
                             } else {
                                 Err(eyre!("{task_name} exited before gateway shutdown"))
@@ -1684,6 +1690,7 @@ impl RpcServer {
                     }
                 }
                 shutdown_result = shutdown.changed() => {
+                    let shutdown_requested = *shutdown.borrow();
                     if shutdown_result.is_err() {
                         warn!(task = task_name, "Background task monitor shutdown channel dropped before explicit shutdown");
                     }
@@ -1692,8 +1699,24 @@ impl RpcServer {
                         .expect("background task handle must be present until awaited")
                         .await
                     {
-                        Ok(()) => Ok(()),
-                        Err(error) => Err(eyre!("{task_name} join failed during shutdown: {error}")),
+                        Ok(()) => {
+                            if shutdown_requested {
+                                Ok(())
+                            } else {
+                                Err(eyre!(
+                                    "{task_name} exited after shutdown channel closed without a shutdown signal"
+                                ))
+                            }
+                        }
+                        Err(error) => {
+                            if shutdown_requested {
+                                Err(eyre!("{task_name} join failed during shutdown: {error}"))
+                            } else {
+                                Err(eyre!(
+                                    "{task_name} join failed after shutdown channel closed without a shutdown signal: {error}"
+                                ))
+                            }
+                        }
                     }
                 }
             }
@@ -1976,6 +1999,25 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn request_id_for_span_marks_invalid_headers() -> TestResult<()> {
+        let request = Request::builder()
+            .uri("/")
+            .header("x-request-id", HeaderValue::from_bytes(b"\xff")?)
+            .body(())?;
+
+        assert_eq!(request_id_for_span(&request), "<invalid x-request-id>");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn request_id_for_span_marks_missing_headers_as_unknown() -> TestResult<()> {
+        let request = Request::builder().uri("/").body(())?;
+
+        assert_eq!(request_id_for_span(&request), "unknown");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn wait_for_background_tasks_rejects_join_failures() -> TestResult<()> {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let failing = tokio::spawn(async move {
@@ -2017,6 +2059,46 @@ mod tests {
         .expect_err("background task that exits before shutdown must be treated as a failure");
 
         assert!(error.to_string().contains("exited before gateway shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal(
+    ) -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let completed = tokio::spawn(async move {});
+        drop(shutdown_tx);
+
+        let error = RpcServer::monitor_background_task(
+            "SSE subscription bus",
+            completed,
+            shutdown_rx,
+        )
+        .await
+        .expect("monitor join should succeed")
+        .expect_err(
+            "background task that exits after shutdown channel drop without a shutdown signal must fail",
+        );
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("exited before gateway shutdown")
+                || rendered.contains("shutdown channel closed without a shutdown signal")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        shutdown_tx.send(true)?;
+        drop(shutdown_tx);
+        let completed = tokio::spawn(async move {});
+
+        RpcServer::monitor_background_task("SSE subscription bus", completed, shutdown_rx)
+            .await
+            .expect("monitor join should succeed")?;
+
         Ok(())
     }
 

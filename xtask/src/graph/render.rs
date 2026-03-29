@@ -543,4 +543,40 @@ mod tests {
 
         Ok(())
     }
+
+    #[sinex_test]
+    async fn test_ascii_renderer_renders_focused_dependency_tree() -> TestResult<()> {
+        let graph = WorkspaceGraph::new()?;
+        let packages = graph.workspace_packages()?;
+        let focus_pkg = packages
+            .first()
+            .ok_or_else(|| color_eyre::eyre::eyre!("workspace should expose at least one package"))?
+            .name()
+            .to_string();
+
+        let renderer = AsciiRenderer::new(&graph, Some(focus_pkg.clone()), 3);
+        let output = renderer.render()?;
+
+        assert!(output.contains(&focus_pkg));
+        assert!(output.contains("└──") || output.contains("├──"));
+        assert!(!output.contains("Full tree visualization will be available in Phase 3"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ascii_renderer_marks_depth_limit() -> TestResult<()> {
+        let graph = WorkspaceGraph::new()?;
+        let packages = graph.workspace_packages()?;
+        let focus_pkg = packages
+            .first()
+            .ok_or_else(|| color_eyre::eyre::eyre!("workspace should expose at least one package"))?
+            .name()
+            .to_string();
+
+        let renderer = AsciiRenderer::new(&graph, Some(focus_pkg), 0);
+        let output = renderer.render()?;
+
+        assert!(output.contains("(max depth)"));
+        Ok(())
+    }
 }

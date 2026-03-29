@@ -106,6 +106,7 @@ mod tests {
     use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::mpsc;
     use uuid::Uuid;
     use xtask::sandbox::{EphemeralNats, TestContext, TestResult, sinex_test};
@@ -558,6 +559,43 @@ mod tests {
         assert!(
             metadata.last_heartbeat >= initial_last_heartbeat + 5,
             "leader maintenance should keep refreshing last_heartbeat beyond startup registration"
+        );
+
+        run_handle.abort();
+        let _ = run_handle.await;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn leader_maintenance_does_not_restart_process_events_future(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime(&ctx, "coordination-single-process-future").await?;
+        let mut coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+        let starts = Arc::new(AtomicUsize::new(0));
+        let starts_for_task = starts.clone();
+
+        let run_handle = tokio::spawn(async move {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(14),
+                coordination.run_coordination_loop(move || {
+                    let starts = starts_for_task.clone();
+                    async move {
+                        starts.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_secs(14)).await;
+                        Ok::<(), SinexError>(())
+                    }
+                }),
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_secs(11)).await;
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            1,
+            "maintenance ticks must not recreate the leader process future"
         );
 
         run_handle.abort();
@@ -1096,6 +1134,8 @@ impl NodeCoordination {
             .handoff_receiver
             .take()
             .ok_or(SinexError::invalid_state("No handoff receiver"))?;
+        let process_events_future = process_events();
+        tokio::pin!(process_events_future);
 
         loop {
             tokio::select! {
@@ -1126,7 +1166,7 @@ impl NodeCoordination {
                }
 
                // Process Events
-               result = process_events() => {
+               result = &mut process_events_future => {
                    match result {
                        Ok(()) => {
                            info!("Leader event processing completed; exiting coordination loop");

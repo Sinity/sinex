@@ -141,21 +141,18 @@ impl DepsCommand {
             }
 
             Self::Tree { package, depth } => {
-                use crate::deps::analyzer::WorkspaceAnalyzer;
+                use crate::graph::render::{AsciiRenderer, Renderer};
+                use crate::graph::workspace::WorkspaceGraph;
 
-                // Create analyzer
-                let analyzer =
-                    WorkspaceAnalyzer::new().context("Failed to create workspace analyzer")?;
-
-                let mut rendered = String::new();
+                let graph = WorkspaceGraph::new().context("Failed to create workspace graph")?;
 
                 // Verify package exists if specified
                 if let Some(pkg_name) = package {
-                    let packages = analyzer
+                    let packages = graph
                         .workspace_packages()
                         .context("Failed to get workspace packages")?;
 
-                    let found = packages.iter().any(|p| p.name == *pkg_name);
+                    let found = packages.iter().any(|p| p.name() == pkg_name);
 
                     if !found {
                         bail!(
@@ -163,30 +160,16 @@ impl DepsCommand {
                             pkg_name,
                             packages
                                 .iter()
-                                .map(|p| format!("  - {}", p.name))
+                                .map(|p| format!("  - {}", p.name()))
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         );
                     }
-
-                    rendered.push_str(&format!(
-                        "Dependency tree for '{pkg_name}' (depth: {depth}):\n"
-                    ));
-                    rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
-                } else {
-                    rendered.push_str(&format!("Workspace dependency tree (depth: {depth}):\n"));
-                    rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
-
-                    // Show workspace packages as placeholder
-                    let packages = analyzer
-                        .workspace_packages()
-                        .context("Failed to get workspace packages")?;
-
-                    rendered.push_str("\nWorkspace packages:\n");
-                    for pkg in packages {
-                        rendered.push_str(&format!("  - {} v{}\n", pkg.name, pkg.version));
-                    }
                 }
+
+                let rendered = AsciiRenderer::new(&graph, package.clone(), *depth)
+                    .render()
+                    .context("Failed to render dependency tree")?;
 
                 Ok(CommandResult::success()
                     .with_data(serde_json::Value::String(rendered))

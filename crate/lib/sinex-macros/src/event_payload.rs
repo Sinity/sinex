@@ -65,7 +65,16 @@ fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         version: #version,
                         schema_fn: || {
                             let schema = ::schemars::schema_for!(#name);
-                            ::serde_json::to_value(&schema).expect("Schema must serialize")
+                            ::serde_json::to_value(&schema).map_err(|error| {
+                                ::sinex_primitives::error::SinexError::serialization(
+                                    "failed to serialize event payload schema"
+                                )
+                                .with_context(
+                                    "payload_type",
+                                    ::std::concat!(::std::module_path!(), "::", ::std::stringify!(#name))
+                                )
+                                .with_std_error(&error)
+                            })
                         },
                     }
                 }

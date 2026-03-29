@@ -17,6 +17,7 @@ use sinex_primitives::{
     units::{Bytes, Seconds},
 };
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -25,6 +26,7 @@ use std::{
 };
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -55,6 +57,7 @@ pub struct AcquisitionManager {
     source_type: String,
     _source_path: String,
     streams_ready: Arc<AtomicBool>,
+    streams_bootstrap_lock: Arc<Mutex<()>>,
     work_dir: Option<PathBuf>,
 }
 
@@ -278,6 +281,7 @@ impl AcquisitionManager {
             source_type,
             _source_path: source_path,
             streams_ready: Arc::new(AtomicBool::new(false)),
+            streams_bootstrap_lock: Arc::new(Mutex::new(())),
             work_dir,
         }
     }
@@ -334,27 +338,32 @@ impl AcquisitionManager {
     }
 
     async fn ensure_streams_ready(&self) -> NodeResult<()> {
-        // Use compare_exchange to avoid duplicate bootstrap from concurrent callers
-        if self
-            .streams_ready
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            // Another caller already set it to true (bootstrap done or in progress)
+        self.ensure_streams_ready_with(|| async {
+            AcquisitionManager::bootstrap_streams_with_namespace(
+                &self.nats_client,
+                self.namespace.as_deref(),
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn ensure_streams_ready_with<F, Fut>(&self, bootstrap: F) -> NodeResult<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = NodeResult<()>>,
+    {
+        if self.streams_ready.load(Ordering::SeqCst) {
             return Ok(());
         }
 
-        if let Err(e) = AcquisitionManager::bootstrap_streams_with_namespace(
-            &self.nats_client,
-            self.namespace.as_deref(),
-        )
-        .await
-        {
-            // Reset flag so next caller can retry
-            self.streams_ready.store(false, Ordering::SeqCst);
-            return Err(e);
+        let _bootstrap_guard = self.streams_bootstrap_lock.lock().await;
+        if self.streams_ready.load(Ordering::SeqCst) {
+            return Ok(());
         }
 
+        bootstrap().await?;
+        self.streams_ready.store(true, Ordering::SeqCst);
         Ok(())
     }
 
@@ -758,6 +767,121 @@ impl AppendStreamAcquirer {
         if let Some(handle) = self.current_handle.take() {
             self.manager.finalize(handle, reason).await?;
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these tests exercise private bootstrap coordination state;
+    // extracting them would require widening the test surface of AcquisitionManager.
+    use super::AcquisitionManager;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::sync::oneshot;
+    use tokio::time::{Duration, sleep};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn concurrent_stream_bootstrap_waits_for_completion(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let manager = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "bootstrap-test",
+            "/bootstrap",
+        ));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let first = {
+            let manager = manager.clone();
+            let attempts = attempts.clone();
+            tokio::spawn(async move {
+                manager
+                    .ensure_streams_ready_with(|| async move {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        let _ = started_tx.send(());
+                        let _ = release_rx.await;
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+
+        started_rx.await?;
+
+        let second = {
+            let manager = manager.clone();
+            let attempts = attempts.clone();
+            tokio::spawn(async move {
+                manager
+                    .ensure_streams_ready_with(|| async move {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+
+        sleep(Duration::from_millis(100)).await;
+        assert!(
+            !second.is_finished(),
+            "concurrent callers must wait for stream bootstrap to finish"
+        );
+
+        let _ = release_tx.send(());
+        first.await??;
+        second.await??;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "only the first caller should perform bootstrap work"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn failed_stream_bootstrap_remains_retryable(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "retry-test", "/retry");
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let err = manager
+            .ensure_streams_ready_with({
+                let attempts = attempts.clone();
+                || async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Err(sinex_primitives::error::SinexError::messaging(
+                        "bootstrap failed",
+                    ))
+                }
+            })
+            .await
+            .expect_err("failed bootstrap should surface immediately");
+        assert!(
+            err.to_string().contains("bootstrap failed"),
+            "unexpected error: {err}"
+        );
+
+        manager
+            .ensure_streams_ready_with({
+                let attempts = attempts.clone();
+                || async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await?;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "failed bootstrap should not poison future retries"
+        );
         Ok(())
     }
 }

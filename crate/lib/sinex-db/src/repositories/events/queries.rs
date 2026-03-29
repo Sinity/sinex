@@ -168,6 +168,24 @@ impl EventRepository<'_> {
         Ok(result.unwrap_or(0))
     }
 
+    #[instrument(skip(self), fields(source = %source, event_type = %event_type))]
+    pub async fn count_by_source_and_event_type(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> DbResult<i64> {
+        let result = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM core.events WHERE source = $1 AND event_type = $2",
+            source.as_str(),
+            event_type.as_str()
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "count events by source and type"))?;
+
+        Ok(result.unwrap_or(0))
+    }
+
     #[instrument(skip(self), fields(event_type = %event_type))]
     pub async fn estimate_count_by_event_type(&self, event_type: &EventType) -> DbResult<i64> {
         // EXPLAIN output shape is not supported by sqlx macros; use runtime query.

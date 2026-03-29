@@ -741,7 +741,7 @@ impl SourceMaterialRepository<'_> {
     /// - Metadata is deep-merged with new values
     /// - `end_time` is cleared so terminal state does not leak into the rerun
     /// - `staged_by` and `staged_on_host` are updated if not null
-    async fn register_in_flight_internal_with_executor<'e, E>(
+    async fn register_in_flight_by_source_identifier_with_executor<'e, E>(
         &self,
         executor: E,
         id: Id<SourceMaterial>,
@@ -838,6 +838,106 @@ impl SourceMaterialRepository<'_> {
             .await
             .map_err(|e| db_error(e, "upsert in-flight source material"))
     }
+
+    /// External registrations carry an explicit material id that downstream slices,
+    /// end markers, and ledger entries all reference directly. Reusing a
+    /// `source_identifier` with a different explicit id is therefore invalid and
+    /// must fail honestly rather than silently aliasing the new material onto an
+    /// older row.
+    async fn register_external_in_flight_by_id_with_executor<'e, E>(
+        &self,
+        executor: E,
+        id: Id<SourceMaterial>,
+        material_type: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+        start_time_override: Option<Timestamp>,
+    ) -> DbResult<SourceMaterialRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let mut material =
+            SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
+        material.status = status::SENSING.to_string();
+        material.timing_info_type = timing_info_types::REALTIME.to_string();
+        material.merge_metadata(metadata);
+        if let Some(uri) = source_uri {
+            material
+                .metadata_object_mut()
+                .insert("source_uri".to_string(), JsonValue::String(uri.to_string()));
+        }
+        material.metadata_object_mut().insert(
+            "material_type".to_string(),
+            JsonValue::String(material_type.to_string()),
+        );
+        let start_time = start_time_override
+            .or(material.start_time)
+            .unwrap_or_else(Timestamp::now);
+        material.start_time = Some(start_time);
+        material.staged_by = Some("sinex-db".to_string());
+        material.staged_on_host = Some(gethostname::gethostname().to_string_lossy().to_string());
+
+        let upsert_sql = r"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                staged_by,
+                staged_on_host
+            ) VALUES (
+                $1::uuid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                material_kind = EXCLUDED.material_kind,
+                source_identifier = EXCLUDED.source_identifier,
+                status = EXCLUDED.status,
+                timing_info_type = EXCLUDED.timing_info_type,
+                metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
+                start_time = COALESCE(EXCLUDED.start_time, raw.source_material_registry.start_time),
+                end_time = NULL,
+                staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
+                staged_on_host = COALESCE(EXCLUDED.staged_on_host, raw.source_material_registry.staged_on_host)
+            RETURNING
+                id::uuid as id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as optional_blob_id
+        ";
+
+        sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
+            .bind(id.to_uuid())
+            .bind(&material.material_kind)
+            .bind(&material.source_identifier)
+            .bind(&material.status)
+            .bind(&material.timing_info_type)
+            .bind(&material.metadata)
+            .bind(material.start_time)
+            .bind(&material.staged_by)
+            .bind(&material.staged_on_host)
+            .fetch_one(executor)
+            .await
+            .map_err(|e| db_error(e, "upsert external in-flight source material"))
+    }
     pub async fn register_in_flight(
         &self,
         material_type: &str,
@@ -845,7 +945,7 @@ impl SourceMaterialRepository<'_> {
         metadata: JsonValue,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::new();
-        self.register_in_flight_internal_with_executor(
+        self.register_in_flight_by_source_identifier_with_executor(
             self.pool,
             id,
             material_type,
@@ -864,7 +964,7 @@ impl SourceMaterialRepository<'_> {
         started_at: Timestamp,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::from_uuid(material_id);
-        self.register_in_flight_internal_with_executor(
+        self.register_external_in_flight_by_id_with_executor(
             self.pool,
             id,
             material_type,
@@ -888,7 +988,7 @@ impl SourceMaterialRepository<'_> {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let id = Id::<SourceMaterial>::from_uuid(material_id);
-        self.register_in_flight_internal_with_executor(
+        self.register_external_in_flight_by_id_with_executor(
             executor,
             id,
             material_type,

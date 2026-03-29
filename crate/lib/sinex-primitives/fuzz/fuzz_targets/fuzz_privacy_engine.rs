@@ -16,7 +16,9 @@ fuzz_target!(|data: &[u8]| {
             ProcessingContext::Document,
             ProcessingContext::Metadata,
         ] {
-            let result = privacy::engine().process(s, ctx);
+            let Ok(result) = privacy::process(s, ctx) else {
+                return;
+            };
             // Basic sanity: if suppressed, we still got a result
             let _ = result.any_matched();
             let _ = result.suppressed;

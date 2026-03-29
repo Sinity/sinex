@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::config::workspace_root;
 use crate::tools::{ToolInfo, ToolManager};
 
 /// Spawn a watchdog thread that prints a "still waiting..." message every `interval` seconds.
@@ -728,28 +729,60 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
     Ok(())
 }
 
-/// Set a development RPC token if not already set.
-/// This allows `xtask run gateway` to work without manual token setup.
-/// Only sets the token in non-production environments.
-fn set_dev_token_if_missing() {
-    // Don't auto-set in production
+fn default_dev_rpc_token() -> String {
+    let hostname = gethostname::gethostname().to_string_lossy().to_string();
+    format!("dev-token-{hostname}:admin")
+}
+
+fn env_var_present_and_nonempty(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| !value.is_empty())
+}
+
+fn dev_rpc_token_if_missing() -> Option<String> {
     if std::env::var("SINEX_ENVIRONMENT")
         .ok()
         .is_some_and(|e| e == "production")
     {
-        return;
+        return None;
     }
 
-    // Check if any token source is already set
-    let has_token = std::env::var("SINEX_RPC_TOKEN").is_ok()
-        || std::env::var("SINEX_RPC_TOKEN_FILE").is_ok()
-        || std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE").is_ok();
+    let has_token = env_var_present_and_nonempty("SINEX_RPC_TOKEN")
+        || env_var_present_and_nonempty("SINEX_RPC_TOKEN_FILE")
+        || env_var_present_and_nonempty("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
 
-    if !has_token {
-        // Generate a deterministic dev token based on hostname (for consistency across runs)
-        // but still unique enough that it's clearly a dev token
-        let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let dev_token = format!("dev-token-{hostname}");
+    (!has_token).then(default_dev_rpc_token)
+}
+
+pub(crate) fn local_runtime_env_overrides() -> Vec<(String, String)> {
+    let mut overrides = Vec::new();
+    let tls_dir = workspace_root().join(".sinex/tls");
+    let cert_path = tls_dir.join("server.pem");
+    let key_path = tls_dir.join("server-key.pem");
+
+    if !env_var_present_and_nonempty("SINEX_GATEWAY_TLS_CERT") && cert_path.exists() {
+        overrides.push((
+            "SINEX_GATEWAY_TLS_CERT".to_string(),
+            cert_path.display().to_string(),
+        ));
+    }
+    if !env_var_present_and_nonempty("SINEX_GATEWAY_TLS_KEY") && key_path.exists() {
+        overrides.push((
+            "SINEX_GATEWAY_TLS_KEY".to_string(),
+            key_path.display().to_string(),
+        ));
+    }
+    if let Some(token) = dev_rpc_token_if_missing() {
+        overrides.push(("SINEX_RPC_TOKEN".to_string(), token));
+    }
+
+    overrides
+}
+
+/// Set a development RPC token if not already set.
+/// This allows `xtask run gateway` to work without manual token setup.
+/// Only sets the token in non-production environments.
+fn set_dev_token_if_missing() {
+    if let Some(dev_token) = dev_rpc_token_if_missing() {
         unsafe { std::env::set_var("SINEX_RPC_TOKEN", &dev_token) };
         eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={dev_token} (dev mode)");
     }
@@ -1259,8 +1292,34 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use std::ffi::OsString;
     use std::os::unix::process::ExitStatusExt;
     use tempfile::tempdir;
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let original = std::env::var_os(key);
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[sinex_test]
     async fn test_infra_status_capture() -> TestResult<()> {
@@ -1524,6 +1583,45 @@ mod tests {
         assert!(message.contains("not found in PATH"));
         assert!(message.contains("createdb"));
         assert!(message.contains("createdb --version"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_set_dev_token_if_missing_adds_admin_role_suffix() -> TestResult<()> {
+        let _env_guard = EnvGuard::set("SINEX_ENVIRONMENT", None);
+        let _token_guard = EnvGuard::set("SINEX_RPC_TOKEN", None);
+        let _token_file_guard = EnvGuard::set("SINEX_RPC_TOKEN_FILE", None);
+        let _admin_file_guard = EnvGuard::set("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
+
+        set_dev_token_if_missing();
+
+        let token = std::env::var("SINEX_RPC_TOKEN")?;
+        assert!(token.starts_with("dev-token-"));
+        assert!(token.ends_with(":admin"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -> TestResult<()>
+    {
+        let _env_guard = EnvGuard::set("SINEX_ENVIRONMENT", None);
+        let _token_guard = EnvGuard::set("SINEX_RPC_TOKEN", None);
+        let _token_file_guard = EnvGuard::set("SINEX_RPC_TOKEN_FILE", None);
+        let _admin_file_guard = EnvGuard::set("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
+        let _tls_cert_guard = EnvGuard::set("SINEX_GATEWAY_TLS_CERT", None);
+        let _tls_key_guard = EnvGuard::set("SINEX_GATEWAY_TLS_KEY", None);
+
+        let overrides = local_runtime_env_overrides();
+
+        assert!(overrides.iter().any(|(key, value)| {
+            key == "SINEX_RPC_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
+        }));
+        assert!(overrides.iter().any(|(key, value)| {
+            key == "SINEX_GATEWAY_TLS_CERT" && value.ends_with("server.pem")
+        }));
+        assert!(overrides.iter().any(|(key, value)| {
+            key == "SINEX_GATEWAY_TLS_KEY" && value.ends_with("server-key.pem")
+        }));
         Ok(())
     }
 }

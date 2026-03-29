@@ -44,6 +44,7 @@ const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
 pub enum ApplyError {
     Sqlx(sqlx::Error),
     MissingExtensions(Vec<String>),
+    Internal(String),
 }
 
 impl std::fmt::Display for ApplyError {
@@ -55,6 +56,7 @@ impl std::fmt::Display for ApplyError {
                 "Required PostgreSQL extensions missing: {}",
                 missing.join(", ")
             ),
+            Self::Internal(message) => write!(f, "{message}"),
         }
     }
 }
@@ -64,6 +66,7 @@ impl std::error::Error for ApplyError {
         match self {
             Self::Sqlx(err) => Some(err),
             Self::MissingExtensions(_) => None,
+            Self::Internal(_) => None,
         }
     }
 }
@@ -75,11 +78,12 @@ impl From<sqlx::Error> for ApplyError {
 }
 
 pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
+    let convergible_tables = crate::converge::convergible_tables()?;
     ensure_schemas(pool).await?;
     ensure_required_extensions(pool).await?;
     execute_sql(pool, BOOTSTRAP_SQL).await?;
     create_tables(pool).await?;
-    crate::converge::converge_tables(pool, &crate::converge::convergible_tables()).await?;
+    crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
@@ -89,6 +93,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
 }
 
 pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
+    let convergible_tables = crate::converge::convergible_tables()?;
     let mut drifts = Vec::new();
 
     // Table existence.
@@ -99,8 +104,7 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     }
 
     // Column and named constraint gaps — derived from sea-query declarations.
-    let column_gaps =
-        crate::converge::report_column_gaps(pool, &crate::converge::convergible_tables()).await?;
+    let column_gaps = crate::converge::report_column_gaps(pool, &convergible_tables).await?;
     drifts.extend(column_gaps);
 
     // Trigger existence (triggers are managed by CREATE OR REPLACE, not convergence).

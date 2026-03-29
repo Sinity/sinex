@@ -261,7 +261,17 @@ impl JobManager {
 
     /// Start a new background job.
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
-        self.spawn_with_history(command, args, command, args)
+        self.spawn_with_history_env(command, args, command, args, &[])
+    }
+
+    /// Start a new background job with explicit environment overrides.
+    pub fn spawn_with_env(
+        &self,
+        command: &str,
+        args: &[String],
+        env_vars: &[(String, String)],
+    ) -> Result<Job> {
+        self.spawn_with_history_env(command, args, command, args, env_vars)
     }
 
     /// Start a new background job with explicit history metadata.
@@ -271,6 +281,17 @@ impl JobManager {
         args: &[String],
         history_command: &str,
         history_args: &[String],
+    ) -> Result<Job> {
+        self.spawn_with_history_env(command, args, history_command, history_args, &[])
+    }
+
+    fn spawn_with_history_env(
+        &self,
+        command: &str,
+        args: &[String],
+        history_command: &str,
+        history_args: &[String],
+        env_vars: &[(String, String)],
     ) -> Result<Job> {
         // Register with HistoryDb first to get both IDs.
         // invocation_id: the durable execution record (claimed by the child process).
@@ -312,6 +333,9 @@ impl JobManager {
             .env("XTASK_BG_JOB_ID", job_id.to_string())
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
 
         // Make the child its own process group leader so the coordinator can
         // kill the entire group (cargo + rustc/nextest children) via kill(-pid).

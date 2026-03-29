@@ -47,7 +47,6 @@ async fn start_assembler(
         state_dir.path().to_path_buf(),
         Some(namespace.to_string()),
         1_000,
-        50,
         Some(MaterialReadySet::default()),
         100,
         512 * 1024 * 1024,
@@ -284,40 +283,29 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let ledger_wait = async {
         for (material_id, _, total_size, _) in &material_plans {
             let material_id_uuid = *material_id;
+            let expected_size = *total_size;
             WaitHelpers::wait_for_condition(
                 || {
                     let pool = ctx.pool.clone();
                     async move {
-                        let row = sqlx::query(
-                            r"
-                            SELECT offset_end, offset_kind
-                            FROM raw.temporal_ledger
-                            WHERE source_material_id = $1::uuid
-                            ",
+                        let row = sqlx::query!(
+                            r#"
+                            SELECT EXISTS(
+                                SELECT 1
+                                FROM raw.temporal_ledger
+                                WHERE source_material_id = $1::uuid
+                                  AND offset_start = 0
+                                  AND offset_end = $2
+                                  AND offset_kind = 'byte'
+                            ) AS "exists!"
+                            "#,
+                            material_id_uuid,
+                            expected_size,
                         )
-                        .bind(material_id_uuid)
-                        .fetch_optional(&pool)
+                        .fetch_one(&pool)
                         .await?;
 
-                        if let Some(row) = row {
-                            let offset_end: i64 = row.try_get("offset_end")?;
-                            let offset_kind: String = row.try_get("offset_kind")?;
-                            if offset_end != *total_size {
-                                return Err(sinex_primitives::error::SinexError::database(
-                                    format!(
-                                        "ledger offset_end {offset_end} != expected {total_size}"
-                                    ),
-                                ));
-                            }
-                            if offset_kind != "byte" {
-                                return Err(sinex_primitives::error::SinexError::database(
-                                    format!("ledger offset_kind {offset_kind} != byte"),
-                                ));
-                            }
-                            Ok(true)
-                        } else {
-                            Ok(false)
-                        }
+                        Ok::<bool, sqlx::Error>(row.exists)
                     }
                 },
                 30,

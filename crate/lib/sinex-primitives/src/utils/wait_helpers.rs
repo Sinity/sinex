@@ -86,6 +86,7 @@ where
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
     let mut backoff = Duration::from_millis(10);
+    let mut last_error = None;
 
     while start.elapsed() < timeout_duration {
         match condition_fn().await {
@@ -96,6 +97,7 @@ where
             Err(e) => {
                 // Log error but continue waiting
                 tracing::debug!("Condition check failed: {}", e);
+                last_error = Some(e);
             }
         }
 
@@ -105,9 +107,11 @@ where
         backoff = (backoff * 2).min(Duration::from_secs(1));
     }
 
-    Err(SinexError::timeout(format!(
-        "{check_name} timeout after {timeout_secs} seconds"
-    )))
+    let timeout = SinexError::timeout(format!("{check_name} timeout after {timeout_secs} seconds"));
+    Err(match last_error {
+        Some(error) => timeout.with_source(error),
+        None => timeout,
+    })
 }
 
 /// Typed wrapper for `wait_for_condition` using `Seconds`.
@@ -414,6 +418,7 @@ where
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
+    let mut last_error = None;
 
     while start.elapsed() < timeout_duration {
         match condition_fn().await {
@@ -424,6 +429,7 @@ where
             Err(e) => {
                 // Log error but continue waiting
                 tracing::debug!("Condition check failed: {}", e);
+                last_error = Some(e);
             }
         }
 
@@ -438,9 +444,13 @@ where
         tokio::time::sleep(adaptive_delay).await;
     }
 
-    Err(SinexError::timeout(format!(
+    let timeout = SinexError::timeout(format!(
         "{check_name} timeout after {timeout_secs} seconds (adaptive backoff)"
-    )))
+    ));
+    Err(match last_error {
+        Some(error) => timeout.with_source(error),
+        None => timeout,
+    })
 }
 
 /// Typed wrapper for `wait_for_condition_adaptive` using `Seconds`.

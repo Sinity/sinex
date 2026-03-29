@@ -424,6 +424,7 @@ impl IngestService {
                 "sinex-ingestd".to_string(),
                 sinex_primitives::Seconds::from_secs(60),
             )
+            .with_node_name(node_name.clone())
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
@@ -695,6 +696,26 @@ impl IngestService {
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
+    fn handle_material_assembler_result(
+        result: IngestdResult<()>,
+        shutdown_flag: &Arc<AtomicBool>,
+    ) -> IngestdResult<()> {
+        match result {
+            Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
+                info!("MaterialAssembler shutting down normally");
+                Ok(())
+            }
+            Ok(()) => {
+                info!("MaterialAssembler completed normally");
+                Ok(())
+            }
+            Err(error) => {
+                error!(error = %error, "MaterialAssembler failed");
+                Err(error)
+            }
+        }
+    }
+
     /// Start the `JetStream` consumer task, returning both the handle and a readiness receiver.
     ///
     /// The receiver fires after the durable `JetStream` consumer has been created and the pull
@@ -787,7 +808,6 @@ impl IngestService {
         let assembler_state_dir = self.config.assembler_state_dir.clone();
         let namespace = self.config.nats_namespace.clone();
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
-        let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
         let max_buffered_slices = self.config.max_buffered_slices;
         let max_material_size_bytes = self.config.max_material_size_bytes.as_u64();
         let slice_timeout_secs = self.config.slice_timeout_secs;
@@ -825,7 +845,6 @@ impl IngestService {
                 state_dir,
                 namespace.clone(),
                 slices_max_ack_pending,
-                max_concurrent_assemblies,
                 ready_set,
                 max_buffered_slices,
                 max_material_size_bytes,
@@ -843,21 +862,7 @@ impl IngestService {
             let result = assembler
                 .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
                 .await;
-            if shutdown_flag.load(Ordering::Acquire) {
-                info!("MaterialAssembler shutting down normally");
-                Ok(())
-            } else {
-                match result {
-                    Ok(()) => {
-                        info!("MaterialAssembler completed normally");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!(error = %e, "MaterialAssembler failed");
-                        Err(e)
-                    }
-                }
-            }
+            Self::handle_material_assembler_result(result, &shutdown_flag)
         });
         (handle, ready_rx)
     }
@@ -1453,6 +1458,30 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("did not signal ready"));
         assert!(message.contains("JetStream consumer"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_material_assembler_result_preserves_errors_during_shutdown(
+    ) -> xtask::sandbox::TestResult<()> {
+        let shutdown_flag = Arc::new(AtomicBool::new(true));
+
+        let error = IngestService::handle_material_assembler_result(
+            Err(SinexError::service("material bootstrap failed")),
+            &shutdown_flag,
+        )
+        .expect_err("material assembler errors must not be masked by shutdown");
+
+        assert!(error.to_string().contains("material bootstrap failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_material_assembler_result_allows_clean_shutdown(
+    ) -> xtask::sandbox::TestResult<()> {
+        let shutdown_flag = Arc::new(AtomicBool::new(true));
+
+        IngestService::handle_material_assembler_result(Ok(()), &shutdown_flag)?;
         Ok(())
     }
 
