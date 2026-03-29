@@ -417,7 +417,13 @@ impl CheckpointManager {
         };
 
         if entry.value.is_empty() {
-            return Ok(None);
+            return Err(
+                SinexError::checkpoint("Checkpoint KV entry is empty")
+                    .with_context("key", key.to_string())
+                    .with_context("node", self.node_name.clone())
+                    .with_context("consumer_group", self.consumer_group.clone())
+                    .with_context("consumer_name", self.consumer_name.clone()),
+            );
         }
 
         let mut state = self.decode_checkpoint_state(key, &entry.value)?;

@@ -129,3 +129,32 @@ async fn checkpoint_stats_surface_corrupt_kv_state(
     assert!(message.contains(&key));
     Ok(())
 }
+
+#[sinex_test]
+async fn load_checkpoint_rejects_empty_kv_state(
+    ctx: TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ctx.with_nats().shared().await?;
+    let kv = ctx.checkpoint_kv().await?;
+    let manager = CheckpointManager::new(
+        kv.clone(),
+        "empty-node".to_string(),
+        "empty-group".to_string(),
+        "empty-consumer".to_string(),
+    );
+    manager.save_checkpoint(&CheckpointState::default()).await?;
+
+    let mut keys = kv.keys().await?;
+    let key = keys.try_next().await?.expect("checkpoint key should exist");
+    kv.put(&key, Vec::<u8>::new().into()).await?;
+
+    let error = manager
+        .load_checkpoint()
+        .await
+        .expect_err("empty checkpoint KV should not be treated as a fresh start");
+    let message = format!("{error:#}");
+    assert!(matches!(error, SinexError::Checkpoint(_)));
+    assert!(message.contains("Checkpoint KV entry is empty"));
+    assert!(message.contains(&key));
+    Ok(())
+}
