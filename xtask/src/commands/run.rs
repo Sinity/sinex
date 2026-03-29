@@ -36,7 +36,7 @@ fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u1
 }
 
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
-/// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
+/// Nodes expose `--service-name`; core services don't.
 fn is_node_package(name: &str) -> bool {
     name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
 }
@@ -49,12 +49,25 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     )
 }
 
-/// Append `--instance-id` (for nodes) or `rpc-server` (for gateway) to cargo args.
-fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: &str) {
+fn runtime_cli_args(package: &str, run_identity: &str) -> Vec<String> {
     if is_node_package(package) {
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        vec![
+            format!("--service-name={run_identity}"),
+            "service".to_string(),
+        ]
     } else if package.contains("gateway") {
-        args.extend(["--".to_string(), "rpc-server".to_string()]);
+        vec!["rpc-server".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Append node/gateway runtime args after the cargo `--` separator when needed.
+fn append_binary_extra_args(args: &mut Vec<String>, package: &str, run_identity: &str) {
+    let extra_args = runtime_cli_args(package, run_identity);
+    if !extra_args.is_empty() {
+        args.push("--".to_string());
+        args.extend(extra_args);
     }
 }
 
@@ -802,7 +815,7 @@ impl RunCommand {
         let runtime_env = self.local_run_env_vars();
 
         for name in binaries {
-            let (_, _package, binary) = BINARIES
+            let (_, package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
@@ -816,11 +829,7 @@ impl RunCommand {
             }
 
             let mut cmd = Command::new(&binary_path);
-            if is_node_package(name) {
-                cmd.arg(format!("--instance-id={instance_id}"));
-            } else if *name == "gateway" {
-                cmd.arg("rpc-server");
-            }
+            cmd.args(runtime_cli_args(package, &instance_id));
 
             let (stdout_io, stderr_io) = if pipe_output {
                 (Stdio::piped(), Stdio::piped())
@@ -998,11 +1007,7 @@ impl RunCommand {
         let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
 
         let mut cmd = Command::new(&binary_path);
-        if is_node_package(package) {
-            cmd.arg(format!("--instance-id={instance_id}"));
-        } else if package == "sinex-gateway" {
-            cmd.arg("rpc-server");
-        }
+        cmd.args(runtime_cli_args(package, instance_id));
         cmd.envs(self.local_run_env_vars());
 
         let mut child = cmd
@@ -1344,6 +1349,50 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("sinex-gateway"));
         assert!(rendered.contains("did not expose a PID"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_cli_args_use_service_name_for_nodes()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            vec![
+                "--service-name=terminal-ingestor-123".to_string(),
+                "service".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_cli_args_use_rpc_server_for_gateway()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            runtime_cli_args("sinex-gateway", "gateway-123"),
+            vec!["rpc-server".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_cargo_run_args_use_service_name_for_nodes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = base_command(RunSubcommand::Node {
+            name: "terminal-ingestor".to_string(),
+            instance_id: None,
+        });
+        assert_eq!(
+            command.build_cargo_run_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            vec![
+                "run".to_string(),
+                "-p".to_string(),
+                "sinex-terminal-ingestor".to_string(),
+                "--".to_string(),
+                "--service-name=terminal-ingestor-123".to_string(),
+                "service".to_string(),
+            ]
+        );
         Ok(())
     }
 
