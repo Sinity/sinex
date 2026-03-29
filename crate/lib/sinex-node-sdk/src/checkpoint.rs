@@ -696,7 +696,7 @@ pub async fn cleanup_stale_checkpoints(
     max_age: std::time::Duration,
 ) -> NodeResult<CheckpointCleanupResult> {
     let now = Timestamp::now();
-    let cutoff = now - time::Duration::try_from(max_age).unwrap_or(time::Duration::days(30));
+    let cutoff = checkpoint_cleanup_cutoff(now, max_age)?;
 
     let mut result = CheckpointCleanupResult {
         scanned: 0,
@@ -764,6 +764,18 @@ pub async fn cleanup_stale_checkpoints(
     Ok(result)
 }
 
+fn checkpoint_cleanup_cutoff(
+    now: Timestamp,
+    max_age: std::time::Duration,
+) -> NodeResult<Timestamp> {
+    let max_age = time::Duration::try_from(max_age).map_err(|error| {
+        SinexError::checkpoint("Checkpoint cleanup max age is out of range")
+            .with_context("max_age_seconds", max_age.as_secs_f64().to_string())
+            .with_std_error(&error)
+    })?;
+    Ok(now - max_age)
+}
+
 /// Spawn a background task for periodic checkpoint cleanup.
 ///
 /// This function starts a background task that runs checkpoint cleanup
@@ -819,7 +831,8 @@ pub fn spawn_checkpoint_cleanup_task(
 #[cfg(test)]
 mod tests {
     // Inline because this covers local checkpoint env/default semantics.
-    use super::CheckpointCleanupConfig;
+    use super::{CheckpointCleanupConfig, checkpoint_cleanup_cutoff};
+    use sinex_primitives::prelude::Timestamp;
     use xtask::sandbox::sinex_serial_test;
 
     struct ScopedEnvGuard {
@@ -874,6 +887,18 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.max_age.as_secs(), 30 * 24 * 60 * 60);
         assert_eq!(config.interval.as_secs(), 24 * 60 * 60);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn checkpoint_cleanup_cutoff_rejects_out_of_range_max_age() -> xtask::sandbox::TestResult<()> {
+        let error = checkpoint_cleanup_cutoff(Timestamp::now(), std::time::Duration::MAX)
+            .expect_err("out-of-range cleanup ages must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Checkpoint cleanup max age is out of range")
+        );
         Ok(())
     }
 }

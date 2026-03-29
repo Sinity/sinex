@@ -623,7 +623,7 @@ impl Default for ScanEstimate {
 /// ```text
 /// Created ──► Initializing ──► Initialized ──► Running ──► ShutDown
 ///                                                  │
-///                                                  └──► ShutDown (via shutdown())
+///                                                  └──► ShutdownFailed
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerLifecycle {
@@ -635,6 +635,8 @@ pub enum RunnerLifecycle {
     Initialized,
     /// `run_service` or `run_scan` is executing.
     Running,
+    /// `shutdown` failed and the runner is in a partially torn-down state.
+    ShutdownFailed,
     /// `shutdown` has completed (or was never initialized).
     ShutDown,
 }
@@ -646,6 +648,7 @@ impl std::fmt::Display for RunnerLifecycle {
             Self::Initializing => write!(f, "Initializing"),
             Self::Initialized => write!(f, "Initialized"),
             Self::Running => write!(f, "Running"),
+            Self::ShutdownFailed => write!(f, "ShutdownFailed"),
             Self::ShutDown => write!(f, "ShutDown"),
         }
     }
@@ -1036,7 +1039,10 @@ impl<T: Node + 'static> NodeRunner<T> {
                         .to_string(),
                 ));
             }
-            RunnerLifecycle::Initialized | RunnerLifecycle::Running | RunnerLifecycle::ShutDown => {
+            RunnerLifecycle::Initialized
+            | RunnerLifecycle::Running
+            | RunnerLifecycle::ShutdownFailed
+            | RunnerLifecycle::ShutDown => {
                 return Err(SinexError::lifecycle(format!(
                     "Cannot initialize node: runner is in '{}' state (expected 'Created')",
                     self.lifecycle,
@@ -2733,7 +2739,6 @@ impl<T: Node + 'static> NodeRunner<T> {
             self.lifecycle = RunnerLifecycle::ShutDown;
             return Ok(());
         }
-        self.lifecycle = RunnerLifecycle::ShutDown;
 
         info!("Shutting down stream node runner");
 
@@ -2774,7 +2779,16 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
         Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
 
-        Self::collapse_shutdown_errors(shutdown_errors)
+        match Self::collapse_shutdown_errors(shutdown_errors) {
+            Ok(()) => {
+                self.lifecycle = RunnerLifecycle::ShutDown;
+                Ok(())
+            }
+            Err(error) => {
+                self.lifecycle = RunnerLifecycle::ShutdownFailed;
+                Err(error)
+            }
+        }
     }
 
     async fn abort_task(
@@ -2837,6 +2851,9 @@ mod tests {
     #[derive(Default)]
     struct RuntimeTestNode;
 
+    #[derive(Default)]
+    struct FailingShutdownNode;
+
     impl Node for RuntimeTestNode {
         type Config = ();
 
@@ -2872,6 +2889,48 @@ mod tests {
 
         async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
             Ok(Checkpoint::None)
+        }
+    }
+
+    impl Node for FailingShutdownNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "failing-shutdown-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn shutdown(&mut self) -> NodeResult<()> {
+            Err(SinexError::processing("node shutdown failed"))
         }
     }
 
@@ -3264,6 +3323,21 @@ mod tests {
         assert!(message.contains("primary shutdown failure"));
         assert!(message.contains("event batcher"));
         assert!(message.contains("secondary shutdown failure"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_marks_runner_failed_when_cleanup_errors() -> TestResult<()> {
+        let mut runner = NodeRunner::new(FailingShutdownNode);
+        runner.lifecycle = RunnerLifecycle::Initialized;
+
+        let error = runner
+            .shutdown()
+            .await
+            .expect_err("failing shutdowns must surface as errors");
+
+        assert!(error.to_string().contains("node shutdown failed"));
+        assert_eq!(runner.lifecycle(), RunnerLifecycle::ShutdownFailed);
         Ok(())
     }
 }
