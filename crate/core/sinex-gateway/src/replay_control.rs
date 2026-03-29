@@ -769,51 +769,60 @@ impl ReplayExecutionEngine {
         );
 
         let result = self.run_operation(operation_id, &executor_name).await;
-        self.handle_execution_finish(operation_id, &result).await;
-        match result {
-            Ok(operation) => Ok(operation),
-            Err(err) => match self.load_cancelled_operation(operation_id).await {
+        let bookkeeping_error = self.handle_execution_finish(operation_id, &result).await.err();
+        match (result, bookkeeping_error) {
+            (Ok(operation), None) => Ok(operation),
+            (Ok(_), Some(bookkeeping_error)) => Err(bookkeeping_error),
+            (Err(err), Some(bookkeeping_error)) => Err(Self::wrap_bookkeeping_error(
+                err,
+                operation_id,
+                Some(bookkeeping_error),
+            )),
+            (Err(err), None) => match self.load_cancelled_operation(operation_id).await {
                 Ok(Some(cancelled)) if cancelled.started_at.is_some() => Ok(cancelled),
                 Ok(Some(_)) => Err(err),
                 Ok(None) => Err(err),
-                Err(load_err) => Err(err).wrap_err(format!(
-                    "replay cancellation probe failed after execution error: {load_err}"
-                )),
+                Err(load_err) => {
+                    Err(err).wrap_err(format!(
+                        "replay cancellation probe failed after execution error: {load_err}"
+                    ))
+                }
             },
         }
     }
 
-    async fn handle_execution_finish(&self, operation_id: Uuid, result: &Result<ReplayOperation>) {
-        match self.replay.load_operation(operation_id).await {
-            Ok(operation) if operation.state == ReplayState::Cancelled => {
-                info!(
-                    operation_id = %operation_id,
-                    state = ?operation.state,
-                    "Replay execution stopped after operator cancellation"
-                );
-                return;
-            }
-            Ok(operation) if operation.state == ReplayState::Cancelling => {
-                if Self::execution_result_is_cancellation(result) {
-                    match self.replay.finish_cancellation(operation_id).await {
-                        Ok(()) => {
-                            info!(
-                                operation_id = %operation_id,
-                                state = ?ReplayState::Cancelled,
-                                "Replay execution stopped after operator cancellation"
-                            );
-                            return;
-                        }
-                        Err(err) => {
-                            warn!(?err, "Failed to finalize replay cancellation");
-                        }
-                    }
-                }
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!(?err, "Failed to load replay operation while checking for cancellation");
-            }
+    async fn handle_execution_finish(
+        &self,
+        operation_id: Uuid,
+        result: &Result<ReplayOperation>,
+    ) -> Result<()> {
+        let operation = self.replay.load_operation(operation_id).await.wrap_err_with(|| {
+            format!("failed to inspect replay operation state after execution for {operation_id}")
+        })?;
+
+        if operation.state == ReplayState::Cancelled {
+            info!(
+                operation_id = %operation_id,
+                state = ?operation.state,
+                "Replay execution stopped after operator cancellation"
+            );
+            return Ok(());
+        }
+
+        if operation.state == ReplayState::Cancelling && Self::execution_result_is_cancellation(result)
+        {
+            self.replay
+                .finish_cancellation(operation_id)
+                .await
+                .wrap_err_with(|| {
+                    format!("failed to finalize replay cancellation for operation {operation_id}")
+                })?;
+            info!(
+                operation_id = %operation_id,
+                state = ?ReplayState::Cancelled,
+                "Replay execution stopped after operator cancellation"
+            );
+            return Ok(());
         }
 
         if let Err(err) = result {
@@ -822,13 +831,27 @@ impl ReplayExecutionEngine {
                 error = %err,
                 "Replay execution failed"
             );
-            if let Err(mark_err) = self
-                .replay
+            self.replay
                 .mark_failed(operation_id, format!("{err:#}"))
                 .await
-            {
-                warn!(?mark_err, "Failed to mark replay operation as failed");
-            }
+                .wrap_err_with(|| {
+                    format!("failed to mark replay operation as failed for operation {operation_id}")
+                })?;
+        }
+
+        Ok(())
+    }
+
+    fn wrap_bookkeeping_error(
+        err: color_eyre::eyre::Report,
+        operation_id: Uuid,
+        bookkeeping_error: Option<color_eyre::eyre::Report>,
+    ) -> color_eyre::eyre::Report {
+        match bookkeeping_error {
+            Some(bookkeeping_error) => err.wrap_err(format!(
+                "failed to finalize replay execution bookkeeping for operation {operation_id}: {bookkeeping_error:#}"
+            )),
+            None => err,
         }
     }
 
@@ -2046,6 +2069,38 @@ mod tests {
         for state in targets {
             replay.transition(operation_id, *state).await?;
         }
+        Ok(())
+    }
+
+    async fn wait_for_operation_state(
+        replay: &Arc<ReplayStateMachine>,
+        operation_id: Uuid,
+        target: ReplayState,
+    ) -> Result<()> {
+        for _ in 0..40 {
+            let operation = replay.load_operation(operation_id).await?;
+            if operation.state == target {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        Err(eyre!(
+            "operation {operation_id} did not reach state {:?} before timeout",
+            target
+        ))
+    }
+
+    async fn corrupt_operation_preview_summary(pool: &DbPool, operation_id: Uuid) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET preview_summary = '"broken"'::jsonb
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -3461,6 +3516,198 @@ mod tests {
         scan_handle
             .await
             .map_err(|e| eyre!("fake cancel-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_surfaces_operation_state_corruption_after_failure(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+        let material_id = ctx
+            .create_source_material(Some("replay-corrupt-failure"))
+            .await?;
+        let event = DynamicPayload::new(
+            "corrupt-failure-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-corrupt-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        ctx.pool.events().insert(event).await?;
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_ack_only(
+            nats_client.clone(),
+            env.clone(),
+            "corrupt-failure-test",
+        )
+        .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_completion_timeout(Duration::from_millis(200));
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+
+        let control_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+        let execute_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+
+        let mut scope = sample_scope();
+        scope.node_id = "corrupt-failure-test".to_string();
+
+        let planned = control_client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = control_client.preview(planned.operation_id).await?;
+        let approved = control_client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        let operation_id = approved.operation_id;
+        let execute_task = tokio::spawn(async move {
+            execute_client
+                .execute(operation_id, "service:executor-node".into(), false)
+                .await
+        });
+
+        wait_for_operation_state(&replay, operation_id, ReplayState::Executing).await?;
+        corrupt_operation_preview_summary(&ctx.pool, operation_id).await?;
+
+        let err = execute_task
+            .await
+            .map_err(|e| eyre!("execute task failed: {e}"))?
+            .expect_err("corrupt replay metadata should surface as execution failure");
+        assert!(
+            err.to_string()
+                .contains("failed to finalize replay execution bookkeeping"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            err.to_string()
+                .contains("failed to inspect replay operation state after execution"),
+            "unexpected error: {err:#}"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake corrupt-failure-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+        let material_id = ctx
+            .create_source_material(Some("replay-corrupt-cancel"))
+            .await?;
+        let event = DynamicPayload::new(
+            "corrupt-cancel-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-corrupt-cancel.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_ack_only(
+            nats_client.clone(),
+            env.clone(),
+            "corrupt-cancel-test",
+        )
+        .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+            .spawn()
+            .await?;
+
+        let execute_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+        let control_client = ReplayControlClient::new(
+            env.clone(),
+            async_nats::connect(&nats_url).await?,
+            Duration::from_secs(30),
+        );
+
+        let mut scope = sample_scope();
+        scope.node_id = "corrupt-cancel-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = control_client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, _) = control_client.preview(planned.operation_id).await?;
+        let approved = control_client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        let operation_id = approved.operation_id;
+        let execute_task = tokio::spawn(async move {
+            execute_client
+                .execute(operation_id, "service:executor-node".into(), false)
+                .await
+        });
+
+        wait_for_operation_state(&replay, operation_id, ReplayState::Executing).await?;
+
+        let cancellation_requested = control_client
+            .cancel(
+                operation_id,
+                "admin:approver".into(),
+                Some("operator requested stop".to_string()),
+            )
+            .await?;
+        assert_eq!(cancellation_requested.state, ReplayState::Cancelling);
+
+        corrupt_operation_preview_summary(&ctx.pool, operation_id).await?;
+
+        let err = execute_task
+            .await
+            .map_err(|e| eyre!("execute task failed: {e}"))?
+            .expect_err("corrupt replay metadata should surface as cancellation bookkeeping failure");
+        assert!(
+            err.to_string()
+                .contains("failed to finalize replay execution bookkeeping"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            err.to_string()
+                .contains("failed to inspect replay operation state after execution"),
+            "unexpected error: {err:#}"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake corrupt-cancel-test node task failed: {e}"))?;
 
         Ok(())
     }
