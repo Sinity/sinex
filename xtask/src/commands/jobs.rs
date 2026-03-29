@@ -100,6 +100,11 @@ impl XtaskCommand for JobsCommand {
     }
 }
 
+fn format_job_pid(pid: Option<u32>) -> String {
+    pid.map(|pid| pid.to_string())
+        .unwrap_or_else(|| "<unavailable>".to_string())
+}
+
 fn execute_list(
     job_manager: &JobManager,
     limit: usize,
@@ -125,7 +130,7 @@ fn execute_list(
                     truncate_str(&job.command, 16),
                     status_str.to_string(),
                     progress_brief(progress.progress.as_ref()),
-                    job.pid.to_string(),
+                    format_job_pid(job.pid),
                     super::format_display_time(&job.started_at),
                 ]);
             }
@@ -187,7 +192,7 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
                     progress_brief(progress.progress.as_ref()),
-                    job.pid.to_string(),
+                    format_job_pid(job.pid),
                     running_time,
                     super::format_display_time(&job.started_at),
                 ]);
@@ -293,7 +298,7 @@ async fn execute_status(
             println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
             println!("  Status:   {}", status_to_str(job.job_status));
-            println!("  PID:      {}", job.pid);
+            println!("  PID:      {}", format_job_pid(job.pid));
             println!("  Started:  {}", job.started_at);
             let progress = load_invocation_progress(ctx, job.invocation_id);
             if let Some(ref p) = progress.progress {

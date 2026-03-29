@@ -30,8 +30,8 @@ pub struct Job {
     pub args: Vec<String>,
     /// When the job started
     pub started_at: OffsetDateTime,
-    /// Process ID (if running)
-    pub pid: u32,
+    /// Process ID, or `None` if the job never exposed one.
+    pub pid: Option<u32>,
     /// Process lifecycle status
     pub job_status: JobLifecycleStatus,
     /// Path to stdout log
@@ -43,6 +43,10 @@ pub struct Job {
 }
 
 impl Job {
+    fn require_spawned_pid(pid: Option<u32>, command: &str, args: &[String]) -> Result<u32> {
+        pid.ok_or_else(|| eyre!("spawned background job for {command} {args:?} did not expose a PID"))
+    }
+
     fn read_archived_stream(&self, stream_name: &str) -> Result<String> {
         let cfg = config();
         let history_db_path = cfg.history_db_path();
@@ -160,8 +164,9 @@ impl Job {
     #[must_use]
     pub fn is_alive(&self) -> bool {
         matches!(self.job_status, JobLifecycleStatus::Running)
-            && self.pid > 0
-            && Path::new(&format!("/proc/{}", self.pid)).exists()
+            && self
+                .pid
+                .is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists())
     }
 }
 
@@ -275,7 +280,7 @@ impl JobManager {
             db.start_background_job(
                 history_command,
                 history_args,
-                0,
+                None,
                 Path::new(""),
                 Path::new(""),
             )?
@@ -322,11 +327,7 @@ impl JobManager {
             .spawn()
             .with_context(|| format!("failed to spawn: {command} {args:?}"))?;
 
-        // R5 (accepted): there is a brief window between spawn and update_job_pid where
-        // pid=0 is stored in the DB. The watchdog checks `if pid == 0 { return; }` so it
-        // won't kill PID 0. A crash in this window leaves the job "running" with pid=0,
-        // which is cleaned up by `reap_stale_jobs` on the next xtask invocation.
-        let pid = child.id().unwrap_or(0);
+        let pid = Job::require_spawned_pid(child.id(), command, args)?;
 
         // Update background_jobs with PID and log paths (using job_id).
         {
@@ -356,9 +357,6 @@ impl JobManager {
             std::thread::sleep(max_duration);
 
             // Check if process is still alive via kill(0)
-            if pid == 0 {
-                return;
-            }
             let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
 
             let still_alive = nix::sys::signal::kill(nix_pid, None).is_ok();
@@ -421,7 +419,7 @@ impl JobManager {
             command: history_command.to_string(),
             args: history_args.to_vec(),
             started_at: OffsetDateTime::now_utc(),
-            pid,
+            pid: Some(pid),
             job_status: JobLifecycleStatus::Running,
             stdout_path,
             stderr_path,
@@ -439,16 +437,16 @@ impl JobManager {
         };
 
         // Reap stale running entries:
-        // - pid == 0 means we never captured a live process id
-        // - pid > 0 but process no longer exists
+        // - pid == None means we never captured a live process id
+        // - Some(pid) but process no longer exists
         if matches!(bg.job_status, JobLifecycleStatus::Running) {
-            if bg.pid == 0 {
+            let Some(pid) = bg.pid else {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
-            }
+            };
 
-            let pid = nix::unistd::Pid::from_raw(bg.pid as i32);
+            let pid = nix::unistd::Pid::from_raw(pid as i32);
             if nix::sys::signal::kill(pid, None).is_err() {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
@@ -492,13 +490,13 @@ impl JobManager {
         let mut reaped = 0;
 
         for job in active {
-            if job.pid == 0 {
+            let Some(pid) = job.pid else {
                 self.finish_stale_running_job(&db, &job);
                 reaped += 1;
                 continue;
-            }
+            };
 
-            let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+            let pid = nix::unistd::Pid::from_raw(pid as i32);
             // Signal 0 checks if process exists without sending a signal
             if nix::sys::signal::kill(pid, None).is_err() {
                 self.finish_stale_running_job(&db, &job);
@@ -532,8 +530,8 @@ impl JobManager {
         };
 
         if matches!(job.job_status, JobLifecycleStatus::Running) {
-            if job.pid > 0 {
-                let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+            if let Some(job_pid) = job.pid {
+                let pid = nix::unistd::Pid::from_raw(job_pid as i32);
                 // Send SIGTERM to the process group
                 match nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM) {
                     Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
@@ -694,7 +692,7 @@ mod tests {
             command: "test".into(),
             args: vec![],
             started_at: OffsetDateTime::now_utc(),
-            pid: 0,
+            pid: Some(1234),
             job_status: JobLifecycleStatus::Running,
             stdout_path: stdout_path.clone(),
             stderr_path: dir.path().join("stderr.log"),
@@ -703,6 +701,16 @@ mod tests {
 
         let result = job.tail_stdout(3)?;
         assert_eq!(result, "line3\nline4\nline5");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_require_spawned_pid_rejects_missing_pid() -> TestResult<()> {
+        let error = Job::require_spawned_pid(None, "xtask", &["check".to_string()])
+            .expect_err("missing PID must surface");
+        let rendered = error.to_string();
+        assert!(rendered.contains("did not expose a PID"));
+        assert!(rendered.contains("xtask"));
         Ok(())
     }
 
@@ -747,7 +755,7 @@ mod tests {
             command: "check".into(),
             args: vec![],
             started_at: OffsetDateTime::now_utc(),
-            pid: 0,
+            pid: None,
             job_status: JobLifecycleStatus::Completed,
             stdout_path: dir.path().join("missing-stdout.log"),
             stderr_path: dir.path().join("missing-stderr.log"),
@@ -770,7 +778,7 @@ mod tests {
             command: "check".into(),
             args: vec![],
             started_at: OffsetDateTime::now_utc(),
-            pid: 1234,
+            pid: Some(1234),
             job_status: JobLifecycleStatus::Running,
             stdout_path: dir.path().join("missing-stdout.log"),
             stderr_path: dir.path().join("missing-stderr.log"),
@@ -795,7 +803,7 @@ mod tests {
         let stdout_path = dir.path().join("stdout.log");
         let stderr_path = dir.path().join("stderr.log");
         let (_invocation_id, job_id) =
-            db.start_background_job("check", &[], 11111, &stdout_path, &stderr_path)?;
+            db.start_background_job("check", &[], Some(11111), &stdout_path, &stderr_path)?;
         db.finish_background_job(
             job_id,
             JobLifecycleStatus::Completed,
@@ -811,7 +819,7 @@ mod tests {
             command: "check".into(),
             args: vec![],
             started_at: OffsetDateTime::now_utc(),
-            pid: 0,
+            pid: None,
             job_status: JobLifecycleStatus::Completed,
             stdout_path,
             stderr_path,
