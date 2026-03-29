@@ -307,7 +307,7 @@ async fn query_advisory_lock_holders() -> String {
         return "\nAdvisory lock holder probe unavailable: database url is empty".to_string();
     }
 
-    let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) \
+    let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) AS query_preview \
                  FROM pg_stat_activity a \
                  JOIN pg_locks l ON l.pid = a.pid \
                  WHERE l.locktype = 'advisory' AND a.pid <> pg_backend_pid() \
@@ -326,19 +326,7 @@ async fn query_advisory_lock_holders() -> String {
 
     match result {
         Ok(Ok(rows)) if !rows.is_empty() => {
-            use sqlx::Row;
-            let entries: Vec<String> = rows
-                .iter()
-                .map(|r| {
-                    format!(
-                        "  pid={} user={} state={} query={}",
-                        r.try_get::<i32, _>("pid").unwrap_or(0),
-                        r.try_get::<&str, _>("usename").unwrap_or("?"),
-                        r.try_get::<&str, _>("state").unwrap_or("?"),
-                        r.try_get::<&str, _>("left").unwrap_or("?"),
-                    )
-                })
-                .collect();
+            let entries: Vec<String> = rows.iter().map(format_lock_holder_row).collect();
             format!("\nAdvisory lock holders:\n{}", entries.join("\n"))
         }
         Ok(Ok(_)) => String::new(),
@@ -349,6 +337,31 @@ async fn query_advisory_lock_holders() -> String {
             "\nAdvisory lock holder probe unavailable: timed out querying pg_stat_activity after 3s"
                 .to_string()
         }
+    }
+}
+
+fn format_lock_holder_row(row: &sqlx::postgres::PgRow) -> String {
+    use sqlx::Row;
+
+    format!(
+        "  pid={} user={} state={} query={}",
+        format_lock_holder_field("pid", row.try_get::<i32, _>("pid")),
+        format_lock_holder_field("usename", row.try_get::<&str, _>("usename")),
+        format_lock_holder_field("state", row.try_get::<&str, _>("state")),
+        format_lock_holder_field(
+            "query_preview",
+            row.try_get::<&str, _>("query_preview")
+        ),
+    )
+}
+
+fn format_lock_holder_field<T: std::fmt::Display>(
+    field: &str,
+    value: std::result::Result<T, sqlx::Error>,
+) -> String {
+    match value {
+        Ok(value) => value.to_string(),
+        Err(error) => format!("<unavailable: {field} ({error})>"),
     }
 }
 
@@ -1286,6 +1299,24 @@ mod tests {
                 || probe.contains("timed out querying pg_stat_activity"),
             "unexpected probe output: {probe}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_lock_holder_field_preserves_sqlx_errors() -> TestResult<()> {
+        let rendered = format_lock_holder_field::<i32>(
+            "pid",
+            Err(sqlx::Error::ColumnNotFound("pid".into())),
+        );
+        assert!(rendered.contains("<unavailable: pid"));
+        assert!(rendered.contains("no column found"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_lock_holder_field_renders_values() -> TestResult<()> {
+        let rendered = format_lock_holder_field("state", Ok("active"));
+        assert_eq!(rendered, "active");
         Ok(())
     }
 }
