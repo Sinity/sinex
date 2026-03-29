@@ -534,8 +534,12 @@ impl MaterialAssembler {
     }
 
     /// Handle a begin message
-    async fn handle_begin(&self, msg: jetstream::Message) -> IngestdResult<()> {
-        state::handle_begin(self, msg).await
+    async fn handle_begin(
+        &self,
+        material_id: Uuid,
+        begin: state::MaterialBeginMessage,
+    ) -> IngestdResult<()> {
+        state::handle_begin(self, material_id, begin).await
     }
 
     /// Handle a material slice message

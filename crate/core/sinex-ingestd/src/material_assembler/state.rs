@@ -3,12 +3,11 @@
 //! This module contains the core state structures, message types, and helper
 //! functions used by the material assembler to track in-flight assembly operations.
 
-use async_nats::jetstream;
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Timestamp;
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, path::PathBuf};
 use tokio::fs::File;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -295,32 +294,14 @@ pub(super) fn build_finalize_metadata(
 
 /// Handle a begin message by initializing or updating assembler state.
 #[tracing::instrument(
-    skip(assembler, msg),
+    skip(assembler, begin),
     fields(material_id, lock_acquire_ms, lock_hold_ms)
 )]
 pub(super) async fn handle_begin(
     assembler: &MaterialAssembler,
-    msg: jetstream::Message,
+    material_id: Uuid,
+    begin: MaterialBeginMessage,
 ) -> IngestdResult<()> {
-    let begin: MaterialBeginMessage = match serde_json::from_slice(&msg.payload) {
-        Ok(begin) => begin,
-        Err(e) => {
-            warn!("Failed to decode begin message payload: {}", e);
-            return Ok(());
-        }
-    };
-
-    let material_id = match Uuid::from_str(&begin.material_id) {
-        Ok(id) => id,
-        Err(e) => {
-            warn!(
-                material_id = %begin.material_id,
-                "Invalid material_id in begin message: {}",
-                e
-            );
-            return Ok(());
-        }
-    };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
     let started_at = parse_material_started_at(material_id, &begin.started_at, "begin message")?;
