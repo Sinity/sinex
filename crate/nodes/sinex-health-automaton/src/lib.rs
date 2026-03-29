@@ -268,13 +268,16 @@ impl ScopeReconcilerNode for HealthAggregator {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
-        // Scope is the component name — each component has independent health state
+    fn scope_keys(&self, input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String> {
+        // Keep malformed payloads isolated on the live path so they do not all collide into a
+        // shared "unknown" scope before reconcile rejects them into DLQ.
         let component = input
             .get("component")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        vec![component.to_string()]
+            .filter(|component| !component.trim().is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("__invalid_component__:{}", context.trigger_uuid()));
+        vec![component]
     }
 
     async fn reconcile(
