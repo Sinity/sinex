@@ -244,9 +244,12 @@ fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
             MAX_CHECKPOINT_JSON_BYTES
         )));
     }
-    let val: serde_json::Value =
-        serde_json::from_str(checkpoint_str).map_err(SinexError::serialization)?;
-    serde_json::from_value(val).map_err(SinexError::serialization)
+    let val: serde_json::Value = serde_json::from_str(checkpoint_str).map_err(|error| {
+        SinexError::serialization("Failed to parse checkpoint JSON").with_std_error(&error)
+    })?;
+    serde_json::from_value(val).map_err(|error| {
+        SinexError::serialization("Failed to decode checkpoint JSON").with_std_error(&error)
+    })
 }
 
 /// Parse checkpoint as timestamp
@@ -261,17 +264,36 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
     Checkpoint::stream(checkpoint_str, None)
 }
 
+fn checkpoint_looks_like_json(checkpoint_str: &str) -> bool {
+    matches!(
+        checkpoint_str.chars().next(),
+        Some('{') | Some('[') | Some('"')
+    )
+}
+
+fn checkpoint_looks_like_rfc3339(checkpoint_str: &str) -> bool {
+    let bytes = checkpoint_str.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_digit)
+        && checkpoint_str.contains('T')
+        && checkpoint_str.contains(':')
+}
+
 /// Parse checkpoint from string representation
 pub fn parse_checkpoint(checkpoint_str: &str) -> NodeResult<Checkpoint> {
+    let checkpoint_str = checkpoint_str.trim();
     if ["none", "start"]
         .iter()
         .any(|token| checkpoint_str.eq_ignore_ascii_case(token))
     {
         Ok(Checkpoint::None)
+    } else if checkpoint_looks_like_json(checkpoint_str) {
+        parse_checkpoint_json(checkpoint_str)
+    } else if checkpoint_looks_like_rfc3339(checkpoint_str) {
+        parse_checkpoint_timestamp(checkpoint_str)
     } else {
         parse_checkpoint_json(checkpoint_str)
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
-            .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
+            .map_or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)), Ok)
     }
 }
 
@@ -947,10 +969,11 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 #[cfg(test)]
 mod tests {
     use super::{
-        edge_mode_enabled, handle_export_result, render_cli_value,
+        edge_mode_enabled, handle_export_result, parse_checkpoint, render_cli_value,
         render_optional_cli_timestamp, unavailable_section,
     };
     use crate::SinexError;
+    use crate::runtime::stream::Checkpoint;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
     use xtask::sandbox::sinex_serial_test;
@@ -990,6 +1013,39 @@ mod tests {
     #[test]
     fn render_optional_cli_timestamp_is_explicit_when_unknown() {
         assert_eq!(render_optional_cli_timestamp(None), "unknown");
+    }
+
+    #[test]
+    fn parse_checkpoint_rejects_malformed_json_input() {
+        let error = parse_checkpoint("{ definitely-not-json")
+            .expect_err("JSON-like checkpoint input must not silently fall back to a stream id");
+
+        assert!(format!("{error:#}").contains("Failed to parse checkpoint JSON"));
+    }
+
+    #[test]
+    fn parse_checkpoint_rejects_invalid_timestamp_like_input() {
+        let error = parse_checkpoint("2026-03-28T25:61:61Z")
+            .expect_err("timestamp-like checkpoint input must not silently fall back to a stream id");
+
+        assert!(format!("{error:#}").contains("Invalid timestamp format"));
+    }
+
+    #[test]
+    fn parse_checkpoint_accepts_stream_ids_after_structured_parsers_fail() -> xtask::sandbox::TestResult<()> {
+        let checkpoint = parse_checkpoint("1234567890-0")?;
+        match checkpoint {
+            Checkpoint::Stream { message_id, .. } => {
+                assert_eq!(message_id, "1234567890-0");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected stream checkpoint, got {}",
+                    other.description()
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[sinex_serial_test]

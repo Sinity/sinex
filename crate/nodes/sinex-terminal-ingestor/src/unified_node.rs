@@ -2136,8 +2136,16 @@ enum TextHistoryLine<'a> {
     },
     MalformedMetadata {
         kind: &'static str,
+        reason: &'static str,
         raw_line: &'a str,
     },
+}
+
+fn parse_shell_unix_timestamp(raw: &str) -> Result<Timestamp, &'static str> {
+    let raw = raw
+        .parse::<i64>()
+        .map_err(|_| "timestamp is not a signed 64-bit integer")?;
+    Timestamp::from_unix_timestamp(raw).ok_or("timestamp is outside the supported Unix range")
 }
 
 fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a> {
@@ -2145,10 +2153,11 @@ fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a
         && let Some(raw) = line.strip_prefix('#')
         && raw.chars().all(|ch| ch.is_ascii_digit())
     {
-        return match raw.parse::<i64>().ok().and_then(Timestamp::from_unix_timestamp) {
-            Some(timestamp) => TextHistoryLine::TimestampMarker(timestamp),
-            None => TextHistoryLine::MalformedMetadata {
+        return match parse_shell_unix_timestamp(raw) {
+            Ok(timestamp) => TextHistoryLine::TimestampMarker(timestamp),
+            Err(reason) => TextHistoryLine::MalformedMetadata {
                 kind: "bash timestamp marker",
+                reason,
                 raw_line: line,
             },
         };
@@ -2159,13 +2168,14 @@ fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a
         && let Some((timestamp, remainder)) = history.split_once(':')
         && let Some((_, command)) = remainder.split_once(';')
     {
-        return match timestamp.parse::<i64>().ok().and_then(Timestamp::from_unix_timestamp) {
-            Some(timestamp) => TextHistoryLine::Command {
+        return match parse_shell_unix_timestamp(timestamp) {
+            Ok(timestamp) => TextHistoryLine::Command {
                 command,
                 timestamp: Some(timestamp),
             },
-            None => TextHistoryLine::MalformedMetadata {
+            Err(reason) => TextHistoryLine::MalformedMetadata {
                 kind: "zsh extended history timestamp",
+                reason,
                 raw_line: line,
             },
         };
@@ -2201,11 +2211,16 @@ async fn process_text_history_line(
             .await?;
             Ok(true)
         }
-        TextHistoryLine::MalformedMetadata { kind, raw_line } => Err(
+        TextHistoryLine::MalformedMetadata {
+            kind,
+            reason,
+            raw_line,
+        } => Err(
             SinexError::processing("malformed terminal history metadata line")
                 .with_context("shell", ctx.shell.clone())
                 .with_context("path", ctx.path.to_string())
                 .with_context("metadata_kind", kind.to_string())
+                .with_context("metadata_reason", reason.to_string())
                 .with_context("line_preview", raw_line.chars().take(120).collect::<String>()),
         ),
     }
@@ -3326,8 +3341,13 @@ mod tests {
     #[sinex_test]
     async fn parse_text_history_line_rejects_malformed_shell_metadata() -> TestResult<()> {
         match parse_text_history_line("bash", "#999999999999999999999999") {
-            TextHistoryLine::MalformedMetadata { kind, raw_line } => {
+            TextHistoryLine::MalformedMetadata {
+                kind,
+                reason,
+                raw_line,
+            } => {
                 assert_eq!(kind, "bash timestamp marker");
+                assert_eq!(reason, "timestamp is not a signed 64-bit integer");
                 assert_eq!(raw_line, "#999999999999999999999999");
             }
             other => {
@@ -3339,9 +3359,55 @@ mod tests {
         }
 
         match parse_text_history_line("zsh", ": nope:0;echo hello") {
-            TextHistoryLine::MalformedMetadata { kind, raw_line } => {
+            TextHistoryLine::MalformedMetadata {
+                kind,
+                reason,
+                raw_line,
+            } => {
                 assert_eq!(kind, "zsh extended history timestamp");
+                assert_eq!(reason, "timestamp is not a signed 64-bit integer");
                 assert_eq!(raw_line, ": nope:0;echo hello");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected malformed zsh metadata, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_text_history_line_reports_out_of_range_shell_timestamps() -> TestResult<()> {
+        match parse_text_history_line("bash", "#253402300800") {
+            TextHistoryLine::MalformedMetadata {
+                kind,
+                reason,
+                raw_line,
+            } => {
+                assert_eq!(kind, "bash timestamp marker");
+                assert_eq!(reason, "timestamp is outside the supported Unix range");
+                assert_eq!(raw_line, "#253402300800");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected malformed bash metadata, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        match parse_text_history_line("zsh", ": 253402300800:0;echo hello") {
+            TextHistoryLine::MalformedMetadata {
+                kind,
+                reason,
+                raw_line,
+            } => {
+                assert_eq!(kind, "zsh extended history timestamp");
+                assert_eq!(reason, "timestamp is outside the supported Unix range");
+                assert_eq!(raw_line, ": 253402300800:0;echo hello");
             }
             other => {
                 return Err(color_eyre::eyre::eyre!(
