@@ -1,6 +1,7 @@
 #![cfg(feature = "messaging")]
 
 use sinex_node_sdk::WatcherHandle;
+use sinex_primitives::SinexError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{Duration, sleep};
@@ -139,6 +140,7 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
     let forwarder_task = tokio::spawn(async move {
         sleep(Duration::from_secs(10)).await;
         forwarder_flag_clone.store(true, Ordering::SeqCst);
+        Ok::<(), SinexError>(())
     });
 
     let mut handle = WatcherHandle::<()>::initialized("test");
@@ -160,7 +162,7 @@ async fn test_watcher_is_inactive_when_forwarder_finishes(
     let main_task = tokio::spawn(async {
         sleep(Duration::from_secs(10)).await;
     });
-    let forwarder = tokio::spawn(async {});
+    let forwarder = tokio::spawn(async { Ok::<(), SinexError>(()) });
 
     let mut handle = WatcherHandle::<()>::initialized("test");
     handle.start(main_task, Some(forwarder))?;
@@ -203,6 +205,8 @@ async fn test_watcher_shutdown_rejects_panicked_forwarder(
     let task = tokio::spawn(async {});
     let forwarder = tokio::spawn(async {
         panic!("forwarder panic");
+        #[allow(unreachable_code)]
+        Ok::<(), SinexError>(())
     });
     tokio::task::yield_now().await;
 

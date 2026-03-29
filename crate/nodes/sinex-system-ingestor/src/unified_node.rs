@@ -142,9 +142,17 @@ const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
-fn forwarder_join_result(task_name: &str, result: Result<(), JoinError>) -> NodeResult<()> {
+fn forwarder_join_result(
+    task_name: &str,
+    result: Result<NodeResult<()>, JoinError>,
+) -> NodeResult<()> {
     match result {
-        Ok(()) => Ok(()),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(
+            SinexError::processing("system forwarder task failed")
+                .with_context("task", task_name.to_string())
+                .with_std_error(&err),
+        ),
         Err(err) if err.is_cancelled() => {
             warn!(task = task_name, "System forwarder task was cancelled");
             Ok(())
@@ -791,9 +799,7 @@ impl SystemNode {
             if let Err(error) = forwarder_join_result("systemd", systemd_result) {
                 forwarder_errors.push(error);
             }
-            if let Err(error) = collapse_forwarder_errors(forwarder_errors) {
-                panic!("{error}");
-            }
+            collapse_forwarder_errors(forwarder_errors)
         });
 
         let mut handle = handle;
@@ -1229,7 +1235,7 @@ fn spawn_forwarder<E>(
     mut rx: mpsc::Receiver<Event<E>>,
     emitter: EventEmitter,
     health: Option<Arc<RwLock<WatcherHealth>>>,
-) -> JoinHandle<()>
+) -> JoinHandle<NodeResult<()>>
 where
     E: Serialize + Send + 'static,
 {
@@ -1244,9 +1250,8 @@ where
                         if let Some(health) = &health {
                             record_forwarder_health_error(health, &error);
                             warn!(error = %error, channel = channel_name, "System forwarder terminated");
-                            return;
                         }
-                        panic!("{error}");
+                        return Err(error);
                     }
                 }
                 Err(err) => {
@@ -1256,12 +1261,13 @@ where
                     if let Some(health) = &health {
                         record_forwarder_health_error(health, &error);
                         warn!(error = %error, channel = channel_name, "System forwarder terminated");
-                        return;
                     }
-                    panic!("{error}");
+                    return Err(error);
                 }
             }
         }
+
+        Ok(())
     })
 }
 
@@ -1847,7 +1853,7 @@ mod tests {
 
     #[sinex_test]
     async fn forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
-        let handle = tokio::spawn(async {});
+        let handle = tokio::spawn(async { Ok::<(), SinexError>(()) });
         forwarder_join_result("journal", handle.await)?;
         Ok(())
     }
@@ -1856,6 +1862,7 @@ mod tests {
     async fn forwarder_join_result_accepts_cancelled_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<(), SinexError>(())
         });
         handle.abort();
         forwarder_join_result("journal", handle.await)?;
@@ -1936,14 +1943,18 @@ mod tests {
             .map_err(|error| color_eyre::eyre::eyre!(error.to_string()))?;
         drop(tx);
 
-        handle.await?;
+        let error = forwarder_join_result("system.test.forwarder", handle.await)
+            .expect_err("forwarder failure should still surface through join results");
         let watcher_health = health.read();
-        let error = watcher_health
+        let recorded = watcher_health
             .last_error
             .as_deref()
             .expect("forwarder failure should be recorded in watcher health");
-        assert!(error.contains("Failed to emit forwarded event"));
-        assert!(error.contains("system.test.forwarder"));
+        assert!(recorded.contains("Failed to emit forwarded event"));
+        assert!(recorded.contains("system.test.forwarder"));
+        let message = format!("{error:#}");
+        assert!(message.contains("system forwarder task failed"));
+        assert!(message.contains("system.test.forwarder"));
         Ok(())
     }
 }

@@ -62,7 +62,7 @@ pub enum WatcherState {
         /// Main watcher task handle
         task: JoinHandle<()>,
         /// Optional forwarder task handle (e.g., for event forwarding)
-        forwarder: Option<JoinHandle<()>>,
+        forwarder: Option<JoinHandle<SinexResult<()>>>,
     },
     /// Watcher has been stopped (terminal state)
     Stopped,
@@ -177,7 +177,7 @@ impl<M> WatcherHandle<M> {
     pub fn running(
         name: &'static str,
         task: JoinHandle<()>,
-        forwarder: Option<JoinHandle<()>>,
+        forwarder: Option<JoinHandle<SinexResult<()>>>,
         material: Option<M>,
     ) -> Self {
         let health = Arc::new(RwLock::new(WatcherHealth {
@@ -211,7 +211,7 @@ impl<M> WatcherHandle<M> {
     pub fn start(
         &mut self,
         task: JoinHandle<()>,
-        forwarder: Option<JoinHandle<()>>,
+        forwarder: Option<JoinHandle<SinexResult<()>>>,
     ) -> SinexResult<()> {
         match &self.state {
             WatcherState::Initialized => {
@@ -323,6 +323,54 @@ impl<M> WatcherHandle<M> {
         }
     }
 
+    async fn shutdown_forwarder(
+        watcher_name: &'static str,
+        task_name: &'static str,
+        task: &mut JoinHandle<SinexResult<()>>,
+    ) -> SinexResult<()> {
+        match tokio::time::timeout(SHUTDOWN_GRACE_PERIOD, &mut *task).await {
+            Ok(Ok(Ok(()))) => {
+                debug!(watcher = watcher_name, task = task_name, "Watcher task finished before shutdown");
+                Ok(())
+            }
+            Ok(Ok(Err(error))) => Err(error
+                .with_context("watcher_name", watcher_name)
+                .with_context("task", task_name.to_string())),
+            Ok(Err(join_error)) if join_error.is_cancelled() => {
+                debug!(watcher = watcher_name, task = task_name, "Watcher task aborted during shutdown");
+                Ok(())
+            }
+            Ok(Err(join_error)) => Err(
+                SinexError::processing("Watcher task failed during shutdown")
+                    .with_context("watcher_name", watcher_name)
+                    .with_context("task", task_name.to_string())
+                    .with_context("join_error", join_error.to_string()),
+            ),
+            Err(_) => {
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    grace_period_ms = SHUTDOWN_GRACE_PERIOD.as_millis(),
+                    "Watcher task did not exit within shutdown grace period; aborting"
+                );
+                task.abort();
+                match task.await {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => Err(error
+                        .with_context("watcher_name", watcher_name)
+                        .with_context("task", task_name.to_string())),
+                    Err(join_error) if join_error.is_cancelled() => Ok(()),
+                    Err(join_error) => Err(
+                        SinexError::processing("Watcher task failed during shutdown")
+                            .with_context("watcher_name", watcher_name)
+                            .with_context("task", task_name.to_string())
+                            .with_context("join_error", join_error.to_string()),
+                    ),
+                }
+            }
+        }
+    }
+
     /// Wait for running tasks to exit cleanly, then abort any stragglers.
     async fn abort_tasks_async(&mut self) -> SinexResult<()> {
         let watcher_name = self.name;
@@ -334,8 +382,12 @@ impl<M> WatcherHandle<M> {
                     errors.push(error);
                 }
                 if let Some(mut fwd) = forwarder.take() {
-                    if let Err(error) =
-                        Self::shutdown_task(watcher_name, "watcher forwarder", &mut fwd).await
+                    if let Err(error) = Self::shutdown_forwarder(
+                        watcher_name,
+                        "watcher forwarder",
+                        &mut fwd,
+                    )
+                    .await
                     {
                         errors.push(error);
                     }
