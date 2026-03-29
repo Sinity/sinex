@@ -1674,7 +1674,7 @@ impl RpcServer {
                 } => {
                     match task_result {
                         Ok(()) => {
-                            if shutdown.has_changed().unwrap_or(true) || *shutdown.borrow() {
+                            if *shutdown.borrow() {
                                 Ok(())
                             } else {
                                 Err(eyre!("{task_name} exited before gateway shutdown"))
@@ -1684,6 +1684,7 @@ impl RpcServer {
                     }
                 }
                 shutdown_result = shutdown.changed() => {
+                    let shutdown_requested = *shutdown.borrow();
                     if shutdown_result.is_err() {
                         warn!(task = task_name, "Background task monitor shutdown channel dropped before explicit shutdown");
                     }
@@ -1692,8 +1693,24 @@ impl RpcServer {
                         .expect("background task handle must be present until awaited")
                         .await
                     {
-                        Ok(()) => Ok(()),
-                        Err(error) => Err(eyre!("{task_name} join failed during shutdown: {error}")),
+                        Ok(()) => {
+                            if shutdown_requested {
+                                Ok(())
+                            } else {
+                                Err(eyre!(
+                                    "{task_name} exited after shutdown channel closed without a shutdown signal"
+                                ))
+                            }
+                        }
+                        Err(error) => {
+                            if shutdown_requested {
+                                Err(eyre!("{task_name} join failed during shutdown: {error}"))
+                            } else {
+                                Err(eyre!(
+                                    "{task_name} join failed after shutdown channel closed without a shutdown signal: {error}"
+                                ))
+                            }
+                        }
                     }
                 }
             }
@@ -2017,6 +2034,46 @@ mod tests {
         .expect_err("background task that exits before shutdown must be treated as a failure");
 
         assert!(error.to_string().contains("exited before gateway shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal(
+    ) -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let completed = tokio::spawn(async move {});
+        drop(shutdown_tx);
+
+        let error = RpcServer::monitor_background_task(
+            "SSE subscription bus",
+            completed,
+            shutdown_rx,
+        )
+        .await
+        .expect("monitor join should succeed")
+        .expect_err(
+            "background task that exits after shutdown channel drop without a shutdown signal must fail",
+        );
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("exited before gateway shutdown")
+                || rendered.contains("shutdown channel closed without a shutdown signal")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        shutdown_tx.send(true)?;
+        drop(shutdown_tx);
+        let completed = tokio::spawn(async move {});
+
+        RpcServer::monitor_background_task("SSE subscription bus", completed, shutdown_rx)
+            .await
+            .expect("monitor join should succeed")?;
+
         Ok(())
     }
 
