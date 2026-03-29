@@ -7,6 +7,7 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
     environment::environment,
+    env as shared_env,
     units::{Bytes, Milliseconds},
     validation::deserialize_validated_utf8_path,
 };
@@ -81,19 +82,6 @@ pub struct IngestdConfig {
         message = "Material slices max_ack_pending must be between 1 and 100000"
     ))]
     pub material_slices_max_ack_pending: i64,
-
-    /// Maximum concurrent material assemblies (semaphore limit)
-    ///
-    /// Controls how many materials can be assembled simultaneously.
-    /// Higher values increase throughput but consume more memory.
-    /// Set via: `SINEX_INGESTD_MAX_CONCURRENT_ASSEMBLIES=50`
-    #[builder(default = default_max_concurrent_assemblies())]
-    #[validate(range(
-        min = 1,
-        max = 500,
-        message = "max_concurrent_assemblies must be between 1 and 500"
-    ))]
-    pub max_concurrent_assemblies: usize,
 
     /// Enable dry-run mode (no database writes)
     #[builder(default = false)]
@@ -452,32 +440,11 @@ impl IngestdConfig {
 }
 
 fn env_flag(name: &str) -> IngestdResult<Option<bool>> {
-    match std::env::var(name) {
-        Ok(value) => {
-            let normalized = value.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => Ok(Some(true)),
-                "0" | "false" | "no" | "off" => Ok(Some(false)),
-                _ => Err(SinexError::configuration(format!(
-                    "Environment variable {name} has invalid boolean value `{value}`"
-                ))),
-            }
-        }
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-    }
+    shared_env::strict_flag(name)
 }
 
 fn env_string(name: &str) -> IngestdResult<Option<String>> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-    }
+    shared_env::strict_var(name)
 }
 
 fn env_parsed<T>(name: &str) -> IngestdResult<Option<T>>
@@ -485,17 +452,7 @@ where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
 {
-    match std::env::var(name) {
-        Ok(value) => value.parse::<T>().map(Some).map_err(|error| {
-            SinexError::configuration(format!(
-                "Environment variable {name} has invalid value `{value}`: {error}"
-            ))
-        }),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-    }
+    shared_env::strict_parsed(name)
 }
 
 fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
@@ -578,7 +535,6 @@ impl Default for IngestdConfig {
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),
             material_slices_max_ack_pending: default_material_slices_max_ack_pending(),
-            max_concurrent_assemblies: default_max_concurrent_assemblies(),
             dry_run: false,
             validate_schemas: true,
             skip_schema_sync: false,
@@ -678,10 +634,6 @@ fn default_consumer_max_ack_pending() -> i64 {
 
 fn default_material_slices_max_ack_pending() -> i64 {
     1_000
-}
-
-fn default_max_concurrent_assemblies() -> usize {
-    50
 }
 
 fn default_max_message_size() -> Bytes {

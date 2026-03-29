@@ -1110,7 +1110,6 @@ mod tests {
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
-            50,
             Some(MaterialReadySet::default()),
             100,
             512 * 1024 * 1024,

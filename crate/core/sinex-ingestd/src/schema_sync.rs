@@ -15,7 +15,9 @@ use tracing::info;
 pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResult> {
     info!("Starting schema synchronization");
 
-    let discovered_schemas = generate_all_schemas();
+    let discovered_schemas = generate_all_schemas().map_err(|error| {
+        error.with_context("operation", "generate_discovered_payload_schemas")
+    })?;
     let repo = SchemaManagementRepository::new(pool);
     let result = repo.sync_discovered_schemas(discovered_schemas).await?;
 

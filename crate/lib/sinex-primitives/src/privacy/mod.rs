@@ -9,8 +9,9 @@
 //! ```
 //! use sinex_primitives::privacy::{self, ProcessingContext};
 //!
-//! let result = privacy::engine().process("export TOKEN=ghp_abc123", ProcessingContext::Command);
+//! let result = privacy::process("export TOKEN=ghp_abc123", ProcessingContext::Command)?;
 //! assert!(!result.matched_rules.is_empty());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 mod catalog;
@@ -28,22 +29,37 @@ use std::sync::OnceLock;
 
 // ─── Global engine ───────────────────────────────────────────
 
-static ENGINE: OnceLock<PrivacyEngine> = OnceLock::new();
+static ENGINE: OnceLock<Result<PrivacyEngine, PrivacyError>> = OnceLock::new();
+
+fn build_engine_from_env() -> Result<PrivacyEngine, PrivacyError> {
+    let config = PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
+    PrivacyEngine::new(config)
+}
 
 /// Get the process-wide privacy engine.
 ///
 /// On first call, initializes from `PrivacyConfig::from_env()`.
 ///
-/// Panics if privacy configuration cannot be loaded or if built-in pattern
-/// compilation fails. Both are fatal: running with an invalid privacy policy
-/// would silently degrade redaction guarantees.
-#[allow(clippy::expect_used)] // Fatal invalid privacy policy / built-in patterns
-pub fn engine() -> &'static PrivacyEngine {
-    ENGINE.get_or_init(|| {
-        let config =
-            PrivacyConfig::from_env().expect("failed to load privacy configuration from environment");
-        PrivacyEngine::new(config).expect("built-in privacy patterns must compile")
-    })
+/// Returns the same cached initialization error on every call if privacy
+/// configuration or built-in rule compilation fails.
+pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
+    ENGINE.get_or_init(build_engine_from_env).as_ref()
+}
+
+/// Process text with the global privacy engine.
+pub fn process<'a>(
+    text: &'a str,
+    context: ProcessingContext,
+) -> Result<Processed<'a>, &'static PrivacyError> {
+    Ok(engine()?.process(text, context))
+}
+
+/// Process JSON with the global privacy engine.
+pub fn process_json(
+    value: &serde_json::Value,
+    context: ProcessingContext,
+) -> Result<serde_json::Value, &'static PrivacyError> {
+    Ok(engine()?.process_json(value, context))
 }
 
 // ─── Processing context ──────────────────────────────────────
@@ -256,6 +272,8 @@ impl<'a> Processed<'a> {
 /// Errors from the privacy engine.
 #[derive(Debug, thiserror::Error)]
 pub enum PrivacyError {
+    #[error(transparent)]
+    Config(#[from] PrivacyConfigError),
     #[error("invalid regex pattern in rule '{rule}': {source}")]
     InvalidPattern { rule: String, source: regex::Error },
     #[error("encryption failed: {0}")]
@@ -268,4 +286,62 @@ pub enum PrivacyError {
     InvalidToken(String),
     #[error("invalid key: {0}")]
     InvalidKey(String),
+}
+
+#[cfg(test)]
+mod tests {
+    // Exception to per-crate tests/: this exercises private privacy-engine
+    // initialization helpers without widening the public API.
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::LazyLock;
+    use xtask::sandbox::sinex_test;
+
+    static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    fn restore_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+
+    #[sinex_test]
+    async fn build_engine_from_env_propagates_config_errors() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
+        unsafe { std::env::set_var("SINEX_PRIVACY_EXTRA_RULES", "{not-json") };
+
+        let result = build_engine_from_env();
+
+        restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+
+        let err = match result {
+            Ok(_) => panic!("invalid privacy env override should fail honestly"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, PrivacyError::Config(_)));
+        assert!(
+            err.to_string()
+                .contains("invalid privacy environment override SINEX_PRIVACY_EXTRA_RULES")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn build_engine_from_env_accepts_default_configuration() -> ::xtask::sandbox::TestResult<()>
+    {
+        let _guard = ENV_LOCK.lock().await;
+        let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
+        unsafe { std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES") };
+
+        let engine = build_engine_from_env()?;
+        let processed = engine.process("token=abc", ProcessingContext::Command);
+
+        restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+
+        assert!(processed.any_matched());
+        Ok(())
+    }
 }

@@ -78,6 +78,12 @@ pub enum SqliteHistoryRowOutcome {
     Skipped,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqliteHistoryWarningDisposition {
+    Retry,
+    SkipRow,
+}
+
 #[derive(Debug)]
 pub enum SqliteHistoryImportError<ReadError, ProcessError> {
     Read(ReadError),
@@ -214,18 +220,21 @@ pub async fn import_sqlite_history_lenient<
     RowId,
     Process,
     ProcessFuture,
+    WarningDisposition,
 >(
     from_row_id: i64,
     end_time: Option<Timestamp>,
     read: Read,
     row_id: RowId,
     mut process: Process,
+    warning_disposition: WarningDisposition,
 ) -> Result<SqliteHistoryImportReport<Warning>, ReadError>
 where
     Read: FnOnce(i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), ReadError>,
     RowId: Fn(&Entry) -> i64,
     Process: FnMut(Entry) -> ProcessFuture,
     ProcessFuture: Future<Output = Result<SqliteHistoryRowOutcome, Warning>>,
+    WarningDisposition: Fn(&Warning) -> SqliteHistoryWarningDisposition,
 {
     let (entries, _) = read(from_row_id, end_time)?;
     let mut processed_rows = 0usize;
@@ -242,10 +251,16 @@ where
                 last_row_id = last_row_id.max(entry_row_id);
             }
             Err(warning) => {
+                let disposition = warning_disposition(&warning);
                 warnings.push(warning);
-                // Preserve the warned row for retry instead of silently stepping
-                // over it and duplicating/lossily skipping later rows.
-                break;
+                match disposition {
+                    SqliteHistoryWarningDisposition::Retry => {
+                        break;
+                    }
+                    SqliteHistoryWarningDisposition::SkipRow => {
+                        last_row_id = last_row_id.max(entry_row_id);
+                    }
+                }
             }
         }
     }

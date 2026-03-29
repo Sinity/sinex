@@ -38,7 +38,7 @@ use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -53,6 +53,7 @@ const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
 /// Preview length for malformed or oversized journal lines in logs and DLQ payloads.
 const JOURNAL_LINE_PREVIEW_LIMIT: usize = 512;
+const JOURNAL_STDERR_PREVIEW_LIMIT: usize = 512;
 const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Required keys in a systemd journal cursor string.
@@ -76,18 +77,87 @@ impl Drop for StreamingActivityGuard {
     }
 }
 
-fn check_follow_exit_status(exit_reason: FollowExitReason, status: ExitStatus) -> NodeResult<()> {
-    match exit_reason {
-        FollowExitReason::Shutdown => Ok(()),
-        FollowExitReason::UnexpectedEof => Err(
-            SinexError::processing("journalctl follow stream ended unexpectedly")
-                .with_context("exit_status", status.to_string()),
-        ),
-        FollowExitReason::ReadError => Err(
-            SinexError::processing("journalctl follow stream terminated after a read failure")
-                .with_context("exit_status", status.to_string()),
-        ),
+fn stderr_preview(stderr: &str) -> Option<String> {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return None;
     }
+
+    let mut preview = trimmed
+        .chars()
+        .take(JOURNAL_STDERR_PREVIEW_LIMIT)
+        .collect::<String>();
+    if trimmed.chars().count() > JOURNAL_STDERR_PREVIEW_LIMIT {
+        preview.push('…');
+    }
+    Some(preview)
+}
+
+fn check_follow_exit_status(
+    exit_reason: FollowExitReason,
+    status: ExitStatus,
+    stderr: Option<&str>,
+) -> NodeResult<()> {
+    let error = match exit_reason {
+        FollowExitReason::Shutdown => return Ok(()),
+        FollowExitReason::UnexpectedEof => {
+            SinexError::processing("journalctl follow stream ended unexpectedly")
+                .with_context("exit_status", status.to_string())
+        }
+        FollowExitReason::ReadError => {
+            SinexError::processing("journalctl follow stream terminated after a read failure")
+                .with_context("exit_status", status.to_string())
+        }
+    };
+
+    Err(if let Some(stderr) = stderr.and_then(stderr_preview) {
+        error.with_context("stderr", stderr)
+    } else {
+        error
+    })
+}
+
+async fn read_child_stderr(child: &mut Child, process_name: &str) -> NodeResult<Option<String>> {
+    let Some(mut stderr) = child.stderr.take() else {
+        return Ok(None);
+    };
+
+    let mut bytes = Vec::new();
+    stderr.read_to_end(&mut bytes).await.map_err(|error| {
+        SinexError::io(format!("failed to read {process_name} stderr"))
+            .with_std_error(&error)
+    })?;
+
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+fn follow_exit_processing_error_message(exit_reason: FollowExitReason) -> &'static str {
+    match exit_reason {
+        FollowExitReason::Shutdown => "journalctl follow stream ended during shutdown",
+        FollowExitReason::UnexpectedEof => "journalctl follow stream ended unexpectedly",
+        FollowExitReason::ReadError => "journalctl follow stream terminated after a read failure",
+    }
+}
+
+fn build_follow_wait_error(
+    error: std::io::Error,
+    exit_reason: FollowExitReason,
+    stderr: Option<&str>,
+    stderr_read_error: Option<&str>,
+) -> SinexError {
+    let mut wait_error = SinexError::io("Failed to wait for journal watcher process exit")
+        .with_source(error)
+        .with_context(
+            "follow_exit_reason",
+            follow_exit_processing_error_message(exit_reason),
+        );
+    if let Some(stderr) = stderr.and_then(stderr_preview) {
+        wait_error = wait_error.with_context("stderr", stderr);
+    }
+    if let Some(stderr_read_error) = stderr_read_error {
+        wait_error = wait_error.with_context("stderr_read_error", stderr_read_error.to_string());
+    }
+    wait_error
 }
 
 fn signal_child_terminate(child: &Child, process_name: &str) -> NodeResult<()> {
@@ -631,6 +701,85 @@ impl UnifiedJournalWatcher {
         Ok(true)
     }
 
+    fn record_seen_cursor(
+        first_cursor: &mut Option<String>,
+        last_cursor: &mut Option<String>,
+        cursor: &str,
+    ) {
+        if first_cursor.is_none() {
+            *first_cursor = Some(cursor.to_string());
+        }
+        *last_cursor = Some(cursor.to_string());
+    }
+
+    async fn remember_processed_cursor(
+        &mut self,
+        cursor: &str,
+    ) -> NodeResult<()> {
+        self.last_cursor = Some(cursor.to_string());
+        self.save_cursor(cursor).await
+    }
+
+    async fn handle_oversized_line(
+        &self,
+        line: &str,
+        material: &WatcherMaterialContext,
+    ) -> NodeResult<Option<String>> {
+        let (cursor, unit, metadata_parse_error) = match Self::parse_oversized_line_metadata(line) {
+            Ok((cursor, unit)) => (Some(cursor), unit, None),
+            Err(error) => {
+                self.record_invalid_oversized_line_metadata(line, &error);
+                (None, None, Some(error.to_string()))
+            }
+        };
+
+        let cursor_for_dlq = cursor.as_deref().unwrap_or("unknown");
+        match self
+            .route_oversized_line_to_dlq(
+                material,
+                line,
+                cursor_for_dlq,
+                unit.as_deref(),
+                metadata_parse_error.as_deref(),
+            )
+            .await
+        {
+            Ok(true) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    reason = "journal_line_too_large",
+                    "Oversized journal line routed to DLQ"
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    reason = "journal_line_too_large",
+                    "Oversized journal line skipped because no DLQ publisher is configured"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    error = %err,
+                    reason = "journal_line_too_large",
+                    "Failed to route oversized journal line to DLQ"
+                );
+            }
+        }
+
+        Ok(cursor)
+    }
+
     /// Add systemd units to track
     pub fn track_systemd_units(&mut self, units: impl IntoIterator<Item = String>) {
         self.systemd_units.extend(units);
@@ -739,22 +888,28 @@ impl UnifiedJournalWatcher {
 
         for line in output.stdout.split(|&b| b == b'\n') {
             if !line.is_empty() {
+                if line.len() > self.max_line_bytes {
+                    let raw_line = String::from_utf8_lossy(line);
+                    if let Some(cursor) =
+                        self.handle_oversized_line(raw_line.as_ref(), material).await?
+                    {
+                        Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
+                    }
+                    continue;
+                }
                 match serde_json::from_slice::<serde_json::Value>(line) {
                     Ok(entry) => {
                         // Process entry and emit both journal and systemd events if applicable
                         if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                            if first_cursor.is_none() {
-                                first_cursor = journal_event
-                                    .payload
-                                    .get("cursor")
-                                    .and_then(|v| v.as_str())
-                                    .map(std::string::ToString::to_string);
+                            if let Some(cursor) =
+                                journal_event.payload.get("cursor").and_then(|v| v.as_str())
+                            {
+                                Self::record_seen_cursor(
+                                    &mut first_cursor,
+                                    &mut last_cursor,
+                                    cursor,
+                                );
                             }
-                            last_cursor = journal_event
-                                .payload
-                                .get("cursor")
-                                .and_then(|v| v.as_str())
-                                .map(std::string::ToString::to_string);
 
                             batch.push(journal_event);
                             entries_count += 1;
@@ -792,8 +947,7 @@ impl UnifiedJournalWatcher {
 
         // Update cursor
         if let Some(ref cursor) = last_cursor {
-            self.last_cursor = Some(cursor.clone());
-            self.save_cursor(cursor).await?;
+            self.remember_processed_cursor(cursor).await?;
         }
 
         // Send sync event
@@ -942,59 +1096,10 @@ impl UnifiedJournalWatcher {
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
                     if line.len() > self.max_line_bytes {
-                        let (cursor, unit, metadata_parse_error) =
-                            match Self::parse_oversized_line_metadata(line.trim()) {
-                                Ok((cursor, unit)) => (cursor, unit, None),
-                                Err(error) => {
-                                    self.record_invalid_oversized_line_metadata(
-                                        line.trim(),
-                                        &error,
-                                    );
-                                    ("unknown".to_string(), None, Some(error.to_string()))
-                                }
-                            };
-
-                        match self
-                            .route_oversized_line_to_dlq(
-                                material,
-                                &line,
-                                &cursor,
-                                unit.as_deref(),
-                                metadata_parse_error.as_deref(),
-                            )
-                            .await
+                        if let Some(cursor) =
+                            self.handle_oversized_line(line.trim(), material).await?
                         {
-                            Ok(true) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    reason = "journal_line_too_large",
-                                    "Oversized journal line routed to DLQ"
-                                );
-                            }
-                            Ok(false) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    reason = "journal_line_too_large",
-                                    "Oversized journal line skipped because no DLQ publisher is configured"
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    error = %err,
-                                    reason = "journal_line_too_large",
-                                    "Failed to route oversized journal line to DLQ"
-                                );
-                            }
+                            self.remember_processed_cursor(&cursor).await?;
                         }
                         continue;
                     }
@@ -1007,8 +1112,7 @@ impl UnifiedJournalWatcher {
                                     if let Some(cursor) =
                                         event.payload.get("cursor").and_then(|v| v.as_str())
                                     {
-                                        self.last_cursor = Some(cursor.to_string());
-                                        self.save_cursor(cursor).await?;
+                                        self.remember_processed_cursor(cursor).await?;
                                     }
 
                                     self.send_event(
@@ -1054,18 +1158,31 @@ impl UnifiedJournalWatcher {
         if let Some(mut child) = self.child_process.take() {
             match child.wait().await {
                 Ok(status) => {
-                    check_follow_exit_status(exit_reason, status)?;
+                    let stderr = read_child_stderr(&mut child, "journal watcher").await?;
+                    check_follow_exit_status(exit_reason, status, stderr.as_deref())?;
                 }
                 Err(error) => {
                     warn!(error = %error, "Failed to wait for journal watcher process exit");
                     if !matches!(exit_reason, FollowExitReason::Shutdown) {
-                        self.record_error(format!(
-                            "Failed to wait for journal watcher process exit: {error}"
+                        let (stderr, stderr_read_error) =
+                            match read_child_stderr(&mut child, "journal watcher").await {
+                                Ok(stderr) => (stderr, None),
+                                Err(stderr_error) => (None, Some(format!("{stderr_error:#}"))),
+                            };
+                        let message = if let Some(stderr_read_error) = &stderr_read_error {
+                            format!(
+                                "Failed to wait for journal watcher process exit: {error}; failed to read stderr: {stderr_read_error}"
+                            )
+                        } else {
+                            format!("Failed to wait for journal watcher process exit: {error}")
+                        };
+                        self.record_error(message);
+                        return Err(build_follow_wait_error(
+                            error,
+                            exit_reason,
+                            stderr.as_deref(),
+                            stderr_read_error.as_deref(),
                         ));
-                        return Err(
-                            SinexError::io("Failed to wait for journal watcher process exit")
-                                .with_source(error),
-                        );
                     }
                 }
             }
@@ -1089,8 +1206,15 @@ impl UnifiedJournalWatcher {
             Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Journal entry")?;
 
         let timestamp_us = Self::parse_journal_timestamp_us(obj, &cursor)?;
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "journal_entry_redaction")
+            .with_std_error(error)
+        })?;
 
-        let message = privacy::engine()
+        let message = privacy_engine
             .process(
                 &Self::require_entry_string_field(obj, "MESSAGE", "Journal entry")?,
                 ProcessingContext::Journal,
@@ -1117,7 +1241,7 @@ impl UnifiedJournalWatcher {
         let uid = Self::parse_optional_field(obj, "_UID", &cursor)?;
         let gid = Self::parse_optional_field(obj, "_GID", &cursor)?;
         let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
-            privacy::engine()
+            privacy_engine
                 .process(s, ProcessingContext::Command)
                 .text
                 .into_owned()
@@ -1177,7 +1301,7 @@ impl UnifiedJournalWatcher {
             {
                 fields.insert(
                     key.clone(),
-                    privacy::engine()
+                    privacy_engine
                         .process(s, ProcessingContext::Journal)
                         .text
                         .into_owned(),
@@ -1574,6 +1698,7 @@ mod tests {
     use async_trait::async_trait;
     use sinex_primitives::events::Provenance;
     use sinex_primitives::{Id, JsonValue};
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
     use xtask::sandbox::prelude::*;
 
@@ -1664,6 +1789,28 @@ mod tests {
                 },
             }
         }
+    }
+
+    fn fake_journalctl_script(stdout_lines: &[String]) -> String {
+        let mut script =
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'journalctl test\\n'\n  exit 0\nfi\n"
+                .to_string();
+        for line in stdout_lines {
+            let escaped = line.replace('\'', "'\"'\"'");
+            script.push_str(&format!("printf '%s\\n' '{escaped}'\n"));
+        }
+        script
+    }
+
+    fn install_fake_journalctl(script: &str) -> TestResult<std::path::PathBuf> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journalctl-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let script_path = runtime_dir.join("journalctl");
+        std::fs::write(&script_path, script)?;
+        let mut permissions = std::fs::metadata(&script_path)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script_path, permissions)?;
+        Ok(runtime_dir)
     }
 
     #[sinex_test]
@@ -1888,6 +2035,85 @@ mod tests {
         .expect_err("oversized journal metadata must not fabricate a cursor");
 
         assert!(error.to_string().contains("missing required __CURSOR"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn import_historical_advances_cursor_past_oversized_lines(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let cursor = "s=abc;i=1;b=boot;m=1;t=1;x=1";
+        let oversized_line = json!({
+            "__CURSOR": cursor,
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "MESSAGE": "X".repeat(256),
+        })
+        .to_string();
+        let runtime_dir =
+            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvVarGuard::set(
+            "PATH",
+            runtime_dir
+                .to_str()
+                .expect("temp journalctl directory should be valid UTF-8"),
+        );
+
+        let mut watcher = test_watcher();
+        watcher.max_line_bytes = 64;
+        let material = test_material();
+        let (journal_tx, mut journal_rx) = mpsc::channel(1);
+
+        let entries = watcher
+            .import_historical(&journal_tx, &None, &material)
+            .await?;
+
+        assert_eq!(entries, 0);
+        assert_eq!(watcher.last_cursor.as_deref(), Some(cursor));
+        assert!(
+            journal_rx.try_recv().is_err(),
+            "oversized entries must not emit normal events"
+        );
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn follow_journal_advances_cursor_past_oversized_lines(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let cursor = "s=follow;i=1;b=boot;m=1;t=1;x=1";
+        let oversized_line = json!({
+            "__CURSOR": cursor,
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "MESSAGE": "Y".repeat(256),
+        })
+        .to_string();
+        let runtime_dir =
+            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvVarGuard::set(
+            "PATH",
+            runtime_dir
+                .to_str()
+                .expect("temp journalctl directory should be valid UTF-8"),
+        );
+
+        let mut watcher = test_watcher();
+        watcher.max_line_bytes = 64;
+        let material = test_material();
+        let (journal_tx, _journal_rx) = mpsc::channel(1);
+
+        let error = watcher
+            .follow_journal_inner(&journal_tx, None, &material)
+            .await
+            .expect_err("follow loop should report the spawned journalctl EOF");
+
+        assert!(error.to_string().contains("ended unexpectedly"));
+        assert_eq!(watcher.last_cursor.as_deref(), Some(cursor));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
 
@@ -2249,7 +2475,7 @@ mod tests {
             .arg("exit 0")
             .status()?;
 
-        let error = check_follow_exit_status(FollowExitReason::UnexpectedEof, status)
+        let error = check_follow_exit_status(FollowExitReason::UnexpectedEof, status, None)
             .expect_err("unexpected EOF must not be treated as healthy shutdown");
         assert!(error.to_string().contains("ended unexpectedly"));
         Ok(())
@@ -2263,10 +2489,50 @@ mod tests {
             .arg("exit 17")
             .status()?;
 
-        let error = check_follow_exit_status(FollowExitReason::ReadError, status)
+        let error = check_follow_exit_status(FollowExitReason::ReadError, status, None)
             .expect_err("read failures must surface even after the child exits");
         assert!(error.to_string().contains("read failure"));
         assert!(error.to_string().contains("17"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_follow_exit_status_preserves_stderr_excerpt(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 5")
+            .status()?;
+
+        let error = check_follow_exit_status(
+            FollowExitReason::UnexpectedEof,
+            status,
+            Some("permission denied while opening journal"),
+        )
+        .expect_err("stderr should remain attached to follow failures");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("permission denied while opening journal"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn build_follow_wait_error_preserves_stderr_read_failure_context(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+
+        let error = build_follow_wait_error(
+            std::io::Error::other("broken wait"),
+            FollowExitReason::UnexpectedEof,
+            None,
+            Some("failed to read journal watcher stderr: permission denied"),
+        );
+        let rendered = format!("{error:#}");
+
+        assert!(rendered.contains("broken wait"));
+        assert!(rendered.contains("journalctl follow stream ended unexpectedly"));
+        assert!(rendered.contains("stderr_read_error"));
+        assert!(rendered.contains("failed to read journal watcher stderr: permission denied"));
         Ok(())
     }
 
@@ -2278,7 +2544,7 @@ mod tests {
             .arg("exit 143")
             .status()?;
 
-        check_follow_exit_status(FollowExitReason::Shutdown, status)?;
+        check_follow_exit_status(FollowExitReason::Shutdown, status, None)?;
         Ok(())
     }
 }

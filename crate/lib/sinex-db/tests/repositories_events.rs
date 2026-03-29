@@ -377,6 +377,50 @@ async fn register_external_in_flight_resets_terminal_status_to_sensing(
     Ok(())
 }
 
+#[sinex_test]
+async fn register_external_in_flight_rejects_source_identifier_aliasing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let original_id = uuid::Uuid::now_v7();
+    let conflicting_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-conflict-{original_id}");
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            original_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "first registration"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let error = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            conflicting_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "conflicting registration"}),
+            Timestamp::now(),
+        )
+        .await
+        .expect_err("different explicit material ids must not alias through source_identifier");
+
+    assert!(error.to_string().contains("source_identifier"));
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::<sinex_db::SourceMaterialRecord>::from_uuid(original_id))
+        .await?
+        .expect("original explicit material id must remain intact");
+    assert_eq!(persisted.id, original_id);
+    Ok(())
+}
+
 // =============================================================================
 // SYNTHETIC METADATA ROUNDTRIP TESTS (Slice 3)
 // =============================================================================

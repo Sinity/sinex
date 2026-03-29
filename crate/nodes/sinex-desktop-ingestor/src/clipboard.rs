@@ -410,9 +410,14 @@ impl ClipboardWatcher {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Stage-as-you-go context not initialized".to_string())
         })?;
+        let privacy_engine = privacy::engine().map_err(|error| {
+            SinexError::configuration("failed to initialize privacy engine".to_string())
+                .with_context("component", "desktop_clipboard_capture")
+                .with_std_error(error)
+        })?;
 
         // Apply privacy filter to redact sensitive content
-        let processed = privacy::engine().process(&content.text, ProcessingContext::Clipboard);
+        let processed = privacy_engine.process(&content.text, ProcessingContext::Clipboard);
         let privacy_filtered = processed.any_matched();
         let data_bytes = processed.text.as_bytes();
 
@@ -435,7 +440,7 @@ impl ClipboardWatcher {
 
         // Also redact window title if present
         let redacted_window_title = content.window_title.as_ref().map(|t| {
-            privacy::engine()
+            privacy_engine
                 .process(t, ProcessingContext::WindowTitle)
                 .text
                 .into_owned()
@@ -443,7 +448,7 @@ impl ClipboardWatcher {
 
         // Redact text preview
         let redacted_preview = content.text_preview.as_ref().map(|p| {
-            privacy::engine()
+            privacy_engine
                 .process(p, ProcessingContext::Clipboard)
                 .text
                 .into_owned()

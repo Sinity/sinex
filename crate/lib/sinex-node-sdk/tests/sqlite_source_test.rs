@@ -3,7 +3,8 @@ use std::{io::Error as IoError, sync::Arc};
 use camino::Utf8PathBuf;
 use rusqlite::Connection;
 use sinex_node_sdk::{
-    SqliteHistoryImportError, SqliteHistoryRowOutcome, import_sqlite_history_lenient,
+    SqliteHistoryImportError, SqliteHistoryRowOutcome, SqliteHistoryWarningDisposition,
+    import_sqlite_history_lenient,
     import_sqlite_history_strict, read_rows_after,
 };
 use sinex_primitives::Timestamp;
@@ -11,7 +12,7 @@ use tokio::sync::Mutex;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn sqlite_history_lenient_import_stops_at_first_warning_without_advancing_checkpoint()
+async fn sqlite_history_lenient_import_advances_past_skippable_warning()
 -> TestResult<()>
 {
     let seen_rows = Arc::new(Mutex::new(Vec::new()));
@@ -40,13 +41,14 @@ async fn sqlite_history_lenient_import_stops_at_first_warning_without_advancing_
                 }
             }
         },
+        |_warning| SqliteHistoryWarningDisposition::SkipRow,
     )
     .await?;
 
     assert_eq!(report.processed_rows, 1);
     assert_eq!(report.last_row_id, 5);
     assert_eq!(report.warnings, vec!["row 2 was malformed".to_string()]);
-    assert_eq!(*seen_rows.lock().await, vec![1, 2]);
+    assert_eq!(*seen_rows.lock().await, vec![1, 2, 3]);
 
     Ok(())
 }
@@ -66,12 +68,47 @@ async fn sqlite_history_lenient_import_advances_across_processed_and_skipped_row
                 Ok::<_, String>(SqliteHistoryRowOutcome::Processed)
             }
         },
+        |_warning| SqliteHistoryWarningDisposition::Retry,
     )
     .await?;
 
     assert_eq!(report.processed_rows, 2);
     assert_eq!(report.last_row_id, 3);
     assert!(report.warnings.is_empty());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn sqlite_history_lenient_import_retries_without_advancing_on_retryable_warning()
+-> TestResult<()>
+{
+    let seen_rows = Arc::new(Mutex::new(Vec::new()));
+
+    let report = import_sqlite_history_lenient(
+        5,
+        None,
+        |_from_row_id, _end_time| Ok::<_, IoError>((vec![1_i64, 2, 3], 9)),
+        |row_id| *row_id,
+        |row_id| {
+            let seen_rows = Arc::clone(&seen_rows);
+            async move {
+                seen_rows.lock().await.push(row_id);
+                if row_id == 2 {
+                    Err(format!("row {row_id} should be retried"))
+                } else {
+                    Ok(SqliteHistoryRowOutcome::Processed)
+                }
+            }
+        },
+        |_warning| SqliteHistoryWarningDisposition::Retry,
+    )
+    .await?;
+
+    assert_eq!(report.processed_rows, 1);
+    assert_eq!(report.last_row_id, 5);
+    assert_eq!(report.warnings, vec!["row 2 should be retried".to_string()]);
+    assert_eq!(*seen_rows.lock().await, vec![1, 2]);
 
     Ok(())
 }

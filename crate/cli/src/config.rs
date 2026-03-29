@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::env as shared_env;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -290,10 +291,9 @@ fn env_bool_override(key: &str, target: &mut bool) {
 fn env_parse_override<T>(key: &str, target: &mut T)
 where
     T: std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
-    if let Ok(value) = std::env::var(key)
-        && let Ok(parsed) = value.parse::<T>()
-    {
+    if let Some(parsed) = shared_env::parse_optional(key, "") {
         *target = parsed;
     }
 }

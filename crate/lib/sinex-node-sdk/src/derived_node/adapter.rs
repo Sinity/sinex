@@ -520,7 +520,12 @@ where
         } = output;
 
         let privacy_context = self.node.output_privacy_context();
-        let filtered_payload = privacy::engine().process_json(&payload, privacy_context);
+        let filtered_payload = privacy::process_json(&payload, privacy_context).map_err(|error| {
+            SinexError::configuration("failed to initialize privacy engine".to_string())
+                .with_context("component", "derived_output_payload")
+                .with_context("privacy_context", format!("{privacy_context:?}"))
+                .with_std_error(error)
+        })?;
         if filtered_payload != payload {
             debug!(
                 node = %self.node.name(),

@@ -172,6 +172,7 @@ pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 pub use sqlite_source::stage_material;
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
+    SqliteHistoryWarningDisposition,
     SqliteTableCheckError,
     ensure_sqlite_with_tables, import_sqlite_history_lenient, import_sqlite_history_strict,
     max_row_id_for_query, read_rows_after, read_rows_with_params,

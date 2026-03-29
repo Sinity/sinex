@@ -167,10 +167,22 @@ pub(super) fn spawn_begin_consumer(
                     }
                 };
 
-                let material_id = parse_begin_material_id(&message.payload);
+                let (begin_message, material_id) = match decode_begin_message(&message.payload) {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            payload_len = message.payload.len(),
+                            payload_preview = %String::from_utf8_lossy(&message.payload),
+                            "Failed to decode begin message payload"
+                        );
+                        ack_with_warning(&message, "begin_payload_invalid", None).await?;
+                        continue;
+                    }
+                };
 
                 let result = std::panic::AssertUnwindSafe(async {
-                    assembler.handle_begin(message.clone()).await
+                    assembler.handle_begin(material_id, begin_message).await
                 })
                 .catch_unwind()
                 .await;
@@ -183,7 +195,7 @@ pub(super) fn spawn_begin_consumer(
                             &message,
                             None,
                             "begin_processing_failed",
-                            material_id.as_ref().ok(),
+                            Some(&material_id),
                         )
                         .await?;
                         continue;
@@ -191,35 +203,32 @@ pub(super) fn spawn_begin_consumer(
                     Err(panic) => {
                         let panic_msg = describe_panic(&*panic);
                         error!(
-                            material_id = ?material_id.as_ref().ok(),
-                            material_id_error = ?material_id.as_ref().err(),
+                            material_id = %material_id,
                             "Begin consumer panicked: {}",
                             panic_msg
                         );
-                        if let Ok(material_id) = material_id {
-                            assembler
-                                .route_material_error(
-                                    material_id,
-                                    "begin_consumer_panic",
-                                    json!({ "panic": panic_msg }),
-                                )
-                                .await;
-                            assembler
-                                .finalize_failed_material(material_id, "begin_consumer_panic")
-                                .await;
-                        }
+                        assembler
+                            .route_material_error(
+                                material_id,
+                                "begin_consumer_panic",
+                                json!({ "panic": panic_msg }),
+                            )
+                            .await;
+                        assembler
+                            .finalize_failed_material(material_id, "begin_consumer_panic")
+                            .await;
                         nak_with_warning(
                             &message,
                             Some(std::time::Duration::from_millis(200)),
                             "begin_processing_panicked",
-                            material_id.as_ref().ok(),
+                            Some(&material_id),
                         )
                         .await?;
                         continue;
                     }
                 }
 
-                ack_with_warning(&message, "begin_processed", material_id.as_ref().ok()).await?;
+                ack_with_warning(&message, "begin_processed", Some(&material_id)).await?;
             }
         }
 
@@ -576,10 +585,11 @@ fn parse_material_id(raw: &str, context: &str) -> Result<Uuid, String> {
     Uuid::from_str(raw).map_err(|error| format!("invalid {context} '{raw}': {error}"))
 }
 
-fn parse_begin_material_id(payload: &[u8]) -> Result<Uuid, String> {
+fn decode_begin_message(payload: &[u8]) -> Result<(MaterialBeginMessage, Uuid), String> {
     let begin = serde_json::from_slice::<MaterialBeginMessage>(payload)
         .map_err(|error| format!("invalid begin payload: {error}"))?;
-    parse_material_id(&begin.material_id, "begin material_id")
+    let material_id = parse_material_id(&begin.material_id, "begin material_id")?;
+    Ok((begin, material_id))
 }
 
 fn parse_slice_material_id(subject: &str) -> Result<Uuid, String> {
@@ -613,7 +623,7 @@ fn parse_slice_offset(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_begin_material_id, parse_material_id, parse_slice_material_id, parse_slice_offset,
+        decode_begin_message, parse_material_id, parse_slice_material_id, parse_slice_offset,
     };
     use async_nats::HeaderMap;
     use serde_json::json;
@@ -671,8 +681,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_begin_material_id_rejects_invalid_payload() -> TestResult<()> {
-        let error = parse_begin_material_id(
+    async fn decode_begin_message_rejects_invalid_payload() -> TestResult<()> {
+        let error = decode_begin_message(
+            br#"{"material_id":"oops""#,
+        )
+        .expect_err("invalid begin payload should fail");
+        assert!(error.contains("invalid begin payload"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn decode_begin_message_rejects_invalid_material_id() -> TestResult<()> {
+        let error = decode_begin_message(
             serde_json::to_vec(&json!({
                 "material_id": "not-a-uuid",
                 "material_kind": "shell-history",
@@ -682,15 +702,15 @@ mod tests {
             }))?
             .as_slice(),
         )
-            .expect_err("invalid begin material id should fail");
+        .expect_err("invalid begin material id should fail");
         assert!(error.contains("begin material_id"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn parse_begin_material_id_accepts_valid_payload() -> TestResult<()> {
+    async fn decode_begin_message_accepts_valid_payload() -> TestResult<()> {
         let material_id = "00000000-0000-7000-8000-000000000001";
-        let parsed = parse_begin_material_id(
+        let (begin, parsed_material_id) = decode_begin_message(
             serde_json::to_vec(&json!({
                 "material_id": material_id,
                 "material_kind": "shell-history",
@@ -701,7 +721,8 @@ mod tests {
                 .as_slice(),
         )
         .map_err(|error| color_eyre::eyre::eyre!(error))?;
-        assert_eq!(parsed, material_id.parse::<Uuid>()?);
+        assert_eq!(begin.material_kind, "shell-history");
+        assert_eq!(parsed_material_id, material_id.parse::<Uuid>()?);
         Ok(())
     }
 

@@ -791,17 +791,25 @@ async fn test_scope_reconciler_scope_key_derivation() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_scope_reconciler_unknown_component_defaults() -> TestResult<()> {
+async fn test_scope_reconciler_invalid_component_gets_unique_sentinel_scope() -> TestResult<()> {
     let aggregator = HealthAggregator::default();
     let ctx = make_context(Timestamp::now());
+    let trigger_id = ctx.trigger_uuid();
 
-    // No "component" field → defaults to "unknown"
     let input = json!({
         "current_status": "healthy",
     });
 
     let scope_keys = aggregator.scope_keys(&input, &ctx);
-    assert_eq!(scope_keys, vec!["unknown"]);
+    assert_eq!(scope_keys.len(), 1);
+    assert_eq!(
+        scope_keys[0],
+        format!("__invalid_component__:{trigger_id}")
+    );
+    assert_ne!(
+        scope_keys[0], "unknown",
+        "malformed payloads must not collide with the literal unknown component"
+    );
     Ok(())
 }
 
