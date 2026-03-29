@@ -34,6 +34,7 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::{
     HostName, Seconds, Timestamp, Uuid,
+    env as shared_env,
     events::{
         payload::PayloadExt,
         payloads::{
@@ -587,13 +588,7 @@ impl DesktopNode {
     }
 
     fn env_string_override(name: &str) -> NodeResult<Option<String>> {
-        match std::env::var(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-                "Environment variable '{name}' is not valid UTF-8"
-            ))),
-        }
+        shared_env::strict_var(name)
     }
 
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {

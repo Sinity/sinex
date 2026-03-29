@@ -4,6 +4,7 @@
 use crate::common::{
     Duration, Event, HashMap, JsonValue, NodeResult, Timestamp, debug, error, info, warn,
 };
+use sinex_primitives::env as shared_env;
 use sinex_primitives::privacy::{self, ProcessingContext};
 
 // Window manager specific imports
@@ -81,14 +82,12 @@ fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node
 }
 
 fn env_string(name: &str) -> NodeResult<Option<String>> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(platform_error(
-            format!("Environment variable '{name}' is not valid UTF-8"),
+    shared_env::strict_var(name).map_err(|err| {
+        platform_error(
+            err.to_string(),
             ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
-        )),
-    }
+        )
+    })
 }
 
 fn collect_hyprland_candidates<I>(entries: I, hypr_dir: &Path) -> NodeResult<Vec<PathBuf>>
