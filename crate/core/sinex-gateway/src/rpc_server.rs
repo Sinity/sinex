@@ -31,6 +31,7 @@ use serde_json::Value;
 use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Uuid};
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -1205,6 +1206,16 @@ fn warn_if_remote_bind(bind_address: &BindAddress) {
     }
 }
 
+fn request_id_for_span<'a, B>(request: &'a Request<B>) -> Cow<'a, str> {
+    match request.headers().get("x-request-id") {
+        Some(value) => match value.to_str() {
+            Ok(request_id) => Cow::Borrowed(request_id),
+            Err(_) => Cow::Borrowed("<invalid x-request-id>"),
+        },
+        None => Cow::Borrowed("unknown"),
+    }
+}
+
 fn apply_rpc_layers<S>(
     router: Router<S>,
     limits: &RpcServerLimits,
@@ -1247,16 +1258,11 @@ where
         )
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                let request_id = request
-                    .headers()
-                    .get("x-request-id")
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("unknown");
                 tracing::info_span!(
                     "rpc.request",
                     method = %request.method(),
                     uri = %request.uri(),
-                    request_id = request_id
+                    request_id = %request_id_for_span(request)
                 )
             }),
         )
@@ -1989,6 +1995,25 @@ mod tests {
         );
 
         handle.abort();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn request_id_for_span_marks_invalid_headers() -> TestResult<()> {
+        let request = Request::builder()
+            .uri("/")
+            .header("x-request-id", HeaderValue::from_bytes(b"\xff")?)
+            .body(())?;
+
+        assert_eq!(request_id_for_span(&request), "<invalid x-request-id>");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn request_id_for_span_marks_missing_headers_as_unknown() -> TestResult<()> {
+        let request = Request::builder().uri("/").body(())?;
+
+        assert_eq!(request_id_for_span(&request), "unknown");
         Ok(())
     }
 
