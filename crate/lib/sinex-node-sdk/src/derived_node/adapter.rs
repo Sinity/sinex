@@ -265,22 +265,32 @@ where
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-        if let Some(data) = checkpoint_state.data {
-            let persisted: PersistedState<N::State> = decode_checkpoint_data(
-                data,
-                "derived checkpoint state",
-                self.node.name(),
-            )?;
-            info!(
-                node = %self.node.name(),
-                events_processed = persisted.events_processed,
-                "Restored state from NATS KV checkpoint"
-            );
-            self.persisted_state = persisted;
-            self.last_revision = checkpoint_state.revision;
-        } else {
-            info!(node = %self.node.name(), "No valid checkpoint, starting fresh");
-            self.persisted_state = PersistedState::default();
+        match checkpoint_state.data {
+            Some(data) => {
+                let persisted: PersistedState<N::State> = decode_checkpoint_data(
+                    data,
+                    "derived checkpoint state",
+                    self.node.name(),
+                )?;
+                info!(
+                    node = %self.node.name(),
+                    events_processed = persisted.events_processed,
+                    "Restored state from NATS KV checkpoint"
+                );
+                self.persisted_state = persisted;
+                self.last_revision = checkpoint_state.revision;
+            }
+            None if matches!(checkpoint_state.checkpoint, Checkpoint::None) => {
+                info!(node = %self.node.name(), "No valid checkpoint, starting fresh");
+                self.persisted_state = PersistedState::default();
+                self.last_revision = checkpoint_state.revision;
+            }
+            None => {
+                return Err(
+                    SinexError::checkpoint("Derived checkpoint KV entry is missing state data")
+                        .with_context("node", self.node.name()),
+                );
+            }
         }
 
         Ok(())
@@ -1554,9 +1564,10 @@ mod tests {
     use crate::exploration::ExplorationProvider;
     use crate::runtime::stream::Checkpoint;
     use crate::shutdown::ShutdownConfig;
-    use crate::CheckpointState;
+    use crate::{CheckpointManager, CheckpointState};
     use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
+    use futures::TryStreamExt;
     use tempfile::tempdir;
     #[cfg(feature = "messaging")]
     use crate::self_observation::SelfObservationError;
@@ -1564,6 +1575,7 @@ mod tests {
     use sinex_primitives::JsonValue;
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
+    use std::sync::Arc;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
 
@@ -1684,6 +1696,73 @@ mod tests {
         assert!(message.contains("missing state data"));
         assert!(message.contains("derived-adapter-test"));
         assert!(message.contains(&checkpoint_path.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_accepts_fresh_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            "derived-adapter-test".to_string(),
+            "test-group".to_string(),
+            "fresh-consumer".to_string(),
+        );
+
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+        adapter
+            .load_state()
+            .await
+            .expect("fresh derived checkpoint state should be treated as a clean start");
+
+        assert_eq!(adapter.persisted_state.events_processed, 0);
+        assert_eq!(adapter.last_revision, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_rejects_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv.clone(),
+            "derived-adapter-test".to_string(),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+        manager.save_checkpoint(&CheckpointState::default()).await?;
+
+        let mut keys = kv.keys().await?;
+        let key = keys
+            .try_next()
+            .await?
+            .expect("checkpoint key should exist");
+        let corrupt = serde_json::to_vec(&CheckpointState {
+            checkpoint: Checkpoint::stream("restored", None),
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        })?;
+        kv.put(&key, corrupt.into()).await?;
+
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+
+        let error = adapter
+            .load_state()
+            .await
+            .expect_err("empty derived checkpoint KV state must not be treated as fresh");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("derived-adapter-test"));
         Ok(())
     }
 }

@@ -245,16 +245,29 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         // 2. Try NATS KV
         if let Some(cm) = &self.checkpoint_manager {
             let ckpt = cm.load_checkpoint().await?;
-            let data = ckpt.data.ok_or_else(|| {
-                SinexError::checkpoint("Ingestor checkpoint KV entry is missing state data")
-                    .with_context("node", self.ingestor.name())
-            })?;
-            self.state = decode_checkpoint_data(data, "ingestor checkpoint state", self.ingestor.name())?;
-            self.state.revision = ckpt.revision;
-            if matches!(self.state.checkpoint, Checkpoint::None)
-                && !matches!(ckpt.checkpoint, Checkpoint::None)
-            {
-                self.state.checkpoint = ckpt.checkpoint;
+            match ckpt.data {
+                Some(data) => {
+                    self.state = decode_checkpoint_data(
+                        data,
+                        "ingestor checkpoint state",
+                        self.ingestor.name(),
+                    )?;
+                    self.state.revision = ckpt.revision;
+                    if matches!(self.state.checkpoint, Checkpoint::None)
+                        && !matches!(ckpt.checkpoint, Checkpoint::None)
+                    {
+                        self.state.checkpoint = ckpt.checkpoint;
+                    }
+                }
+                None if matches!(ckpt.checkpoint, Checkpoint::None) => {
+                    self.state.revision = ckpt.revision;
+                }
+                None => {
+                    return Err(
+                        SinexError::checkpoint("Ingestor checkpoint KV entry is missing state data")
+                            .with_context("node", self.ingestor.name()),
+                    );
+                }
             }
         }
 
@@ -587,6 +600,31 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("missing state data"));
         assert!(message.contains("ingestor-adapter-test"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_accepts_fresh_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            "ingestor-adapter-test".to_string(),
+            "test-group".to_string(),
+            "fresh-consumer".to_string(),
+        );
+
+        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+        adapter
+            .load_state()
+            .await
+            .expect("fresh checkpoint state should be treated as a clean start");
+
+        assert!(matches!(adapter.state.checkpoint, Checkpoint::None));
+        assert_eq!(adapter.state.revision, 0);
         Ok(())
     }
 }
