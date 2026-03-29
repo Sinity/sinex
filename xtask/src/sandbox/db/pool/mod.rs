@@ -952,7 +952,24 @@ impl DatabasePool {
         .await
         {
             Ok(Ok(meta)) => meta,
-            Ok(Err(_)) | Err(_) => None,
+            Ok(Err(error)) => {
+                slog!(
+                    Level::Warn,
+                    "slot_meta_load_failed",
+                    slot = slot.name,
+                    error = error.to_string()
+                );
+                None
+            }
+            Err(_) => {
+                slog!(
+                    Level::Warn,
+                    "slot_meta_load_timed_out",
+                    slot = slot.name,
+                    timeout_secs = 2
+                );
+                None
+            }
         };
 
         let expected_fp = self.expected_fingerprint.clone();

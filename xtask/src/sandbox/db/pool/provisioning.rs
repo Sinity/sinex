@@ -1,6 +1,7 @@
 //! Database provisioning — creation, cloning, permissions, admin connections.
 
 use crate::sandbox::prelude::*;
+use serde::de::DeserializeOwned;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::Row;
 use sqlx::pool::PoolConnection;
@@ -515,10 +516,7 @@ pub(super) async fn load_template_meta(
         return Ok(None);
     };
 
-    match serde_json::from_str::<TemplateMeta>(&comment) {
-        Ok(meta) => Ok(Some(meta)),
-        Err(_) => Ok(None),
-    }
+    parse_database_meta_comment("template", template_name, &comment).map(Some)
 }
 
 pub(super) async fn load_pool_meta(
@@ -539,10 +537,18 @@ pub(super) async fn load_pool_meta(
         return Ok(None);
     };
 
-    match serde_json::from_str::<PoolMeta>(&comment) {
-        Ok(meta) => Ok(Some(meta)),
-        Err(_) => Ok(None),
-    }
+    parse_database_meta_comment("pool", db_name, &comment).map(Some)
+}
+
+fn parse_database_meta_comment<T>(kind: &str, db_name: &str, comment: &str) -> TestResult<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_str(comment).map_err(|error| {
+        eyre!(format!(
+            "failed to parse {kind} database metadata comment for {db_name}: {error}"
+        ))
+    })
 }
 
 pub(super) async fn default_extension_versions(
@@ -791,6 +797,38 @@ mod tests {
         assert!(
             rendered.contains("Admin connection failed"),
             "missing admin connection context: {rendered}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_template_meta_comment_rejects_invalid_json() -> TestResult<()> {
+        let err = parse_database_meta_comment::<TemplateMeta>(
+            "template",
+            "sinex_test_template",
+            "{ definitely not valid json",
+        )
+        .expect_err("invalid template metadata must not be treated as missing");
+        assert!(
+            err.to_string()
+                .contains("failed to parse template database metadata comment"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_pool_meta_comment_rejects_invalid_json() -> TestResult<()> {
+        let err = parse_database_meta_comment::<PoolMeta>(
+            "pool",
+            "sinex_test_pool_0",
+            "{ definitely not valid json",
+        )
+        .expect_err("invalid pool metadata must not be treated as missing");
+        assert!(
+            err.to_string()
+                .contains("failed to parse pool database metadata comment"),
+            "unexpected error: {err:#}"
         );
         Ok(())
     }
