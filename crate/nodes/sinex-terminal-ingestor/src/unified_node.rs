@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, SqliteHistoryRowOutcome, import_sqlite_history_lenient, stage_material,
+    SourceState, SqliteHistoryRowOutcome, SqliteHistoryWarningDisposition,
+    import_sqlite_history_lenient, stage_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -202,6 +203,29 @@ struct HistoryScanOutcome {
     state: HistoryState,
     warnings: Vec<String>,
     failure: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct HistorySqliteWarning {
+    disposition: SqliteHistoryWarningDisposition,
+    message: String,
+}
+
+impl HistorySqliteWarning {
+    fn new(disposition: SqliteHistoryWarningDisposition, message: String) -> Self {
+        Self {
+            disposition,
+            message,
+        }
+    }
+
+    fn disposition(&self) -> SqliteHistoryWarningDisposition {
+        self.disposition
+    }
+
+    fn into_message(self) -> String {
+        self.message
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -633,6 +657,32 @@ impl HistoryWatcherContext {
         format!("{}: {}", self.checkpoint_key(), detail.into())
     }
 
+    fn retryable_sqlite_warning(&self, detail: impl Into<String>) -> HistorySqliteWarning {
+        HistorySqliteWarning::new(
+            SqliteHistoryWarningDisposition::Retry,
+            self.strict_warning(detail),
+        )
+    }
+
+    fn skippable_sqlite_warning(&self, detail: impl Into<String>) -> HistorySqliteWarning {
+        HistorySqliteWarning::new(
+            SqliteHistoryWarningDisposition::SkipRow,
+            self.strict_warning(detail),
+        )
+    }
+
+    fn sqlite_warning_for_error(
+        &self,
+        detail: impl Into<String>,
+        error: &SinexError,
+    ) -> HistorySqliteWarning {
+        let detail = detail.into();
+        match error {
+            SinexError::Validation(_) => self.skippable_sqlite_warning(detail),
+            _ => self.retryable_sqlite_warning(detail),
+        }
+    }
+
     fn success_outcome(
         &self,
         processed: usize,
@@ -971,13 +1021,13 @@ impl HistoryWatcherContext {
                                 let message =
                                     format!("failed to process Fish row {row_id}: {error}");
                                 self.record_error("process_fish_entry", &message);
-                                self.strict_warning(message)
+                                self.skippable_sqlite_warning(message)
                             }),
                             Err(error) => {
                                 let message =
                                     format!("failed to process Fish row {row_id}: {error}");
                                 self.record_error("process_fish_entry", &message);
-                                Err(self.strict_warning(message))
+                                Err(self.skippable_sqlite_warning(message))
                             }
                         };
                         async move {
@@ -992,10 +1042,11 @@ impl HistoryWatcherContext {
                                     let message =
                                         format!("failed to process Fish row {row_id}: {error}");
                                     self.record_error("process_fish_entry", &message);
-                                    self.strict_warning(message)
+                                    self.sqlite_warning_for_error(message, &error)
                                 })
                         }
                     },
+                    HistorySqliteWarning::disposition,
                 )
                 .await
                 {
@@ -1005,7 +1056,11 @@ impl HistoryWatcherContext {
                         self.success_outcome(
                             report.processed_rows,
                             Self::sqlite_history_state(sqlite_row_id, recent_hashes),
-                            report.warnings,
+                            report
+                                .warnings
+                                .into_iter()
+                                .map(HistorySqliteWarning::into_message)
+                                .collect(),
                         )
                     }
                     Err(error) => {
@@ -1068,14 +1123,14 @@ impl HistoryWatcherContext {
                                         let message =
                                             format!("failed to process Atuin row {row_id}: {error}");
                                         self.record_error("process_atuin_entry", &message);
-                                        self.strict_warning(message)
+                                        self.skippable_sqlite_warning(message)
                                     })
                             }
                             Err(error) => {
                                 let message =
                                     format!("failed to process Atuin row {row_id}: {error}");
                                 self.record_error("process_atuin_entry", &message);
-                                Err(self.strict_warning(message))
+                                Err(self.skippable_sqlite_warning(message))
                             }
                         };
                         async move {
@@ -1090,10 +1145,11 @@ impl HistoryWatcherContext {
                                     let message =
                                         format!("failed to process Atuin row {row_id}: {error}");
                                     self.record_error("process_atuin_entry", &message);
-                                    self.strict_warning(message)
+                                    self.sqlite_warning_for_error(message, &error)
                                 })
                         }
                     },
+                    HistorySqliteWarning::disposition,
                 )
                 .await
                 {
@@ -1103,7 +1159,11 @@ impl HistoryWatcherContext {
                         self.success_outcome(
                             report.processed_rows,
                             Self::sqlite_history_state(sqlite_row_id, recent_hashes),
-                            report.warnings,
+                            report
+                                .warnings
+                                .into_iter()
+                                .map(HistorySqliteWarning::into_message)
+                                .collect(),
                         )
                     }
                     Err(error) => {
@@ -1765,6 +1825,7 @@ impl HistoryWatcherContext {
                                 "Failed to process Fish history entry from {}: {}",
                                 self.path, error
                             );
+                            self.skippable_sqlite_warning(error.to_string())
                         })?
                     else {
                         return Ok(SqliteHistoryRowOutcome::Skipped);
@@ -1779,9 +1840,11 @@ impl HistoryWatcherContext {
                                 "Failed to process Fish history entry from {}: {}",
                                 self.path, error
                             );
+                            self.sqlite_warning_for_error(error.to_string(), &error)
                         })
                 }
             },
+            HistorySqliteWarning::disposition,
         )
         .await
         {
@@ -1854,6 +1917,7 @@ impl HistoryWatcherContext {
                                 "Failed to process Atuin history entry from {}: {}",
                                 self.path, error
                             );
+                            self.skippable_sqlite_warning(error.to_string())
                         })?
                     else {
                         return Ok(SqliteHistoryRowOutcome::Skipped);
@@ -1868,9 +1932,11 @@ impl HistoryWatcherContext {
                                 "Failed to process Atuin history entry from {}: {}",
                                 self.path, error
                             );
+                            self.sqlite_warning_for_error(error.to_string(), &error)
                         })
                 }
             },
+            HistorySqliteWarning::disposition,
         )
         .await
         {
@@ -5762,7 +5828,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn scan_history_once_from_state_does_not_advance_past_warned_sqlite_row(
+    async fn scan_history_once_from_state_advances_past_permanent_warned_sqlite_row(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
@@ -5832,10 +5898,101 @@ mod tests {
             "expected row warning, got {:?}",
             outcome.warnings
         );
-        assert_eq!(outcome.state.sqlite_row_id, Some(0));
         assert!(
-            fix.commands.lock().await.is_empty(),
-            "rows after the warned row must not be emitted before the checkpoint advances"
+            outcome
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed to process Atuin row 2")),
+            "expected retryable row warning, got {:?}",
+            outcome.warnings
+        );
+        assert_eq!(outcome.state.sqlite_row_id, Some(1));
+        assert!(
+            fix.commands
+                .lock()
+                .await
+                .iter()
+                .any(|command| command == "echo should-not-run-yet"),
+            "rows after a permanently invalid row should still be emitted"
+        );
+        fix._ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn poll_atuin_history_once_advances_past_permanent_warned_sqlite_row(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let mut fix = make_watcher(&ctx, "sqlite-warning-poll", 4096).await?;
+        fix.ctx.source_mode = HistorySourceMode::AtuinSqlite;
+        fix.ctx.shell = "atuin".to_string();
+
+        let history_path = fix.history_path.with_extension("sqlite");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "bad-row",
+                1_700_000_000_000_000_000_i64,
+                "echo broken",
+                "/tmp",
+                0_i64,
+                -1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "good-row",
+                1_700_000_000_000_000_100_i64,
+                "echo should-run-after-warning",
+                "/tmp",
+                0_i64,
+                1_i64,
+                "test-host",
+                "session-1",
+            ],
+        )?;
+
+        fix.ctx.path = Utf8PathBuf::from_path_buf(history_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let mut sqlite_row_id = 0_i64;
+        let mut recent_hashes = VecDeque::new();
+        let processed = fix
+            .ctx
+            .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes, false)
+            .await?;
+
+        assert_eq!(processed, 0);
+        assert_eq!(sqlite_row_id, 1);
+        assert!(
+            fix.commands
+                .lock()
+                .await
+                .iter()
+                .any(|command| command == "echo should-run-after-warning"),
+            "continuous polling should advance beyond permanently invalid rows"
         );
         fix._ingest_handle.stop().await?;
         Ok(())
