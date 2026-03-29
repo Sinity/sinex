@@ -2,6 +2,10 @@
 //!
 //! This module provides the core types for payload registration via inventory.
 
+use crate::error::Result;
+use serde_json::Value;
+use std::collections::HashMap;
+
 /// Information about a payload type collected by the inventory registry.
 ///
 /// This struct holds metadata for a single registered `EventPayload` type,
@@ -16,14 +20,11 @@ pub struct PayloadInfo {
     /// Payload version (typically semantic version like "1.0.0")
     pub version: &'static str,
     /// Function that generates the JSON schema for this payload
-    pub schema_fn: fn() -> serde_json::Value,
+    pub schema_fn: fn() -> Result<Value>,
 }
 
 // Register PayloadInfo for inventory collection
 inventory::collect!(PayloadInfo);
-
-use serde_json::Value;
-use std::collections::HashMap;
 
 /// Get all registered payload types via the inventory registry.
 ///
@@ -37,19 +38,92 @@ pub fn get_all_payloads() -> impl Iterator<Item = &'static PayloadInfo> {
 ///
 /// Returns a `HashMap` keyed by (source, `event_type`, version) tuples, mapping to their JSON schemas.
 /// Used for schema synchronization and validation.
-#[must_use]
-pub fn generate_all_schemas() -> HashMap<(String, String, String), Value> {
+pub fn generate_all_schemas() -> Result<HashMap<(String, String, String), Value>> {
+    generate_schemas_from_payloads(get_all_payloads())
+}
+
+fn generate_schemas_from_payloads<'a, I>(
+    payloads: I,
+) -> Result<HashMap<(String, String, String), Value>>
+where
+    I: IntoIterator<Item = &'a PayloadInfo>,
+{
     let mut schemas = HashMap::new();
 
-    for payload in get_all_payloads() {
+    for payload in payloads {
         let key = (
             payload.source.to_string(),
             payload.event_type.to_string(),
             payload.version.to_string(),
         );
-        let schema = (payload.schema_fn)();
+        let schema = (payload.schema_fn)().map_err(|error| {
+            error
+                .with_context("payload_type", payload.type_name)
+                .with_context("source", payload.source)
+                .with_context("event_type", payload.event_type)
+                .with_context("version", payload.version)
+        })?;
         schemas.insert(key, schema);
     }
 
-    schemas
+    Ok(schemas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PayloadInfo, generate_schemas_from_payloads};
+    use serde_json::json;
+    use xtask::sandbox::prelude::*;
+
+    fn schema_ok() -> crate::error::Result<serde_json::Value> {
+        Ok(json!({"type": "object"}))
+    }
+
+    fn schema_err() -> crate::error::Result<serde_json::Value> {
+        Err(crate::error::SinexError::serialization(
+            "failed to serialize event payload schema",
+        ))
+    }
+
+    #[sinex_test]
+    async fn generate_schemas_collects_entries() -> TestResult<()> {
+        let payloads = [PayloadInfo {
+            type_name: "test::Payload",
+            source: "test-source",
+            event_type: "test.event",
+            version: "1.0.0",
+            schema_fn: schema_ok,
+        }];
+
+        let schemas = generate_schemas_from_payloads(payloads.iter())?;
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(
+            schemas.get(&(
+                "test-source".to_string(),
+                "test.event".to_string(),
+                "1.0.0".to_string()
+            )),
+            Some(&json!({"type": "object"}))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn generate_schemas_surfaces_schema_generation_failures() -> TestResult<()> {
+        let payloads = [PayloadInfo {
+            type_name: "test::BrokenPayload",
+            source: "test-source",
+            event_type: "test.broken",
+            version: "1.0.0",
+            schema_fn: schema_err,
+        }];
+
+        let error = generate_schemas_from_payloads(payloads.iter())
+            .expect_err("schema generation failures must stay explicit");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to serialize event payload schema"));
+        assert!(rendered.contains("test::BrokenPayload"));
+        assert!(rendered.contains("test.broken"));
+        Ok(())
+    }
 }
