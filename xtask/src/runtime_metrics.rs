@@ -105,6 +105,23 @@ impl RuntimeMetrics {
         self.last_batch_latency_ms.is_some() && self.fresh_batch_latency_ms().is_none()
     }
 
+    fn describe_sample_age(age_secs: Option<i64>) -> String {
+        match age_secs {
+            Some(age) => format!("last sample {age}s ago"),
+            None => "sample age unavailable".to_string(),
+        }
+    }
+
+    pub fn consumer_lag_stale_note(&self) -> Option<String> {
+        self.consumer_lag_is_stale()
+            .then(|| Self::describe_sample_age(self.consumer_lag_age_secs))
+    }
+
+    pub fn batch_latency_stale_note(&self) -> Option<String> {
+        self.batch_latency_is_stale()
+            .then(|| Self::describe_sample_age(self.last_batch_latency_age_secs))
+    }
+
     pub fn warnings(&self) -> Vec<String> {
         let mut warnings = Vec::new();
         if let Some(error) = &self.query_error {
@@ -128,10 +145,9 @@ impl RuntimeMetrics {
                 "Runtime health: consumer lag is high ({lag:.0} pending)"
             ));
         }
-        if self.consumer_lag_is_stale() {
+        if let Some(note) = self.consumer_lag_stale_note() {
             warnings.push(format!(
-                "Runtime health: consumer lag telemetry is stale ({}s old)",
-                self.consumer_lag_age_secs.unwrap_or_default()
+                "Runtime health: consumer lag telemetry is stale ({note})"
             ));
         }
 
@@ -142,10 +158,9 @@ impl RuntimeMetrics {
                 "Runtime health: batch latency is high ({latency:.0}ms)"
             ));
         }
-        if self.batch_latency_is_stale() {
+        if let Some(note) = self.batch_latency_stale_note() {
             warnings.push(format!(
-                "Runtime health: batch latency telemetry is stale ({}s old)",
-                self.last_batch_latency_age_secs.unwrap_or_default()
+                "Runtime health: batch latency telemetry is stale ({note})"
             ));
         }
 
@@ -435,6 +450,42 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("consumer lag telemetry is stale"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_assessment_preserves_unknown_stale_sample_age()
+    -> xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Healthy,
+            last_heartbeat_age_secs: Some(5),
+            consumer_lag_pending: Some(42.0),
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: Some(125.0),
+            last_batch_latency_age_secs: None,
+            query_error: None,
+        };
+
+        assert_eq!(
+            metrics.consumer_lag_stale_note().as_deref(),
+            Some("sample age unavailable")
+        );
+        assert_eq!(
+            metrics.batch_latency_stale_note().as_deref(),
+            Some("sample age unavailable")
+        );
+
+        let warnings = metrics.warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("consumer lag telemetry is stale (sample age unavailable)"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("batch latency telemetry is stale (sample age unavailable)"))
         );
         Ok(())
     }

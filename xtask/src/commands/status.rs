@@ -2121,34 +2121,32 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                 style(heartbeat).dim()
             );
 
-            match metrics.fresh_consumer_lag_pending() {
-                Some(lag) => println!(
+            if let Some(lag) = metrics.fresh_consumer_lag_pending() {
+                println!(
                     "  {} Consumer lag:       {:.0} pending",
                     style("-").dim(),
                     lag
-                ),
-                None if metrics.consumer_lag_is_stale() => println!(
-                    "  {} Consumer lag:       stale telemetry (last sample {}s ago)",
+                );
+            } else if let Some(note) = metrics.consumer_lag_stale_note() {
+                println!(
+                    "  {} Consumer lag:       stale telemetry ({})",
                     style("⚠").yellow(),
-                    metrics.consumer_lag_age_secs.unwrap_or_default()
-                ),
-                None => {}
+                    note
+                );
             }
 
-            match metrics.fresh_batch_latency_ms() {
-                Some(latency) => {
-                    println!(
-                        "  {} Batch latency:      {:.0}ms",
-                        style("-").dim(),
-                        latency
-                    )
-                }
-                None if metrics.batch_latency_is_stale() => println!(
-                    "  {} Batch latency:      stale telemetry (last sample {}s ago)",
+            if let Some(latency) = metrics.fresh_batch_latency_ms() {
+                println!(
+                    "  {} Batch latency:      {:.0}ms",
+                    style("-").dim(),
+                    latency
+                );
+            } else if let Some(note) = metrics.batch_latency_stale_note() {
+                println!(
+                    "  {} Batch latency:      stale telemetry ({})",
                     style("⚠").yellow(),
-                    metrics.last_batch_latency_age_secs.unwrap_or_default()
-                ),
-                None => {}
+                    note
+                );
             }
             if let Some(message) = runtime_query_error_message(metrics) {
                 println!("  {} {}", style("✗").red(), message);

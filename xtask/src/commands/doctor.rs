@@ -789,11 +789,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
                 style("✓").green()
             };
             println!("  {} Consumer lag:       {:.0} pending", lag_icon, lag);
-        } else if metrics.consumer_lag_is_stale() {
+        } else if let Some(note) = metrics.consumer_lag_stale_note() {
             println!(
-                "  {} Consumer lag:       stale telemetry (last sample {}s ago)",
+                "  {} Consumer lag:       stale telemetry ({})",
                 style("⚠").yellow(),
-                metrics.consumer_lag_age_secs.unwrap_or_default()
+                note
             );
         }
 
@@ -805,11 +805,11 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
                 style("✓").green()
             };
             println!("  {} Batch latency:      {:.0}ms", lat_icon, latency);
-        } else if metrics.batch_latency_is_stale() {
+        } else if let Some(note) = metrics.batch_latency_stale_note() {
             println!(
-                "  {} Batch latency:      stale telemetry (last sample {}s ago)",
+                "  {} Batch latency:      stale telemetry ({})",
                 style("⚠").yellow(),
-                metrics.last_batch_latency_age_secs.unwrap_or_default()
+                note
             );
         }
 
