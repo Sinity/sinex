@@ -95,15 +95,7 @@ impl UnusedDetector {
             bail!("cargo-machete failed: {stdout}{stderr}");
         }
 
-        // Try JSON parse first (if machete supports --json in the future)
-        if (stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('['))
-            && let Ok(report) = Self::parse_machete_output(&stdout)
-        {
-            return Ok(report);
-        }
-
-        // Fall back to text output parsing
-        Ok(Self::parse_machete_text_output(&stdout))
+        Self::parse_machete_stdout(&stdout)
     }
 
     /// Detect using cargo-udeps
@@ -142,7 +134,17 @@ impl UnusedDetector {
     ///
     /// # Errors
     /// Returns error if output format is unexpected
-    fn parse_machete_text_output(text: &str) -> UnusedReport {
+    fn parse_machete_stdout(stdout: &str) -> Result<UnusedReport> {
+        let trimmed = stdout.trim_start();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return Self::parse_machete_output(stdout)
+                .context("cargo-machete emitted JSON-looking output that failed to parse");
+        }
+
+        Self::parse_machete_text_output(stdout)
+    }
+
+    fn parse_machete_text_output(text: &str) -> Result<UnusedReport> {
         let mut unused_deps = Vec::new();
         let mut current_package: Option<String> = None;
 
@@ -159,8 +161,16 @@ impl UnusedDetector {
             }
 
             // Package line: "package-name -- ./path/to/Cargo.toml:"
-            if line.contains(" -- ") && line.ends_with(':') {
-                let package_name = line.split(" -- ").next().unwrap_or("").trim();
+            if line.contains("-- ") && line.ends_with(':') {
+                let (package_name, _) = line.split_once("-- ").ok_or_else(|| {
+                    color_eyre::eyre::eyre!(
+                        "cargo-machete package line was missing expected delimiter: {line}"
+                    )
+                })?;
+                let package_name = package_name.trim();
+                if package_name.is_empty() {
+                    bail!("cargo-machete reported an empty package name: {line}");
+                }
                 current_package = Some(package_name.to_string());
             }
             // Dependency line (indented): "    dep-name"
@@ -172,13 +182,15 @@ impl UnusedDetector {
                         dependency: dep_name.to_string(),
                     });
                 }
+            } else {
+                bail!("cargo-machete emitted a dependency line before any package header: {line}");
             }
         }
 
-        UnusedReport {
+        Ok(UnusedReport {
             unused: unused_deps,
             tool: "cargo-machete".to_string(),
-        }
+        })
     }
 
     /// Parse cargo-machete JSON output (for future use if JSON format is added)
@@ -321,6 +333,46 @@ mod tests {
         let result = UnusedDetector::parse_machete_output(json);
 
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_stdout_text_output() -> TestResult<()> {
+        let report = UnusedDetector::parse_machete_stdout(
+            "sinex-db -- ./crate/lib/sinex-db/Cargo.toml:\n    serde\n    tokio\n",
+        )?;
+
+        assert_eq!(report.tool, "cargo-machete");
+        assert_eq!(report.unused.len(), 2);
+        assert_eq!(report.unused[0].package, "sinex-db");
+        assert_eq!(report.unused[0].dependency, "serde");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_stdout_rejects_malformed_json() -> TestResult<()> {
+        let error = UnusedDetector::parse_machete_stdout("{not valid json")
+            .expect_err("malformed JSON-looking output should fail");
+        assert!(format!("{error:#}").contains("failed to parse"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_text_output_rejects_dependency_before_header() -> TestResult<()> {
+        let error = UnusedDetector::parse_machete_text_output("serde\n")
+            .expect_err("dependency without package header should fail");
+        assert!(
+            format!("{error:#}")
+                .contains("cargo-machete emitted a dependency line before any package header")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_text_output_rejects_empty_package_name() -> TestResult<()> {
+        let error = UnusedDetector::parse_machete_text_output(" -- ./Cargo.toml:\n    serde\n")
+            .expect_err("empty package header should fail");
+        assert!(format!("{error:#}").contains("empty package name"));
         Ok(())
     }
 
