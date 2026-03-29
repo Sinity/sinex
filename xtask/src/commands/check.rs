@@ -515,22 +515,28 @@ impl XtaskCommand for CheckCommand {
         }
 
         // H1: Post-check fixable diagnostic hint
-        let fixable_count = ctx
-            .with_history_db(|db| db.get_fixable_diagnostic_count())
-            .unwrap_or(0);
+        let (fixable_count, fixable_warning) = resolve_fixable_diagnostic_count(ctx);
+        if let Some(warning) = fixable_warning {
+            if ctx.is_human() {
+                eprintln!("→ {warning}");
+            }
+            result = result.with_warning(warning);
+        }
 
         // Merge diagnostic counts into any existing breakdown data already in result.
         // with_data() replaces — so we must merge here to preserve lint_breakdown/file_breakdown.
         let mut final_data = result.data.take().unwrap_or(serde_json::json!({}));
         final_data["diagnostics_recorded"] = serde_json::json!(ctx.invocation_id().is_some());
-        final_data["fixable"] = serde_json::json!(fixable_count);
+        if let Some(fixable_count) = fixable_count {
+            final_data["fixable"] = serde_json::json!(fixable_count);
+        }
         result = result.with_data(final_data);
 
-        if ctx.is_human() && fixable_count > 0 {
+        if ctx.is_human() && fixable_count.is_some_and(|count| count > 0) {
             eprintln!(
                 "→ {} auto-fixable warning{} detected. Run: xtask check --fix --smart",
-                fixable_count,
-                if fixable_count == 1 { "" } else { "s" }
+                fixable_count.unwrap_or_default(),
+                if fixable_count == Some(1) { "" } else { "s" }
             );
         }
 
@@ -547,6 +553,23 @@ impl XtaskCommand for CheckCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
+    }
+}
+
+fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
+    match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
+        Some(Ok(count)) => (Some(count), None),
+        Some(Err(error)) => (
+            None,
+            Some(format!(
+                "Failed to query auto-fixable diagnostic count from history DB: {error:#}"
+            )),
+        ),
+        None if ctx.invocation_id().is_some() => (
+            None,
+            Some("Failed to open history DB for auto-fixable diagnostic count".to_string()),
+        ),
+        None => (None, None),
     }
 }
 
@@ -693,6 +716,21 @@ mod tests {
         .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
     }
 
+    fn mock_ctx_with_history(
+        runner: Arc<MockCargoRunner>,
+        invocation_id: Option<i64>,
+        db_path: std::path::PathBuf,
+    ) -> CommandContext {
+        CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            invocation_id,
+            "check",
+            db_path,
+        )
+        .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
+    }
+
     fn error_summary() -> DiagnosticSummary {
         DiagnosticSummary {
             errors: 1,
@@ -732,6 +770,46 @@ mod tests {
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_success(), "clean check should succeed: {result:?}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_check_warns_when_fixable_count_is_unavailable(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let temp = tempfile::tempdir()?;
+        let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        let data = result
+            .data
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected structured data"));
+        assert!(result.is_success(), "clean check should still succeed: {result:?}");
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("auto-fixable diagnostic count")));
+        assert!(data.get("fixable").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(result.is_success(), "clean check should succeed: {result:?}");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("auto-fixable diagnostic count")),
+            "unexpected auto-fixable warning: {:?}",
+            result.warnings
+        );
         Ok(())
     }
 
