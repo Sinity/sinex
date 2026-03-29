@@ -108,6 +108,12 @@ enum DeliveryOutcome {
     Closed,
 }
 
+struct IndexedEvents {
+    events_by_id: HashMap<Id<Event<JsonValue>>, Arc<Event<JsonValue>>>,
+    missing_id_count: usize,
+    duplicate_id_count: usize,
+}
+
 impl SubscriptionSlot {
     fn new(filter: SubscriptionFilter) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
         let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
@@ -401,6 +407,28 @@ impl SubscriptionBus {
         truncated
     }
 
+    fn index_events_by_id(events: Vec<Event<JsonValue>>) -> IndexedEvents {
+        let mut events_by_id = HashMap::with_capacity(events.len());
+        let mut missing_id_count = 0usize;
+        let mut duplicate_id_count = 0usize;
+
+        for event in events {
+            let Some(id) = event.id else {
+                missing_id_count = missing_id_count.saturating_add(1);
+                continue;
+            };
+            if events_by_id.insert(id, Arc::new(event)).is_some() {
+                duplicate_id_count = duplicate_id_count.saturating_add(1);
+            }
+        }
+
+        IndexedEvents {
+            events_by_id,
+            missing_id_count,
+            duplicate_id_count,
+        }
+    }
+
     fn snapshot_subscriptions(&self) -> Vec<(u64, Arc<SubscriptionSlot>)> {
         self.subscriptions
             .iter()
@@ -429,10 +457,18 @@ impl SubscriptionBus {
             }
         };
 
-        let mut events_by_id: HashMap<_, _> = events
-            .into_iter()
-            .filter_map(|event| event.id.map(|id| (id, Arc::new(event))))
-            .collect();
+        let IndexedEvents {
+            mut events_by_id,
+            missing_id_count,
+            duplicate_id_count,
+        } = Self::index_events_by_id(events);
+        if missing_id_count > 0 || duplicate_id_count > 0 {
+            warn!(
+                events_without_id = missing_id_count,
+                duplicate_event_ids = duplicate_id_count,
+                "SSE fan-out fetch returned malformed events; preserving unresolved confirmations for retry"
+            );
+        }
         let mut events = Vec::new();
         let mut missing_ids = Vec::new();
         for id in ids {
@@ -540,6 +576,28 @@ mod tests {
         let preview = SubscriptionBus::payload_preview(&vec![b'a'; 200]);
         assert!(preview.ends_with('…'));
         assert_eq!(preview.chars().count(), 161);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn index_events_by_id_reports_missing_and_duplicate_ids() -> TestResult<()> {
+        let mut missing_id = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
+            .from_material(Id::from_uuid(Uuid::now_v7()))
+            .build()?;
+        missing_id.id = None;
+
+        let duplicate_id = Id::from_uuid(Uuid::now_v7());
+        let mut duplicate = DynamicPayload::new("sse-test", "sse.event", json!({"value": 2}))
+            .from_material(Id::from_uuid(Uuid::now_v7()))
+            .build()?;
+        duplicate.id = Some(duplicate_id);
+        let duplicate_again = duplicate.clone();
+
+        let indexed = SubscriptionBus::index_events_by_id(vec![missing_id, duplicate, duplicate_again]);
+
+        assert_eq!(indexed.missing_id_count, 1);
+        assert_eq!(indexed.duplicate_id_count, 1);
+        assert_eq!(indexed.events_by_id.len(), 1);
         Ok(())
     }
 
