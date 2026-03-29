@@ -21,8 +21,8 @@ pub struct ResourceStatus {
     pub memory_available_gb: Option<f64>,
     /// Total system memory in GB, or `None` when the platform does not expose it.
     pub memory_total_gb: Option<f64>,
-    /// 1-minute load average
-    pub load_1min: f64,
+    /// 1-minute load average, or `None` when the platform does not expose it.
+    pub load_1min: Option<f64>,
     /// Number of CPU cores
     pub cpu_count: usize,
 }
@@ -58,7 +58,8 @@ impl ResourceStatus {
     #[must_use]
     pub fn load_acceptable(&self) -> bool {
         // Consider overloaded if load > 90% of CPU count
-        self.load_1min < (self.cpu_count as f64 * 0.9)
+        self.load_1min
+            .is_none_or(|load_1min| load_1min < (self.cpu_count as f64 * 0.9))
     }
 
     /// Get a warning message if resources are constrained.
@@ -77,10 +78,12 @@ impl ResourceStatus {
             ));
         }
 
-        if !self.load_acceptable() {
+        if let Some(load_1min) = self.load_1min
+            && !self.load_acceptable()
+        {
             warnings.push(format!(
                 "High system load: {:.1} (1min avg) on {} CPUs",
-                self.load_1min, self.cpu_count
+                load_1min, self.cpu_count
             ));
         }
 
@@ -98,10 +101,11 @@ impl ResourceStatus {
             (Some(available), Some(total)) => format!("{available:.1}/{total:.1}GB free"),
             _ => "unavailable".to_string(),
         };
-        format!(
-            "Memory: {memory}, Load: {:.2} ({} CPUs)",
-            self.load_1min, self.cpu_count
-        )
+        let load = self
+            .load_1min
+            .map(|load_1min| format!("{load_1min:.2}"))
+            .unwrap_or_else(|| "unavailable".to_string());
+        format!("Memory: {memory}, Load: {load} ({} CPUs)", self.cpu_count)
     }
 }
 
@@ -154,16 +158,16 @@ fn parse_memory_info(content: &str) -> Result<(u64, u64)> {
 }
 
 /// Read 1-minute load average from /proc/loadavg.
-fn load_1min() -> Result<f64> {
+fn load_1min() -> Result<Option<f64>> {
     let content = match std::fs::read_to_string("/proc/loadavg") {
         Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0.0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(eyre!(error).wrap_err("failed to read /proc/loadavg"));
         }
     };
 
-    parse_load_1min(&content)
+    parse_load_1min(&content).map(Some)
 }
 
 fn parse_load_1min(content: &str) -> Result<f64> {
@@ -197,7 +201,7 @@ mod tests {
         let status = ResourceStatus {
             memory_available_gb: Some(3.0),
             memory_total_gb: Some(32.0),
-            load_1min: 1.0,
+            load_1min: Some(1.0),
             cpu_count: 8,
         };
         let warning = status.warning(8);
@@ -211,7 +215,7 @@ mod tests {
         let status = ResourceStatus {
             memory_available_gb: Some(16.0),
             memory_total_gb: Some(32.0),
-            load_1min: 15.0,
+            load_1min: Some(15.0),
             cpu_count: 8,
         };
         let warning = status.warning(8);
@@ -225,7 +229,7 @@ mod tests {
         let status = ResourceStatus {
             memory_available_gb: Some(16.0),
             memory_total_gb: Some(32.0),
-            load_1min: 2.0,
+            load_1min: Some(2.0),
             cpu_count: 8,
         };
         assert!(status.warning(8).is_none());
@@ -237,13 +241,28 @@ mod tests {
         let status = ResourceStatus {
             memory_available_gb: None,
             memory_total_gb: None,
-            load_1min: 2.0,
+            load_1min: Some(2.0),
             cpu_count: 8,
         };
 
         assert_eq!(status.summary(), "Memory: unavailable, Load: 2.00 (8 CPUs)");
         assert!(status.warning(8).is_none());
         assert!(status.has_memory_for(8));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_reports_missing_load_honestly() -> TestResult<()> {
+        let status = ResourceStatus {
+            memory_available_gb: Some(16.0),
+            memory_total_gb: Some(32.0),
+            load_1min: None,
+            cpu_count: 8,
+        };
+
+        assert_eq!(status.summary(), "Memory: 16.0/32.0GB free, Load: unavailable (8 CPUs)");
+        assert!(status.warning(8).is_none());
+        assert!(status.load_acceptable());
         Ok(())
     }
 
