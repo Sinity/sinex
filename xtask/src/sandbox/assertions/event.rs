@@ -117,13 +117,12 @@ impl<'a> EventAssert<'a> {
                     .count_by_event_type(event_type)
                     .await? as usize
             }
-            (Some(_source), Some(_event_type)) => {
-                // Combined source + type filtering not yet supported.
-                // Use separate assertions for now.
-                bail!(
-                    "EventAssert does not yet support combined source + event_type filtering. \
-                     Use separate assertions or direct repository queries."
-                );
+            (Some(source), Some(event_type)) => {
+                self.ctx
+                    .pool
+                    .events()
+                    .count_by_source_and_event_type(source, event_type)
+                    .await? as usize
             }
         };
         Ok(count)
