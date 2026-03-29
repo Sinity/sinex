@@ -701,6 +701,85 @@ impl UnifiedJournalWatcher {
         Ok(true)
     }
 
+    fn record_seen_cursor(
+        first_cursor: &mut Option<String>,
+        last_cursor: &mut Option<String>,
+        cursor: &str,
+    ) {
+        if first_cursor.is_none() {
+            *first_cursor = Some(cursor.to_string());
+        }
+        *last_cursor = Some(cursor.to_string());
+    }
+
+    async fn remember_processed_cursor(
+        &mut self,
+        cursor: &str,
+    ) -> NodeResult<()> {
+        self.last_cursor = Some(cursor.to_string());
+        self.save_cursor(cursor).await
+    }
+
+    async fn handle_oversized_line(
+        &self,
+        line: &str,
+        material: &WatcherMaterialContext,
+    ) -> NodeResult<Option<String>> {
+        let (cursor, unit, metadata_parse_error) = match Self::parse_oversized_line_metadata(line) {
+            Ok((cursor, unit)) => (Some(cursor), unit, None),
+            Err(error) => {
+                self.record_invalid_oversized_line_metadata(line, &error);
+                (None, None, Some(error.to_string()))
+            }
+        };
+
+        let cursor_for_dlq = cursor.as_deref().unwrap_or("unknown");
+        match self
+            .route_oversized_line_to_dlq(
+                material,
+                line,
+                cursor_for_dlq,
+                unit.as_deref(),
+                metadata_parse_error.as_deref(),
+            )
+            .await
+        {
+            Ok(true) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    reason = "journal_line_too_large",
+                    "Oversized journal line routed to DLQ"
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    reason = "journal_line_too_large",
+                    "Oversized journal line skipped because no DLQ publisher is configured"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    line_bytes = line.len(),
+                    limit = self.max_line_bytes,
+                    cursor = cursor_for_dlq,
+                    journal_unit = ?unit,
+                    error = %err,
+                    reason = "journal_line_too_large",
+                    "Failed to route oversized journal line to DLQ"
+                );
+            }
+        }
+
+        Ok(cursor)
+    }
+
     /// Add systemd units to track
     pub fn track_systemd_units(&mut self, units: impl IntoIterator<Item = String>) {
         self.systemd_units.extend(units);
@@ -809,22 +888,28 @@ impl UnifiedJournalWatcher {
 
         for line in output.stdout.split(|&b| b == b'\n') {
             if !line.is_empty() {
+                if line.len() > self.max_line_bytes {
+                    let raw_line = String::from_utf8_lossy(line);
+                    if let Some(cursor) =
+                        self.handle_oversized_line(raw_line.as_ref(), material).await?
+                    {
+                        Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
+                    }
+                    continue;
+                }
                 match serde_json::from_slice::<serde_json::Value>(line) {
                     Ok(entry) => {
                         // Process entry and emit both journal and systemd events if applicable
                         if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                            if first_cursor.is_none() {
-                                first_cursor = journal_event
-                                    .payload
-                                    .get("cursor")
-                                    .and_then(|v| v.as_str())
-                                    .map(std::string::ToString::to_string);
+                            if let Some(cursor) =
+                                journal_event.payload.get("cursor").and_then(|v| v.as_str())
+                            {
+                                Self::record_seen_cursor(
+                                    &mut first_cursor,
+                                    &mut last_cursor,
+                                    cursor,
+                                );
                             }
-                            last_cursor = journal_event
-                                .payload
-                                .get("cursor")
-                                .and_then(|v| v.as_str())
-                                .map(std::string::ToString::to_string);
 
                             batch.push(journal_event);
                             entries_count += 1;
@@ -862,8 +947,7 @@ impl UnifiedJournalWatcher {
 
         // Update cursor
         if let Some(ref cursor) = last_cursor {
-            self.last_cursor = Some(cursor.clone());
-            self.save_cursor(cursor).await?;
+            self.remember_processed_cursor(cursor).await?;
         }
 
         // Send sync event
@@ -1012,59 +1096,10 @@ impl UnifiedJournalWatcher {
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
                     if line.len() > self.max_line_bytes {
-                        let (cursor, unit, metadata_parse_error) =
-                            match Self::parse_oversized_line_metadata(line.trim()) {
-                                Ok((cursor, unit)) => (cursor, unit, None),
-                                Err(error) => {
-                                    self.record_invalid_oversized_line_metadata(
-                                        line.trim(),
-                                        &error,
-                                    );
-                                    ("unknown".to_string(), None, Some(error.to_string()))
-                                }
-                            };
-
-                        match self
-                            .route_oversized_line_to_dlq(
-                                material,
-                                &line,
-                                &cursor,
-                                unit.as_deref(),
-                                metadata_parse_error.as_deref(),
-                            )
-                            .await
+                        if let Some(cursor) =
+                            self.handle_oversized_line(line.trim(), material).await?
                         {
-                            Ok(true) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    reason = "journal_line_too_large",
-                                    "Oversized journal line routed to DLQ"
-                                );
-                            }
-                            Ok(false) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    reason = "journal_line_too_large",
-                                    "Oversized journal line skipped because no DLQ publisher is configured"
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    line_bytes = line.len(),
-                                    limit = self.max_line_bytes,
-                                    cursor = %cursor,
-                                    journal_unit = ?unit,
-                                    error = %err,
-                                    reason = "journal_line_too_large",
-                                    "Failed to route oversized journal line to DLQ"
-                                );
-                            }
+                            self.remember_processed_cursor(&cursor).await?;
                         }
                         continue;
                     }
@@ -1077,8 +1112,7 @@ impl UnifiedJournalWatcher {
                                     if let Some(cursor) =
                                         event.payload.get("cursor").and_then(|v| v.as_str())
                                     {
-                                        self.last_cursor = Some(cursor.to_string());
-                                        self.save_cursor(cursor).await?;
+                                        self.remember_processed_cursor(cursor).await?;
                                     }
 
                                     self.send_event(
@@ -1664,6 +1698,7 @@ mod tests {
     use async_trait::async_trait;
     use sinex_primitives::events::Provenance;
     use sinex_primitives::{Id, JsonValue};
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
     use xtask::sandbox::prelude::*;
 
@@ -1754,6 +1789,28 @@ mod tests {
                 },
             }
         }
+    }
+
+    fn fake_journalctl_script(stdout_lines: &[String]) -> String {
+        let mut script =
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'journalctl test\\n'\n  exit 0\nfi\n"
+                .to_string();
+        for line in stdout_lines {
+            let escaped = line.replace('\'', "'\"'\"'");
+            script.push_str(&format!("printf '%s\\n' '{escaped}'\n"));
+        }
+        script
+    }
+
+    fn install_fake_journalctl(script: &str) -> TestResult<std::path::PathBuf> {
+        let runtime_dir = std::env::temp_dir().join(format!("sinex-journalctl-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&runtime_dir)?;
+        let script_path = runtime_dir.join("journalctl");
+        std::fs::write(&script_path, script)?;
+        let mut permissions = std::fs::metadata(&script_path)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script_path, permissions)?;
+        Ok(runtime_dir)
     }
 
     #[sinex_test]
@@ -1978,6 +2035,85 @@ mod tests {
         .expect_err("oversized journal metadata must not fabricate a cursor");
 
         assert!(error.to_string().contains("missing required __CURSOR"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn import_historical_advances_cursor_past_oversized_lines(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let cursor = "s=abc;i=1;b=boot;m=1;t=1;x=1";
+        let oversized_line = json!({
+            "__CURSOR": cursor,
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "MESSAGE": "X".repeat(256),
+        })
+        .to_string();
+        let runtime_dir =
+            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvVarGuard::set(
+            "PATH",
+            runtime_dir
+                .to_str()
+                .expect("temp journalctl directory should be valid UTF-8"),
+        );
+
+        let mut watcher = test_watcher();
+        watcher.max_line_bytes = 64;
+        let material = test_material();
+        let (journal_tx, mut journal_rx) = mpsc::channel(1);
+
+        let entries = watcher
+            .import_historical(&journal_tx, &None, &material)
+            .await?;
+
+        assert_eq!(entries, 0);
+        assert_eq!(watcher.last_cursor.as_deref(), Some(cursor));
+        assert!(
+            journal_rx.try_recv().is_err(),
+            "oversized entries must not emit normal events"
+        );
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn follow_journal_advances_cursor_past_oversized_lines(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let cursor = "s=follow;i=1;b=boot;m=1;t=1;x=1";
+        let oversized_line = json!({
+            "__CURSOR": cursor,
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "MESSAGE": "Y".repeat(256),
+        })
+        .to_string();
+        let runtime_dir =
+            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvVarGuard::set(
+            "PATH",
+            runtime_dir
+                .to_str()
+                .expect("temp journalctl directory should be valid UTF-8"),
+        );
+
+        let mut watcher = test_watcher();
+        watcher.max_line_bytes = 64;
+        let material = test_material();
+        let (journal_tx, _journal_rx) = mpsc::channel(1);
+
+        let error = watcher
+            .follow_journal_inner(&journal_tx, None, &material)
+            .await
+            .expect_err("follow loop should report the spawned journalctl EOF");
+
+        assert!(error.to_string().contains("ended unexpectedly"));
+        assert_eq!(watcher.last_cursor.as_deref(), Some(cursor));
+
+        let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
 
