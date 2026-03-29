@@ -841,6 +841,41 @@ mod tests {
         assert_eq!(invocation_id, 42);
         Ok(())
     }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_accepts_valid_count() -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "target_count": 3u64
+        }));
+
+        assert_eq!(super::parse_fuzz_target_count(&result)?, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_rejects_missing_count() -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "items": []
+        }));
+
+        let error =
+            super::parse_fuzz_target_count(&result).expect_err("missing target count must surface");
+        assert!(format!("{error:#}").contains("missing target_count"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_rejects_non_numeric_count()
+    -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "target_count": "three"
+        }));
+
+        let error = super::parse_fuzz_target_count(&result)
+            .expect_err("non-numeric target count must surface");
+        assert!(format!("{error:#}").contains("invalid target_count"));
+        Ok(())
+    }
 }
 
 // ─── Subcommand handlers ───────────────────────────────────────────────────
@@ -922,12 +957,7 @@ async fn execute_fuzz(fuzz: &FuzzArgs, ctx: &CommandContext) -> Result<CommandRe
         }
         .execute(ctx)
         .await?;
-        let target_count = list_result
-            .data
-            .as_ref()
-            .and_then(|data| data.get("target_count"))
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
+        let target_count = parse_fuzz_target_count(&list_result)?;
 
         if fuzz.list || target_count == 0 {
             if target_count == 0 {
@@ -962,6 +992,19 @@ async fn execute_fuzz(fuzz: &FuzzArgs, ctx: &CommandContext) -> Result<CommandRe
     Ok(CommandResult::success()
         .with_message("No fuzz target specified")
         .with_duration(ctx.elapsed()))
+}
+
+fn parse_fuzz_target_count(result: &CommandResult) -> Result<u64> {
+    let data = result
+        .data
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result is missing structured data"))?;
+    let target_count = data
+        .get("target_count")
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result is missing target_count"))?;
+    target_count
+        .as_u64()
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result has invalid target_count"))
 }
 
 async fn execute_coverage(cov: &CoverageArgs, ctx: &CommandContext) -> Result<CommandResult> {
