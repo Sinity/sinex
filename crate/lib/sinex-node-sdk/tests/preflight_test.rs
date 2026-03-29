@@ -7,7 +7,10 @@ use sinex_node_sdk::preflight::{
 };
 use sinex_primitives::{environment::SinexEnvironment, nats::JetStreamTopology};
 use std::env;
+use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -661,6 +664,35 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
     Ok(())
 }
 
+/// Test Phase 4: Resource verification surfaces non-UTF8 directory overrides
+#[cfg(unix)]
+#[sinex_test]
+async fn test_phase4_system_resources_rejects_non_unicode_work_dir() -> TestResult<()> {
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let previous = env::var_os("SINEX_WORK_DIR");
+    unsafe { env::set_var("SINEX_WORK_DIR", OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x80])) };
+
+    let (status, _details, messages) = resources::verify_system_resources().await?;
+
+    unsafe {
+        match previous {
+            Some(value) => env::set_var("SINEX_WORK_DIR", value),
+            None => env::remove_var("SINEX_WORK_DIR"),
+        }
+    }
+
+    assert_eq!(status, VerificationStatus::Fail);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("SINEX_WORK_DIR") && message.contains("not valid UTF-8")),
+        "expected invalid UTF-8 work dir message, got {messages:#?}"
+    );
+    Ok(())
+}
+
 // ====== PHASE 5: CONFIGURATION TESTS ======
 
 /// Test Phase 5: Configuration verification success
@@ -800,6 +832,44 @@ async fn test_phase5_configuration_allows_missing_database_url_in_edge_mode() ->
         },
     )
     .await?;
+
+    Ok(())
+}
+
+/// Test Phase 5: Configuration surfaces non-UTF8 required environment values
+#[cfg(unix)]
+#[sinex_test]
+async fn test_phase5_configuration_rejects_non_unicode_required_env(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let previous_database_url = env::var_os("DATABASE_URL");
+    let previous_rust_log = env::var_os("RUST_LOG");
+    unsafe { env::set_var("DATABASE_URL", ctx.database_url().to_string()) };
+    unsafe { env::set_var("RUST_LOG", OsString::from_vec(vec![0x69, 0x6e, 0x80])) };
+
+    let (status, _details, messages) = configuration::verify_configuration_generation().await?;
+
+    unsafe {
+        match previous_database_url {
+            Some(value) => env::set_var("DATABASE_URL", value),
+            None => env::remove_var("DATABASE_URL"),
+        }
+        match previous_rust_log {
+            Some(value) => env::set_var("RUST_LOG", value),
+            None => env::remove_var("RUST_LOG"),
+        }
+    }
+
+    assert_eq!(status, VerificationStatus::Fail);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("RUST_LOG") && message.contains("not valid UTF-8")),
+        "expected invalid UTF-8 RUST_LOG message, got {messages:#?}"
+    );
 
     Ok(())
 }

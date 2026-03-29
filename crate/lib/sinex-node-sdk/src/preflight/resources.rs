@@ -10,6 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
@@ -17,31 +18,58 @@ use tracing::info;
 
 use super::VerificationStatus;
 
-fn configured_state_dir() -> String {
-    std::env::var("SINEX_STATE_DIR")
-        .or_else(|_| std::env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex")))
-        .unwrap_or_else(|_| "/var/lib/sinex".to_string())
+fn env_string(name: &str) -> NodeResult<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable '{name}' is not valid UTF-8"
+        ))),
+    }
 }
 
-fn configured_data_dir() -> String {
-    std::env::var("SINEX_DATA_DIR").unwrap_or_else(|_| configured_state_dir())
+fn configured_state_dir() -> NodeResult<String> {
+    if let Some(state_dir) = env_string("SINEX_STATE_DIR")? {
+        return Ok(state_dir);
+    }
+    if let Some(state_home) = env_string("XDG_STATE_HOME")? {
+        return Ok(format!("{state_home}/sinex"));
+    }
+    Ok("/var/lib/sinex".to_string())
 }
 
-fn configured_log_dir() -> String {
-    std::env::var("SINEX_LOG_DIR").unwrap_or_else(|_| format!("{}/logs", configured_state_dir()))
+fn configured_data_dir() -> NodeResult<String> {
+    env_string("SINEX_DATA_DIR")?.map_or_else(configured_state_dir, Ok)
 }
 
-fn configured_work_dir() -> String {
-    std::env::var("SINEX_WORK_DIR").unwrap_or_else(|_| {
-        dirs::cache_dir()
-            .map(|dir| dir.join("sinex"))
-            .and_then(|dir| dir.into_os_string().into_string().ok())
-            .unwrap_or_else(|| "/tmp/sinex".to_string())
-    })
+fn configured_log_dir() -> NodeResult<String> {
+    if let Some(log_dir) = env_string("SINEX_LOG_DIR")? {
+        return Ok(log_dir);
+    }
+    Ok(format!("{}/logs", configured_state_dir()?))
 }
 
-fn configured_tmp_dir() -> String {
-    std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+fn configured_work_dir() -> NodeResult<String> {
+    if let Some(work_dir) = env_string("SINEX_WORK_DIR")? {
+        return Ok(work_dir);
+    }
+
+    match dirs::cache_dir() {
+        Some(dir) => dir
+            .join("sinex")
+            .into_os_string()
+            .into_string()
+            .map_err(|path| {
+                SinexError::configuration(format!(
+                    "Default cache directory for SINEX_WORK_DIR is not valid UTF-8: {path:?}"
+                ))
+            }),
+        None => Ok("/tmp/sinex".to_string()),
+    }
+}
+
+fn configured_tmp_dir() -> NodeResult<String> {
+    Ok(env_string("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
 }
 
 /// Verify system resource availability for Sinex deployment
@@ -188,9 +216,9 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
 }
 
 async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let data_dir = configured_data_dir();
-    let tmp_dir = configured_tmp_dir();
-    let log_dir = configured_log_dir();
+    let data_dir = configured_data_dir()?;
+    let tmp_dir = configured_tmp_dir()?;
+    let log_dir = configured_log_dir()?;
     let paths_to_check = vec![
         (data_dir, "Sinex data directory".to_string(), 10.0), // 10GB minimum
         (tmp_dir, "Temporary directory".to_string(), 5.0),    // 5GB minimum
@@ -325,11 +353,11 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut directories_to_check = Vec::new();
     for dir in [
-        configured_state_dir(),
-        configured_data_dir(),
-        configured_log_dir(),
-        configured_tmp_dir(),
-        configured_work_dir(),
+        configured_state_dir()?,
+        configured_data_dir()?,
+        configured_log_dir()?,
+        configured_tmp_dir()?,
+        configured_work_dir()?,
     ] {
         if !directories_to_check.contains(&dir) {
             directories_to_check.push(dir);
@@ -451,23 +479,49 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
         }
     }
 
-    let configured_hosts = configured_hostname_resolution_targets();
-    if configured_hosts.is_empty() {
+    let configured_targets = configured_hostname_resolution_probe();
+    if !configured_targets.invalid_inputs.is_empty() {
+        let invalid = configured_targets
+            .invalid_inputs
+            .iter()
+            .map(|input| format!("{}={} ({})", input.env_name, input.raw, input.error))
+            .collect::<Vec<_>>();
+        messages.push(format!(
+            "⚠ Invalid configured hostname targets: {}",
+            invalid.join("; ")
+        ));
+        network_info.insert(
+            "configured_hostname_resolution_inputs",
+            json!(configured_targets.invalid_inputs),
+        );
+    }
+
+    if configured_targets.hosts.is_empty() {
         messages.push(
-            "ℹ No configured network hostnames to resolve; hostname probe skipped".to_string(),
+            if network_info.contains_key("configured_hostname_resolution_inputs") {
+                "ℹ No valid configured network hostnames to resolve; hostname probe skipped"
+                    .to_string()
+            } else {
+                "ℹ No configured network hostnames to resolve; hostname probe skipped"
+                    .to_string()
+            },
         );
         network_info.insert(
             "configured_hostname_resolution",
             json!({
                 "skipped": true,
-                "reason": "no_configured_hostnames",
+                "reason": if network_info.contains_key("configured_hostname_resolution_inputs") {
+                    "no_valid_configured_hostnames"
+                } else {
+                    "no_configured_hostnames"
+                },
             }),
         );
     } else {
         let mut results = serde_json::Map::new();
         let mut failed_hosts = Vec::new();
 
-        for host in configured_hosts {
+        for host in configured_targets.hosts {
             match resolve_hostname(&host) {
                 Ok(()) => {
                     results.insert(host, json!({ "resolved": true }));
@@ -497,33 +551,69 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
     Ok(json!(network_info))
 }
 
-fn configured_hostname_resolution_targets() -> Vec<String> {
-    let mut targets = BTreeSet::new();
-    for env_name in ["DATABASE_URL", "SINEX_NATS_URL", "SINEX_GATEWAY_URL"] {
-        if let Ok(raw) = std::env::var(env_name)
-            && let Some(host) = resolution_target_host(&raw)
-        {
-            targets.insert(host);
-        }
-    }
-    targets.into_iter().collect()
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct InvalidResolutionTarget {
+    env_name: &'static str,
+    raw: String,
+    error: String,
 }
 
-fn resolution_target_host(raw: &str) -> Option<String> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ConfiguredHostnameResolutionProbe {
+    hosts: Vec<String>,
+    invalid_inputs: Vec<InvalidResolutionTarget>,
+}
+
+fn configured_hostname_resolution_probe() -> ConfiguredHostnameResolutionProbe {
+    let mut targets = BTreeSet::new();
+    let mut invalid_inputs = Vec::new();
+    for env_name in ["DATABASE_URL", "SINEX_NATS_URL", "SINEX_GATEWAY_URL"] {
+        match std::env::var_os(env_name) {
+            None => {}
+            Some(raw) => match raw.into_string() {
+                Ok(raw) => match resolution_target_host(&raw) {
+                    Ok(Some(host)) => {
+                        targets.insert(host);
+                    }
+                    Ok(None) => {}
+                    Err(error) => invalid_inputs.push(InvalidResolutionTarget {
+                        env_name,
+                        raw,
+                        error,
+                    }),
+                },
+                Err(raw) => invalid_inputs.push(InvalidResolutionTarget {
+                    env_name,
+                    raw: format!("{raw:?}"),
+                    error: "value contains non-unicode bytes".to_string(),
+                }),
+            },
+        }
+    }
+    ConfiguredHostnameResolutionProbe {
+        hosts: targets.into_iter().collect(),
+        invalid_inputs,
+    }
+}
+
+fn resolution_target_host(raw: &str) -> Result<Option<String>, String> {
     let candidate = if raw.contains("://") {
         raw.to_string()
     } else if raw.contains(':') && !raw.starts_with('/') {
         format!("dummy://{raw}")
     } else {
-        return None;
+        return Err("configured endpoint is not a URL or host:port target".to_string());
     };
 
-    let parsed = url::Url::parse(&candidate).ok()?;
-    let host = parsed.host_str()?;
+    let parsed = url::Url::parse(&candidate)
+        .map_err(|error| format!("failed to parse configured endpoint: {error}"))?;
+    let Some(host) = parsed.host_str() else {
+        return Ok(None);
+    };
     if matches!(host, "localhost" | "127.0.0.1" | "::1") {
-        return None;
+        return Ok(None);
     }
-    Some(host.to_string())
+    Ok(Some(host.to_string()))
 }
 
 fn resolve_hostname(host: &str) -> NodeResult<()> {
@@ -607,7 +697,7 @@ fn check_process_limits_info() -> NodeResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_hostname_resolution_targets, resolution_target_host};
+    use super::{configured_hostname_resolution_probe, resolution_target_host};
     use xtask::sandbox::sinex_test;
 
     struct EnvGuard {
@@ -641,22 +731,31 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             resolution_target_host("postgresql://db.example/sinex"),
-            Some("db.example".to_string())
+            Ok(Some("db.example".to_string()))
         );
         assert_eq!(
             resolution_target_host("nats://nats.example:4222"),
-            Some("nats.example".to_string())
+            Ok(Some("nats.example".to_string()))
         );
         assert_eq!(
             resolution_target_host("127.0.0.1:4222"),
-            None,
+            Ok(None),
             "loopback-only endpoints should not be reported as hostname resolution targets"
         );
         assert_eq!(
             resolution_target_host("postgresql:///sinex?host=/tmp"),
-            None,
+            Ok(None),
             "unix-socket URLs should not be treated as DNS targets"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolution_target_host_rejects_invalid_configured_target()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = resolution_target_host("db.example")
+            .expect_err("bare hostname should surface as invalid configured endpoint");
+        assert!(error.contains("not a URL or host:port target"));
         Ok(())
     }
 
@@ -668,10 +767,30 @@ mod tests {
         env.set("SINEX_NATS_URL", "nats://db.example:4222");
         env.set("SINEX_GATEWAY_URL", "https://gateway.example/rpc");
 
-        let targets = configured_hostname_resolution_targets();
+        let targets = configured_hostname_resolution_probe().hosts;
         assert_eq!(
             targets,
             vec!["db.example".to_string(), "gateway.example".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configured_hostname_resolution_probe_collects_invalid_inputs()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "db.example");
+        env.set("SINEX_NATS_URL", "nats://nats.example:4222");
+
+        let probe = configured_hostname_resolution_probe();
+        assert_eq!(probe.hosts, vec!["nats.example".to_string()]);
+        assert_eq!(probe.invalid_inputs.len(), 1);
+        assert_eq!(probe.invalid_inputs[0].env_name, "DATABASE_URL");
+        assert_eq!(probe.invalid_inputs[0].raw, "db.example");
+        assert!(
+            probe.invalid_inputs[0]
+                .error
+                .contains("not a URL or host:port target")
         );
         Ok(())
     }

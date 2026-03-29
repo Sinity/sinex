@@ -5,6 +5,7 @@ use async_nats::{Client, Message};
 use crate::config::env_bool_optional;
 use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 pub use sinex_db::replay::state_machine::ReplayScope;
 use sinex_db::replay::state_machine::{
@@ -17,14 +18,14 @@ use sinex_node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
 };
-use sinex_primitives::domain::{EventSource, NodeName};
+use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -238,16 +239,6 @@ pub struct ReplayControlClient {
     request_timeout: Duration,
 }
 
-fn lock_recover<'a, T>(mutex: &'a Mutex<T>, context: &str) -> MutexGuard<'a, T> {
-    match mutex.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            warn!(mutex = context, "Mutex poisoned; recovering inner state");
-            poisoned.into_inner()
-        }
-    }
-}
-
 impl ReplayControlClient {
     fn new(env: SinexEnvironment, client: Client, request_timeout: Duration) -> Self {
         let subject = env.nats_subject("sinex.control.replay");
@@ -263,7 +254,7 @@ impl ReplayControlClient {
     pub fn health_snapshot(&self) -> ReplayControlHealth {
         let connected = matches!(self.client.connection_state(), NatsState::Connected);
         let last_error = {
-            let guard = lock_recover(&self.health, "replay_control_health");
+            let guard = self.health.lock();
             guard.last_error.clone()
         };
         ReplayControlHealth {
@@ -273,7 +264,7 @@ impl ReplayControlClient {
     }
 
     fn record_error(&self, message: impl Into<String>) {
-        let mut guard = lock_recover(&self.health, "replay_control_health");
+        let mut guard = self.health.lock();
         guard.last_error = Some(ReplayControlError::new(message));
     }
 
@@ -1299,13 +1290,39 @@ impl ReplayExecutionEngine {
             return;
         }
 
+        let event_source = match EventSource::new(event_source.to_string()) {
+            Ok(source) => source,
+            Err(error) => {
+                warn!(
+                    operation_id = %operation_id,
+                    event_source,
+                    error = %error,
+                    "Skipping scope invalidation publish because archived event source is invalid"
+                );
+                return;
+            }
+        };
+
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
 
         for (event_type, scope_keys) in scope_metadata {
+            let event_type = match EventType::new(event_type.clone()) {
+                Ok(event_type) => event_type,
+                Err(error) => {
+                    warn!(
+                        operation_id = %operation_id,
+                        raw_event_type = %event_type,
+                        scope_count = scope_keys.len(),
+                        error = %error,
+                        "Skipping scope invalidation publish because archived event type is invalid"
+                    );
+                    continue;
+                }
+            };
             let invalidation = DerivedScopeInvalidation::archived(
                 cascade_ids.to_vec(),
-                event_source,
-                event_type.as_str(),
+                event_source.clone(),
+                event_type.clone(),
             )
             .with_operation(operation_id)
             .with_scope_keys(scope_keys.clone());
@@ -1319,7 +1336,7 @@ impl ReplayExecutionEngine {
                     {
                         warn!(
                             operation_id = %operation_id,
-                            event_type,
+                            event_type = %event_type,
                             scope_count = scope_keys.len(),
                             error = %e,
                             "Failed to publish scope invalidation"
@@ -1327,7 +1344,7 @@ impl ReplayExecutionEngine {
                     } else {
                         debug!(
                             operation_id = %operation_id,
-                            event_type,
+                            event_type = %event_type,
                             scope_count = scope_keys.len(),
                             "Published scope invalidation"
                         );
@@ -1934,7 +1951,7 @@ impl ReplayTelemetry {
 
     #[cfg(test)]
     fn latest_snapshot(&self) -> ReplayTelemetrySnapshot {
-        let guard = lock_recover(&self.latest, "replay_telemetry_snapshot");
+        let guard = self.latest.lock();
         guard.clone()
     }
 
@@ -1969,7 +1986,7 @@ impl ReplayTelemetry {
             counts: counts.clone(),
         };
 
-        let mut guard = lock_recover(&self.latest, "replay_telemetry_snapshot");
+        let mut guard = self.latest.lock();
         *guard = snapshot.clone();
 
         info!(
@@ -2214,14 +2231,18 @@ mod tests {
     async fn telemetry_reports_state_counts(ctx: TestContext) -> Result<()> {
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let telemetry = ReplayTelemetry::with_interval(replay.clone(), Duration::from_millis(5));
-        let scope = sample_scope();
+        let planning_scope = sample_scope();
+        let mut executing_scope = sample_scope();
+        executing_scope.node_id = "fs-test-executing".to_string();
+        let mut failed_scope = sample_scope();
+        failed_scope.node_id = "fs-test-failed".to_string();
 
         let _planning = replay
-            .create_operation(scope.clone(), "planner".into())
+            .create_operation(planning_scope, "planner".into())
             .await?;
 
         let executing = replay
-            .create_operation(scope.clone(), "executor".into())
+            .create_operation(executing_scope, "executor".into())
             .await?;
         drive_to_state(
             &replay,
@@ -2235,7 +2256,7 @@ mod tests {
         )
         .await?;
 
-        let failed = replay.create_operation(scope, "runner".into()).await?;
+        let failed = replay.create_operation(failed_scope, "runner".into()).await?;
         drive_to_state(
             &replay,
             &ctx.pool,

@@ -1000,9 +1000,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.event_batcher_shutdown = Some(batcher_shutdown_sender);
 
         // Get hostname
-        let host = gethostname::gethostname().to_string_lossy().to_string();
+        let host = sinex_primitives::events::builder::get_hostname();
         let consumer_name = format!("{host}-{}", std::process::id());
-        let instance_id = Self::build_instance_id(&host);
+        let instance_id = Self::build_instance_id(host.as_str());
         let version = crate::version::node_version()
             .map(|value| value.to_string())
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
@@ -1735,7 +1735,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let replay_service_info = ServiceInfo::new(
             replay_service_name.clone(),
             base_service_info.node_name().to_string(),
-            base_service_info.host().to_string(),
+            base_service_info.host().clone(),
             base_service_info.work_dir().clone(),
             base_service_info.dry_run(),
             base_service_info.instance_id().to_string(),
@@ -2074,7 +2074,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .nats_client()
                 .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
             let service = rs.service_info().service_name().to_string();
-            let host = rs.service_info().host().to_string();
+            let host = rs.service_info().host().as_str().to_string();
             let pid = std::process::id();
             let instance_id = format!("{host}-{pid}");
 

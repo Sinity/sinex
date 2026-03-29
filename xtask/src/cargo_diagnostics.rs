@@ -195,10 +195,8 @@ impl DiagnosticSummary {
 /// the cargo target/ lock is held by a concurrent process (e.g., nextest, another
 /// `cargo check`). On timeout, kills the child process and returns an error.
 fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<u8>, bool)> {
-    let timeout_secs = std::env::var("SINEX_CARGO_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(600);
+    let timeout_secs =
+        crate::parse_positive_u64_env_or_default("SINEX_CARGO_TIMEOUT", 600, "cargo timeout");
 
     let mut child = Command::new("cargo")
         .args(cargo_args)
@@ -369,10 +367,8 @@ fn run_cargo_streaming<F>(
 where
     F: FnMut(usize),
 {
-    let timeout_secs = std::env::var("SINEX_CARGO_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(600);
+    let timeout_secs =
+        crate::parse_positive_u64_env_or_default("SINEX_CARGO_TIMEOUT", 600, "cargo timeout");
 
     let mut child = Command::new("cargo")
         .args(cargo_args)
@@ -911,6 +907,26 @@ mod tests {
             None,
             "duplicate artifacts for the same target package should not inflate progress"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_run_cargo_with_timeout_rejects_invalid_timeout_override() -> TestResult<()> {
+        let _guard = super::super::tests::EnvGuard::set("SINEX_CARGO_TIMEOUT", Some("bogus".into()));
+
+        let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
+        assert!(success);
+        assert!(String::from_utf8(stdout)?.contains("cargo"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_run_cargo_with_timeout_rejects_zero_timeout_override() -> TestResult<()> {
+        let _guard = super::super::tests::EnvGuard::set("SINEX_CARGO_TIMEOUT", Some("0".into()));
+
+        let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
+        assert!(success);
+        assert!(String::from_utf8(stdout)?.contains("cargo"));
         Ok(())
     }
 }

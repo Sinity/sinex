@@ -1205,47 +1205,86 @@ impl JetStreamConsumer {
                     error!("Failed to persist batch: {}", e);
                     let mut settlement_errors = Vec::new();
                     for prepared in &batch {
-                        if self.should_route_terminal_persistence_failure(&prepared.message) {
-                            if let Err(err) = self
-                                .route_to_dlq_and_ack(
-                                    &prepared.message,
-                                    format!("Persistence error: {e}"),
-                                )
-                                .await
-                            {
+                        match self.should_route_terminal_persistence_failure(&prepared.message) {
+                            Ok(true) => {
+                                if let Err(err) = self
+                                    .route_to_dlq_and_ack(
+                                        &prepared.message,
+                                        format!("Persistence error: {e}"),
+                                    )
+                                    .await
+                                {
+                                    warn!(
+                                        event_id = %prepared.parsed_id,
+                                        error = %err,
+                                        "Failed to route persistence error to DLQ"
+                                    );
+                                    settlement_errors.push((
+                                        prepared.parsed_id,
+                                        Self::message_settlement_failure(
+                                            "failed to route persistence error to DLQ",
+                                            prepared.parsed_id,
+                                            &err,
+                                        ),
+                                    ));
+                                }
+                            }
+                            Ok(false) => {
+                                if let Err(err) = prepared
+                                    .message
+                                    .ack_with(jetstream::AckKind::Nak(None))
+                                    .await
+                                {
+                                    warn!(
+                                        event_id = %prepared.parsed_id,
+                                        error = %err,
+                                        "Failed to NAK after persistence failure"
+                                    );
+                                    self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                                    settlement_errors.push((
+                                        prepared.parsed_id,
+                                        Self::message_settlement_failure(
+                                            "failed to NAK after persistence failure",
+                                            prepared.parsed_id,
+                                            &err,
+                                        ),
+                                    ));
+                                }
+                            }
+                            Err(err) => {
                                 warn!(
                                     event_id = %prepared.parsed_id,
                                     error = %err,
-                                    "Failed to route persistence error to DLQ"
+                                    "Failed to inspect persistence retry state; NAKing for retry"
                                 );
                                 settlement_errors.push((
                                     prepared.parsed_id,
-                                    Self::message_settlement_failure(
-                                        "failed to route persistence error to DLQ",
-                                        prepared.parsed_id,
-                                        &err,
+                                    err.with_context(
+                                        "settlement_operation",
+                                        "inspect_persistence_retry_state",
                                     ),
                                 ));
+                                if let Err(nak_err) = prepared
+                                    .message
+                                    .ack_with(jetstream::AckKind::Nak(None))
+                                    .await
+                                {
+                                    warn!(
+                                        event_id = %prepared.parsed_id,
+                                        error = %nak_err,
+                                        "Failed to NAK after persistence retry-state inspection failure"
+                                    );
+                                    self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                                    settlement_errors.push((
+                                        prepared.parsed_id,
+                                        Self::message_settlement_failure(
+                                            "failed to NAK after persistence retry-state inspection failure",
+                                            prepared.parsed_id,
+                                            &nak_err,
+                                        ),
+                                    ));
+                                }
                             }
-                        } else if let Err(err) = prepared
-                            .message
-                            .ack_with(jetstream::AckKind::Nak(None))
-                            .await
-                        {
-                            warn!(
-                                event_id = %prepared.parsed_id,
-                                error = %err,
-                                "Failed to NAK after persistence failure"
-                            );
-                            self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                            settlement_errors.push((
-                                prepared.parsed_id,
-                                Self::message_settlement_failure(
-                                    "failed to NAK after persistence failure",
-                                    prepared.parsed_id,
-                                    &err,
-                                ),
-                            ));
                         }
                     }
                     let failed_count = batch.len() as u64;
@@ -1444,20 +1483,33 @@ impl JetStreamConsumer {
         })
     }
 
-    fn should_route_terminal_persistence_failure(&self, msg: &jetstream::Message) -> bool {
-        if self.route_db_errors_to_dlq {
-            return true;
+    fn should_route_terminal_persistence_failure(
+        &self,
+        msg: &jetstream::Message,
+    ) -> IngestdResult<bool> {
+        let delivery_attempt = msg
+            .info()
+            .map(|info| info.delivered)
+            .map_err(|error| error.to_string());
+        Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt)
+    }
+
+    fn should_route_persistence_failure(
+        route_db_errors_to_dlq: bool,
+        delivery_attempt: std::result::Result<i64, String>,
+    ) -> IngestdResult<bool> {
+        if route_db_errors_to_dlq {
+            return Ok(true);
         }
 
-        match msg.info() {
-            Ok(info) => info.delivered >= MAIN_CONSUMER_MAX_DELIVER,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "Failed to inspect JetStream delivery metadata for persistence failure"
-                );
-                false
-            }
+        match delivery_attempt {
+            Ok(delivered) => Ok(delivered >= MAIN_CONSUMER_MAX_DELIVER),
+            Err(error) => Err(
+                SinexError::processing(
+                    "Failed to inspect JetStream delivery metadata for persistence failure",
+                )
+                .with_context("delivery_metadata_error", error),
+            ),
         }
     }
 
@@ -2021,6 +2073,51 @@ mod tests {
             .get("additional_settlement_error_1")
             .expect("extra settlement error should stay attached");
         assert!(extra.contains("failed to route persistence error to DLQ"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn persistence_failure_routing_short_circuits_when_dlq_is_forced() -> TestResult<()> {
+        assert!(JetStreamConsumer::should_route_persistence_failure(
+            true,
+            Err("delivery metadata unavailable".to_string()),
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn persistence_failure_routing_uses_delivery_attempts_when_available() -> TestResult<()> {
+        assert!(!JetStreamConsumer::should_route_persistence_failure(
+            false,
+            Ok(MAIN_CONSUMER_MAX_DELIVER - 1),
+        )?);
+        assert!(JetStreamConsumer::should_route_persistence_failure(
+            false,
+            Ok(MAIN_CONSUMER_MAX_DELIVER),
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn persistence_failure_routing_rejects_missing_delivery_metadata() -> TestResult<()> {
+        let error = JetStreamConsumer::should_route_persistence_failure(
+            false,
+            Err("metadata missing".to_string()),
+        )
+        .expect_err("missing delivery metadata must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to inspect JetStream delivery metadata"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("delivery_metadata_error")
+                .map(String::as_str),
+            Some("metadata missing")
+        );
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
+use sinex_db::DynamicPayload;
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
 
@@ -247,6 +248,68 @@ async fn failed_schema_registration_does_not_clear_active(
     assert_eq!(
         active.id, original.id,
         "original schema should remain active when new registration fails"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn corrupt_validation_cache_rows_fail_honestly(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.schemas();
+    let schema = repo
+        .register_schema(NewEventSchema {
+            source: EventSource::from_static("cache-source"),
+            event_type: EventType::from_static("cache.event"),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "required": ["name"]
+            }),
+        })
+        .await?;
+
+    let material_id = ctx.create_source_material(Some("corrupt-validation-cache")).await?;
+    let inserted = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new("cache-source", "cache.event", json!({ "name": "alice" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = *inserted
+        .id
+        .as_ref()
+        .expect("inserted events should always have ids")
+        .as_uuid();
+
+    sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.validation_cache (
+            event_id, schema_id, is_valid, validation_errors
+        ) VALUES (
+            $1::uuid, $2::uuid, false, $3
+        )
+        "#,
+        event_id,
+        schema.id.as_uuid(),
+        json!({ "unexpected": true }),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let error = repo
+        .validate_event_payload_by_event_id(&event_id)
+        .await
+        .expect_err("corrupt validation cache rows must fail honestly");
+    assert!(
+        error
+            .to_string()
+            .contains("deserialize validation cache entry"),
+        "expected corrupt cache row to surface deserialization failure, got: {error}"
     );
     Ok(())
 }

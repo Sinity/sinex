@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::{PatternRule, RuleCategory, RuleOverride, Strategy};
@@ -167,6 +168,85 @@ fn parse_strategy(s: &str) -> Option<Strategy> {
     }
 }
 
+fn invalid_env(var: &'static str, reason: impl Into<String>) -> PrivacyConfigError {
+    PrivacyConfigError::InvalidEnv {
+        var: var.to_string(),
+        reason: reason.into(),
+    }
+}
+
+fn parse_bool_env(var: &'static str, value: &str) -> Result<bool, PrivacyConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(invalid_env(
+            var,
+            format!("expected true/false or 1/0, got '{value}'"),
+        )),
+    }
+}
+
+fn parse_builtin_categories_env(value: &str) -> Result<CategorySet, PrivacyConfigError> {
+    let raw = value.trim();
+    match raw.to_ascii_lowercase().as_str() {
+        "all" => Ok(CategorySet::All),
+        "none" => Ok(CategorySet::None),
+        _ => {
+            let mut categories = Vec::new();
+            let mut invalid = Vec::new();
+            for part in raw.split(',') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match trimmed.to_ascii_lowercase().as_str() {
+                    "secret" | "secrets" => categories.push(RuleCategory::Secret),
+                    "pii" => categories.push(RuleCategory::Pii),
+                    "privacy" => categories.push(RuleCategory::Privacy),
+                    "custom" => categories.push(RuleCategory::Custom),
+                    _ => invalid.push(trimmed.to_string()),
+                }
+            }
+
+            if !invalid.is_empty() {
+                return Err(invalid_env(
+                    "SINEX_PRIVACY_BUILTIN",
+                    format!(
+                        "unknown categories: {}; expected all, none, or comma-separated secret/pii/privacy/custom",
+                        invalid.join(", ")
+                    ),
+                ));
+            }
+
+            if categories.is_empty() {
+                return Err(invalid_env(
+                    "SINEX_PRIVACY_BUILTIN",
+                    "no valid categories were provided",
+                ));
+            }
+
+            Ok(CategorySet::Only(categories))
+        }
+    }
+}
+
+fn parse_json_env<T>(var: &'static str, value: &str) -> Result<T, PrivacyConfigError>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_str(value)
+        .map_err(|error| invalid_env(var, format!("failed to parse JSON override: {error}")))
+}
+
+fn parse_strategy_env(var: &'static str, value: &str) -> Result<Strategy, PrivacyConfigError> {
+    parse_strategy(value).ok_or_else(|| {
+        invalid_env(
+            var,
+            format!("expected redact, encrypt, hash, or suppress, got '{value}'"),
+        )
+    })
+}
+
 /// Resolve the configured config file path.
 ///
 /// Checks `$SINEX_PRIVACY_CONFIG` first, then `$SINEX_STATE_DIR/privacy.toml`.
@@ -174,17 +254,29 @@ fn parse_strategy(s: &str) -> Option<Strategy> {
 /// An explicit `SINEX_PRIVACY_CONFIG` path is always returned as-is so missing
 /// or unreadable files fail honestly instead of silently falling back to
 /// defaults.
-fn configured_config_path() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("SINEX_PRIVACY_CONFIG") {
-        return Some(PathBuf::from(explicit));
+fn configured_config_path() -> Result<Option<PathBuf>, PrivacyConfigError> {
+    if let Some(explicit) = std::env::var_os("SINEX_PRIVACY_CONFIG") {
+        let explicit = explicit.into_string().map_err(|value| {
+            invalid_env(
+                "SINEX_PRIVACY_CONFIG",
+                format!("contains a non-unicode path: {value:?}"),
+            )
+        })?;
+        return Ok(Some(PathBuf::from(explicit)));
     }
-    if let Ok(state_dir) = std::env::var("SINEX_STATE_DIR") {
+    if let Some(state_dir) = std::env::var_os("SINEX_STATE_DIR") {
+        let state_dir = state_dir.into_string().map_err(|value| {
+            invalid_env(
+                "SINEX_STATE_DIR",
+                format!("contains a non-unicode path: {value:?}"),
+            )
+        })?;
         let path = PathBuf::from(state_dir).join("privacy.toml");
         if path.exists() {
-            return Some(path);
+            return Ok(Some(path));
         }
     }
-    None
+    Ok(None)
 }
 
 impl PrivacyConfig {
@@ -248,60 +340,37 @@ impl PrivacyConfig {
     /// | `SINEX_PRIVACY_STATS` | `false` | Per-rule match counting |
     pub fn from_env() -> Result<Self, PrivacyConfigError> {
         // Start from file config if available, otherwise defaults
-        let mut config = match configured_config_path() {
+        let mut config = match configured_config_path()? {
             Some(path) => Self::from_file(&path)?,
             None => Self::default(),
         };
 
         // Env vars override file config
         if let Ok(val) = std::env::var("SINEX_PRIVACY_ENABLED") {
-            config.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+            config.enabled = parse_bool_env("SINEX_PRIVACY_ENABLED", &val)?;
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_BUILTIN") {
-            config.builtin_categories = match val.to_lowercase().as_str() {
-                "all" => CategorySet::All,
-                "none" => CategorySet::None,
-                _ => {
-                    let cats: Vec<RuleCategory> = val
-                        .split(',')
-                        .filter_map(|s| match s.trim().to_lowercase().as_str() {
-                            "secret" | "secrets" => Some(RuleCategory::Secret),
-                            "pii" => Some(RuleCategory::Pii),
-                            "privacy" => Some(RuleCategory::Privacy),
-                            "custom" => Some(RuleCategory::Custom),
-                            _ => None,
-                        })
-                        .collect();
-                    if cats.is_empty() {
-                        CategorySet::All
-                    } else {
-                        CategorySet::Only(cats)
-                    }
-                }
-            };
+            config.builtin_categories = parse_builtin_categories_env(&val)?;
         }
 
-        if let Ok(json) = std::env::var("SINEX_PRIVACY_EXTRA_RULES")
-            && let Ok(rules) = serde_json::from_str::<Vec<PatternRule>>(&json)
-        {
-            config.extra_rules = rules;
+        if let Ok(json) = std::env::var("SINEX_PRIVACY_EXTRA_RULES") {
+            config.extra_rules = parse_json_env("SINEX_PRIVACY_EXTRA_RULES", &json)?;
         }
 
-        if let Ok(json) = std::env::var("SINEX_PRIVACY_OVERRIDES")
-            && let Ok(overrides) = serde_json::from_str::<HashMap<String, RuleOverride>>(&json)
-        {
-            config.overrides = overrides;
+        if let Ok(json) = std::env::var("SINEX_PRIVACY_OVERRIDES") {
+            config.overrides = parse_json_env("SINEX_PRIVACY_OVERRIDES", &json)?;
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_DEFAULT_STRATEGY")
-            && let Some(s) = parse_strategy(&val)
-        {
-            config.default_strategy = s;
+        if let Ok(val) = std::env::var("SINEX_PRIVACY_DEFAULT_STRATEGY") {
+            config.default_strategy = parse_strategy_env("SINEX_PRIVACY_DEFAULT_STRATEGY", &val)?;
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_SECRET_STRATEGY") {
-            config.secret_strategy = parse_strategy(&val);
+            config.secret_strategy = Some(parse_strategy_env(
+                "SINEX_PRIVACY_SECRET_STRATEGY",
+                &val,
+            )?);
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_KEY_FILE") {
@@ -313,7 +382,7 @@ impl PrivacyConfig {
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_STATS") {
-            config.track_stats = val.eq_ignore_ascii_case("true") || val == "1";
+            config.track_stats = parse_bool_env("SINEX_PRIVACY_STATS", &val)?;
         }
 
         Ok(config)
@@ -333,6 +402,8 @@ pub enum PrivacyConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    #[error("invalid privacy environment override {var}: {reason}")]
+    InvalidEnv { var: String, reason: String },
 }
 
 #[cfg(test)]
@@ -576,6 +647,66 @@ hex = "abcd1234"
         let error = result.expect_err("invalid state-dir privacy config must surface");
         assert!(error.to_string().contains("failed to parse privacy config"));
         assert!(error.to_string().contains(path.to_string_lossy().as_ref()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_rejects_invalid_extra_rules_json() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
+        unsafe { std::env::set_var("SINEX_PRIVACY_EXTRA_RULES", "{not-json") };
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+
+        let error = result.expect_err("invalid JSON override must surface");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid privacy environment override SINEX_PRIVACY_EXTRA_RULES")
+        );
+        assert!(error.to_string().contains("failed to parse JSON override"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_rejects_invalid_builtin_categories() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN");
+        unsafe { std::env::set_var("SINEX_PRIVACY_BUILTIN", "secret,wat") };
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_BUILTIN", old_builtin);
+
+        let error = result.expect_err("invalid builtin categories must surface");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid privacy environment override SINEX_PRIVACY_BUILTIN")
+        );
+        assert!(error.to_string().contains("unknown categories: wat"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn from_env_rejects_invalid_default_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        let old_strategy = std::env::var_os("SINEX_PRIVACY_DEFAULT_STRATEGY");
+        unsafe { std::env::set_var("SINEX_PRIVACY_DEFAULT_STRATEGY", "explode") };
+
+        let result = PrivacyConfig::from_env();
+
+        restore_var("SINEX_PRIVACY_DEFAULT_STRATEGY", old_strategy);
+
+        let error = result.expect_err("invalid strategy override must surface");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid privacy environment override SINEX_PRIVACY_DEFAULT_STRATEGY")
+        );
+        assert!(error.to_string().contains("expected redact, encrypt, hash, or suppress"));
         Ok(())
     }
 }

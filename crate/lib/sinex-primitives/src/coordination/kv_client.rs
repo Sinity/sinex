@@ -50,15 +50,9 @@ impl CoordinationTiming {
 
     fn from_env() -> Self {
         Self::from_overrides(
-            std::env::var("SINEX_COORDINATION_HEARTBEAT")
-                .ok()
-                .and_then(|raw| raw.parse::<u64>().ok()),
-            std::env::var("SINEX_COORDINATION_TIMEOUT")
-                .ok()
-                .and_then(|raw| raw.parse::<u64>().ok()),
-            std::env::var("SINEX_COORDINATION_HANDOFF")
-                .ok()
-                .and_then(|raw| raw.parse::<u64>().ok()),
+            timing_override_from_env("SINEX_COORDINATION_HEARTBEAT"),
+            timing_override_from_env("SINEX_COORDINATION_TIMEOUT"),
+            timing_override_from_env("SINEX_COORDINATION_HANDOFF"),
         )
     }
 
@@ -81,6 +75,36 @@ impl CoordinationTiming {
     fn instance_stale_timeout(self) -> Duration {
         self.leadership_timeout()
             .max(self.heartbeat_interval().saturating_mul(2))
+    }
+}
+
+fn timing_override_from_env(key: &'static str) -> Option<u64> {
+    match std::env::var(key) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(0) => {
+                warn!(env_var = key, value = %raw, "Ignoring non-positive coordination timing override");
+                None
+            }
+            Ok(value) => Some(value),
+            Err(error) => {
+                warn!(
+                    env_var = key,
+                    value = %raw,
+                    error = %error,
+                    "Ignoring invalid coordination timing override"
+                );
+                None
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(value)) => {
+            warn!(
+                env_var = key,
+                value = ?value,
+                "Ignoring non-unicode coordination timing override"
+            );
+            None
+        }
     }
 }
 
@@ -502,7 +526,30 @@ impl CoordinationKvClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use xtask::sandbox::sinex_test;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[sinex_test]
     async fn coordination_timing_defaults_match_deployment_contract()
@@ -528,6 +575,36 @@ mod tests {
     async fn coordination_timing_rejects_zero_overrides()
     -> ::xtask::sandbox::TestResult<()> {
         let timing = CoordinationTiming::from_overrides(Some(0), Some(0), Some(0));
+        assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
+        assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
+        assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(10));
+        Ok(())
+    }
+
+    #[sinex_test(serial = true)]
+    async fn coordination_timing_from_env_accepts_positive_overrides()
+    -> ::xtask::sandbox::TestResult<()> {
+        let _heartbeat = EnvVarGuard::set("SINEX_COORDINATION_HEARTBEAT", "7");
+        let _timeout = EnvVarGuard::set("SINEX_COORDINATION_TIMEOUT", "31");
+        let _handoff = EnvVarGuard::set("SINEX_COORDINATION_HANDOFF", "11");
+
+        let timing = CoordinationTiming::from_env();
+
+        assert_eq!(timing.heartbeat_secs, Seconds::from_secs(7));
+        assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(31));
+        assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(11));
+        Ok(())
+    }
+
+    #[sinex_test(serial = true)]
+    async fn coordination_timing_from_env_ignores_invalid_overrides()
+    -> ::xtask::sandbox::TestResult<()> {
+        let _heartbeat = EnvVarGuard::set("SINEX_COORDINATION_HEARTBEAT", "oops");
+        let _timeout = EnvVarGuard::set("SINEX_COORDINATION_TIMEOUT", "0");
+        let _handoff = EnvVarGuard::set("SINEX_COORDINATION_HANDOFF", "-5");
+
+        let timing = CoordinationTiming::from_env();
+
         assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
         assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
         assert_eq!(timing.handoff_timeout_secs, Seconds::from_secs(10));

@@ -23,6 +23,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
+use parking_lot::RwLock;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::systemd_notify;
@@ -33,7 +34,7 @@ use sinex_primitives::{Bytes, Uuid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -230,13 +231,7 @@ pub(crate) struct GatewayAuth {
 
 impl GatewayAuth {
     fn store_token(token: &RwLock<Option<String>>, new_token: String) {
-        let mut token_guard = match token.write() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!("Gateway token lock poisoned during reload; continuing with inner state");
-                poisoned.into_inner()
-            }
-        };
+        let mut token_guard = token.write();
         *token_guard = Some(new_token);
     }
 
@@ -411,13 +406,7 @@ impl GatewayAuth {
     pub(crate) fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
-        let token_guard = match self.token.read() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!("Gateway token lock poisoned during verify; continuing with inner state");
-                poisoned.into_inner()
-            }
-        };
+        let token_guard = self.token.read();
         if let Some(expected) = token_guard.as_ref() {
             if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
                 Ok(provided)

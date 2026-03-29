@@ -21,7 +21,7 @@ async fn test_watcher_state_transitions() -> Result<(), Box<dyn std::error::Erro
     let was_active = handle.is_active();
     assert!(was_active);
     handle.shutdown().await?;
-    assert!(!tracker.read().expect("health lock").active);
+    assert!(!tracker.read().active);
     Ok(())
 }
 
@@ -36,7 +36,7 @@ async fn test_watcher_running_constructor() -> Result<(), Box<dyn std::error::Er
     assert!(health.active);
     let tracker = handle.health_tracker();
     handle.shutdown().await?;
-    assert!(!tracker.read().expect("health lock").active);
+    assert!(!tracker.read().active);
     Ok(())
 }
 
@@ -77,7 +77,7 @@ async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::E
     sleep(Duration::from_millis(100)).await;
 
     assert!(!flag.load(Ordering::SeqCst));
-    assert!(!tracker.read().expect("health lock").active);
+    assert!(!tracker.read().active);
     Ok(())
 }
 
@@ -121,7 +121,7 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
     sleep(Duration::from_millis(100)).await;
     assert!(!main_flag.load(Ordering::SeqCst));
     assert!(!forwarder_flag.load(Ordering::SeqCst));
-    assert!(!tracker.read().expect("health lock").active);
+    assert!(!tracker.read().active);
     Ok(())
 }
 
@@ -143,47 +143,6 @@ async fn test_watcher_is_inactive_when_forwarder_finishes(
     );
 
     handle.shutdown().await?;
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_watcher_health_recovers_from_poisoned_lock(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let handle = WatcherHandle::<()>::initialized("test");
-    let tracker = handle.health_tracker();
-
-    let poison_tracker = Arc::clone(&tracker);
-    let _ = std::thread::spawn(move || {
-        let mut guard = poison_tracker.write().expect("health lock");
-        guard.active = true;
-        guard.events_processed = 7;
-        panic!("poison watcher health");
-    })
-    .join();
-
-    let health = handle.health();
-    assert!(health.active);
-    assert_eq!(health.events_processed, 7);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_watcher_record_error_recovers_from_poisoned_lock(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let handle = WatcherHandle::<()>::initialized("test");
-    let tracker = handle.health_tracker();
-
-    let poison_tracker = Arc::clone(&tracker);
-    let _ = std::thread::spawn(move || {
-        let _guard = poison_tracker.write().expect("health lock");
-        panic!("poison watcher health");
-    })
-    .join();
-
-    handle.record_error("recovered".to_string());
-
-    let health = handle.health();
-    assert_eq!(health.last_error.as_deref(), Some("recovered"));
     Ok(())
 }
 
