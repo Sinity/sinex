@@ -17,10 +17,10 @@ pub mod thresholds {
 /// Current system resource status.
 #[derive(Debug, Clone)]
 pub struct ResourceStatus {
-    /// Available memory in GB
-    pub memory_available_gb: f64,
-    /// Total system memory in GB
-    pub memory_total_gb: f64,
+    /// Available memory in GB, or `None` when the platform does not expose it.
+    pub memory_available_gb: Option<f64>,
+    /// Total system memory in GB, or `None` when the platform does not expose it.
+    pub memory_total_gb: Option<f64>,
     /// 1-minute load average
     pub load_1min: f64,
     /// Number of CPU cores
@@ -30,16 +30,18 @@ pub struct ResourceStatus {
 impl ResourceStatus {
     /// Capture current system resource status.
     pub fn capture() -> Result<Self> {
-        // When /proc/meminfo is absent (non-Linux), assume ample memory so callers
-        // don't emit spurious low-memory warnings. Read/parse failures should still
-        // surface honestly instead of fabricating values.
-        let (available_kb, total_kb) = memory_info()?.unwrap_or((u64::MAX, u64::MAX));
+        let memory_gb = memory_info()?.map(|(available_kb, total_kb)| {
+            (
+                available_kb as f64 / 1024.0 / 1024.0,
+                total_kb as f64 / 1024.0 / 1024.0,
+            )
+        });
         let load = load_1min()?;
         let cpu_count = num_cpus::get();
 
         Ok(Self {
-            memory_available_gb: available_kb as f64 / 1024.0 / 1024.0,
-            memory_total_gb: total_kb as f64 / 1024.0 / 1024.0,
+            memory_available_gb: memory_gb.map(|(available, _)| available),
+            memory_total_gb: memory_gb.map(|(_, total)| total),
             load_1min: load,
             cpu_count,
         })
@@ -48,7 +50,8 @@ impl ResourceStatus {
     /// Check if enough memory is available for an operation.
     #[must_use]
     pub fn has_memory_for(&self, required_gb: u64) -> bool {
-        self.memory_available_gb >= required_gb as f64
+        self.memory_available_gb
+            .is_none_or(|available| available >= required_gb as f64)
     }
 
     /// Check if system load is acceptable (not overloaded).
@@ -65,10 +68,12 @@ impl ResourceStatus {
     pub fn warning(&self, required_gb: u64) -> Option<String> {
         let mut warnings = Vec::new();
 
-        if !self.has_memory_for(required_gb) {
+        if let Some(available_gb) = self.memory_available_gb
+            && available_gb < required_gb as f64
+        {
             warnings.push(format!(
                 "Low memory: {:.1}GB available, {}GB recommended",
-                self.memory_available_gb, required_gb
+                available_gb, required_gb
             ));
         }
 
@@ -89,9 +94,13 @@ impl ResourceStatus {
     /// Get a summary line suitable for preflight display.
     #[must_use]
     pub fn summary(&self) -> String {
+        let memory = match (self.memory_available_gb, self.memory_total_gb) {
+            (Some(available), Some(total)) => format!("{available:.1}/{total:.1}GB free"),
+            _ => "unavailable".to_string(),
+        };
         format!(
-            "Memory: {:.1}/{:.1}GB free, Load: {:.2} ({} CPUs)",
-            self.memory_available_gb, self.memory_total_gb, self.load_1min, self.cpu_count
+            "Memory: {memory}, Load: {:.2} ({} CPUs)",
+            self.load_1min, self.cpu_count
         )
     }
 }
@@ -186,8 +195,8 @@ mod tests {
     #[sinex_test]
     async fn test_warning_low_memory() -> TestResult<()> {
         let status = ResourceStatus {
-            memory_available_gb: 3.0,
-            memory_total_gb: 32.0,
+            memory_available_gb: Some(3.0),
+            memory_total_gb: Some(32.0),
             load_1min: 1.0,
             cpu_count: 8,
         };
@@ -200,8 +209,8 @@ mod tests {
     #[sinex_test]
     async fn test_warning_high_load() -> TestResult<()> {
         let status = ResourceStatus {
-            memory_available_gb: 16.0,
-            memory_total_gb: 32.0,
+            memory_available_gb: Some(16.0),
+            memory_total_gb: Some(32.0),
             load_1min: 15.0,
             cpu_count: 8,
         };
@@ -214,12 +223,27 @@ mod tests {
     #[sinex_test]
     async fn test_no_warning_when_ok() -> TestResult<()> {
         let status = ResourceStatus {
-            memory_available_gb: 16.0,
-            memory_total_gb: 32.0,
+            memory_available_gb: Some(16.0),
+            memory_total_gb: Some(32.0),
             load_1min: 2.0,
             cpu_count: 8,
         };
         assert!(status.warning(8).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_reports_missing_memory_honestly() -> TestResult<()> {
+        let status = ResourceStatus {
+            memory_available_gb: None,
+            memory_total_gb: None,
+            load_1min: 2.0,
+            cpu_count: 8,
+        };
+
+        assert_eq!(status.summary(), "Memory: unavailable, Load: 2.00 (8 CPUs)");
+        assert!(status.warning(8).is_none());
+        assert!(status.has_memory_for(8));
         Ok(())
     }
 
