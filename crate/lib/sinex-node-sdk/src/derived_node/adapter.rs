@@ -292,7 +292,11 @@ where
             return Ok(None);
         };
         let Some(data) = file_state.data else {
-            return Ok(None);
+            return Err(
+                SinexError::checkpoint("Derived hot reload checkpoint file is missing state data")
+                    .with_context("node", self.node.name())
+                    .with_context("path", checkpoint_path.display().to_string()),
+            );
         };
 
         let persisted: PersistedState<N::State> = decode_checkpoint_data(
@@ -1548,17 +1552,22 @@ mod tests {
     use super::log_self_observation_failure;
     use crate::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerWrapper};
     use crate::exploration::ExplorationProvider;
+    use crate::runtime::stream::Checkpoint;
+    use crate::shutdown::ShutdownConfig;
+    use crate::CheckpointState;
     use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
+    use tempfile::tempdir;
     #[cfg(feature = "messaging")]
     use crate::self_observation::SelfObservationError;
     use serde::{Deserialize, Serialize};
     use sinex_primitives::JsonValue;
     use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::temporal::Timestamp;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
 
-    #[derive(Default, Serialize, Deserialize)]
+    #[derive(Debug, Default, Serialize, Deserialize)]
     struct TestDerivedState;
 
     struct TestDerivedNode;
@@ -1641,6 +1650,40 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(false)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn try_restore_from_file_rejects_missing_state_payload() -> TestResult<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir.path().join("derived-empty-state.checkpoint.json");
+        CheckpointState {
+            checkpoint: Checkpoint::None,
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let adapter = DerivedNodeAdapter::with_shutdown_config(
+            TransducerWrapper(TestDerivedNode),
+            ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path.clone()),
+                ..ShutdownConfig::default()
+            },
+        );
+
+        let error = adapter
+            .try_restore_from_file()
+            .await
+            .expect_err("empty hot reload state must not be treated as absent");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("derived-adapter-test"));
+        assert!(message.contains(&checkpoint_path.display().to_string()));
         Ok(())
     }
 }

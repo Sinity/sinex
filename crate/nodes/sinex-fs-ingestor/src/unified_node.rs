@@ -354,11 +354,14 @@ impl FilesystemNode {
         self.dropped_events.load(Ordering::Relaxed)
     }
 
-    fn active_watcher_count(&self) -> Option<usize> {
+    fn active_watcher_state(&self) -> (Option<usize>, bool) {
         match self.watch_handles.try_lock() {
-            Ok(guard) if guard.is_empty() => None,
-            Ok(guard) => Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
-            Err(_) => None,
+            Ok(guard) if guard.is_empty() => (None, false),
+            Ok(guard) => (
+                Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
+                false,
+            ),
+            Err(_) => (None, true),
         }
     }
 
@@ -670,11 +673,17 @@ impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         let watched_paths = self.config.watch_paths.len();
         let dropped_events = self.dropped_event_count();
-        let active_watchers = self.active_watcher_count();
-        let healthy = watched_paths > 0 && active_watchers.is_none_or(|count| count == watched_paths);
-        let is_connected = watched_paths > 0 && active_watchers.is_none_or(|count| count > 0);
+        let (active_watchers, watcher_registry_busy) = self.active_watcher_state();
+        let healthy = !watcher_registry_busy
+            && watched_paths > 0
+            && active_watchers.is_none_or(|count| count == watched_paths);
+        let is_connected = !watcher_registry_busy
+            && watched_paths > 0
+            && active_watchers.is_none_or(|count| count > 0);
         let description = if watched_paths == 0 {
             "No filesystem watch paths configured".to_string()
+        } else if watcher_registry_busy {
+            "Filesystem monitoring status unavailable (watcher registry busy)".to_string()
         } else if let Some(active_watchers) = active_watchers {
             if active_watchers == 0 {
                 format!(
@@ -698,6 +707,9 @@ impl ExplorationProvider for FilesystemNode {
         metadata.insert("dropped_events".to_string(), serde_json::json!(dropped_events));
         if let Some(active_watchers) = active_watchers {
             metadata.insert("active_watchers".to_string(), serde_json::json!(active_watchers));
+        }
+        if watcher_registry_busy {
+            metadata.insert("watcher_registry_busy".to_string(), serde_json::json!(true));
         }
 
         Ok(SourceState {
@@ -1466,6 +1478,41 @@ mod tests {
         for handle in guard.drain(..) {
             handle.abort();
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_marks_busy_watcher_registry_unhealthy() -> TestResult<()> {
+        let node = FilesystemNode::with_config(FilesystemConfig {
+            watch_paths: vec!["/tmp".to_string()],
+            ..FilesystemConfig::default()
+        });
+
+        let guard = node.watch_handles.lock().await;
+        let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
+
+        assert!(
+            !state.is_connected,
+            "busy watcher registry must not claim filesystem monitoring is connected"
+        );
+        assert!(
+            !state.healthy,
+            "busy watcher registry must degrade filesystem source health"
+        );
+        assert!(
+            state.description.contains("watcher registry busy"),
+            "description should explain busy watcher registry: {}",
+            state.description
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("watcher_registry_busy")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        drop(guard);
         Ok(())
     }
 
