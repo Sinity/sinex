@@ -31,6 +31,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
+const REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
 
@@ -206,6 +207,7 @@ pub struct ReplayControlHealth {
 #[derive(Debug, Default)]
 struct ReplayControlHealthState {
     last_error: Option<ReplayControlError>,
+    server_subscribed: bool,
 }
 
 /// Spawn the replay control bus and return a client handle.
@@ -218,16 +220,23 @@ pub async fn spawn_replay_control(
     request_timeout: Duration,
 ) -> Result<ReplayControlClient> {
     let env = environment().clone();
+    let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
 
     // Create execution engine with NATS client for node-dispatch replay control
     let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 
-    ReplayControlServer::new(env.clone(), client.clone(), replay, executor)
+    ReplayControlServer::new(
+        env.clone(),
+        client.clone(),
+        replay,
+        executor,
+        Arc::clone(&health),
+    )
         .spawn()
         .await?;
 
-    Ok(ReplayControlClient::new(env, client, request_timeout))
+    Ok(ReplayControlClient::new(env, client, request_timeout, health))
 }
 
 /// Client for issuing replay control commands over NATS.
@@ -240,25 +249,40 @@ pub struct ReplayControlClient {
 }
 
 impl ReplayControlClient {
-    fn new(env: SinexEnvironment, client: Client, request_timeout: Duration) -> Self {
+    fn new(
+        env: SinexEnvironment,
+        client: Client,
+        request_timeout: Duration,
+        health: Arc<Mutex<ReplayControlHealthState>>,
+    ) -> Self {
         let subject = env.nats_subject("sinex.control.replay");
         Self {
             subject,
             client,
-            health: Arc::new(Mutex::new(ReplayControlHealthState::default())),
+            health,
             request_timeout,
         }
     }
 
     #[must_use]
     pub fn health_snapshot(&self) -> ReplayControlHealth {
-        let connected = matches!(self.client.connection_state(), NatsState::Connected);
-        let last_error = {
+        let client_connected = matches!(self.client.connection_state(), NatsState::Connected);
+        let (server_subscribed, last_error) = {
             let guard = self.health.lock();
-            guard.last_error.clone()
+            (guard.server_subscribed, guard.last_error.clone())
         };
+        let last_error = last_error.or_else(|| {
+            (!client_connected).then(|| {
+                ReplayControlError::new("Replay control NATS client disconnected")
+            })
+        })
+        .or_else(|| {
+            (!server_subscribed).then(|| {
+                ReplayControlError::new("Replay control server subscription is not active")
+            })
+        });
         ReplayControlHealth {
-            connected,
+            connected: client_connected && server_subscribed,
             last_error,
         }
     }
@@ -460,6 +484,7 @@ struct ReplayControlServer {
     client: Client,
     replay: Arc<ReplayStateMachine>,
     executor: ReplayExecutionEngine,
+    health: Arc<Mutex<ReplayControlHealthState>>,
 }
 
 impl ReplayControlServer {
@@ -468,6 +493,7 @@ impl ReplayControlServer {
         client: Client,
         replay: Arc<ReplayStateMachine>,
         executor: ReplayExecutionEngine,
+        health: Arc<Mutex<ReplayControlHealthState>>,
     ) -> Self {
         let subject = env.nats_subject("sinex.control.replay");
         Self {
@@ -475,19 +501,85 @@ impl ReplayControlServer {
             client,
             replay,
             executor,
+            health,
         }
     }
 
-    async fn spawn(self) -> Result<()> {
+    async fn spawn(self) -> Result<tokio::task::JoinHandle<()>> {
+        let mut subscription = self.subscribe_with_backoff(false).await?;
         let client = self.client.clone();
         let subject = self.subject.clone();
+        let replay = self.replay.clone();
+        let executor = self.executor.clone();
+        let health = Arc::clone(&self.health);
+
+        let task = tokio::spawn(async move {
+            'outer: loop {
+                while let Some(message) = subscription.next().await {
+                    let client = client.clone();
+                    let replay = replay.clone();
+                    let executor = executor.clone();
+                    tokio::spawn(async move {
+                        if let Err(err) =
+                            Self::handle_message(&client, &replay, &executor, message).await
+                        {
+                            warn!(?err, "Replay control request failed");
+                        }
+                    });
+                }
+
+                Self::record_subscription_error(
+                    &health,
+                    "Replay control subscription closed; reconnecting",
+                );
+                warn!(
+                    retry_delay_ms = REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE.as_millis(),
+                    "Replay control subscription closed; reconnecting"
+                );
+
+                loop {
+                    match Self::subscribe_once(&client, &subject).await {
+                        Ok(subscription_next) => {
+                            Self::mark_server_subscribed(&health, true);
+                            info!(subject = %subject, "Replay control server reconnected");
+                            subscription = subscription_next;
+                            continue 'outer;
+                        }
+                        Err(error) => {
+                            Self::record_subscription_error(&health, error.to_string());
+                            warn!(
+                                error = %error,
+                                backoff_ms = REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE.as_millis(),
+                                "Replay control subscription failed after startup; retrying"
+                            );
+                            tokio::time::sleep(REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE).await;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(task)
+    }
+
+    async fn subscribe_with_backoff(&self, reconnected: bool) -> Result<async_nats::Subscriber> {
         let mut backoff = REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE;
         let mut attempt = 0usize;
-        let mut subscription = loop {
+
+        loop {
             attempt += 1;
-            match client.subscribe(subject.clone()).await {
-                Ok(subscription) => break subscription,
+            match Self::subscribe_once(&self.client, &self.subject).await {
+                Ok(subscription) => {
+                    Self::mark_server_subscribed(&self.health, true);
+                    if reconnected {
+                        info!(subject = %self.subject, "Replay control server reconnected");
+                    } else {
+                        info!(subject = %self.subject, "Replay control server subscribed to subject");
+                    }
+                    return Ok(subscription);
+                }
                 Err(err) => {
+                    Self::record_subscription_error(&self.health, err.to_string());
                     if attempt >= REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS {
                         return Err(err).wrap_err("Failed to subscribe to replay control subject");
                     }
@@ -504,31 +596,38 @@ impl ReplayControlServer {
                     );
                 }
             }
-        };
-        let replay = self.replay.clone();
-        let executor = self.executor.clone();
+        }
+    }
 
-        tokio::spawn(async move {
-            while let Some(message) = subscription.next().await {
-                let client = client.clone();
-                let replay = replay.clone();
-                let executor = executor.clone();
-                tokio::spawn(async move {
-                    if let Err(err) =
-                        Self::handle_message(&client, &replay, &executor, message).await
-                    {
-                        warn!(?err, "Replay control request failed");
-                    }
-                });
-            }
-        });
+    async fn subscribe_once(client: &Client, subject: &str) -> Result<async_nats::Subscriber> {
+        match tokio::time::timeout(
+            REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT,
+            client.subscribe(subject.to_string()),
+        )
+        .await
+        {
+            Ok(Ok(subscription)) => Ok(subscription),
+            Ok(Err(error)) => Err(error)
+                .wrap_err_with(|| format!("failed to subscribe to replay control subject {subject}")),
+            Err(_) => Err(eyre!(
+                "timed out subscribing to replay control subject {subject} after {:?}",
+                REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT
+            )),
+        }
+    }
 
-        info!(
-            subject = %self.subject,
-            "Replay control server subscribed to subject"
-        );
+    fn mark_server_subscribed(health: &Arc<Mutex<ReplayControlHealthState>>, subscribed: bool) {
+        let mut guard = health.lock();
+        guard.server_subscribed = subscribed;
+    }
 
-        Ok(())
+    fn record_subscription_error(
+        health: &Arc<Mutex<ReplayControlHealthState>>,
+        message: impl Into<String>,
+    ) {
+        let mut guard = health.lock();
+        guard.server_subscribed = false;
+        guard.last_error = Some(ReplayControlError::new(message));
     }
 
     async fn handle_message(
@@ -2386,6 +2485,87 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn replay_control_reconnects_when_subscription_closes_after_startup(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats = ctx.nats_handle()?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = sinex_primitives::environment::environment();
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone());
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+
+        let server_task = ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay,
+            executor,
+            Arc::clone(&health),
+        )
+        .spawn()
+        .await?;
+        let client = ReplayControlClient::new(
+            env,
+            nats_client,
+            Duration::from_secs(30),
+            Arc::clone(&health),
+        );
+
+        nats.shutdown().await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        assert!(
+            !server_task.is_finished(),
+            "closing the live replay-control subscription should keep the server retrying instead of exiting"
+        );
+        let snapshot = client.health_snapshot();
+        assert!(
+            !snapshot.connected,
+            "replay-control health must reflect that the live subscription was lost"
+        );
+        assert!(
+            snapshot.last_error.is_some(),
+            "replay-control health must retain a clue after the live subscription is lost"
+        );
+
+        server_task.abort();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_control_health_reports_inactive_subscription(ctx: TestContext) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        let client = ReplayControlClient::new(
+            sinex_primitives::environment::environment(),
+            ctx.nats_client(),
+            Duration::from_secs(30),
+            Arc::clone(&health),
+        );
+
+        let disconnected = client.health_snapshot();
+        assert!(!disconnected.connected);
+        assert_eq!(
+            disconnected
+                .last_error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            Some("Replay control server subscription is not active")
+        );
+
+        {
+            let mut guard = health.lock();
+            guard.server_subscribed = true;
+        }
+
+        let connected = client.health_snapshot();
+        assert!(connected.connected);
+        assert!(connected.last_error.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let ctx = ctx.with_nats().dedicated().await?;
 
@@ -2905,10 +3085,22 @@ mod tests {
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
             .with_scan_completion_timeout(Duration::from_millis(100));
         ReplayTelemetry::new(replay.clone()).spawn();
-        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay.clone(),
+            executor,
+            Arc::clone(&health),
+        )
             .spawn()
             .await?;
-        let client = ReplayControlClient::new(env.clone(), nats_client, Duration::from_secs(30));
+        let client = ReplayControlClient::new(
+            env.clone(),
+            nats_client,
+            Duration::from_secs(30),
+            health,
+        );
 
         let mut scope = sample_scope();
         scope.node_id = "timeout-test".to_string();
@@ -3111,10 +3303,17 @@ mod tests {
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
             .with_scan_ack_timeout(Duration::from_millis(100));
         ReplayTelemetry::new(replay.clone()).spawn();
-        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay.clone(),
+            executor,
+            Arc::clone(&health),
+        )
             .spawn()
             .await?;
-        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30));
+        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30), health);
 
         let mut scope = sample_scope();
         scope.node_id = "pre-ack-test".to_string();
@@ -3422,7 +3621,14 @@ mod tests {
 
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
             .with_scan_completion_timeout(Duration::from_secs(5));
-        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay.clone(),
+            executor,
+            Arc::clone(&health),
+        )
             .spawn()
             .await?;
 
@@ -3430,11 +3636,13 @@ mod tests {
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            health,
         );
 
         let mut scope = sample_scope();
@@ -3551,7 +3759,14 @@ mod tests {
 
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
             .with_scan_completion_timeout(Duration::from_millis(200));
-        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay.clone(),
+            executor,
+            Arc::clone(&health),
+        )
             .spawn()
             .await?;
 
@@ -3559,11 +3774,13 @@ mod tests {
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            Arc::clone(&health),
         );
         let execute_client = ReplayControlClient::new(
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            health,
         );
 
         let mut scope = sample_scope();
@@ -3642,7 +3859,14 @@ mod tests {
 
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
             .with_scan_completion_timeout(Duration::from_secs(5));
-        ReplayControlServer::new(env.clone(), nats_client.clone(), replay.clone(), executor)
+        let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+        ReplayControlServer::new(
+            env.clone(),
+            nats_client.clone(),
+            replay.clone(),
+            executor,
+            Arc::clone(&health),
+        )
             .spawn()
             .await?;
 
@@ -3650,11 +3874,13 @@ mod tests {
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
             env.clone(),
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
+            health,
         );
 
         let mut scope = sample_scope();
