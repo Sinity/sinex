@@ -24,7 +24,7 @@ use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::privacy;
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination, Uuid};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,6 +43,30 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
         return false;
     }
     true
+}
+
+fn stale_output_ids_or_skip_scope(
+    node_name: &str,
+    scope_key: &str,
+    stale_query_result: Result<Vec<QueryResultEvent>, SinexError>,
+) -> Option<Vec<Uuid>> {
+    match stale_query_result {
+        Ok(events) => Some(
+            events
+                .iter()
+                .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
+                .collect(),
+        ),
+        Err(error) => {
+            error!(
+                node = node_name,
+                scope_key,
+                error = %error,
+                "Failed to query stale outputs — skipping scope to prevent duplicate recomputation"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(feature = "messaging")]
@@ -662,24 +686,13 @@ where
                 ..EventQuery::default()
             };
 
-            let stale_ids: Vec<Uuid> =
-                match self
-                    .load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
-                    .await
-                {
-                    Ok(events) => events
-                        .iter()
-                        .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
-                        .collect(),
-                Err(e) => {
-                    warn!(
-                        node = %self.node.name(),
-                        scope_key,
-                        error = %e,
-                        "Failed to query stale outputs — proceeding without archive"
-                    );
-                    Vec::new()
-                }
+            let Some(stale_ids) = stale_output_ids_or_skip_scope(
+                self.node.name(),
+                scope_key,
+                self.load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
+                    .await,
+            ) else {
+                continue;
             };
 
             // ── Step 2: Archive stale outputs ──
@@ -1557,14 +1570,14 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::DerivedNodeAdapter;
+    use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
     use crate::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerWrapper};
     use crate::exploration::ExplorationProvider;
     use crate::runtime::stream::Checkpoint;
     use crate::shutdown::ShutdownConfig;
-    use crate::{CheckpointManager, CheckpointState};
+    use crate::{CheckpointManager, CheckpointState, SinexError};
     use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
     use futures::TryStreamExt;
@@ -1631,6 +1644,26 @@ mod tests {
         assert!(signal_shutdown_channel(&tx, "test-derived"));
         rx.changed().await?;
         assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stale_output_ids_or_skip_scope_returns_empty_ids_on_success() -> TestResult<()> {
+        let stale_ids =
+            stale_output_ids_or_skip_scope("test-derived", "scope-a", Ok(Vec::new()))
+                .expect("successful stale query should not skip scope");
+        assert!(stale_ids.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stale_output_ids_or_skip_scope_skips_scope_on_query_error() -> TestResult<()> {
+        let stale_ids = stale_output_ids_or_skip_scope(
+            "test-derived",
+            "scope-a",
+            Err(SinexError::invalid_state("corrupt stale output row")),
+        );
+        assert!(stale_ids.is_none());
         Ok(())
     }
 
