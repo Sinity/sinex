@@ -245,7 +245,7 @@ struct HistoryStatusOutput {
 struct ActivityEntry {
     command: String,
     status: String,
-    duration_secs: f64,
+    duration_secs: Option<f64>,
     timestamp: String,
 }
 
@@ -429,7 +429,7 @@ struct SummaryLastCommands {
 #[derive(Debug, Serialize)]
 struct SummaryCommandInfo {
     status: InvocationStatus,
-    duration_secs: f64,
+    duration_secs: Option<f64>,
     age_mins: i64,
 }
 
@@ -1040,7 +1040,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                 let age = now - i.started_at;
                 SummaryCommandInfo {
                     status: i.status,
-                    duration_secs: i.duration_secs.unwrap_or(0.0),
+                    duration_secs: i.duration_secs,
                     age_mins: age.whole_minutes(),
                 }
             })
@@ -1441,7 +1441,10 @@ impl<'a> MotdRenderer<'a> {
                     style("✗").red().to_string()
                 };
                 let age = format_age(info.age_mins);
-                let dur = format!("{:.1}s", info.duration_secs);
+                let dur = info
+                    .duration_secs
+                    .map(|duration| format!("{duration:.1}s"))
+                    .unwrap_or_else(|| "?".to_string());
                 parts.push(format!(
                     "{} {} {} {}",
                     name,
@@ -1987,7 +1990,7 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                 InvocationStatus::Cancelled => "cancelled",
             }
             .to_string(),
-            duration_secs: inv.duration_secs.unwrap_or(0.0),
+            duration_secs: inv.duration_secs,
             timestamp: inv
                 .started_at
                 .format(&time::format_description::well_known::Rfc3339)
@@ -2207,8 +2210,13 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                     _ => style(&entry.status).dim(),
                 };
                 println!(
-                    "  {:<15} {:<10} ({:.1}s)",
-                    entry.command, status_style, entry.duration_secs
+                    "  {:<15} {:<10} ({})",
+                    entry.command,
+                    status_style,
+                    entry
+                        .duration_secs
+                        .map(|duration| format!("{duration:.1}s"))
+                        .unwrap_or_else(|| "unknown".to_string())
                 );
             }
         }
@@ -2445,7 +2453,7 @@ mod tests {
             recent_activity: vec![ActivityEntry {
                 command: "check".into(),
                 status: "success".into(),
-                duration_secs: 3.5,
+                duration_secs: Some(3.5),
                 timestamp: "2025-01-01T00:00:00Z".into(),
             }],
             warnings: vec!["Test warning".into()],
@@ -2499,7 +2507,7 @@ mod tests {
             last_commands: SummaryLastCommands {
                 check: Some(SummaryCommandInfo {
                     status: InvocationStatus::Success,
-                    duration_secs: 3.2,
+                    duration_secs: Some(3.2),
                     age_mins: 15,
                 }),
                 test: None,
@@ -2677,6 +2685,116 @@ mod tests {
 
         let json = serde_json::to_value(&output)?;
         assert!(json["last_commit"]["age_mins"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_output_preserves_missing_command_duration()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = SummaryOutput {
+            health: "healthy".into(),
+            health_indicator: "ok".into(),
+            summary: "infra:ok".into(),
+            infrastructure: SummaryInfraHealth {
+                postgres: true,
+                nats: true,
+            },
+            last_commands: SummaryLastCommands {
+                check: Some(SummaryCommandInfo {
+                    status: InvocationStatus::Success,
+                    duration_secs: None,
+                    age_mins: 5,
+                }),
+                test: None,
+                build: None,
+            },
+            diagnostics: SummaryDiagnostics {
+                errors: 0,
+                warnings: 0,
+                fixable: 0,
+                flaky_tests: 0,
+            },
+            active_jobs: 0,
+            git: SummaryGitState {
+                branch: Some("master".into()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                message: None,
+            },
+            warnings: Vec::new(),
+            history: HistoryStatusOutput {
+                status: "healthy".into(),
+                synthetic: false,
+                recent_invocations: 0,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            health_score: None,
+            velocity: None,
+            recommendations: None,
+            runtime: None,
+            services: None,
+            last_commit: None,
+            stash_count: None,
+            files_changed: None,
+            uncommitted_count: None,
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["last_commands"]["check"]["duration_secs"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_status_output_preserves_missing_recent_activity_duration()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = StatusOutput {
+            infrastructure: InfrastructureStatus {
+                postgres: ComponentStatus {
+                    status: "online".into(),
+                    latency_ms: Some(1),
+                    port: Some(5432),
+                    message: None,
+                },
+                nats: ComponentStatus {
+                    status: "online".into(),
+                    latency_ms: Some(1),
+                    port: Some(4222),
+                    message: None,
+                },
+            },
+            services: Vec::new(),
+            runtime: Some(RuntimeMetrics::unavailable()),
+            runtime_assessment: None,
+            history: HistoryStatusOutput {
+                status: "available".into(),
+                synthetic: false,
+                recent_invocations: 1,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            jobs: JobsStatus {
+                active: 0,
+                recent_failures: 0,
+            },
+            recent_activity: vec![ActivityEntry {
+                command: "test".into(),
+                status: "success".into(),
+                duration_secs: None,
+                timestamp: "2025-01-01T00:00:00Z".into(),
+            }],
+            warnings: Vec::new(),
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["recent_activity"][0]["duration_secs"].is_null());
         Ok(())
     }
 
