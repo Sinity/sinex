@@ -235,6 +235,10 @@ fn spawn_output_handlers(
     }
 }
 
+fn require_spawned_pid(pid: Option<u32>, binary: &str) -> Result<u32> {
+    pid.ok_or_else(|| eyre!("spawned process for {binary} did not expose a PID"))
+}
+
 /// Poll children until one exits, returning its name.
 ///
 /// Returns `None` after 8 hours (D6 fix) — callers treat None as "kill everything",
@@ -826,7 +830,7 @@ impl RunCommand {
                 .with_context(|| format!("Failed to spawn {name}"))?;
 
             if pipe_output {
-                let pid = child.id().unwrap_or(0);
+                let pid = require_spawned_pid(child.id(), name)?;
                 log_streams.push((
                     name.to_string(),
                     child.stdout.take(),
@@ -998,7 +1002,7 @@ impl RunCommand {
             .spawn()
             .with_context(|| format!("Failed to spawn {binary}"))?;
 
-        let pid = child.id().unwrap_or(0);
+        let pid = require_spawned_pid(child.id(), binary)?;
 
         // Derive a short name for display/journal from the binary name
         let short_name = BINARIES
@@ -1313,6 +1317,22 @@ mod tests {
             assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_require_spawned_pid_accepts_present_pid() -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(require_spawned_pid(Some(42), "sinex-gateway")?, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_require_spawned_pid_rejects_missing_pid() -> ::xtask::sandbox::TestResult<()> {
+        let error =
+            require_spawned_pid(None, "sinex-gateway").expect_err("missing PID must fail honestly");
+        let rendered = error.to_string();
+        assert!(rendered.contains("sinex-gateway"));
+        assert!(rendered.contains("did not expose a PID"));
         Ok(())
     }
 
