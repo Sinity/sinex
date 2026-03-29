@@ -408,6 +408,12 @@ impl HeartbeatEmitter {
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
             use sinex_db::DbPoolExt;
+            if self.node_name.is_none() && self.node_run_id.is_none() {
+                warn!(
+                    service = %metrics.service_name,
+                    "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled"
+                );
+            }
             if let Some(node_name) = &self.node_name {
                 match pool
                     .state()

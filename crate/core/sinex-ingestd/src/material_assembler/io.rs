@@ -71,11 +71,35 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
             continue;
         }
 
-        let material_id = parse_material_state_folder(&path)?;
+        let material_id = match parse_material_state_folder(&path) {
+            Ok(material_id) => material_id,
+            Err(error @ SinexError::InvalidState(_)) => {
+                warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "Assembler state entry is invalid; cleaning it up and continuing"
+                );
+                cleanup_state_path(&path).await;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
 
-        if let Some(state) = restore_state_params(assembler, material_id, &path).await? {
-            assembler.insert_state_handle(material_id, state).await;
-            info!(material_id = %material_id, "Restored in-flight material state from WAL");
+        match restore_state_params(assembler, material_id, &path).await {
+            Ok(Some(state)) => {
+                assembler.insert_state_handle(material_id, state).await;
+                info!(material_id = %material_id, "Restored in-flight material state from WAL");
+            }
+            Ok(None) => {}
+            Err(error @ SinexError::InvalidState(_)) => {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Persisted material state is invalid; cleaning it up and continuing"
+                );
+                cleanup_state_path(&path).await;
+            }
+            Err(error) => return Err(error),
         }
     }
 
@@ -579,37 +603,35 @@ pub(super) async fn append_wal_entry(
 /// Remove the persisted state directory for a material
 pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Uuid) {
     let path = assembler.state_root.join(material_id.to_string());
+    cleanup_state_path(&path).await;
+}
 
-    // Also clean up any orphaned temp files
+async fn cleanup_state_path(path: &Path) {
     let temp_path = path.join(TEMP_FILE_NAME);
+    let buffers_dir = path.join(BUFFER_DIR_NAME);
+
     if temp_path.exists()
         && let Err(e) = fs::remove_file(&temp_path).await
     {
         warn!(
-            material_id = %material_id,
             path = %temp_path.display(),
             "Failed to remove temp file: {}",
             e
         );
     }
 
-    // Clean up buffered slice files
-    let buffers_dir = path.join(BUFFER_DIR_NAME);
     if buffers_dir.exists()
         && let Err(e) = fs::remove_dir_all(&buffers_dir).await
     {
         warn!(
-            material_id = %material_id,
             path = %buffers_dir.display(),
             "Failed to remove buffers directory: {}",
             e
         );
     }
 
-    // Finally remove the entire state directory
     if let Err(e) = fs::remove_dir_all(&path).await {
         warn!(
-            material_id = %material_id,
             path = %path.display(),
             "Failed to remove assembler state directory: {}",
             e
@@ -1286,7 +1308,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn restore_state_rejects_invalid_started_at_in_wal(ctx: TestContext) -> TestResult<()> {
+    async fn restore_state_cleans_up_invalid_started_at_in_wal(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
@@ -1305,16 +1327,23 @@ mod tests {
         )
         .await?;
 
-        let error = restore_state(&assembler)
-            .await
-            .expect_err("invalid WAL started_at must fail honestly");
-        assert!(error.to_string().contains("Invalid started_at"));
-        assert!(error.to_string().contains("restored WAL state"));
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "invalid WAL started_at should be quarantined and cleaned up"
+        );
+        assert!(
+            assembler.assembler_state.is_empty(),
+            "invalid WAL started_at must not restore an in-memory assembly"
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn restore_state_rejects_invalid_buffered_slice_filename(ctx: TestContext) -> TestResult<()> {
+    async fn restore_state_cleans_up_invalid_buffered_slice_filename(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
@@ -1336,12 +1365,16 @@ mod tests {
         tokio::fs::write(material_dir.join(BUFFER_DIR_NAME).join("bad-offset.slice"), b"slice")
             .await?;
 
-        let error = restore_state(&assembler)
-            .await
-            .expect_err("invalid buffered slice filenames must fail restore honestly");
+        restore_state(&assembler).await?;
 
-        assert!(error.to_string().contains("invalid offset"));
-        assert!(error.to_string().contains("bad-offset"));
+        assert!(
+            !material_dir.exists(),
+            "invalid buffered slice filenames should be quarantined and cleaned up"
+        );
+        assert!(
+            assembler.assembler_state.is_empty(),
+            "invalid buffered slice filenames must not restore an in-memory assembly"
+        );
         Ok(())
     }
 
