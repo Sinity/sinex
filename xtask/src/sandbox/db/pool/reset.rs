@@ -563,12 +563,13 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
 #[cfg(test)]
 mod tests {
     use super::{force_event_material_cleanup, log_remaining_rows, seed_test_fixtures};
-    use crate::sandbox::prelude::{Sandbox, TestResult};
     use crate::sandbox::sinex_test;
     use sinex_primitives::Uuid;
 
     #[sinex_test]
-    async fn log_remaining_rows_reports_extra_source_materials(ctx: Sandbox) -> TestResult<()> {
+    async fn log_remaining_rows_reports_extra_source_materials(
+        ctx: crate::sandbox::Sandbox,
+    ) -> ::xtask::sandbox::TestResult<()> {
         let source_identifier = format!("force-cleanup-test-{}", Uuid::now_v7());
         sqlx::query(
             "INSERT INTO raw.source_material_registry \
@@ -590,8 +591,8 @@ mod tests {
 
     #[sinex_test]
     async fn force_event_material_cleanup_clears_extra_source_materials(
-        ctx: Sandbox,
-    ) -> TestResult<()> {
+        ctx: crate::sandbox::Sandbox,
+    ) -> ::xtask::sandbox::TestResult<()> {
         let source_identifier = format!("force-cleanup-test-{}", Uuid::now_v7());
         sqlx::query(
             "INSERT INTO raw.source_material_registry \
