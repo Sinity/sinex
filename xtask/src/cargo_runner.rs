@@ -10,6 +10,8 @@
 use color_eyre::eyre::Result;
 
 use crate::cargo_diagnostics::DiagnosticSummary;
+#[cfg(any(test, feature = "sandbox"))]
+use parking_lot::Mutex;
 
 // ─── Trait ────────────────────────────────────────────────────────────────────
 
@@ -86,7 +88,7 @@ pub struct MockCargoRunner {
     /// Whether `run_fmt_check` should succeed (`true`) or fail (`false`).
     pub fmt_ok: bool,
     /// Records how many times each method was called, for assertion in tests.
-    pub calls: std::sync::Mutex<MockCallCounts>,
+    pub calls: Mutex<MockCallCounts>,
 }
 
 /// Call counts recorded by [`MockCargoRunner`].
@@ -142,7 +144,7 @@ impl MockCargoRunner {
 
     /// Snapshot of call counts so far.
     pub fn calls(&self) -> MockCallCounts {
-        let guard = self.calls.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.calls.lock();
         MockCallCounts {
             check: guard.check,
             clippy: guard.clippy,
@@ -158,7 +160,7 @@ impl CargoRunner for MockCargoRunner {
         _args: &[&str],
         on_package_done: &mut dyn FnMut(usize),
     ) -> Result<DiagnosticSummary> {
-        self.calls.lock().unwrap_or_else(|p| p.into_inner()).check += 1;
+        self.calls.lock().check += 1;
         // Fire the callback once per compiled package so that progress-reporting
         // code paths in CheckCommand::execute() are exercised. The count matches
         // the pre-configured summary so tests that assert progress counts work.
@@ -173,7 +175,7 @@ impl CargoRunner for MockCargoRunner {
         _args: &[&str],
         on_package_done: &mut dyn FnMut(usize),
     ) -> Result<DiagnosticSummary> {
-        self.calls.lock().unwrap_or_else(|p| p.into_inner()).clippy += 1;
+        self.calls.lock().clippy += 1;
         for (i, _) in self.clippy_response.compiled_packages.iter().enumerate() {
             on_package_done(i + 1);
         }
@@ -181,7 +183,7 @@ impl CargoRunner for MockCargoRunner {
     }
 
     fn run_fmt_check(&self) -> Result<()> {
-        self.calls.lock().unwrap_or_else(|p| p.into_inner()).fmt += 1;
+        self.calls.lock().fmt += 1;
         if self.fmt_ok {
             Ok(())
         } else {
