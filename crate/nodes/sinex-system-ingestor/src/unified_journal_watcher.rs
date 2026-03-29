@@ -139,6 +139,27 @@ fn follow_exit_processing_error_message(exit_reason: FollowExitReason) -> &'stat
     }
 }
 
+fn build_follow_wait_error(
+    error: std::io::Error,
+    exit_reason: FollowExitReason,
+    stderr: Option<&str>,
+    stderr_read_error: Option<&str>,
+) -> SinexError {
+    let mut wait_error = SinexError::io("Failed to wait for journal watcher process exit")
+        .with_source(error)
+        .with_context(
+            "follow_exit_reason",
+            follow_exit_processing_error_message(exit_reason),
+        );
+    if let Some(stderr) = stderr.and_then(stderr_preview) {
+        wait_error = wait_error.with_context("stderr", stderr);
+    }
+    if let Some(stderr_read_error) = stderr_read_error {
+        wait_error = wait_error.with_context("stderr_read_error", stderr_read_error.to_string());
+    }
+    wait_error
+}
+
 fn signal_child_terminate(child: &Child, process_name: &str) -> NodeResult<()> {
     let pid = child.id().ok_or_else(|| {
         SinexError::processing(format!(
@@ -1109,30 +1130,25 @@ impl UnifiedJournalWatcher {
                 Err(error) => {
                     warn!(error = %error, "Failed to wait for journal watcher process exit");
                     if !matches!(exit_reason, FollowExitReason::Shutdown) {
-                        let stderr = read_child_stderr(&mut child, "journal watcher")
-                            .await
-                            .ok()
-                            .flatten();
-                        self.record_error(format!(
-                            "Failed to wait for journal watcher process exit: {error}"
-                        ));
-                        let io_error =
-                            SinexError::io("Failed to wait for journal watcher process exit")
-                                .with_source(error);
-                        return Err(if let Some(stderr) = stderr.and_then(|value| stderr_preview(&value))
-                        {
-                            io_error
-                                .with_context(
-                                    "follow_exit_reason",
-                                    follow_exit_processing_error_message(exit_reason),
-                                )
-                                .with_context("stderr", stderr)
-                        } else {
-                            io_error.with_context(
-                                "follow_exit_reason",
-                                follow_exit_processing_error_message(exit_reason),
+                        let (stderr, stderr_read_error) =
+                            match read_child_stderr(&mut child, "journal watcher").await {
+                                Ok(stderr) => (stderr, None),
+                                Err(stderr_error) => (None, Some(format!("{stderr_error:#}"))),
+                            };
+                        let message = if let Some(stderr_read_error) = &stderr_read_error {
+                            format!(
+                                "Failed to wait for journal watcher process exit: {error}; failed to read stderr: {stderr_read_error}"
                             )
-                        });
+                        } else {
+                            format!("Failed to wait for journal watcher process exit: {error}")
+                        };
+                        self.record_error(message);
+                        return Err(build_follow_wait_error(
+                            error,
+                            exit_reason,
+                            stderr.as_deref(),
+                            stderr_read_error.as_deref(),
+                        ));
                     }
                 }
             }
@@ -2353,6 +2369,27 @@ mod tests {
         .expect_err("stderr should remain attached to follow failures");
         let rendered = format!("{error:#}");
         assert!(rendered.contains("permission denied while opening journal"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn build_follow_wait_error_preserves_stderr_read_failure_context(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+
+        let error = build_follow_wait_error(
+            std::io::Error::other("broken wait"),
+            FollowExitReason::UnexpectedEof,
+            None,
+            Some("failed to read journal watcher stderr: permission denied"),
+        );
+        let rendered = format!("{error:#}");
+
+        assert!(rendered.contains("broken wait"));
+        assert!(rendered.contains("journalctl follow stream ended unexpectedly"));
+        assert!(rendered.contains("stderr_read_error"));
+        assert!(rendered.contains("failed to read journal watcher stderr: permission denied"));
         Ok(())
     }
 
