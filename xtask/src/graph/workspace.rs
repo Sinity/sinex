@@ -173,61 +173,6 @@ impl WorkspaceGraph {
         &self.graph
     }
 
-    /// Inject timing weights into the graph from bench timing data.
-    ///
-    /// If Phase 2 timing data is available, loads compile times from the history
-    /// database and associates them with packages for weighted analysis. Otherwise,
-    /// uses uniform weights (1.0) for all packages.
-    ///
-    /// This method currently behaves as a no-op placeholder. It
-    /// returns the graph unchanged with uniform weights and prints a note to stderr.
-    ///
-    /// # Returns
-    ///
-    /// A new `WorkspaceGraph` with timing weights applied. Currently returns `self`
-    /// since timing-weight integration is not yet complete.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use xtask::graph::WorkspaceGraph;
-    ///
-    /// let graph = WorkspaceGraph::new()?
-    ///     .with_timing_weights()?;
-    /// # Ok::<(), color_eyre::eyre::Report>(())
-    /// ```
-    ///
-    /// # Future Behavior
-    ///
-    /// When timing-weight integration is complete, this method will:
-    /// 1. Check if timing history database exists
-    /// 2. Load most recent timing data for each crate
-    /// 3. Associate compile times with graph nodes for weighted analysis
-    pub fn with_timing_weights(self) -> Result<Self> {
-        // Check if the bench history database exists and has timing data.
-        // The bench module stores results in a SQLite DB at the configured state dir.
-        let cfg = crate::config::config();
-        let bench_db_path = cfg.state_dir.join("bench-history.db");
-
-        if !bench_db_path.exists() {
-            eprintln!(
-                "Note: No bench history database found at {}",
-                bench_db_path.display()
-            );
-            eprintln!("Using uniform weights (1.0) for all packages");
-            eprintln!("Run `xtask test --bench` to populate timing data");
-            return Ok(self);
-        }
-
-        // Database exists but we can't query per-crate compile times from it yet
-        // (bench history tracks thread-count scenarios, not per-crate compile times).
-        // For now, acknowledge the database exists but use uniform weights.
-        eprintln!("Note: Bench history found but per-crate timing data not yet available");
-        eprintln!("Using uniform weights (1.0) for all packages");
-
-        Ok(self)
-    }
-
     /// Get all transitive dependents of a package.
     ///
     /// Returns all packages that directly or indirectly depend on the given package.
