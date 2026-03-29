@@ -312,6 +312,19 @@ pub fn validate_work_dir(s: &str) -> Result<SanitizedPath, String> {
     parse_non_empty_path_arg(s, "Working directory").map_err(|e| e.to_string())
 }
 
+fn resolve_primary_database_url(args: &NodeCli) -> NodeResult<String> {
+    let base_url = if let Some(db_url) = &args.database_url {
+        db_url.clone()
+    } else {
+        std::env::var("DATABASE_URL").map_err(|e| {
+            SinexError::unknown(format!("DATABASE_URL environment variable not set: {e}"))
+        })?
+    };
+    sinex_db::resolve_effective_database_url(&base_url).map_err(|error| {
+        SinexError::configuration("Failed to validate node DATABASE_URL").with_std_error(&error)
+    })
+}
+
 /// Validate and parse scan target path
 pub fn validate_scan_target(s: &str) -> Result<SanitizedPath, String> {
     parse_non_empty_path_arg(s, "Scan target").map_err(|e| e.to_string())
@@ -933,18 +946,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
     }
 
     async fn connect_primary_db(args: &NodeCli) -> NodeResult<PgPool> {
-        let base_url = if let Some(db_url) = &args.database_url {
-            db_url.clone()
-        } else {
-            std::env::var("DATABASE_URL").map_err(|e| {
-                SinexError::unknown(format!("DATABASE_URL environment variable not set: {e}"))
-            })?
-        };
-        let env = sinex_primitives::environment();
-        let namespaced_url = env
-            .database_url(&base_url)
-            .unwrap_or_else(|_| base_url.clone());
-        PgPool::connect(&namespaced_url)
+        let database_url = resolve_primary_database_url(args)?;
+        PgPool::connect(&database_url)
             .await
             .map_err(|e| SinexError::unknown(format!("Failed to connect to database: {e}")))
     }
@@ -969,8 +972,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 #[cfg(test)]
 mod tests {
     use super::{
-        edge_mode_enabled, handle_export_result, parse_checkpoint, render_cli_value,
-        render_optional_cli_timestamp, unavailable_section,
+        NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result,
+        parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
+        resolve_primary_database_url, unavailable_section,
     };
     use crate::SinexError;
     use crate::runtime::stream::Checkpoint;
@@ -1015,6 +1019,32 @@ mod tests {
         assert_eq!(render_optional_cli_timestamp(None), "unknown");
     }
 
+    fn test_cli_with_database_url(database_url: Option<&str>) -> NodeCli {
+        NodeCli {
+            nats: NatsArgs {
+                url: "nats://localhost:4222".to_string(),
+                name: None,
+                require_tls: None,
+                ca_cert: None,
+                client_cert: None,
+                client_key: None,
+                creds_file: None,
+                nkey_seed_file: None,
+                token: None,
+                token_file: None,
+            },
+            database_url: database_url.map(ToOwned::to_owned),
+            service_name: None,
+            work_dir: None,
+            verbose: 0,
+            node_config: None,
+            command: NodeCommand::Service {
+                dry_run: true,
+                consumer_group: None,
+            },
+        }
+    }
+
     #[test]
     fn parse_checkpoint_rejects_malformed_json_input() {
         let error = parse_checkpoint("{ definitely-not-json")
@@ -1046,6 +1076,16 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn resolve_primary_database_url_rejects_invalid_namespaced_url() {
+        let cli = test_cli_with_database_url(Some("not-a-valid-postgres-url"));
+        let error = resolve_primary_database_url(&cli)
+            .expect_err("invalid database URLs must not silently bypass namespacing");
+
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("Failed to validate node DATABASE_URL"));
     }
 
     #[sinex_serial_test]
