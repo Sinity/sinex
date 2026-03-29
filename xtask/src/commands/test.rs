@@ -503,15 +503,32 @@ impl XtaskCommand for TestCommand {
             ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
-        let low_disk_space = !check_disk_space_gb(2);
+        let disk_space_status = check_disk_space_gb(2);
         let low_disk_space_warning = "Low disk space (<2GB). Tests might fail.";
+        let disk_space_probe_warning = match &disk_space_status {
+            DiskSpaceStatus::Unknown { issue } => Some(format!(
+                "Failed to inspect available disk space before running tests: {issue}"
+            )),
+            _ => None,
+        };
 
         // Check disk space (human warning plus structured warning on final result)
-        if ctx.is_human() && low_disk_space {
-            eprintln!(
-                "{} Low disk space (<2GB). Tests might fail.",
-                style("WARNING:").red().bold()
-            );
+        if ctx.is_human() {
+            match &disk_space_status {
+                DiskSpaceStatus::Low { .. } => {
+                    eprintln!(
+                        "{} Low disk space (<2GB). Tests might fail.",
+                        style("WARNING:").red().bold()
+                    );
+                }
+                DiskSpaceStatus::Unknown { issue } => {
+                    eprintln!(
+                        "{} Failed to inspect available disk space before running tests: {issue}",
+                        style("WARNING:").red().bold()
+                    );
+                }
+                DiskSpaceStatus::Sufficient { .. } => {}
+            }
         }
 
         // Guard: running xtask test foreground inside nextest causes a cargo target/ lock
@@ -703,8 +720,11 @@ impl XtaskCommand for TestCommand {
                 "failure_details_issue": failure_details_issue.clone(),
             }))
             .with_duration(ctx.elapsed());
-            if low_disk_space {
+            if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
+            }
+            if let Some(warning) = &disk_space_probe_warning {
+                result = result.with_warning(warning.clone());
             }
             if let Some(issue) = failure_details_issue {
                 result = result.with_warning(issue);
@@ -743,8 +763,11 @@ impl XtaskCommand for TestCommand {
                     stats.passed, stats.ignored
                 ))
                 .with_duration(ctx.elapsed());
-            if low_disk_space {
+            if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
+            }
+            if let Some(warning) = &disk_space_probe_warning {
+                result = result.with_warning(warning.clone());
             }
             if let Some(issue) = flaky_issue {
                 result = result.with_warning(issue);
@@ -841,6 +864,74 @@ mod tests {
         assert_eq!(invocation_id, 42);
         Ok(())
     }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_accepts_valid_count() -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "target_count": 3u64
+        }));
+
+        assert_eq!(super::parse_fuzz_target_count(&result)?, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_rejects_missing_count() -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "items": []
+        }));
+
+        let error =
+            super::parse_fuzz_target_count(&result).expect_err("missing target count must surface");
+        assert!(format!("{error:#}").contains("missing target_count"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_fuzz_target_count_rejects_non_numeric_count()
+    -> ::xtask::sandbox::TestResult<()> {
+        let result = CommandResult::success().with_data(serde_json::json!({
+            "target_count": "three"
+        }));
+
+        let error = super::parse_fuzz_target_count(&result)
+            .expect_err("non-numeric target count must surface");
+        assert!(format!("{error:#}").contains("invalid target_count"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_disk_space_probe_reports_low_space() -> ::xtask::sandbox::TestResult<()> {
+        let status = super::classify_disk_space_probe_result(Ok(1), 2);
+        assert!(matches!(status, DiskSpaceStatus::Low { available_gb: 1, min_gb: 2 }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_disk_space_probe_reports_sufficient_space()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = super::classify_disk_space_probe_result(Ok(4), 2);
+        assert!(matches!(
+            status,
+            DiskSpaceStatus::Sufficient {
+                available_gb: 4,
+                min_gb: 2
+            }
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_disk_space_probe_surfaces_probe_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status =
+            super::classify_disk_space_probe_result(Err("statvfs failed".to_string()), 2);
+        let DiskSpaceStatus::Unknown { issue } = status else {
+            panic!("expected unknown disk-space status");
+        };
+        assert!(issue.contains("statvfs failed"));
+        Ok(())
+    }
 }
 
 // ─── Subcommand handlers ───────────────────────────────────────────────────
@@ -922,12 +1013,7 @@ async fn execute_fuzz(fuzz: &FuzzArgs, ctx: &CommandContext) -> Result<CommandRe
         }
         .execute(ctx)
         .await?;
-        let target_count = list_result
-            .data
-            .as_ref()
-            .and_then(|data| data.get("target_count"))
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
+        let target_count = parse_fuzz_target_count(&list_result)?;
 
         if fuzz.list || target_count == 0 {
             if target_count == 0 {
@@ -962,6 +1048,19 @@ async fn execute_fuzz(fuzz: &FuzzArgs, ctx: &CommandContext) -> Result<CommandRe
     Ok(CommandResult::success()
         .with_message("No fuzz target specified")
         .with_duration(ctx.elapsed()))
+}
+
+fn parse_fuzz_target_count(result: &CommandResult) -> Result<u64> {
+    let data = result
+        .data
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result is missing structured data"))?;
+    let target_count = data
+        .get("target_count")
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result is missing target_count"))?;
+    target_count
+        .as_u64()
+        .ok_or_else(|| color_eyre::eyre::eyre!("fuzz list result has invalid target_count"))
 }
 
 async fn execute_coverage(cov: &CoverageArgs, ctx: &CommandContext) -> Result<CommandResult> {
@@ -1061,16 +1160,51 @@ async fn execute_vm(vm: &VmArgs, ctx: &CommandContext) -> Result<CommandResult> 
     vm_cmd.execute(ctx).await
 }
 
-/// Check if sufficient disk space is available on current directory's filesystem
-fn check_disk_space_gb(min_gb: u64) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiskSpaceStatus {
+    Sufficient { available_gb: u64, min_gb: u64 },
+    Low { available_gb: u64, min_gb: u64 },
+    Unknown { issue: String },
+}
+
+fn classify_disk_space_probe_result(
+    available_gb: std::result::Result<u64, String>,
+    min_gb: u64,
+) -> DiskSpaceStatus {
+    match available_gb {
+        Ok(available_gb) if available_gb >= min_gb => DiskSpaceStatus::Sufficient {
+            available_gb,
+            min_gb,
+        },
+        Ok(available_gb) => DiskSpaceStatus::Low {
+            available_gb,
+            min_gb,
+        },
+        Err(issue) => DiskSpaceStatus::Unknown { issue },
+    }
+}
+
+/// Check if sufficient disk space is available on current directory's filesystem.
+/// Probe failures remain explicit instead of being treated as healthy.
+fn check_disk_space_gb(min_gb: u64) -> DiskSpaceStatus {
     #[cfg(unix)]
     {
         use nix::sys::statvfs::statvfs;
-        if let Ok(stat) = statvfs(".") {
-            let available_bytes = stat.blocks_available() * stat.fragment_size();
-            let available_gb = available_bytes / (1024 * 1024 * 1024);
-            return available_gb >= min_gb;
-        }
+        return classify_disk_space_probe_result(
+            statvfs(".")
+                .map(|stat| {
+                    let available_bytes = stat.blocks_available() * stat.fragment_size();
+                    available_bytes / (1024 * 1024 * 1024)
+                })
+                .map_err(|error| error.to_string()),
+            min_gb,
+        );
     }
-    true // Assume OK on non-Unix or if check fails
+    #[cfg(not(unix))]
+    {
+        classify_disk_space_probe_result(
+            Err("disk-space probing is unavailable on this platform".to_string()),
+            min_gb,
+        )
+    }
 }

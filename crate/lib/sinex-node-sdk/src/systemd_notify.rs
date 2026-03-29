@@ -25,7 +25,12 @@ pub fn notify_stopping(component: &str) {
     }
 }
 
-pub fn spawn_watchdog(component: &'static str) -> Option<JoinHandle<()>> {
+pub struct WatchdogHandle {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    join_handle: JoinHandle<()>,
+}
+
+pub fn spawn_watchdog(component: &'static str) -> Option<WatchdogHandle> {
     let interval = watchdog_interval()?;
     debug!(
         component,
@@ -33,29 +38,45 @@ pub fn spawn_watchdog(component: &'static str) -> Option<JoinHandle<()>> {
         "Systemd watchdog enabled"
     );
 
-    Some(tokio::spawn(async move {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let join_handle = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
+        let mut shutdown_rx = shutdown_rx;
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         ticker.tick().await;
 
         loop {
-            ticker.tick().await;
-            if let Err(error) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
-                warn!(component, error = %error, "Failed to notify systemd watchdog state");
+            tokio::select! {
+                _ = ticker.tick() => {
+                    if let Err(error) = sd_notify::notify(false, &[NotifyState::Watchdog]) {
+                        warn!(component, error = %error, "Failed to notify systemd watchdog state");
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    break;
+                }
             }
         }
-    }))
+    });
+
+    Some(WatchdogHandle {
+        shutdown_tx,
+        join_handle,
+    })
 }
 
-pub async fn stop_watchdog(handle: Option<JoinHandle<()>>, component: &str) {
+pub async fn stop_watchdog(handle: Option<WatchdogHandle>, component: &str) {
     let Some(handle) = handle else {
         return;
     };
 
-    handle.abort();
-    match handle.await {
+    let WatchdogHandle {
+        shutdown_tx,
+        join_handle,
+    } = handle;
+    let _ = shutdown_tx.send(());
+    match join_handle.await {
         Ok(()) => {}
-        Err(error) if error.is_cancelled() => {}
         Err(error) => {
             warn!(component, error = %error, "Failed to stop systemd watchdog task cleanly");
         }

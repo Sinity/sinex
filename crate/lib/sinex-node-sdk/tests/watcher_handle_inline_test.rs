@@ -4,6 +4,7 @@ use sinex_node_sdk::WatcherHandle;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{Duration, sleep};
+use tokio::sync::Notify;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -77,6 +78,34 @@ async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::E
     sleep(Duration::from_millis(100)).await;
 
     assert!(!flag.load(Ordering::SeqCst));
+    assert!(!tracker.read().active);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_watcher_shutdown_waits_for_clean_exit() -> Result<(), Box<dyn std::error::Error>> {
+    let started = Arc::new(Notify::new());
+    let shutdown = Arc::new(Notify::new());
+    let finished = Arc::new(AtomicBool::new(false));
+
+    let started_clone = Arc::clone(&started);
+    let shutdown_clone = Arc::clone(&shutdown);
+    let finished_clone = Arc::clone(&finished);
+    let task = tokio::spawn(async move {
+        started_clone.notify_waiters();
+        shutdown_clone.notified().await;
+        finished_clone.store(true, Ordering::SeqCst);
+    });
+
+    let mut handle = WatcherHandle::<()>::initialized("test");
+    handle.start(task, None)?;
+    let tracker = handle.health_tracker();
+
+    started.notified().await;
+    shutdown.notify_waiters();
+    handle.shutdown().await?;
+
+    assert!(finished.load(Ordering::SeqCst));
     assert!(!tracker.read().active);
     Ok(())
 }

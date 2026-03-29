@@ -82,6 +82,10 @@ pub struct SessionState {
     /// session boundary detection deterministic and replay-correct.
     #[serde(default)]
     pub gap_detected: bool,
+
+    /// Deferred first event of the next session when a gap boundary is hit.
+    #[serde(default)]
+    pub pending_session_seed: Option<PendingSessionSeed>,
 }
 
 impl Default for SessionState {
@@ -94,6 +98,7 @@ impl Default for SessionState {
             event_ids: Vec::new(),
             session_counter: 0,
             gap_detected: false,
+            pending_session_seed: None,
         }
     }
 }
@@ -107,11 +112,40 @@ impl SessionState {
         self.sources.clear();
         self.event_ids.clear();
         self.gap_detected = false;
+        self.pending_session_seed = None;
+    }
+
+    fn seed_session(&mut self, seed: PendingSessionSeed) {
+        self.session_start = Some(seed.event_time);
+        self.last_event_time = Some(seed.event_time);
+        self.event_count = 1;
+        self.sources.clear();
+        self.sources.insert(seed.source);
+        self.event_ids.clear();
+        self.event_ids.push(seed.event_id);
+        self.gap_detected = false;
+        self.pending_session_seed = None;
     }
 }
 
-#[derive(Default)]
-pub struct SessionDetector;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingSessionSeed {
+    pub event_time: Timestamp,
+    pub source: String,
+    pub event_id: Uuid,
+}
+
+pub struct SessionDetector {
+    gap_threshold: Duration,
+}
+
+impl Default for SessionDetector {
+    fn default() -> Self {
+        Self {
+            gap_threshold: gap_threshold(),
+        }
+    }
+}
 
 impl WindowedNode for SessionDetector {
     type State = SessionState;
@@ -146,14 +180,21 @@ impl WindowedNode for SessionDetector {
     ) -> Result<(), NodeLogicError> {
         let event_time = context.require_ts_orig()?;
         let source = context.source.as_str().to_string();
+        let event_id = context.trigger_uuid();
 
         // Detect session gap using event timestamps (replay-correct).
         // A gap is detected when the incoming event's ts_orig is more than
         // gap_threshold after the last event's ts_orig. This uses event
         // time, not wall clock, so replay produces the same boundaries.
         if let Some(last_time) = state.last_event_time {
-            if state.event_count > 0 && (event_time - last_time) >= gap_threshold() {
+            if state.event_count > 0 && (event_time - last_time) >= self.gap_threshold {
                 state.gap_detected = true;
+                state.pending_session_seed = Some(PendingSessionSeed {
+                    event_time,
+                    source,
+                    event_id,
+                });
+                return Ok(());
             }
         }
 
@@ -165,7 +206,7 @@ impl WindowedNode for SessionDetector {
         state.last_event_time = Some(event_time);
         state.event_count += 1;
         state.sources.insert(source);
-        state.event_ids.push(context.trigger_uuid());
+        state.event_ids.push(event_id);
 
         // Cap provenance list to prevent unbounded growth in very long sessions
         if state.event_ids.len() > 10_000 {
@@ -218,8 +259,13 @@ impl WindowedNode for SessionDetector {
         let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary);
 
-        // Reset state for the next session
+        // Reset state for the next session, seeding it with the deferred
+        // post-gap event when a boundary was triggered by an incoming event.
+        let pending_seed = state.pending_session_seed.take();
         state.reset_session();
+        if let Some(seed) = pending_seed {
+            state.seed_session(seed);
+        }
 
         Ok(Some(output))
     }

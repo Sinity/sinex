@@ -45,9 +45,12 @@
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::task::{JoinError, JoinHandle};
+use tokio::time::Duration;
 
 use sinex_primitives::{Result as SinexResult, SinexError};
 use tracing::debug;
+
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -284,7 +287,8 @@ impl<M> WatcherHandle<M> {
         self.material.take()
     }
 
-    /// Gracefully shutdown the watcher, aborting tasks and marking as stopped.
+    /// Gracefully shutdown the watcher, first waiting briefly for tasks to exit,
+    /// then aborting as a fallback, and finally marking as stopped.
     ///
     /// This is also automatically called on `Drop`, but calling explicitly
     /// allows for proper async cleanup of material contexts and awaiting task completion.
@@ -299,22 +303,39 @@ impl<M> WatcherHandle<M> {
         shutdown_result
     }
 
-    /// Abort any running tasks and wait for them to finish.
+    async fn shutdown_task(
+        watcher_name: &'static str,
+        task_name: &'static str,
+        task: &mut JoinHandle<()>,
+    ) -> SinexResult<()> {
+        match tokio::time::timeout(SHUTDOWN_GRACE_PERIOD, &mut *task).await {
+            Ok(result) => Self::shutdown_join_result(watcher_name, task_name, result),
+            Err(_) => {
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    grace_period_ms = SHUTDOWN_GRACE_PERIOD.as_millis(),
+                    "Watcher task did not exit within shutdown grace period; aborting"
+                );
+                task.abort();
+                Self::shutdown_join_result(watcher_name, task_name, task.await)
+            }
+        }
+    }
+
+    /// Wait for running tasks to exit cleanly, then abort any stragglers.
     async fn abort_tasks_async(&mut self) -> SinexResult<()> {
         let watcher_name = self.name;
         let mut errors = Vec::new();
         match &mut self.state {
             WatcherState::Running { task, forwarder } => {
-                task.abort();
-                if let Err(error) =
-                    Self::shutdown_join_result(watcher_name, "watcher task", task.await)
+                if let Err(error) = Self::shutdown_task(watcher_name, "watcher task", task).await
                 {
                     errors.push(error);
                 }
-                if let Some(fwd) = forwarder.take() {
-                    fwd.abort();
+                if let Some(mut fwd) = forwarder.take() {
                     if let Err(error) =
-                        Self::shutdown_join_result(watcher_name, "watcher forwarder", fwd.await)
+                        Self::shutdown_task(watcher_name, "watcher forwarder", &mut fwd).await
                     {
                         errors.push(error);
                     }

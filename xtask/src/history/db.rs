@@ -1843,7 +1843,7 @@ impl HistoryDb {
         &self,
         command: &str,
         args: &[String],
-        pid: u32,
+        pid: Option<u32>,
         stdout_path: &Path,
         stderr_path: &Path,
     ) -> Result<(i64, i64)> {
@@ -1874,12 +1874,11 @@ impl HistoryDb {
         } else {
             Some(stderr_path.display().to_string())
         };
-        let pid_val = if pid == 0 { None } else { Some(pid) };
         self.conn.execute(
             r"INSERT INTO background_jobs
                 (invocation_id, command, args_json, pid, stdout_path, stderr_path, job_status, started_at)
               VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
-            params![invocation_id, command, args_json, pid_val, stdout_str, stderr_str, started_at],
+            params![invocation_id, command, args_json, pid, stdout_str, stderr_str, started_at],
         )?;
         let job_id = self.conn.last_insert_rowid();
 
@@ -3434,7 +3433,7 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
             &time::format_description::well_known::Rfc3339,
         )
         .map_err(|error| invalid_background_job_field(4, "started_at", error))?,
-        pid: pid.unwrap_or(0),
+        pid,
         stdout_path: row.get(6)?,
         stderr_path: row.get(7)?,
         job_status: JobLifecycleStatus::try_from_str(&job_status_str).map_err(|error| {
@@ -3458,7 +3457,7 @@ pub struct BackgroundJob {
     pub command: String,
     pub args: Vec<String>,
     pub started_at: OffsetDateTime,
-    pub pid: u32,
+    pub pid: Option<u32>,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     /// Process lifecycle status (running/completed/failed/orphaned/killed).
@@ -4390,7 +4389,7 @@ mod tests {
         let (_inv_id, job_id) = db.start_background_job(
             "check",
             &["--all".to_string()],
-            99999,
+            Some(99999),
             &stdout_path,
             &stderr_path,
         )?;
@@ -4428,7 +4427,7 @@ mod tests {
         let (_inv_id, job_id) = db.start_background_job(
             "test",
             &["-p".to_string(), "sinex-primitives".to_string()],
-            88888,
+            Some(88888),
             &stdout_path,
             &stderr_path,
         )?;
@@ -4445,6 +4444,25 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_background_job_by_id_preserves_missing_pid() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-bg-missing-pid.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let stdout_path = dir.path().join("job-missing-pid-stdout.log");
+        let stderr_path = dir.path().join("job-missing-pid-stderr.log");
+
+        let (_inv_id, job_id) =
+            db.start_background_job("test", &["-p".to_string()], None, &stdout_path, &stderr_path)?;
+
+        let job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing background job"))?;
+        assert_eq!(job.pid, None);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_background_job_by_id_surfaces_invalid_args_json() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-invalid-args.db");
@@ -4452,7 +4470,13 @@ mod tests {
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
         let (_inv_id, job_id) =
-            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+            db.start_background_job(
+                "test",
+                &["-p".to_string()],
+                Some(88888),
+                &stdout_path,
+                &stderr_path,
+            )?;
         db.conn.execute(
             "UPDATE background_jobs SET args_json = ?1 WHERE id = ?2",
             params!["{not valid json", job_id],
@@ -4473,7 +4497,13 @@ mod tests {
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
         let (_inv_id, job_id) =
-            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+            db.start_background_job(
+                "test",
+                &["-p".to_string()],
+                Some(88888),
+                &stdout_path,
+                &stderr_path,
+            )?;
         db.conn.execute(
             "UPDATE background_jobs SET started_at = ?1 WHERE id = ?2",
             params!["definitely-not-rfc3339", job_id],
@@ -4494,7 +4524,13 @@ mod tests {
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
         let (_inv_id, job_id) =
-            db.start_background_job("test", &["-p".to_string()], 88888, &stdout_path, &stderr_path)?;
+            db.start_background_job(
+                "test",
+                &["-p".to_string()],
+                Some(88888),
+                &stdout_path,
+                &stderr_path,
+            )?;
         db.conn.execute(
             "UPDATE background_jobs SET job_status = ?1 WHERE id = ?2",
             params!["mystery", job_id],
@@ -4521,7 +4557,7 @@ mod tests {
         std::fs::write(&stderr_path, "test stderr output\nerror line")?;
 
         let (_inv_id, job_id) =
-            db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
+            db.start_background_job("check", &[], Some(77777), &stdout_path, &stderr_path)?;
 
         // Finish job with log files
         db.finish_background_job(
@@ -4551,7 +4587,7 @@ mod tests {
         let stdout_path = dir.path().join("missing-stdout.log");
         let stderr_path = dir.path().join("missing-stderr.log");
         let (_inv_id, job_id) =
-            db.start_background_job("check", &[], 77778, &stdout_path, &stderr_path)?;
+            db.start_background_job("check", &[], Some(77778), &stdout_path, &stderr_path)?;
 
         let error = db
             .finish_background_job(
@@ -4579,7 +4615,7 @@ mod tests {
                 let stdout = dir.path().join(format!("job{i}_stdout.log"));
                 let stderr = dir.path().join(format!("job{i}_stderr.log"));
                 let (_inv_id, job_id) = db
-                    .start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
+                    .start_background_job("build", &[], Some(66666 + i as u32), &stdout, &stderr)
                     .unwrap();
                 job_id
             })
@@ -4604,7 +4640,7 @@ mod tests {
         for i in 0..5 {
             let stdout = dir.path().join(format!("job5_{i}_stdout.log"));
             let stderr = dir.path().join(format!("job5_{i}_stderr.log"));
-            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?; // returns (inv_id, job_id)
+            db.start_background_job("test", &[], Some(55555 + i as u32), &stdout, &stderr)?; // returns (inv_id, job_id)
         }
 
         // Get only 3 most recent
@@ -4937,7 +4973,7 @@ mod tests {
         let original_stderr = dir.path().join("original_stderr.log");
 
         let (_inv_id, job_id) =
-            db.start_background_job("build", &[], 33333, &original_stdout, &original_stderr)?;
+            db.start_background_job("build", &[], Some(33333), &original_stdout, &original_stderr)?;
 
         // Update pid
         db.update_job_pid(job_id, 44444)?;
@@ -4949,7 +4985,7 @@ mod tests {
 
         // Retrieve and verify updates
         let job = db.get_background_job_by_id(job_id)?.unwrap();
-        assert_eq!(job.pid, 44444);
+        assert_eq!(job.pid, Some(44444));
         assert_eq!(
             job.stdout_path.as_ref().unwrap(),
             &new_stdout.display().to_string()

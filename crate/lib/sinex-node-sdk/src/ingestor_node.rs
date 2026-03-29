@@ -220,45 +220,54 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         if self.shutdown_config.restore_state_on_startup {
             let path = self.shutdown_config.checkpoint_path(self.ingestor.name());
             if let Some(ckpt) = CheckpointState::load_from_file(&path).await? {
-                if let Some(data) = ckpt.data {
-                    self.state = decode_checkpoint_data(
-                        data,
-                        "hot reload ingestor state",
-                        self.ingestor.name(),
-                    )?;
-                    if matches!(self.state.checkpoint, Checkpoint::None)
-                        && !matches!(ckpt.checkpoint, Checkpoint::None)
-                    {
-                        self.state.checkpoint = ckpt.checkpoint;
-                    }
-                    CheckpointState::delete_file(&path).await.map_err(|error| {
-                        SinexError::io("Failed to delete restored checkpoint file")
-                            .with_context("node", self.ingestor.name())
-                            .with_context("path", path.display().to_string())
-                            .with_std_error(&error)
-                    })?;
-                    return Ok(());
+                let data = ckpt.data.ok_or_else(|| {
+                    SinexError::checkpoint("Hot reload ingestor checkpoint file is missing state data")
+                        .with_context("node", self.ingestor.name())
+                        .with_context("path", path.display().to_string())
+                })?;
+                self.state =
+                    decode_checkpoint_data(data, "hot reload ingestor state", self.ingestor.name())?;
+                if matches!(self.state.checkpoint, Checkpoint::None)
+                    && !matches!(ckpt.checkpoint, Checkpoint::None)
+                {
+                    self.state.checkpoint = ckpt.checkpoint;
                 }
+                CheckpointState::delete_file(&path).await.map_err(|error| {
+                    SinexError::io("Failed to delete restored checkpoint file")
+                        .with_context("node", self.ingestor.name())
+                        .with_context("path", path.display().to_string())
+                        .with_std_error(&error)
+                })?;
+                return Ok(());
             }
         }
 
         // 2. Try NATS KV
         if let Some(cm) = &self.checkpoint_manager {
             let ckpt = cm.load_checkpoint().await?;
-            if let Some(data) = ckpt.data {
-                self.state = decode_checkpoint_data(
-                    data,
-                    "ingestor checkpoint state",
-                    self.ingestor.name(),
-                )?;
-                self.state.revision = ckpt.revision;
-                if matches!(self.state.checkpoint, Checkpoint::None)
-                    && !matches!(ckpt.checkpoint, Checkpoint::None)
-                {
-                    self.state.checkpoint = ckpt.checkpoint;
+            match ckpt.data {
+                Some(data) => {
+                    self.state = decode_checkpoint_data(
+                        data,
+                        "ingestor checkpoint state",
+                        self.ingestor.name(),
+                    )?;
+                    self.state.revision = ckpt.revision;
+                    if matches!(self.state.checkpoint, Checkpoint::None)
+                        && !matches!(ckpt.checkpoint, Checkpoint::None)
+                    {
+                        self.state.checkpoint = ckpt.checkpoint;
+                    }
                 }
-            } else {
-                self.state = IngestorState::default();
+                None if matches!(ckpt.checkpoint, Checkpoint::None) => {
+                    self.state.revision = ckpt.revision;
+                }
+                None => {
+                    return Err(
+                        SinexError::checkpoint("Ingestor checkpoint KV entry is missing state data")
+                            .with_context("node", self.ingestor.name()),
+                    );
+                }
             }
         }
 
@@ -403,9 +412,103 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::signal_shutdown_channel;
+    use super::{IngestorNodeAdapter, signal_shutdown_channel};
+    use crate::checkpoint::{CheckpointManager, CheckpointState};
+    use crate::runtime::stream::{
+        Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
+    };
+    use crate::shutdown::ShutdownConfig;
+    use crate::{IngestorNode, NodeResult};
+    use futures::TryStreamExt;
+    use serde::{Deserialize, Serialize};
+    use sinex_primitives::Timestamp;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
     use tokio::sync::watch;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    struct TestState;
+
+    #[derive(Default)]
+    struct TestIngestor;
+
+    impl IngestorNode for TestIngestor {
+        type Config = ();
+        type State = TestState;
+
+        fn name(&self) -> &str {
+            "ingestor-adapter-test"
+        }
+
+        fn capabilities(&self) -> NodeCapabilities {
+            NodeCapabilities::default()
+        }
+
+        async fn initialize(
+            &mut self,
+            _config: Self::Config,
+            _runtime: &crate::runtime::stream::NodeRuntimeState,
+            _state: &mut Self::State,
+        ) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan_snapshot(
+            &mut self,
+            _state: &mut Self::State,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn scan_historical(
+            &mut self,
+            _state: &mut Self::State,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn run_continuous(
+            &mut self,
+            _state: &mut Self::State,
+            from: Checkpoint,
+            _shutdown_rx: watch::Receiver<bool>,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: from,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+    }
 
     #[sinex_test]
     async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
@@ -423,6 +526,105 @@ mod tests {
         assert!(signal_shutdown_channel(tx, "test-ingestor"));
         rx.changed().await?;
         assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_rejects_hot_reload_file_without_state_payload() -> TestResult<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir.path().join("ingestor-empty-state.checkpoint.json");
+        CheckpointState {
+            checkpoint: Checkpoint::stream("restored", None),
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        adapter.shutdown_config = ShutdownConfig {
+            checkpoint_path: Some(checkpoint_path.clone()),
+            ..ShutdownConfig::default()
+        };
+
+        let error = adapter
+            .load_state()
+            .await
+            .expect_err("empty hot reload ingestor state must not be treated as absent");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("ingestor-adapter-test"));
+        assert!(message.contains(&checkpoint_path.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_rejects_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv.clone(),
+            "ingestor-adapter-test".to_string(),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+        manager.save_checkpoint(&CheckpointState::default()).await?;
+
+        let mut keys = kv.keys().await?;
+        let key = keys
+            .try_next()
+            .await?
+            .expect("checkpoint key should exist");
+        let corrupt = serde_json::to_vec(&CheckpointState {
+            checkpoint: Checkpoint::stream("restored", None),
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        })?;
+        kv.put(&key, corrupt.into()).await?;
+
+        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+
+        let error = adapter
+            .load_state()
+            .await
+            .expect_err("empty ingestor checkpoint KV state must not be treated as fresh");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("ingestor-adapter-test"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_accepts_fresh_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            "ingestor-adapter-test".to_string(),
+            "test-group".to_string(),
+            "fresh-consumer".to_string(),
+        );
+
+        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+        adapter
+            .load_state()
+            .await
+            .expect("fresh checkpoint state should be treated as a clean start");
+
+        assert!(matches!(adapter.state.checkpoint, Checkpoint::None));
+        assert_eq!(adapter.state.revision, 0);
         Ok(())
     }
 }

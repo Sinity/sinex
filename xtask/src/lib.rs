@@ -628,9 +628,16 @@ pub async fn run_cli() -> Result<()> {
                     // Update coordinator state with real job_id + pid.
                     // Critical for FIFO queue: handle_completion may have
                     // left remaining items in the state file with sentinel values.
-                    if let Err(error) = coord.update_state(command_name, job.id, job.pid) {
+                    if let Some(pid) = job.pid {
+                        if let Err(error) = coord.update_state(command_name, job.id, pid) {
+                            eprintln!(
+                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                job.id
+                            );
+                        }
+                    } else {
                         eprintln!(
-                            "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                            "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
                             job.id
                         );
                     }

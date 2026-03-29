@@ -30,7 +30,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material,
     SqliteHistoryImportError, SqliteHistoryRowOutcome,
-    watcher_handle::{WatcherHandle, WatcherHealth},
+    watcher_handle::WatcherHandle,
 };
 use sinex_primitives::{
     HostName, Seconds, Timestamp, Uuid,
@@ -43,7 +43,7 @@ use sinex_primitives::{
     },
     privacy::{self, ProcessingContext},
 };
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::sync::watch;
 
 const MATERIAL_REASON_ACTIVITYWATCH_HISTORY: &str = "desktop-activitywatch-history";
@@ -290,6 +290,7 @@ impl DesktopNode {
 
     fn checkpoint_activitywatch_row_id(checkpoint: &Checkpoint) -> NodeResult<Option<i64>> {
         match checkpoint {
+            Checkpoint::None => Ok(None),
             Checkpoint::External { position, .. } => match position.get("activitywatch_row_id") {
                 Some(serde_json::Value::Number(value)) => {
                     let row_id = value.as_i64().ok_or_else(|| {
@@ -316,7 +317,12 @@ impl DesktopNode {
                 ),
                 None => Ok(None),
             },
-            _ => Ok(None),
+            _ => Err(
+                SinexError::checkpoint(
+                    "desktop ActivityWatch history requires an external checkpoint",
+                )
+                .with_context("checkpoint", checkpoint.description()),
+            ),
         }
     }
 
@@ -564,17 +570,6 @@ impl Default for DesktopNode {
 }
 
 impl DesktopNode {
-    fn record_watcher_error(health: &Arc<RwLock<WatcherHealth>>, error: &SinexError) {
-        match health.write() {
-            Ok(mut watcher_health) => {
-                watcher_health.last_error = Some(error.to_string());
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().last_error = Some(error.to_string());
-            }
-        }
-    }
-
     fn live_watcher_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
         handle.and_then(|watcher| watcher.health().last_error)
     }
@@ -897,7 +892,7 @@ impl IngestorNode for DesktopNode {
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Clipboard monitoring failed: {}", e);
-                            Self::record_watcher_error(&health, &e);
+                            health.write().last_error = Some(e.to_string());
                         }
                     });
                     handle.start(task, None)?;
@@ -936,7 +931,7 @@ impl IngestorNode for DesktopNode {
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Window manager monitoring failed: {}", e);
-                            Self::record_watcher_error(&health, &e);
+                            health.write().last_error = Some(e.to_string());
                         }
                     });
                     handle.start(task, None)?;
@@ -1247,6 +1242,23 @@ mod tests {
         let error = DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)
             .expect_err("non-integer ActivityWatch checkpoint row ids must fail honestly");
         assert!(error.to_string().contains("row id must be an integer"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_rejects_incompatible_checkpoint_kind()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+
+        let error = DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)
+            .expect_err("non-external ActivityWatch checkpoints must fail honestly");
+        let message = format!("{error:#}");
+        assert!(message.contains("requires an external checkpoint"));
+        assert!(message.contains("timestamp"));
         Ok(())
     }
 

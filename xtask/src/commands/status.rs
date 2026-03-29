@@ -245,7 +245,7 @@ struct HistoryStatusOutput {
 struct ActivityEntry {
     command: String,
     status: String,
-    duration_secs: f64,
+    duration_secs: Option<f64>,
     timestamp: String,
 }
 
@@ -400,7 +400,7 @@ impl From<&Recommendation> for RecommendationOutput {
 struct CommitInfo {
     hash: String,
     message: String,
-    age_mins: i64,
+    age_mins: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -429,7 +429,7 @@ struct SummaryLastCommands {
 #[derive(Debug, Serialize)]
 struct SummaryCommandInfo {
     status: InvocationStatus,
-    duration_secs: f64,
+    duration_secs: Option<f64>,
     age_mins: i64,
 }
 
@@ -497,9 +497,9 @@ struct GitState {
     last_commit_hash: Option<String>,
     last_commit_message: Option<String>,
     last_commit_age_mins: Option<i64>,
-    stash_count: usize,
+    stash_count: Option<usize>,
     files_changed: Option<String>,
-    uncommitted_count: usize,
+    uncommitted_count: Option<usize>,
 }
 
 fn summarize_git_probe_output(output: &std::process::Output) -> String {
@@ -559,8 +559,7 @@ fn probe_git_state(cwd: &Path) -> GitState {
                 .lines()
                 .filter(|line| !line.is_empty())
                 .count()
-        })
-        .unwrap_or(0);
+        });
 
     let (ahead, behind) = run_git_output(
         cwd,
@@ -597,8 +596,7 @@ fn probe_git_state(cwd: &Path) -> GitState {
                 .lines()
                 .filter(|line| !line.is_empty())
                 .count()
-        })
-        .unwrap_or(0);
+        });
 
     let files_changed = run_git_output(cwd, &mut probe_issues, &["diff", "--shortstat", "HEAD"])
         .and_then(|output| {
@@ -886,9 +884,9 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 last_commit_hash: None,
                 last_commit_message: None,
                 last_commit_age_mins: None,
-                stash_count: 0,
+                stash_count: None,
                 files_changed: None,
-                uncommitted_count: 0,
+                uncommitted_count: None,
             },
         });
 
@@ -949,9 +947,9 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             last_commit_hash: None,
             last_commit_message: None,
             last_commit_age_mins: None,
-            stash_count: 0,
+            stash_count: None,
             files_changed: None,
-            uncommitted_count: 0,
+            uncommitted_count: None,
         });
         let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
         let history = history_handle.join().unwrap_or_else(|payload| {
@@ -1042,7 +1040,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                 let age = now - i.started_at;
                 SummaryCommandInfo {
                     status: i.status,
-                    duration_secs: i.duration_secs.unwrap_or(0.0),
+                    duration_secs: i.duration_secs,
                     age_mins: age.whole_minutes(),
                 }
             })
@@ -1238,19 +1236,11 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         last_commit: data.git.last_commit_hash.as_ref().map(|hash| CommitInfo {
             hash: hash.clone(),
             message: data.git.last_commit_message.clone().unwrap_or_default(),
-            age_mins: data.git.last_commit_age_mins.unwrap_or(0),
+            age_mins: data.git.last_commit_age_mins,
         }),
-        stash_count: if data.git.stash_count > 0 {
-            Some(data.git.stash_count)
-        } else {
-            None
-        },
+        stash_count: data.git.stash_count.filter(|count| *count > 0),
         files_changed: data.git.files_changed.clone(),
-        uncommitted_count: if data.git.uncommitted_count > 0 {
-            Some(data.git.uncommitted_count)
-        } else {
-            None
-        },
+        uncommitted_count: data.git.uncommitted_count.filter(|count| *count > 0),
     };
 
     if ctx.is_human() {
@@ -1451,7 +1441,10 @@ impl<'a> MotdRenderer<'a> {
                     style("✗").red().to_string()
                 };
                 let age = format_age(info.age_mins);
-                let dur = format!("{:.1}s", info.duration_secs);
+                let dur = info
+                    .duration_secs
+                    .map(|duration| format!("{duration:.1}s"))
+                    .unwrap_or_else(|| "?".to_string());
                 parts.push(format!(
                     "{} {} {} {}",
                     name,
@@ -1800,8 +1793,8 @@ impl<'a> MotdRenderer<'a> {
             || git.dirty
             || git.ahead > 0
             || git.behind > 0
-            || git.stash_count > 0
-            || git.uncommitted_count > 0;
+            || git.stash_count.is_some_and(|count| count > 0)
+            || git.uncommitted_count.is_some_and(|count| count > 0);
 
         if !has_commit && !notable {
             return;
@@ -1834,14 +1827,17 @@ impl<'a> MotdRenderer<'a> {
             stat_parts.push(files.clone());
         }
         // Only show uncommitted_count when files_changed is absent (untracked-only changes)
-        if git.files_changed.is_none() && git.uncommitted_count > 0 {
-            stat_parts.push(format!("{} uncommitted", git.uncommitted_count));
+        if git.files_changed.is_none() && git.uncommitted_count.is_some_and(|count| count > 0) {
+            stat_parts.push(format!(
+                "{} uncommitted",
+                git.uncommitted_count.unwrap_or_default()
+            ));
         }
-        if git.stash_count > 0 {
+        if git.stash_count.is_some_and(|count| count > 0) {
             stat_parts.push(format!(
                 "{} stash{}",
-                git.stash_count,
-                if git.stash_count == 1 { "" } else { "es" }
+                git.stash_count.unwrap_or_default(),
+                if git.stash_count == Some(1) { "" } else { "es" }
             ));
         }
 
@@ -1994,7 +1990,7 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                 InvocationStatus::Cancelled => "cancelled",
             }
             .to_string(),
-            duration_secs: inv.duration_secs.unwrap_or(0.0),
+            duration_secs: inv.duration_secs,
             timestamp: inv
                 .started_at
                 .format(&time::format_description::well_known::Rfc3339)
@@ -2121,34 +2117,32 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                 style(heartbeat).dim()
             );
 
-            match metrics.fresh_consumer_lag_pending() {
-                Some(lag) => println!(
+            if let Some(lag) = metrics.fresh_consumer_lag_pending() {
+                println!(
                     "  {} Consumer lag:       {:.0} pending",
                     style("-").dim(),
                     lag
-                ),
-                None if metrics.consumer_lag_is_stale() => println!(
-                    "  {} Consumer lag:       stale telemetry (last sample {}s ago)",
+                );
+            } else if let Some(note) = metrics.consumer_lag_stale_note() {
+                println!(
+                    "  {} Consumer lag:       stale telemetry ({})",
                     style("⚠").yellow(),
-                    metrics.consumer_lag_age_secs.unwrap_or_default()
-                ),
-                None => {}
+                    note
+                );
             }
 
-            match metrics.fresh_batch_latency_ms() {
-                Some(latency) => {
-                    println!(
-                        "  {} Batch latency:      {:.0}ms",
-                        style("-").dim(),
-                        latency
-                    )
-                }
-                None if metrics.batch_latency_is_stale() => println!(
-                    "  {} Batch latency:      stale telemetry (last sample {}s ago)",
+            if let Some(latency) = metrics.fresh_batch_latency_ms() {
+                println!(
+                    "  {} Batch latency:      {:.0}ms",
+                    style("-").dim(),
+                    latency
+                );
+            } else if let Some(note) = metrics.batch_latency_stale_note() {
+                println!(
+                    "  {} Batch latency:      stale telemetry ({})",
                     style("⚠").yellow(),
-                    metrics.last_batch_latency_age_secs.unwrap_or_default()
-                ),
-                None => {}
+                    note
+                );
             }
             if let Some(message) = runtime_query_error_message(metrics) {
                 println!("  {} {}", style("✗").red(), message);
@@ -2216,8 +2210,13 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
                     _ => style(&entry.status).dim(),
                 };
                 println!(
-                    "  {:<15} {:<10} ({:.1}s)",
-                    entry.command, status_style, entry.duration_secs
+                    "  {:<15} {:<10} ({})",
+                    entry.command,
+                    status_style,
+                    entry
+                        .duration_secs
+                        .map(|duration| format!("{duration:.1}s"))
+                        .unwrap_or_else(|| "unknown".to_string())
                 );
             }
         }
@@ -2454,7 +2453,7 @@ mod tests {
             recent_activity: vec![ActivityEntry {
                 command: "check".into(),
                 status: "success".into(),
-                duration_secs: 3.5,
+                duration_secs: Some(3.5),
                 timestamp: "2025-01-01T00:00:00Z".into(),
             }],
             warnings: vec!["Test warning".into()],
@@ -2508,7 +2507,7 @@ mod tests {
             last_commands: SummaryLastCommands {
                 check: Some(SummaryCommandInfo {
                     status: InvocationStatus::Success,
-                    duration_secs: 3.2,
+                    duration_secs: Some(3.2),
                     age_mins: 15,
                 }),
                 test: None,
@@ -2573,7 +2572,7 @@ mod tests {
             last_commit: Some(CommitInfo {
                 hash: "aafd524".into(),
                 message: "fix(xtask): correct estimate_package_count".into(),
-                age_mins: 32,
+                age_mins: Some(32),
             }),
             stash_count: None,
             files_changed: Some("2 files changed".into()),
@@ -2626,6 +2625,176 @@ mod tests {
         assert_eq!(json["uncommitted_count"], 5);
         // stash_count=None should be absent
         assert!(json.get("stash_count").is_none() || json["stash_count"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_output_preserves_missing_commit_age() -> ::xtask::sandbox::TestResult<()> {
+        let output = SummaryOutput {
+            health: "healthy".into(),
+            health_indicator: "ok".into(),
+            summary: "infra:ok".into(),
+            infrastructure: SummaryInfraHealth {
+                postgres: true,
+                nats: true,
+            },
+            last_commands: SummaryLastCommands {
+                check: None,
+                test: None,
+                build: None,
+            },
+            diagnostics: SummaryDiagnostics {
+                errors: 0,
+                warnings: 0,
+                fixable: 0,
+                flaky_tests: 0,
+            },
+            active_jobs: 0,
+            git: SummaryGitState {
+                branch: Some("master".into()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                message: None,
+            },
+            warnings: Vec::new(),
+            history: HistoryStatusOutput {
+                status: "healthy".into(),
+                synthetic: false,
+                recent_invocations: 0,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            health_score: None,
+            velocity: None,
+            recommendations: None,
+            runtime: None,
+            services: None,
+            last_commit: Some(CommitInfo {
+                hash: "abc1234".into(),
+                message: "status contract test".into(),
+                age_mins: None,
+            }),
+            stash_count: None,
+            files_changed: None,
+            uncommitted_count: None,
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["last_commit"]["age_mins"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_summary_output_preserves_missing_command_duration()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = SummaryOutput {
+            health: "healthy".into(),
+            health_indicator: "ok".into(),
+            summary: "infra:ok".into(),
+            infrastructure: SummaryInfraHealth {
+                postgres: true,
+                nats: true,
+            },
+            last_commands: SummaryLastCommands {
+                check: Some(SummaryCommandInfo {
+                    status: InvocationStatus::Success,
+                    duration_secs: None,
+                    age_mins: 5,
+                }),
+                test: None,
+                build: None,
+            },
+            diagnostics: SummaryDiagnostics {
+                errors: 0,
+                warnings: 0,
+                fixable: 0,
+                flaky_tests: 0,
+            },
+            active_jobs: 0,
+            git: SummaryGitState {
+                branch: Some("master".into()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                message: None,
+            },
+            warnings: Vec::new(),
+            history: HistoryStatusOutput {
+                status: "healthy".into(),
+                synthetic: false,
+                recent_invocations: 0,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            health_score: None,
+            velocity: None,
+            recommendations: None,
+            runtime: None,
+            services: None,
+            last_commit: None,
+            stash_count: None,
+            files_changed: None,
+            uncommitted_count: None,
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["last_commands"]["check"]["duration_secs"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_status_output_preserves_missing_recent_activity_duration()
+    -> ::xtask::sandbox::TestResult<()> {
+        let output = StatusOutput {
+            infrastructure: InfrastructureStatus {
+                postgres: ComponentStatus {
+                    status: "online".into(),
+                    latency_ms: Some(1),
+                    port: Some(5432),
+                    message: None,
+                },
+                nats: ComponentStatus {
+                    status: "online".into(),
+                    latency_ms: Some(1),
+                    port: Some(4222),
+                    message: None,
+                },
+            },
+            services: Vec::new(),
+            runtime: Some(RuntimeMetrics::unavailable()),
+            runtime_assessment: None,
+            history: HistoryStatusOutput {
+                status: "available".into(),
+                synthetic: false,
+                recent_invocations: 1,
+                diagnostic_errors: 0,
+                diagnostic_warnings: 0,
+                fixable_diagnostics: 0,
+                flaky_tests: 0,
+                message: None,
+            },
+            jobs: JobsStatus {
+                active: 0,
+                recent_failures: 0,
+            },
+            recent_activity: vec![ActivityEntry {
+                command: "test".into(),
+                status: "success".into(),
+                duration_secs: None,
+                timestamp: "2025-01-01T00:00:00Z".into(),
+            }],
+            warnings: Vec::new(),
+        };
+
+        let json = serde_json::to_value(&output)?;
+        assert!(json["recent_activity"][0]["duration_secs"].is_null());
         Ok(())
     }
 
@@ -2826,6 +2995,8 @@ mod tests {
         assert_eq!(git.ahead, 0);
         assert_eq!(git.behind, 0);
         assert!(git.last_commit_hash.is_some());
+        assert_eq!(git.stash_count, Some(0));
+        assert_eq!(git.uncommitted_count, Some(0));
         assert!(
             git.probe_message
                 .as_deref()
@@ -2848,6 +3019,8 @@ mod tests {
             .unwrap_or_else(|| panic!("expected git probe failure message"));
         assert!(probe_message.contains("git branch --show-current failed"));
         assert!(probe_message.contains("git status --porcelain failed"));
+        assert_eq!(git.stash_count, None);
+        assert_eq!(git.uncommitted_count, None);
         Ok(())
     }
 

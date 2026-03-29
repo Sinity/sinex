@@ -865,10 +865,10 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
     Ok(())
 }
 
-/// When persistence keeps failing all the way to the consumer max-deliver limit,
-/// the final delivery should be routed to DLQ instead of silently aging out.
+/// When a non-retryable persistence error keeps recurring, ingestd should
+/// eventually route it to DLQ itself instead of relying on JetStream expiry.
 #[sinex_test]
-async fn test_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {
+async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
 
     let suffix = format!("persist-terminal-dlq-{}", Uuid::now_v7().to_string().to_lowercase());

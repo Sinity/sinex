@@ -24,7 +24,7 @@ use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::privacy;
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination, Uuid};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,6 +43,30 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
         return false;
     }
     true
+}
+
+fn stale_output_ids_or_skip_scope(
+    node_name: &str,
+    scope_key: &str,
+    stale_query_result: Result<Vec<QueryResultEvent>, SinexError>,
+) -> Option<Vec<Uuid>> {
+    match stale_query_result {
+        Ok(events) => Some(
+            events
+                .iter()
+                .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
+                .collect(),
+        ),
+        Err(error) => {
+            error!(
+                node = node_name,
+                scope_key,
+                error = %error,
+                "Failed to query stale outputs — skipping scope to prevent duplicate recomputation"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(feature = "messaging")]
@@ -265,22 +289,32 @@ where
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-        if let Some(data) = checkpoint_state.data {
-            let persisted: PersistedState<N::State> = decode_checkpoint_data(
-                data,
-                "derived checkpoint state",
-                self.node.name(),
-            )?;
-            info!(
-                node = %self.node.name(),
-                events_processed = persisted.events_processed,
-                "Restored state from NATS KV checkpoint"
-            );
-            self.persisted_state = persisted;
-            self.last_revision = checkpoint_state.revision;
-        } else {
-            info!(node = %self.node.name(), "No valid checkpoint, starting fresh");
-            self.persisted_state = PersistedState::default();
+        match checkpoint_state.data {
+            Some(data) => {
+                let persisted: PersistedState<N::State> = decode_checkpoint_data(
+                    data,
+                    "derived checkpoint state",
+                    self.node.name(),
+                )?;
+                info!(
+                    node = %self.node.name(),
+                    events_processed = persisted.events_processed,
+                    "Restored state from NATS KV checkpoint"
+                );
+                self.persisted_state = persisted;
+                self.last_revision = checkpoint_state.revision;
+            }
+            None if matches!(checkpoint_state.checkpoint, Checkpoint::None) => {
+                info!(node = %self.node.name(), "No valid checkpoint, starting fresh");
+                self.persisted_state = PersistedState::default();
+                self.last_revision = checkpoint_state.revision;
+            }
+            None => {
+                return Err(
+                    SinexError::checkpoint("Derived checkpoint KV entry is missing state data")
+                        .with_context("node", self.node.name()),
+                );
+            }
         }
 
         Ok(())
@@ -292,7 +326,11 @@ where
             return Ok(None);
         };
         let Some(data) = file_state.data else {
-            return Ok(None);
+            return Err(
+                SinexError::checkpoint("Derived hot reload checkpoint file is missing state data")
+                    .with_context("node", self.node.name())
+                    .with_context("path", checkpoint_path.display().to_string()),
+            );
         };
 
         let persisted: PersistedState<N::State> = decode_checkpoint_data(
@@ -648,24 +686,13 @@ where
                 ..EventQuery::default()
             };
 
-            let stale_ids: Vec<Uuid> =
-                match self
-                    .load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
-                    .await
-                {
-                    Ok(events) => events
-                        .iter()
-                        .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
-                        .collect(),
-                Err(e) => {
-                    warn!(
-                        node = %self.node.name(),
-                        scope_key,
-                        error = %e,
-                        "Failed to query stale outputs — proceeding without archive"
-                    );
-                    Vec::new()
-                }
+            let Some(stale_ids) = stale_output_ids_or_skip_scope(
+                self.node.name(),
+                scope_key,
+                self.load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
+                    .await,
+            ) else {
+                continue;
             };
 
             // ── Step 2: Archive stale outputs ──
@@ -1543,22 +1570,29 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::DerivedNodeAdapter;
+    use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
     use crate::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerWrapper};
     use crate::exploration::ExplorationProvider;
+    use crate::runtime::stream::Checkpoint;
+    use crate::shutdown::ShutdownConfig;
+    use crate::{CheckpointManager, CheckpointState, SinexError};
     use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
+    use futures::TryStreamExt;
+    use tempfile::tempdir;
     #[cfg(feature = "messaging")]
     use crate::self_observation::SelfObservationError;
     use serde::{Deserialize, Serialize};
     use sinex_primitives::JsonValue;
     use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::temporal::Timestamp;
+    use std::sync::Arc;
     use tokio::sync::watch;
     use xtask::sandbox::sinex_test;
 
-    #[derive(Default, Serialize, Deserialize)]
+    #[derive(Debug, Default, Serialize, Deserialize)]
     struct TestDerivedState;
 
     struct TestDerivedNode;
@@ -1613,6 +1647,26 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn stale_output_ids_or_skip_scope_returns_empty_ids_on_success() -> TestResult<()> {
+        let stale_ids =
+            stale_output_ids_or_skip_scope("test-derived", "scope-a", Ok(Vec::new()))
+                .expect("successful stale query should not skip scope");
+        assert!(stale_ids.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stale_output_ids_or_skip_scope_skips_scope_on_query_error() -> TestResult<()> {
+        let stale_ids = stale_output_ids_or_skip_scope(
+            "test-derived",
+            "scope-a",
+            Err(SinexError::invalid_state("corrupt stale output row")),
+        );
+        assert!(stale_ids.is_none());
+        Ok(())
+    }
+
     #[cfg(feature = "messaging")]
     #[sinex_test]
     async fn log_self_observation_failure_accepts_publish_errors() -> TestResult<()> {
@@ -1641,6 +1695,107 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(false)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn try_restore_from_file_rejects_missing_state_payload() -> TestResult<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir.path().join("derived-empty-state.checkpoint.json");
+        CheckpointState {
+            checkpoint: Checkpoint::None,
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let adapter = DerivedNodeAdapter::with_shutdown_config(
+            TransducerWrapper(TestDerivedNode),
+            ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path.clone()),
+                ..ShutdownConfig::default()
+            },
+        );
+
+        let error = adapter
+            .try_restore_from_file()
+            .await
+            .expect_err("empty hot reload state must not be treated as absent");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("derived-adapter-test"));
+        assert!(message.contains(&checkpoint_path.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_accepts_fresh_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            "derived-adapter-test".to_string(),
+            "test-group".to_string(),
+            "fresh-consumer".to_string(),
+        );
+
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+        adapter
+            .load_state()
+            .await
+            .expect("fresh derived checkpoint state should be treated as a clean start");
+
+        assert_eq!(adapter.persisted_state.events_processed, 0);
+        assert_eq!(adapter.last_revision, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_rejects_kv_checkpoint_without_state_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv.clone(),
+            "derived-adapter-test".to_string(),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+        manager.save_checkpoint(&CheckpointState::default()).await?;
+
+        let mut keys = kv.keys().await?;
+        let key = keys
+            .try_next()
+            .await?
+            .expect("checkpoint key should exist");
+        let corrupt = serde_json::to_vec(&CheckpointState {
+            checkpoint: Checkpoint::stream("restored", None),
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        })?;
+        kv.put(&key, corrupt.into()).await?;
+
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.checkpoint_manager = Some(Arc::new(manager));
+
+        let error = adapter
+            .load_state()
+            .await
+            .expect_err("empty derived checkpoint KV state must not be treated as fresh");
+        let message = format!("{error:#}");
+        assert!(message.contains("missing state data"));
+        assert!(message.contains("derived-adapter-test"));
         Ok(())
     }
 }

@@ -86,15 +86,21 @@ fn format_cleanup_failure_context(
     snapshot: Option<BackgroundSnapshot>,
 ) -> String {
     let (pending, labels) = match snapshot {
+        Some(snapshot) if snapshot.busy => ("unknown".to_string(), "<busy>".to_string()),
         Some(snapshot) => {
             let label_list = if snapshot.labels.is_empty() {
                 "none".to_string()
             } else {
                 snapshot.labels.join(", ")
             };
-            (snapshot.pending, label_list)
+            (
+                snapshot
+                    .pending
+                    .map_or_else(|| "unknown".to_string(), |pending| pending.to_string()),
+                label_list,
+            )
         }
-        None => (0, "none".to_string()),
+        None => ("0".to_string(), "none".to_string()),
     };
 
     format!(
@@ -182,7 +188,6 @@ impl Drop for NamespaceReaper {
 
             CLEANUP_HANDLES
                 .lock()
-                .expect("CLEANUP_HANDLES lock poisoned")
                 .push(handle);
         }
     }
@@ -199,10 +204,36 @@ pub enum NatsMode {
     Shared,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackgroundSnapshot {
-    pub pending: usize,
+    pub pending: Option<usize>,
     pub labels: Vec<String>,
+    pub busy: bool,
+}
+
+impl BackgroundSnapshot {
+    fn captured(registry: &BackgroundRegistry) -> Self {
+        Self {
+            pending: Some(registry.pending_count()),
+            labels: registry.labels(),
+            busy: false,
+        }
+    }
+
+    fn busy() -> Self {
+        Self {
+            pending: None,
+            labels: Vec::new(),
+            busy: true,
+        }
+    }
+}
+
+fn snapshot_background_registry(background: &AsyncMutex<BackgroundRegistry>) -> BackgroundSnapshot {
+    match background.try_lock() {
+        Ok(guard) => BackgroundSnapshot::captured(&guard),
+        Err(_) => BackgroundSnapshot::busy(),
+    }
 }
 
 #[derive(Clone)]
@@ -237,16 +268,7 @@ impl SandboxFailureSnapshot {
 
     #[must_use]
     pub fn background_snapshot(&self) -> BackgroundSnapshot {
-        match self.background.try_lock() {
-            Ok(guard) => BackgroundSnapshot {
-                pending: guard.pending_count(),
-                labels: guard.labels(),
-            },
-            Err(_) => BackgroundSnapshot {
-                pending: 0,
-                labels: Vec::new(),
-            },
-        }
+        snapshot_background_registry(&self.background)
     }
 }
 
@@ -799,16 +821,7 @@ impl Sandbox {
 
     #[must_use]
     pub fn background_snapshot(&self) -> BackgroundSnapshot {
-        match self.background.try_lock() {
-            Ok(guard) => BackgroundSnapshot {
-                pending: guard.pending_count(),
-                labels: guard.labels(),
-            },
-            Err(_) => BackgroundSnapshot {
-                pending: 0,
-                labels: Vec::new(),
-            },
-        }
+        snapshot_background_registry(&self.background)
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
@@ -1128,6 +1141,45 @@ mod tests {
             .to_string()
             .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8"));
     }
+
+    #[test]
+    fn snapshot_background_registry_reports_busy_when_lock_is_held() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+        let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
+        let _guard = runtime.block_on(background.lock());
+
+        let snapshot = snapshot_background_registry(background.as_ref());
+
+        assert_eq!(
+            snapshot,
+            BackgroundSnapshot {
+                pending: None,
+                labels: Vec::new(),
+                busy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_background_registry_reports_pending_labels_when_available() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+        let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
+        runtime.block_on(async {
+            let mut guard = background.lock().await;
+            guard.add_hook("cleanup-hook", futures::future::ready(()).boxed());
+        });
+
+        let snapshot = snapshot_background_registry(background.as_ref());
+
+        assert_eq!(
+            snapshot,
+            BackgroundSnapshot {
+                pending: Some(1),
+                labels: vec!["cleanup-hook".to_string()],
+                busy: false,
+            }
+        );
+    }
 }
 
 fn looks_like_error_log(log: &str) -> bool {
@@ -1221,10 +1273,9 @@ impl Drop for Sandbox {
                     }
                 });
 
-                // Always succeeds: CLEANUP_HANDLES uses std::sync::Mutex, not try_lock().
+                // Uses a synchronous mutex, so cleanup registration does not depend on a runtime.
                 CLEANUP_HANDLES
                     .lock()
-                    .expect("CLEANUP_HANDLES lock poisoned")
                     .push(join_handle);
             } else {
                 // Issue 116: No runtime available, spawn blocking thread with its own runtime

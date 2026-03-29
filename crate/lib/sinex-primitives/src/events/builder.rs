@@ -523,7 +523,7 @@ fn validated_host_candidate(candidate: &str) -> Option<HostName> {
 fn derived_host_fallback(candidate: &str) -> HostName {
     let digest = blake3::hash(candidate.as_bytes()).to_hex();
     HostName::new(format!("host-{}", &digest[..16]))
-        .expect("derived host fallback must always produce a valid hostname")
+        .unwrap_or_else(|_| HostName::from_static("unknown-host"))
 }
 
 // Helper function to get hostname (needed by builder)
