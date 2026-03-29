@@ -497,9 +497,9 @@ struct GitState {
     last_commit_hash: Option<String>,
     last_commit_message: Option<String>,
     last_commit_age_mins: Option<i64>,
-    stash_count: usize,
+    stash_count: Option<usize>,
     files_changed: Option<String>,
-    uncommitted_count: usize,
+    uncommitted_count: Option<usize>,
 }
 
 fn summarize_git_probe_output(output: &std::process::Output) -> String {
@@ -559,8 +559,7 @@ fn probe_git_state(cwd: &Path) -> GitState {
                 .lines()
                 .filter(|line| !line.is_empty())
                 .count()
-        })
-        .unwrap_or(0);
+        });
 
     let (ahead, behind) = run_git_output(
         cwd,
@@ -597,8 +596,7 @@ fn probe_git_state(cwd: &Path) -> GitState {
                 .lines()
                 .filter(|line| !line.is_empty())
                 .count()
-        })
-        .unwrap_or(0);
+        });
 
     let files_changed = run_git_output(cwd, &mut probe_issues, &["diff", "--shortstat", "HEAD"])
         .and_then(|output| {
@@ -886,9 +884,9 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 last_commit_hash: None,
                 last_commit_message: None,
                 last_commit_age_mins: None,
-                stash_count: 0,
+                stash_count: None,
                 files_changed: None,
-                uncommitted_count: 0,
+                uncommitted_count: None,
             },
         });
 
@@ -949,9 +947,9 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             last_commit_hash: None,
             last_commit_message: None,
             last_commit_age_mins: None,
-            stash_count: 0,
+            stash_count: None,
             files_changed: None,
-            uncommitted_count: 0,
+            uncommitted_count: None,
         });
         let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
         let history = history_handle.join().unwrap_or_else(|payload| {
@@ -1240,17 +1238,9 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             message: data.git.last_commit_message.clone().unwrap_or_default(),
             age_mins: data.git.last_commit_age_mins.unwrap_or(0),
         }),
-        stash_count: if data.git.stash_count > 0 {
-            Some(data.git.stash_count)
-        } else {
-            None
-        },
+        stash_count: data.git.stash_count.filter(|count| *count > 0),
         files_changed: data.git.files_changed.clone(),
-        uncommitted_count: if data.git.uncommitted_count > 0 {
-            Some(data.git.uncommitted_count)
-        } else {
-            None
-        },
+        uncommitted_count: data.git.uncommitted_count.filter(|count| *count > 0),
     };
 
     if ctx.is_human() {
@@ -1800,8 +1790,8 @@ impl<'a> MotdRenderer<'a> {
             || git.dirty
             || git.ahead > 0
             || git.behind > 0
-            || git.stash_count > 0
-            || git.uncommitted_count > 0;
+            || git.stash_count.is_some_and(|count| count > 0)
+            || git.uncommitted_count.is_some_and(|count| count > 0);
 
         if !has_commit && !notable {
             return;
@@ -1834,14 +1824,17 @@ impl<'a> MotdRenderer<'a> {
             stat_parts.push(files.clone());
         }
         // Only show uncommitted_count when files_changed is absent (untracked-only changes)
-        if git.files_changed.is_none() && git.uncommitted_count > 0 {
-            stat_parts.push(format!("{} uncommitted", git.uncommitted_count));
+        if git.files_changed.is_none() && git.uncommitted_count.is_some_and(|count| count > 0) {
+            stat_parts.push(format!(
+                "{} uncommitted",
+                git.uncommitted_count.unwrap_or_default()
+            ));
         }
-        if git.stash_count > 0 {
+        if git.stash_count.is_some_and(|count| count > 0) {
             stat_parts.push(format!(
                 "{} stash{}",
-                git.stash_count,
-                if git.stash_count == 1 { "" } else { "es" }
+                git.stash_count.unwrap_or_default(),
+                if git.stash_count == Some(1) { "" } else { "es" }
             ));
         }
 
@@ -2824,6 +2817,8 @@ mod tests {
         assert_eq!(git.ahead, 0);
         assert_eq!(git.behind, 0);
         assert!(git.last_commit_hash.is_some());
+        assert_eq!(git.stash_count, Some(0));
+        assert_eq!(git.uncommitted_count, Some(0));
         assert!(
             git.probe_message
                 .as_deref()
@@ -2846,6 +2841,8 @@ mod tests {
             .unwrap_or_else(|| panic!("expected git probe failure message"));
         assert!(probe_message.contains("git branch --show-current failed"));
         assert!(probe_message.contains("git status --porcelain failed"));
+        assert_eq!(git.stash_count, None);
+        assert_eq!(git.uncommitted_count, None);
         Ok(())
     }
 
