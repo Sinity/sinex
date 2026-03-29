@@ -4,8 +4,9 @@
 //! and its capabilities, extracted from sinex-shell-integration.
 
 use camino::Utf8PathBuf;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, path::PathBuf, sync::RwLock};
+use std::{collections::HashMap, env, path::PathBuf};
 use tracing::{info, warn};
 
 /// Cache for command existence checks to avoid repeated `which::which()` calls
@@ -201,25 +202,11 @@ fn read_cached_command_exists(
     cmd: &str,
     cache: &RwLock<HashMap<String, bool>>,
 ) -> Option<bool> {
-    match cache.read() {
-        Ok(cache) => cache.get(cmd).copied(),
-        Err(poisoned) => {
-            warn!(command = cmd, "Command cache read lock poisoned; recovering");
-            poisoned.into_inner().get(cmd).copied()
-        }
-    }
+    cache.read().get(cmd).copied()
 }
 
 fn write_cached_command_exists(cmd: &str, exists: bool, cache: &RwLock<HashMap<String, bool>>) {
-    match cache.write() {
-        Ok(mut cache) => {
-            cache.insert(cmd.to_string(), exists);
-        }
-        Err(poisoned) => {
-            warn!(command = cmd, "Command cache write lock poisoned; recovering");
-            poisoned.into_inner().insert(cmd.to_string(), exists);
-        }
-    }
+    cache.write().insert(cmd.to_string(), exists);
 }
 
 /// Check if a command exists in PATH with caching
@@ -369,10 +356,9 @@ fn get_home_dir() -> Option<Utf8PathBuf> {
 mod tests {
     // Inline because this covers local env/cache/version failure semantics.
     use super::{
-        ShellType, get_shell_version, get_shell_version_impl, read_cached_command_exists,
-        read_optional_env_var, utf8_home_dir_from, write_cached_command_exists,
+        ShellType, get_shell_version, get_shell_version_impl, read_optional_env_var,
+        utf8_home_dir_from,
     };
-    use std::sync::RwLock;
     use xtask::sandbox::sinex_serial_test;
 
     struct ScopedEnvGuard {
@@ -434,33 +420,6 @@ mod tests {
             get_shell_version(&ShellType::Unknown("__sinex_nonexistent_shell__".to_string())),
             None
         );
-    }
-
-    #[test]
-    fn read_cached_command_exists_recovers_from_poisoned_cache() {
-        let poisoned_lock = RwLock::new(std::collections::HashMap::new());
-        let _ = std::panic::catch_unwind(|| {
-            let _guard = poisoned_lock.write().expect("lock available");
-            panic!("poison command cache");
-        });
-
-        assert_eq!(read_cached_command_exists("sh", &poisoned_lock), None);
-    }
-
-    #[test]
-    fn write_cached_command_exists_recovers_from_poisoned_cache() {
-        let poisoned_lock = RwLock::new(std::collections::HashMap::new());
-        let _ = std::panic::catch_unwind(|| {
-            let _guard = poisoned_lock.write().expect("lock available");
-            panic!("poison command cache");
-        });
-
-        write_cached_command_exists("sh", true, &poisoned_lock);
-        let cache = match poisoned_lock.into_inner() {
-            Ok(cache) => cache,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        assert_eq!(cache.get("sh"), Some(&true));
     }
 
     #[sinex_serial_test]

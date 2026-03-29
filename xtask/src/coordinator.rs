@@ -585,14 +585,28 @@ fn git_output(cwd: &Path, args: &[&str], description: &str) -> Result<std::proce
     Ok(output)
 }
 
+fn refresh_git_index(cwd: &Path) -> Result<()> {
+    let output = std::process::Command::new("git")
+        .args(["update-index", "-q", "--refresh"])
+        .current_dir(cwd)
+        .output()
+        .with_context(|| "failed to run git update-index -q --refresh".to_string())?;
+
+    if !output.status.success() {
+        bail!(
+            "git update-index -q --refresh failed: {}",
+            summarize_git_error(&output)
+        );
+    }
+
+    Ok(())
+}
+
 fn tree_fingerprint_in(cwd: &Path) -> Result<String> {
     // Refresh the git index so status reflects actual filesystem state.
     // Without this, rapid edits within the same second can go undetected
     // because git caches stat data (mtime, size) in the index.
-    let _ = std::process::Command::new("git")
-        .args(["update-index", "--refresh"])
-        .current_dir(cwd)
-        .output();
+    refresh_git_index(cwd)?;
 
     let output = git_output(cwd, &["status", "--porcelain"], "status --porcelain")?;
 
@@ -681,10 +695,7 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
     }
 
     // Refresh git index (same as tree_fingerprint)
-    let _ = std::process::Command::new("git")
-        .args(["update-index", "--refresh"])
-        .current_dir(cwd)
-        .output();
+    refresh_git_index(cwd)?;
 
     let mut hasher = Sha256::new();
     for pkg in &packages {
@@ -947,11 +958,59 @@ pub fn coordinate_and_spawn(
 /// 2. `spawn_background()` creates the actual process
 /// 3. This function updates the slot with real values
 pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
-    if let Some(data) = &bg_result.data
-        && let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64())
-        && let Ok(coordinator) = JobCoordinator::new()
-    {
-        let _ = coordinator.update_state(command, job_id, pid as u32);
+    let Some(data) = &bg_result.data else {
+        tracing::warn!(
+            target: "xtask::coordinator",
+            command,
+            "background spawn returned no data; coordinator state was not updated"
+        );
+        return;
+    };
+
+    let Some(job_id) = data["job_id"].as_i64() else {
+        tracing::warn!(
+            target: "xtask::coordinator",
+            command,
+            data = %data,
+            "background spawn returned no job_id; coordinator state was not updated"
+        );
+        return;
+    };
+
+    let Some(pid) = data["pid"].as_u64() else {
+        tracing::warn!(
+            target: "xtask::coordinator",
+            command,
+            data = %data,
+            "background spawn returned no pid; coordinator state was not updated"
+        );
+        return;
+    };
+
+    let coordinator = match JobCoordinator::new() {
+        Ok(coordinator) => coordinator,
+        Err(error) => {
+            tracing::warn!(
+                target: "xtask::coordinator",
+                command,
+                job_id,
+                pid,
+                error = %error,
+                "failed to initialize coordinator while recording spawned job"
+            );
+            return;
+        }
+    };
+
+    if let Err(error) = coordinator.update_state(command, job_id, pid as u32) {
+        tracing::warn!(
+            target: "xtask::coordinator",
+            command,
+            job_id,
+            pid,
+            error = %error,
+            "failed to persist coordinator state for spawned job"
+        );
     }
 }
 
@@ -1351,7 +1410,11 @@ mod tests {
     async fn test_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let error = tree_fingerprint_in(dir.path()).expect_err("expected non-repo to fail");
-        assert!(error.to_string().contains("git status --porcelain failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("git update-index -q --refresh failed")
+        );
         Ok(())
     }
 
@@ -1361,7 +1424,11 @@ mod tests {
         let args = vec!["-p".into(), "xtask".into()];
         let error = scoped_tree_fingerprint_in(dir.path(), "check", &args)
             .expect_err("expected non-repo to fail");
-        assert!(error.to_string().contains("git diff --name-only HEAD -- <prefix> failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("git update-index -q --refresh failed")
+        );
         Ok(())
     }
 
@@ -1375,9 +1442,27 @@ mod tests {
         std::fs::write(dir.path().join("xtask/src/lib.rs"), "fn main() {}\n")?;
         run_git(&["add", "xtask/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
+        std::fs::write(dir.path().join("xtask/src/lib.rs"), "fn main() { println!(\"dirty\"); }\n")?;
 
         let args = vec!["-p".into(), "xtask".into()];
         let fingerprint = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert!(!fingerprint.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_tree_fingerprint_succeeds_in_dirty_repo() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::write(dir.path().join("tracked.txt"), "clean\n")?;
+        run_git(&["add", "tracked.txt"], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+        std::fs::write(dir.path().join("tracked.txt"), "dirty\n")?;
+
+        let fingerprint = tree_fingerprint_in(dir.path())?;
 
         assert!(!fingerprint.is_empty());
         Ok(())

@@ -442,7 +442,7 @@ impl ExplorationProvider for FilesystemNode {
             is_connected: true,
             healthy: true,
             description: "Filesystem node running".to_string(),
-            last_updated: sinex_primitives::temporal::Timestamp::now(),
+            last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,

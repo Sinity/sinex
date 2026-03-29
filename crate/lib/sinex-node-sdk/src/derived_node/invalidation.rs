@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::InvalidationAction;
+use sinex_primitives::domain::{EventSource, EventType, InvalidationAction};
 
 /// A typed invalidation signal for derived nodes.
 ///
@@ -38,10 +38,10 @@ pub struct DerivedScopeInvalidation {
     pub operation_id: Option<Uuid>,
 
     /// Source of the affected events (for node filtering).
-    pub event_source: String,
+    pub event_source: EventSource,
 
     /// Type of the affected events (for node filtering).
-    pub event_type: String,
+    pub event_type: EventType,
 
     /// Pre-computed scope keys that are affected (if known from the archived events).
     ///
@@ -54,15 +54,15 @@ impl DerivedScopeInvalidation {
     /// Create an invalidation for archived events (e.g., replay cascade).
     pub fn archived(
         affected_event_ids: Vec<Uuid>,
-        event_source: impl Into<String>,
-        event_type: impl Into<String>,
+        event_source: EventSource,
+        event_type: EventType,
     ) -> Self {
         Self {
             affected_event_ids,
             action: InvalidationAction::Archived,
             operation_id: None,
-            event_source: event_source.into(),
-            event_type: event_type.into(),
+            event_source,
+            event_type,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -70,15 +70,15 @@ impl DerivedScopeInvalidation {
     /// Create an invalidation for newly inserted events (e.g., late backfill).
     pub fn inserted(
         affected_event_ids: Vec<Uuid>,
-        event_source: impl Into<String>,
-        event_type: impl Into<String>,
+        event_source: EventSource,
+        event_type: EventType,
     ) -> Self {
         Self {
             affected_event_ids,
             action: InvalidationAction::Inserted,
             operation_id: None,
-            event_source: event_source.into(),
-            event_type: event_type.into(),
+            event_source,
+            event_type,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -86,15 +86,15 @@ impl DerivedScopeInvalidation {
     /// Create an invalidation for replaced events (archive + re-insert).
     pub fn replaced(
         affected_event_ids: Vec<Uuid>,
-        event_source: impl Into<String>,
-        event_type: impl Into<String>,
+        event_source: EventSource,
+        event_type: EventType,
     ) -> Self {
         Self {
             affected_event_ids,
             action: InvalidationAction::Replaced,
             operation_id: None,
-            event_source: event_source.into(),
-            event_type: event_type.into(),
+            event_source,
+            event_type,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -116,7 +116,7 @@ impl DerivedScopeInvalidation {
     /// Whether this invalidation is relevant to a node that consumes the given event type.
     #[must_use]
     pub fn matches_input(&self, input_event_type: &str) -> bool {
-        self.event_type == input_event_type
+        self.event_type.as_str() == input_event_type
     }
 }
 

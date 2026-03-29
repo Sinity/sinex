@@ -273,7 +273,10 @@ impl IngestdConfig {
         nats_config.require_tls = nats_require_tls;
         let nats_config_clone = nats_config;
 
-        let db_url = database_url.unwrap_or_else(default_database_url);
+        let db_url = match database_url {
+            Some(url) => url,
+            None => env_string("DATABASE_URL")?.unwrap_or_else(default_database_url_fallback),
+        };
         let mut config = Self::default();
         config.database_url = db_url;
         config.database_pool_size = pool_size;
@@ -467,6 +470,16 @@ fn env_flag(name: &str) -> IngestdResult<Option<bool>> {
     }
 }
 
+fn env_string(name: &str) -> IngestdResult<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+            "Environment variable {name} is not valid UTF-8"
+        ))),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+    }
+}
+
 fn env_parsed<T>(name: &str) -> IngestdResult<Option<T>>
 where
     T: std::str::FromStr,
@@ -597,13 +610,22 @@ impl Default for IngestdConfig {
 /// Explicit `DATABASE_URL` values are treated as exact operator input and are
 /// no longer rewritten through the ambient Sinex environment.
 fn default_database_url() -> String {
-    if let Ok(url) = std::env::var("DATABASE_URL") {
-        url
-    } else {
-        let env = environment();
-        let base_name = env.database_name("sinex");
-        format!("postgresql:///{base_name}?host=/run/postgresql")
+    match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(std::env::VarError::NotPresent) => default_database_url_fallback(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                "DATABASE_URL is not valid UTF-8; falling back to the namespaced local database URL"
+            );
+            default_database_url_fallback()
+        }
     }
+}
+
+fn default_database_url_fallback() -> String {
+    let env = environment();
+    let base_name = env.database_name("sinex");
+    format!("postgresql:///{base_name}?host=/run/postgresql")
 }
 
 /// Default work directory for ingestd with environment namespacing
@@ -867,8 +889,8 @@ fn default_stats_log_interval_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_annex_repo_path, default_gitops_work_dir, default_work_dir, default_path_base_dir,
-        env_validated_path,
+        IngestdConfig, default_annex_repo_path, default_gitops_work_dir, default_path_base_dir,
+        default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
     use sinex_primitives::environment::environment;
@@ -954,6 +976,34 @@ mod tests {
         );
 
         assert_eq!(env_validated_path("SINEX_CONFIG_PATH_OVERRIDE", "test"), None);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn from_args_rejects_non_utf8_database_url_override() -> xtask::sandbox::TestResult<()> {
+        let mut env = ScopedEnvGuard::new(&["DATABASE_URL"]);
+        env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
+
+        let error = IngestdConfig::from_args(
+            None,
+            "nats://localhost:4222".to_string(),
+            false,
+            16,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
+        .expect_err("non-UTF8 DATABASE_URL should fail ingestd config construction");
+
+        let message = error.to_string();
+        assert!(message.contains("DATABASE_URL"));
+        assert!(message.contains("not valid UTF-8"));
         Ok(())
     }
 }

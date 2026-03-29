@@ -5,13 +5,13 @@
 
 use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
+use parking_lot::RwLock;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
 use std::sync::{
-    Arc, RwLock,
+    Arc,
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Instant;
-use tracing::warn;
 
 static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -196,18 +196,11 @@ impl HealthReporter {
     }
 
     fn read_last_status(&self) -> ProcessStatus {
-        let guard = self.last_status.read().unwrap_or_else(|poisoned| {
-            warn!("Health reporter status lock poisoned during read; recovering");
-            poisoned.into_inner()
-        });
-        *guard
+        *self.last_status.read()
     }
 
     fn write_last_status(&self, status: ProcessStatus) {
-        let mut guard = self.last_status.write().unwrap_or_else(|poisoned| {
-            warn!("Health reporter status lock poisoned during write; recovering");
-            poisoned.into_inner()
-        });
+        let mut guard = self.last_status.write();
         *guard = status;
     }
 
@@ -261,56 +254,5 @@ impl HealthReporter {
     #[must_use]
     pub fn metrics(&self) -> &Arc<HealthMetrics> {
         &self.metrics
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::sinex_test;
-
-    fn poison_lock<T: Send + Sync + 'static>(lock: Arc<RwLock<T>>, value: T) {
-        let result = std::thread::spawn(move || {
-            let mut guard = lock.write().expect("test lock should poison cleanly");
-            *guard = value;
-            panic!("poison lock for regression coverage");
-        })
-        .join();
-        assert!(result.is_err(), "poisoning thread should panic");
-    }
-
-    #[sinex_test]
-    async fn check_and_emit_recovers_from_poisoned_last_status_read() -> xtask::sandbox::TestResult<()> {
-        let reporter = HealthReporter::new(
-            "test-component".to_string(),
-            Arc::new(SelfObserver::disabled()),
-            HealthThresholds::default(),
-        );
-        poison_lock(Arc::clone(&reporter.last_status), ProcessStatus::Healthy);
-
-        reporter.record_error(&SinexError::processing("boom"));
-        let status = reporter.check_and_emit().await?;
-
-        assert_eq!(status, ProcessStatus::Failed);
-        assert_eq!(reporter.read_last_status(), ProcessStatus::Failed);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn check_and_emit_recovers_from_poisoned_last_status_write() -> xtask::sandbox::TestResult<()> {
-        let reporter = HealthReporter::new(
-            "test-component".to_string(),
-            Arc::new(SelfObserver::disabled()),
-            HealthThresholds::default(),
-        );
-
-        reporter.record_error(&SinexError::processing("boom"));
-        poison_lock(Arc::clone(&reporter.last_status), ProcessStatus::Healthy);
-
-        let status = reporter.check_and_emit().await?;
-
-        assert_eq!(status, ProcessStatus::Failed);
-        assert_eq!(reporter.read_last_status(), ProcessStatus::Failed);
-        Ok(())
     }
 }

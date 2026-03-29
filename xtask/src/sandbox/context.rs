@@ -106,6 +106,30 @@ fn format_cleanup_failure_context(
     )
 }
 
+fn load_env_filter(default_filter: &str) -> TestResult<tracing_subscriber::EnvFilter> {
+    let Some(raw) = std::env::var_os("RUST_LOG") else {
+        return Ok(tracing_subscriber::EnvFilter::new(default_filter));
+    };
+    let raw = raw
+        .into_string()
+        .map_err(|_| eyre!("RUST_LOG is not valid UTF-8"))?;
+    tracing_subscriber::EnvFilter::try_new(&raw)
+        .map_err(|error| eyre!("Invalid RUST_LOG directive `{raw}`: {error}"))
+}
+
+fn background_invocation_id() -> TestResult<Option<i64>> {
+    let Some(raw) = std::env::var_os("XTASK_BG_INVOCATION_ID") else {
+        return Ok(None);
+    };
+    let raw = raw
+        .into_string()
+        .map_err(|_| eyre!("XTASK_BG_INVOCATION_ID is not valid UTF-8"))?;
+    let invocation_id = raw
+        .parse::<i64>()
+        .map_err(|error| eyre!("Invalid XTASK_BG_INVOCATION_ID `{raw}`: {error}"))?;
+    Ok(Some(invocation_id))
+}
+
 pub struct Sandbox {
     /// Direct access to the database pool - use this for repositories
     pub pool: DbPool,
@@ -540,14 +564,14 @@ impl Sandbox {
 
     /// Initialize tracing for tests (static method for use without context)
     pub fn init_tracing(level: &str) {
-        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+        use tracing_subscriber::{fmt, prelude::*};
 
         // Only initialize if not already initialized
         static TRACING_INIT: std::sync::Once = std::sync::Once::new();
 
         TRACING_INIT.call_once(|| {
-            let filter =
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+            let filter = load_env_filter(level)
+                .unwrap_or_else(|error| panic!("failed to initialize sandbox tracing: {error}"));
 
             tracing_subscriber::registry()
                 .with(fmt::layer().with_test_writer())
@@ -620,13 +644,14 @@ impl Sandbox {
     /// ctx.record_nats_context(&serde_json::to_value(&snap)?);
     /// ```
     pub fn record_nats_context(&self, snapshot: &serde_json::Value) {
-        let inv_id: i64 = std::env::var("XTASK_BG_INVOCATION_ID")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(-1);
-        if inv_id < 0 {
-            return;
-        }
+        let inv_id = match background_invocation_id() {
+            Ok(Some(inv_id)) => inv_id,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("⚠ Failed to read XTASK_BG_INVOCATION_ID: {error}");
+                return;
+            }
+        };
         let cfg = crate::config::config();
         match crate::history::HistoryDb::open(&cfg.history_db_path()) {
             Ok(db) => {
@@ -998,6 +1023,110 @@ impl Sandbox {
                 insta::assert_json_snapshot!(event);
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Inline because these helpers are private to sandbox context initialization/parsing.
+    use super::*;
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<std::ffi::OsString>) -> Self {
+            let original = std::env::var_os(key);
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    #[test]
+    fn load_env_filter_defaults_when_rust_log_is_missing() {
+        let _guard = EnvGuard::set("RUST_LOG", None);
+
+        let filter = load_env_filter("info").expect("default filter should load");
+
+        assert_eq!(filter.to_string(), "info");
+    }
+
+    #[test]
+    fn load_env_filter_rejects_invalid_rust_log_directive() {
+        let _guard = EnvGuard::set("RUST_LOG", Some(std::ffi::OsString::from("[broken")));
+
+        let error = load_env_filter("info").expect_err("invalid directive should fail");
+
+        assert!(error.to_string().contains("Invalid RUST_LOG directive `[broken`"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_env_filter_rejects_non_utf8_rust_log() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = EnvGuard::set("RUST_LOG", Some(std::ffi::OsString::from_vec(vec![0xff])));
+
+        let error = load_env_filter("info").expect_err("non-utf8 directive should fail");
+
+        assert!(error.to_string().contains("RUST_LOG is not valid UTF-8"));
+    }
+
+    #[test]
+    fn background_invocation_id_defaults_to_none_when_missing() {
+        let _guard = EnvGuard::set("XTASK_BG_INVOCATION_ID", None);
+
+        assert_eq!(
+            background_invocation_id().expect("missing invocation ID should be allowed"),
+            None
+        );
+    }
+
+    #[test]
+    fn background_invocation_id_rejects_invalid_integer() {
+        let _guard = EnvGuard::set(
+            "XTASK_BG_INVOCATION_ID",
+            Some(std::ffi::OsString::from("not-a-number")),
+        );
+
+        let error =
+            background_invocation_id().expect_err("invalid invocation ID should not be ignored");
+
+        assert!(error
+            .to_string()
+            .contains("Invalid XTASK_BG_INVOCATION_ID `not-a-number`"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_invocation_id_rejects_non_utf8_value() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = EnvGuard::set(
+            "XTASK_BG_INVOCATION_ID",
+            Some(std::ffi::OsString::from_vec(vec![0xff])),
+        );
+
+        let error =
+            background_invocation_id().expect_err("non-utf8 invocation ID should not be ignored");
+
+        assert!(error
+            .to_string()
+            .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8"));
     }
 }
 

@@ -156,7 +156,7 @@ pub struct GatewayConfig {
 }
 
 fn default_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_default()
+    String::new()
 }
 
 fn default_tcp_listen() -> String {
@@ -164,17 +164,15 @@ fn default_tcp_listen() -> String {
 }
 
 fn default_annex_path() -> String {
-    std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| {
-        std::env::var("HOME").map_or_else(
-            |_| {
-                sinex_primitives::environment::environment()
-                    .work_directory("annex")
-                    .to_string_lossy()
-                    .into_owned()
-            },
-            |home| format!("{home}/.local/share/sinex/annex"),
-        )
-    })
+    std::env::var("HOME").map_or_else(
+        |_| {
+            sinex_primitives::environment::environment()
+                .work_directory("annex")
+                .to_string_lossy()
+                .into_owned()
+        },
+        |home| format!("{home}/.local/share/sinex/annex"),
+    )
 }
 
 fn default_pool_max_connections() -> u32 {
@@ -292,8 +290,8 @@ impl GatewayConfig {
             nats: NatsConnectionConfig::from_env(),
             ..Self::default()
         };
-        config.apply_gateway_env_overrides()?;
         config.apply_manual_env_overrides()?;
+        config.apply_gateway_env_overrides()?;
         if let Some(url) = database_url {
             config.database_url = url;
         }
@@ -496,6 +494,8 @@ impl GatewayConfig {
     }
 
     fn apply_manual_env_overrides(&mut self) -> Result<(), SinexError> {
+        self.database_url = env_string_override("DATABASE_URL", self.database_url.clone())?;
+        self.annex_path = env_string_override("SINEX_ANNEX_PATH", self.annex_path.clone())?;
         self.rpc_token = env_var_optional("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());

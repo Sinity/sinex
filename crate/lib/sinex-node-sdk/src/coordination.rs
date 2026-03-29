@@ -161,7 +161,7 @@ mod tests {
         let service_info = ServiceInfo::new(
             service_name.to_string(),
             service_name.to_string(),
-            gethostname::gethostname().to_string_lossy().to_string(),
+            sinex_primitives::events::builder::get_hostname(),
             work_dir.clone().into_std_path_buf(),
             false,
             format!("test-instance-{}", Uuid::now_v7().simple()),
@@ -936,7 +936,7 @@ impl NodeCoordination {
 
             // Send heartbeat regardless of mode
             if let Err(e) = self.kv_client.heartbeat(&self.current_metadata()).await {
-                warn!("Failed to send heartbeat: {}", e);
+                self.record_coordination_failure("instance_heartbeat", &e);
             }
 
             match self.apply_mode_transition(desired_mode, &process_events).await {

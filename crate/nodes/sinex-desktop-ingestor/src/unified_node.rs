@@ -30,7 +30,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material,
     SqliteHistoryImportError, SqliteHistoryRowOutcome,
-    watcher_handle::WatcherHandle,
+    watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use sinex_primitives::{
     HostName, Seconds, Timestamp, Uuid,
@@ -43,7 +43,7 @@ use sinex_primitives::{
     },
     privacy::{self, ProcessingContext},
 };
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
 
 const MATERIAL_REASON_ACTIVITYWATCH_HISTORY: &str = "desktop-activitywatch-history";
@@ -65,6 +65,20 @@ pub struct DesktopConfig {
     pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
+fn default_activitywatch_db_path_from(home_dir: Option<std::path::PathBuf>) -> Option<Utf8PathBuf> {
+    let home_dir = home_dir?;
+    match Utf8PathBuf::from_path_buf(home_dir.clone()) {
+        Ok(home) => Some(home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
+        Err(path) => {
+            warn!(
+                path = %path.display(),
+                "Home directory path is not valid UTF-8; default ActivityWatch history path is unavailable"
+            );
+            None
+        }
+    }
+}
+
 impl Default for DesktopConfig {
     fn default() -> Self {
         Self {
@@ -76,9 +90,7 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
-            activitywatch_db_path: dirs::home_dir()
-                .and_then(|path| Utf8PathBuf::from_path_buf(path).ok())
-                .map(|home| home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
+            activitywatch_db_path: default_activitywatch_db_path_from(dirs::home_dir()),
         }
     }
 }
@@ -552,6 +564,31 @@ impl Default for DesktopNode {
 }
 
 impl DesktopNode {
+    fn record_watcher_error(health: &Arc<RwLock<WatcherHealth>>, error: &SinexError) {
+        match health.write() {
+            Ok(mut watcher_health) => {
+                watcher_health.last_error = Some(error.to_string());
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn live_watcher_error<M>(handle: Option<&WatcherHandle<M>>) -> Option<String> {
+        handle.and_then(|watcher| watcher.health().last_error)
+    }
+
+    fn env_string_override(name: &str) -> NodeResult<Option<String>> {
+        match std::env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
+                "Environment variable '{name}' is not valid UTF-8"
+            ))),
+        }
+    }
+
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
         raw.parse::<WindowManagerType>().map_err(|error| {
             SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
@@ -597,11 +634,11 @@ impl DesktopNode {
     }
 
     fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
-        if let Ok(val) = std::env::var("SINEX_DESKTOP_REQUIRE_HYPRLAND") {
+        if let Some(val) = Self::env_string_override("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
             config.require_hyprland =
                 Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
         }
-        if let Ok(path) = std::env::var("SINEX_ACTIVITYWATCH_DB_PATH") {
+        if let Some(path) = Self::env_string_override("SINEX_ACTIVITYWATCH_DB_PATH")? {
             config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
         }
 
@@ -855,12 +892,15 @@ impl IngestorNode for DesktopNode {
             .await
             {
                 Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("clipboard");
+                    let health = handle.health_tracker();
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Clipboard monitoring failed: {}", e);
+                            Self::record_watcher_error(&health, &e);
                         }
                     });
-                    *handle = WatcherHandle::running("clipboard", task, None, None);
+                    handle.start(task, None)?;
                     state.health.clipboard_active = true;
                     state.health.clipboard_last_error = None;
                 }
@@ -891,12 +931,15 @@ impl IngestorNode for DesktopNode {
             .await
             {
                 Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("window_manager");
+                    let health = handle.health_tracker();
                     let task = tokio::spawn(async move {
                         if let Err(e) = watcher.start_monitoring().await {
                             error!("Window manager monitoring failed: {}", e);
+                            Self::record_watcher_error(&health, &e);
                         }
                     });
-                    *handle = WatcherHandle::running("window_manager", task, None, None);
+                    handle.start(task, None)?;
                     state.health.window_manager_active = true;
                     state.health.window_manager_last_error = None;
                 }
@@ -981,7 +1024,14 @@ impl IngestorNode for DesktopNode {
         .iter()
         .filter(|&&active| active)
         .count() as u64;
-        let healthy = connected_sources > 0 || active_sources == 0;
+        let healthy = active_sources > 0 && connected_sources == active_sources;
+        let is_connected = active_sources > 0 && connected_sources > 0;
+        let clipboard_error =
+            Self::live_watcher_error(self.clipboard_watcher.as_ref())
+                .or_else(|| state.health.clipboard_last_error.clone());
+        let window_manager_error =
+            Self::live_watcher_error(self.window_manager_watcher.as_ref())
+                .or_else(|| state.health.window_manager_last_error.clone());
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -989,13 +1039,19 @@ impl IngestorNode for DesktopNode {
             "watcher_health".to_string(),
             json!({
                 "clipboard_active": self.clipboard_connected(),
+                "clipboard_error": clipboard_error,
                 "window_manager_active": self.window_manager_connected(),
+                "window_manager_error": window_manager_error,
             }),
         );
         let description = if active_sources == 0 {
             "Desktop Source (all watchers disabled)".to_string()
         } else if connected_sources == 0 {
             format!("Desktop Source ({active_sources} enabled watcher(s), none connected)")
+        } else if connected_sources < active_sources {
+            format!(
+                "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
+            )
         } else {
             format!(
                 "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)"
@@ -1004,15 +1060,12 @@ impl IngestorNode for DesktopNode {
 
         Ok(SourceState {
             description,
-            last_updated: state
-                .last_state
-                .as_ref()
-                .map_or_else(Timestamp::now, |s| s.captured_at),
+            last_updated: state.last_state.as_ref().map(|s| s.captured_at),
             total_items: None,
             healthy,
             recent_activity,
             metadata,
-            is_connected: connected_sources > 0 || active_sources == 0,
+            is_connected,
             lag_seconds: None,
         })
     }
@@ -1040,9 +1093,49 @@ impl IngestorNode for DesktopNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use serde_json::json;
     use std::time::Duration;
-    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
+    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test};
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&mut self, key: &str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
 
     fn sample_activitywatch_entry(
         kind: ActivityWatchEntryKind,
@@ -1060,6 +1153,31 @@ mod tests {
             duration_ms: 1000,
             data,
         })
+    }
+
+    #[sinex_test]
+    async fn desktop_default_activitywatch_db_path_uses_utf8_home_dir()
+    -> xtask::sandbox::TestResult<()> {
+        let path = default_activitywatch_db_path_from(Some(std::path::PathBuf::from("/tmp/home")))
+            .ok_or_else(|| color_eyre::eyre::eyre!("default ActivityWatch path should exist"))?;
+
+        assert_eq!(
+            path,
+            Utf8PathBuf::from("/tmp/home/.local/share/activitywatch/aw-server-rust/sqlite.db")
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn desktop_default_activitywatch_db_path_rejects_non_utf8_home_dir()
+    -> xtask::sandbox::TestResult<()> {
+        let invalid_home = std::path::PathBuf::from(OsString::from_vec(vec![
+            b'/', b't', b'm', b'p', b'/', 0xff,
+        ]));
+
+        assert_eq!(default_activitywatch_db_path_from(Some(invalid_home)), None);
+        Ok(())
     }
 
     #[sinex_test]
@@ -1159,6 +1277,30 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn desktop_env_override_rejects_non_unicode_activitywatch_db_path()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new(&[
+            "SINEX_ACTIVITYWATCH_DB_PATH",
+            "SINEX_DESKTOP_REQUIRE_HYPRLAND",
+        ]);
+        env.set(
+            "SINEX_ACTIVITYWATCH_DB_PATH",
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
+        env.remove("SINEX_DESKTOP_REQUIRE_HYPRLAND");
+
+        let mut config = DesktopConfig::default();
+        let error = DesktopNode::apply_env_overrides(&mut config)
+            .expect_err("non-UTF8 ActivityWatch overrides must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("SINEX_ACTIVITYWATCH_DB_PATH"));
+        assert!(message.contains("not valid UTF-8"));
+        Ok(())
+    }
+
     #[sinex_test]
     async fn desktop_source_state_is_disconnected_when_enabled_watchers_are_inactive()
     -> xtask::sandbox::TestResult<()> {
@@ -1186,6 +1328,7 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             Some(0)
         );
+        assert_eq!(source.last_updated, None);
         Ok(())
     }
 
@@ -1217,7 +1360,9 @@ mod tests {
             source.metadata.get("watcher_health"),
             Some(&json!({
                 "clipboard_active": false,
+                "clipboard_error": serde_json::Value::Null,
                 "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
             }))
         );
         Ok(())
@@ -1235,7 +1380,8 @@ mod tests {
         let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
 
         assert!(source.is_connected);
-        assert!(source.healthy);
+        assert!(!source.healthy);
+        assert!(source.description.contains("degraded"));
         assert_eq!(
             source
                 .metadata
@@ -1247,8 +1393,61 @@ mod tests {
             source.metadata.get("watcher_health"),
             Some(&json!({
                 "clipboard_active": true,
+                "clipboard_error": serde_json::Value::Null,
                 "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
             }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_surfaces_live_watcher_errors()
+    -> xtask::sandbox::TestResult<()> {
+        let mut node = DesktopNode::new();
+        let handle = WatcherHandle::initialized("clipboard");
+        handle.record_error("clipboard watcher crashed".to_string());
+        node.clipboard_watcher = Some(handle);
+
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert_eq!(
+            source.metadata.get("watcher_health"),
+            Some(&json!({
+                "clipboard_active": false,
+                "clipboard_error": "clipboard watcher crashed",
+                "window_manager_active": false,
+                "window_manager_error": serde_json::Value::Null,
+            }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_source_state_marks_disabled_configuration_unhealthy()
+    -> xtask::sandbox::TestResult<()> {
+        let mut node = DesktopNode::new();
+        node.config.clipboard_enabled = false;
+        node.config.window_manager_enabled = false;
+
+        let source = IngestorNode::get_source_state(&node, &DesktopPersistentState::default())?;
+
+        assert!(!source.is_connected);
+        assert!(!source.healthy);
+        assert!(source.description.contains("all watchers disabled"));
+        assert_eq!(
+            source
+                .metadata
+                .get("enabled_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            source
+                .metadata
+                .get("connected_sources")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
         );
         Ok(())
     }

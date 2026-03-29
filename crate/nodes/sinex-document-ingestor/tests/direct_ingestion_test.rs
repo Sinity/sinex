@@ -1,7 +1,7 @@
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentNode};
 use sinex_node_sdk::prelude::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
-use sinex_node_sdk::{IngestorNodeAdapter, Node};
+use sinex_node_sdk::{ExplorationProvider, IngestorNodeAdapter, Node};
 use sinex_primitives::Id;
 use tempfile::{Builder, NamedTempFile};
 use tokio::time::{Duration, timeout};
@@ -118,6 +118,46 @@ async fn document_node_rejects_unsupported_mime_targets(ctx: TestContext) -> Tes
             .await
             .is_err(),
         "unsupported MIME target must not emit an event"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_source_state_reports_initialized_readiness(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(false)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let mut temp = Builder::new().suffix(".txt").tempfile()?;
+    use std::io::Write;
+    writeln!(temp, "document readiness probe")?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.allowed_roots = vec![
+        temp.path()
+            .parent()
+            .expect("temp file should have a parent")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let init_ctx = NodeInitContext::new(config.clone(), raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let state = node.ingestor().get_source_state()?;
+    assert!(state.is_connected);
+    assert!(state.healthy);
+    assert!(state.description.contains("ready"));
+    assert_eq!(state.metadata.get("initialized"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        state.metadata.get("allowed_roots"),
+        Some(&serde_json::json!(config.allowed_roots))
     );
 
     Ok(())

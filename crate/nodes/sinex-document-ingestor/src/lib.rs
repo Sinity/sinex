@@ -452,15 +452,56 @@ impl IngestorNode for DocumentNode {
 
 impl ExplorationProvider for DocumentNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
+        let initialized =
+            self.runtime.is_some() && self.stage_context.is_some() && self.acquisition.is_some();
+        let config_status = self.config.validate().err().map(|error| error.to_string());
+        let config_healthy = config_status.is_none();
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("initialized".to_string(), json!(initialized));
+        metadata.insert(
+            "allowed_roots".to_string(),
+            json!(self.config.allowed_roots),
+        );
+        metadata.insert(
+            "supported_mime_types".to_string(),
+            json!(self.config.supported_mime_types),
+        );
+        if let Some(error) = &config_status {
+            metadata.insert("config_error".to_string(), json!(error));
+        }
+
+        let (is_connected, healthy, description) = if !initialized {
+            (
+                false,
+                false,
+                "Document ingestor is not initialized".to_string(),
+            )
+        } else if let Some(error) = config_status {
+            (
+                false,
+                false,
+                format!("Document ingestor configuration is invalid: {error}"),
+            )
+        } else {
+            (
+                true,
+                true,
+                format!(
+                    "Document ingestor ready for {} root(s)",
+                    self.config.allowed_roots.len()
+                ),
+            )
+        };
+
         Ok(SourceState {
-            is_connected: true,
-            healthy: true,
-            description: "Document Ingestor".to_string(),
-            last_updated: Timestamp::now(),
+            is_connected,
+            healthy: healthy && config_healthy,
+            description,
+            last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
-            metadata: std::collections::HashMap::new(),
+            metadata,
         })
     }
 
@@ -504,6 +545,8 @@ impl Default for DocumentNode {
 #[cfg(test)]
 mod tests {
     use super::DocumentNode;
+    use serde_json::json;
+    use sinex_node_sdk::ExplorationProvider;
     use sinex_node_sdk::runtime::stream::Checkpoint;
     use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::sinex_test;
@@ -529,6 +572,36 @@ mod tests {
             Checkpoint::timestamp(finished_at, None)
         );
         assert_eq!(report.time_range, Some((started_at, finished_at)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn document_source_state_is_unhealthy_before_initialize(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let node = DocumentNode::new();
+        let state = node.get_source_state()?;
+
+        assert!(!state.is_connected);
+        assert!(!state.healthy);
+        assert_eq!(state.last_updated, None);
+        assert!(state.description.contains("not initialized"));
+        assert_eq!(state.metadata.get("initialized"), Some(&json!(false)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn document_source_state_surfaces_invalid_config(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let node = DocumentNode::new();
+        let state = node.get_source_state()?;
+
+        assert_eq!(
+            state.metadata.get("config_error"),
+            Some(&json!(
+                "Configuration error: Allowed roots must be configured for document ingestion"
+            ))
+        );
+        assert!(!state.healthy);
         Ok(())
     }
 }

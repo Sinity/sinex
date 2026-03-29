@@ -46,6 +46,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
+        Mutex as StdMutex,
     },
 };
 use tokio::{
@@ -188,6 +189,7 @@ struct EventMetrics {
     events_deleted: AtomicU64,
     events_moved: AtomicU64,
     processing_errors: AtomicU64,
+    last_activity: StdMutex<Option<Timestamp>>,
 }
 
 impl EventMetrics {
@@ -199,35 +201,55 @@ impl EventMetrics {
             events_deleted: AtomicU64::new(0),
             events_moved: AtomicU64::new(0),
             processing_errors: AtomicU64::new(0),
+            last_activity: StdMutex::new(None),
         })
+    }
+
+    fn record_activity(&self) {
+        *self
+            .last_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Timestamp::now());
     }
 
     fn record_created(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_created.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_modified(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_modified.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_deleted(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_deleted.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_moved(&self) {
         self.events_processed.fetch_add(1, Ordering::Relaxed);
         self.events_moved.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     fn record_error(&self) {
         self.processing_errors.fetch_add(1, Ordering::Relaxed);
+        self.record_activity();
     }
 
     pub(crate) fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
         vec![]
+    }
+
+    fn last_updated(&self) -> Option<Timestamp> {
+        *self
+            .last_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn metadata(&self) -> HashMap<String, serde_json::Value> {
@@ -330,6 +352,14 @@ impl FilesystemNode {
 
     fn dropped_event_count(&self) -> u64 {
         self.dropped_events.load(Ordering::Relaxed)
+    }
+
+    fn active_watcher_count(&self) -> Option<usize> {
+        match self.watch_handles.try_lock() {
+            Ok(guard) if guard.is_empty() => None,
+            Ok(guard) => Some(guard.iter().filter(|handle| !handle.is_finished()).count()),
+            Err(_) => None,
+        }
     }
 
     fn watcher_shutdown_result(
@@ -466,11 +496,8 @@ impl FilesystemNode {
 
     fn snapshot_state(&self) -> FilesystemState {
         let host = self.service_info().map_or_else(
-            |_| HostName::from_static("unknown-host"),
-            |info| {
-                HostName::new(info.host().to_string())
-                    .unwrap_or_else(|_| HostName::from_static("unknown-host"))
-            },
+            |_| sinex_primitives::events::builder::get_hostname(),
+            |info| info.host().clone(),
         );
 
         FilesystemState {
@@ -642,28 +669,42 @@ impl IngestorNode for FilesystemNode {
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         let watched_paths = self.config.watch_paths.len();
-        let processing_errors = self.metrics.processing_errors.load(Ordering::Relaxed);
         let dropped_events = self.dropped_event_count();
-        let healthy = processing_errors == 0;
+        let active_watchers = self.active_watcher_count();
+        let healthy = watched_paths > 0 && active_watchers.is_none_or(|count| count == watched_paths);
+        let is_connected = watched_paths > 0 && active_watchers.is_none_or(|count| count > 0);
         let description = if watched_paths == 0 {
             "No filesystem watch paths configured".to_string()
+        } else if let Some(active_watchers) = active_watchers {
+            if active_watchers == 0 {
+                format!(
+                    "Filesystem monitoring stopped ({watched_paths} configured path(s), no active watchers)"
+                )
+            } else if active_watchers < watched_paths {
+                format!(
+                    "Filesystem monitoring degraded ({active_watchers}/{watched_paths} watcher(s) running)"
+                )
+            } else {
+                format!("Monitoring {watched_paths} filesystem paths")
+            }
         } else if healthy {
             format!("Monitoring {watched_paths} filesystem paths")
         } else {
-            format!(
-                "Monitoring {watched_paths} filesystem paths with {processing_errors} processing error(s)"
-            )
+            format!("Filesystem monitoring unavailable for {watched_paths} configured path(s)")
         };
 
         let mut metadata = self.metrics.metadata();
         metadata.insert("watched_paths".to_string(), serde_json::json!(watched_paths));
         metadata.insert("dropped_events".to_string(), serde_json::json!(dropped_events));
+        if let Some(active_watchers) = active_watchers {
+            metadata.insert("active_watchers".to_string(), serde_json::json!(active_watchers));
+        }
 
         Ok(SourceState {
-            is_connected: watched_paths > 0,
+            is_connected,
             healthy,
             description,
-            last_updated: Timestamp::now(),
+            last_updated: self.metrics.last_updated(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
             total_items: Some(watched_paths as u64),
@@ -921,12 +962,13 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
         return Ok(());
     }
 
+    let created_at = file_created_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_CREATED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileCreatedPayload {
         path: sanitize_path(path)?,
         size,
-        created_at: file_created_at(&metadata),
+        created_at,
         permissions: file_permissions(&metadata),
     };
 
@@ -977,12 +1019,13 @@ async fn handle_file_modified(
         return Ok(());
     }
 
+    let modified_at = file_modified_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_MODIFIED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileModifiedPayload {
         path: sanitize_path(path)?,
         size,
-        modified_at: file_modified_at(&metadata),
+        modified_at,
         modification_type,
     };
 
@@ -1259,17 +1302,31 @@ fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
     }
 }
 
-fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
-    metadata
-        .created()
-        .or_else(|_| metadata.modified())
-        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+fn filesystem_timestamp(
+    timestamp: std::io::Result<std::time::SystemTime>,
+    field: &str,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    timestamp.map(Timestamp::from).map_err(|error| {
+        SinexError::processing("failed to read filesystem timestamp")
+            .with_context("field", field)
+            .with_context("path", path.display().to_string())
+            .with_source(error)
+    })
 }
 
-fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
-    metadata
-        .modified()
-        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+fn file_created_at(
+    metadata: &StdMetadata,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    filesystem_timestamp(metadata.created().or_else(|_| metadata.modified()), "created_at", path)
+}
+
+fn file_modified_at(
+    metadata: &StdMetadata,
+    path: &Path,
+) -> NodeResult<sinex_primitives::temporal::Timestamp> {
+    filesystem_timestamp(metadata.modified(), "modified_at", path)
 }
 
 #[cfg(test)]
@@ -1327,14 +1384,29 @@ mod tests {
         let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
 
         assert!(!state.is_connected);
-        assert!(state.healthy);
+        assert!(!state.healthy);
         assert_eq!(state.total_items, Some(0));
+        assert_eq!(state.last_updated, None);
         assert!(state.description.contains("No filesystem watch paths configured"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn filesystem_source_state_surfaces_processing_errors() -> TestResult<()> {
+    async fn snapshot_state_falls_back_to_global_host_identity() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        let state = node.snapshot_state();
+
+        assert_eq!(
+            state.host,
+            sinex_primitives::events::builder::get_hostname(),
+            "filesystem snapshot state should reuse the shared host identity fallback",
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_does_not_stay_unhealthy_after_transient_processing_error(
+    ) -> TestResult<()> {
         let node = FilesystemNode::with_config(FilesystemConfig {
             watch_paths: vec!["/tmp".to_string()],
             ..FilesystemConfig::default()
@@ -1343,7 +1415,10 @@ mod tests {
 
         let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
         assert!(state.is_connected);
-        assert!(!state.healthy);
+        assert!(
+            state.healthy,
+            "transient cumulative processing errors must not poison filesystem source health forever"
+        );
         assert!(
             state
                 .metadata
@@ -1351,6 +1426,46 @@ mod tests {
                 .and_then(serde_json::Value::as_u64)
                 .is_some_and(|count| count == 1)
         );
+        assert!(state.last_updated.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_source_state_marks_finished_watchers_unhealthy() -> TestResult<()> {
+        let node = FilesystemNode::with_config(FilesystemConfig {
+            watch_paths: vec!["/tmp/a".to_string(), "/tmp/b".to_string()],
+            ..FilesystemConfig::default()
+        });
+
+        {
+            let mut guard = node.watch_handles.lock().await;
+            guard.push(tokio::spawn(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }));
+            guard.push(tokio::spawn(async {}));
+        }
+        tokio::task::yield_now().await;
+
+        let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
+        assert!(state.is_connected, "one active watcher should keep the source connected");
+        assert!(!state.healthy, "finished watcher handles must degrade filesystem source health");
+        assert!(
+            state.description.contains("degraded"),
+            "description should reflect degraded watcher state: {}",
+            state.description
+        );
+        assert_eq!(
+            state
+                .metadata
+                .get("active_watchers")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+
+        let mut guard = node.watch_handles.lock().await;
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
         Ok(())
     }
 
@@ -1448,6 +1563,58 @@ mod tests {
         assert!(error
             .to_string()
             .contains("filesystem watcher observed non-utf8 path"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_timestamp_rejects_unavailable_created_at() -> TestResult<()> {
+        let path = Path::new("/tmp/example.txt");
+        let error = filesystem_timestamp(
+            Err(std::io::Error::other("created timestamp unavailable")),
+            "created_at",
+            path,
+        )
+        .expect_err("missing created_at must fail honestly");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to read filesystem timestamp"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("created_at"),
+            "field context should be preserved: {message}"
+        );
+        assert!(
+            message.contains("/tmp/example.txt"),
+            "path context should be preserved: {message}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_timestamp_rejects_unavailable_modified_at() -> TestResult<()> {
+        let path = Path::new("/tmp/example.txt");
+        let error = filesystem_timestamp(
+            Err(std::io::Error::other("modified timestamp unavailable")),
+            "modified_at",
+            path,
+        )
+        .expect_err("missing modified_at must fail honestly");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to read filesystem timestamp"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("modified_at"),
+            "field context should be preserved: {message}"
+        );
+        assert!(
+            message.contains("/tmp/example.txt"),
+            "path context should be preserved: {message}"
+        );
         Ok(())
     }
 

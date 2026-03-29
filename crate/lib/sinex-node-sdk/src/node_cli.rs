@@ -371,6 +371,10 @@ fn render_cli_timestamp(timestamp: Timestamp) -> String {
     )))
 }
 
+fn render_optional_cli_timestamp(timestamp: Option<Timestamp>) -> String {
+    timestamp.map_or_else(|| "unknown".to_string(), render_cli_timestamp)
+}
+
 fn render_cli_time(timestamp: Timestamp) -> String {
     render_cli_value(timestamp.format(time::macros::format_description!(
         "[hour]:[minute]:[second]"
@@ -765,7 +769,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     println!("  Description: {}", state.description);
                     println!(
                         "  Last updated: {}",
-                        render_cli_timestamp(state.last_updated)
+                        render_optional_cli_timestamp(state.last_updated)
                     );
                     if let Some(total) = state.total_items {
                         println!("  Total items: {total}");
@@ -943,7 +947,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 #[cfg(test)]
 mod tests {
     use super::{
-        edge_mode_enabled, handle_export_result, render_cli_value, unavailable_section,
+        edge_mode_enabled, handle_export_result, render_cli_value,
+        render_optional_cli_timestamp, unavailable_section,
     };
     use crate::SinexError;
     use sinex_primitives::SanitizedPath;
@@ -980,6 +985,11 @@ mod tests {
         let rendered = render_cli_value::<&str>(Err("bad timestamp field"));
 
         assert_eq!(rendered, "<format error: bad timestamp field>");
+    }
+
+    #[test]
+    fn render_optional_cli_timestamp_is_explicit_when_unknown() {
+        assert_eq!(render_optional_cli_timestamp(None), "unknown");
     }
 
     #[sinex_serial_test]

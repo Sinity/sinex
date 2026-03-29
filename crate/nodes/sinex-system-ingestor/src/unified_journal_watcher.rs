@@ -15,6 +15,7 @@ use crate::WatcherMaterialContext;
 use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
+use parking_lot::Mutex;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sinex_node_sdk::{NatsPublisher, NodeResult};
@@ -34,8 +35,8 @@ use sinex_primitives::{
 };
 use std::collections::{HashMap, HashSet};
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -63,6 +64,16 @@ enum FollowExitReason {
     Shutdown,
     UnexpectedEof,
     ReadError,
+}
+
+struct StreamingActivityGuard {
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for StreamingActivityGuard {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
 }
 
 fn check_follow_exit_status(exit_reason: FollowExitReason, status: ExitStatus) -> NodeResult<()> {
@@ -259,17 +270,25 @@ pub struct UnifiedJournalWatcher {
     last_event_time: Arc<Mutex<Option<Instant>>>,
     event_count: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    streaming_active: Arc<AtomicBool>,
     child_process: Option<Child>,
     // Cursor batching state
-    pending_cursor: Arc<Mutex<Option<String>>>,
+    pending_cursor: Arc<StdMutex<Option<String>>>,
     cursor_save_count: Arc<AtomicU64>,
-    last_cursor_save: Arc<Mutex<Instant>>,
+    last_cursor_save: Arc<StdMutex<Instant>>,
     // Backpressure metrics
     channel_drops: Arc<AtomicU64>,
     dlq_publisher: Option<Arc<NatsPublisher>>,
 }
 
 impl UnifiedJournalWatcher {
+    fn begin_streaming(&self) -> StreamingActivityGuard {
+        self.streaming_active.store(true, Ordering::Relaxed);
+        StreamingActivityGuard {
+            active: Arc::clone(&self.streaming_active),
+        }
+    }
+
     async fn load_last_cursor(cursor_file: &str) -> NodeResult<Option<String>> {
         match tokio::fs::read_to_string(cursor_file).await {
             Ok(contents) => {
@@ -497,10 +516,11 @@ impl UnifiedJournalWatcher {
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            streaming_active: Arc::new(AtomicBool::new(false)),
             child_process: None,
-            pending_cursor: Arc::new(Mutex::new(None)),
+            pending_cursor: Arc::new(StdMutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
-            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            last_cursor_save: Arc::new(StdMutex::new(Instant::now())),
             channel_drops: Arc::new(AtomicU64::new(0)),
             dlq_publisher,
         })
@@ -623,15 +643,19 @@ impl UnifiedJournalWatcher {
         systemd_tx: Option<mpsc::Sender<Event<JsonValue>>>,
         material: WatcherMaterialContext,
     ) -> NodeResult<()> {
+        let _activity = self.begin_streaming();
         info!("Starting unified journal monitoring");
 
         // Import historical entries if configured
-        if self.journal_config.import_on_startup
-            && let Err(e) = self
-                .import_historical(&journal_tx, &systemd_tx, &material)
+        if self.journal_config.import_on_startup {
+            self.import_historical(&journal_tx, &systemd_tx, &material)
                 .await
-        {
-            error!("Failed to import historical journal entries: {}", e);
+                .map_err(|error| {
+                    self.record_error(format!(
+                        "Failed to import historical journal entries: {error}"
+                    ));
+                    error.with_context("startup_phase", "historical_import".to_string())
+                })?;
         }
 
         // Follow journal if configured
@@ -700,10 +724,12 @@ impl UnifiedJournalWatcher {
             })?;
 
         if !output.status.success() {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
+            let error = sinex_node_sdk::SinexError::processing(format!(
                 "journalctl failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            )));
+            ));
+            self.record_error(error.to_string());
+            return Err(error);
         }
 
         let mut entries_count = 0u64;
@@ -1016,6 +1042,7 @@ impl UnifiedJournalWatcher {
                     }
                 }
                 Err(e) => {
+                    self.record_error(format!("Error reading journal output: {e}"));
                     error!("Error reading journal output: {}", e);
                     exit_reason = FollowExitReason::ReadError;
                     break;
@@ -1032,6 +1059,9 @@ impl UnifiedJournalWatcher {
                 Err(error) => {
                     warn!(error = %error, "Failed to wait for journal watcher process exit");
                     if !matches!(exit_reason, FollowExitReason::Shutdown) {
+                        self.record_error(format!(
+                            "Failed to wait for journal watcher process exit: {error}"
+                        ));
                         return Err(
                             SinexError::io("Failed to wait for journal watcher process exit")
                                 .with_source(error),
@@ -1478,58 +1508,26 @@ impl UnifiedJournalWatcher {
     /// Update event tracking.
     /// Reserved for metrics and diagnostics integration.
     fn record_event(&self) {
-        match self.last_event_time.lock() {
-            Ok(mut last_event) => {
-                *last_event = Some(Instant::now());
-            }
-            Err(poisoned) => {
-                warn!("Journal watcher last_event_time lock poisoned during event update");
-                *poisoned.into_inner() = Some(Instant::now());
-            }
-        }
+        *self.last_event_time.lock() = Some(Instant::now());
         self.event_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an error.
     /// Reserved for metrics and diagnostics integration.
     fn record_error(&self, error: String) {
-        match self.last_error.lock() {
-            Ok(mut last_error) => {
-                *last_error = Some(error);
-            }
-            Err(poisoned) => {
-                warn!("Journal watcher last_error lock poisoned during error update");
-                *poisoned.into_inner() = Some(error);
-            }
-        }
+        *self.last_error.lock() = Some(error);
     }
 }
 
 #[async_trait::async_trait]
 impl WatcherLifecycle for UnifiedJournalWatcher {
     fn health_snapshot(&self) -> WatcherActivitySnapshot {
-        let last_event = match self.last_event_time.lock() {
-            Ok(last_event) => *last_event,
-            Err(poisoned) => {
-                warn!("Journal watcher last_event_time lock poisoned during health snapshot");
-                *poisoned.into_inner()
-            }
-        };
-        let last_error = match self.last_error.lock() {
-            Ok(last_error) => last_error.clone(),
-            Err(poisoned) => {
-                warn!("Journal watcher last_error lock poisoned during health snapshot");
-                let last_error = poisoned.into_inner();
-                Some(
-                    last_error.clone().unwrap_or_else(|| {
-                        "journal watcher last_error lock poisoned".to_string()
-                    }),
-                )
-            }
-        };
+        let last_event = *self.last_event_time.lock();
+        let last_error = self.last_error.lock().clone();
 
         WatcherActivitySnapshot {
-            active: !self.cancel_token.is_cancelled(),
+            active: self.streaming_active.load(Ordering::Relaxed)
+                && !self.cancel_token.is_cancelled(),
             last_event,
             last_error,
             events_processed: self.event_count.load(Ordering::Relaxed),
@@ -1561,13 +1559,7 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
     }
 
     fn last_event_timestamp(&self) -> Option<Instant> {
-        match self.last_event_time.lock() {
-            Ok(last_event) => *last_event,
-            Err(poisoned) => {
-                warn!("Journal watcher last_event_time lock poisoned during timestamp lookup");
-                *poisoned.into_inner()
-            }
-        }
+        *self.last_event_time.lock()
     }
 
     fn cancellation_token(&self) -> &CancellationToken {
@@ -1624,10 +1616,11 @@ mod tests {
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            streaming_active: Arc::new(AtomicBool::new(false)),
             child_process: None,
-            pending_cursor: Arc::new(Mutex::new(None)),
+            pending_cursor: Arc::new(StdMutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
-            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            last_cursor_save: Arc::new(StdMutex::new(Instant::now())),
             channel_drops: Arc::new(AtomicU64::new(0)),
             dlq_publisher: None,
         }
@@ -2135,6 +2128,7 @@ mod tests {
     async fn send_event_updates_health_snapshot(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
+        watcher.streaming_active.store(true, Ordering::Relaxed);
         let material = test_material();
         let (tx, mut rx) = mpsc::channel(1);
         let event = Event::new_json(
@@ -2148,6 +2142,7 @@ mod tests {
         let _received = rx.recv().await.expect("event should reach the channel");
 
         let snapshot = watcher.health_snapshot();
+        assert!(snapshot.active);
         assert_eq!(snapshot.events_processed, 1);
         assert!(snapshot.last_event.is_some());
         Ok(())
@@ -2157,6 +2152,7 @@ mod tests {
     async fn send_event_rejects_closed_channel(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
+        watcher.streaming_active.store(true, Ordering::Relaxed);
         let material = test_material();
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
@@ -2181,7 +2177,61 @@ mod tests {
         Ok(())
     }
 
-    fn poison_mutex<T: Send + 'static>(mutex: Arc<Mutex<T>>, value: T) {
+    #[sinex_test]
+    async fn health_snapshot_requires_live_streaming_activity(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+
+        watcher.streaming_active.store(true, Ordering::Relaxed);
+        assert!(
+            watcher.health_snapshot().active,
+            "streaming watcher should report active"
+        );
+
+        watcher.streaming_active.store(false, Ordering::Relaxed);
+        assert!(
+            !watcher.health_snapshot().active,
+            "stopped watcher must not stay active just because shutdown was not requested"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn start_streaming_surfaces_historical_import_failures(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let _path = EnvVarGuard::set("PATH", "");
+        let mut watcher = test_watcher();
+        watcher.journal_config.import_on_startup = true;
+        watcher.journal_config.follow = false;
+        let material = test_material();
+        let (journal_tx, _journal_rx) = mpsc::channel(1);
+
+        let error = watcher
+            .start_streaming(journal_tx, None, material)
+            .await
+            .expect_err("historical import failure must abort startup");
+
+        assert!(error.to_string().contains("Failed to run journalctl"));
+        assert!(error.to_string().contains("historical_import"));
+        let snapshot = watcher.health_snapshot();
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|value| value.contains("Failed to import historical journal entries"))
+        );
+        assert!(
+            !snapshot.active,
+            "failed startup must not leave the watcher marked active"
+        );
+
+        Ok(())
+    }
+
+    fn poison_mutex<T: Send + 'static>(mutex: Arc<StdMutex<T>>, value: T) {
         let result = std::thread::spawn(move || {
             let mut guard = mutex.lock().expect("test mutex should lock before poisoning");
             *guard = value;
@@ -2189,52 +2239,6 @@ mod tests {
         })
         .join();
         assert!(result.is_err(), "poisoning thread should panic");
-    }
-
-    #[sinex_test]
-    async fn health_snapshot_preserves_poisoned_last_error(ctx: TestContext) -> TestResult<()> {
-        let _ = ctx;
-        let watcher = test_watcher();
-        poison_mutex(
-            Arc::clone(&watcher.last_error),
-            Some("poisoned journal error".to_string()),
-        );
-
-        let snapshot = watcher.health_snapshot();
-        assert_eq!(
-            snapshot.last_error.as_deref(),
-            Some("poisoned journal error")
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn record_error_recovers_from_poisoned_last_error_lock(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let _ = ctx;
-        let watcher = test_watcher();
-        poison_mutex(Arc::clone(&watcher.last_error), None::<String>);
-
-        watcher.record_error("recovered error".to_string());
-
-        let snapshot = watcher.health_snapshot();
-        assert_eq!(snapshot.last_error.as_deref(), Some("recovered error"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn last_event_timestamp_recovers_from_poisoned_lock(ctx: TestContext) -> TestResult<()> {
-        let _ = ctx;
-        let watcher = test_watcher();
-        let poisoned_time = Instant::now();
-        poison_mutex(Arc::clone(&watcher.last_event_time), Some(poisoned_time));
-
-        let last_event = watcher
-            .last_event_timestamp()
-            .expect("poisoned last_event lock should still yield stored time");
-        assert_eq!(last_event, poisoned_time);
-        Ok(())
     }
 
     #[sinex_test]

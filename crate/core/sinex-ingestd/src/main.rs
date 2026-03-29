@@ -3,7 +3,7 @@ mod build {
 }
 
 use clap::{Parser, ValueEnum};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use sinex_ingestd::{IngestService, IngestdConfig};
 use std::io;
 use tracing::{error, info};
@@ -169,6 +169,26 @@ enum LogFormat {
     Json,
 }
 
+fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter> {
+    let Some(raw) = std::env::var_os(tracing_subscriber::EnvFilter::DEFAULT_ENV) else {
+        return Ok(tracing_subscriber::EnvFilter::new(default_filter));
+    };
+
+    let raw = raw.into_string().map_err(|_| {
+        eyre!(
+            "{} is not valid UTF-8",
+            tracing_subscriber::EnvFilter::DEFAULT_ENV
+        )
+    })?;
+
+    tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
+        eyre!(
+            "Invalid {} directive `{raw}`: {error}",
+            tracing_subscriber::EnvFilter::DEFAULT_ENV
+        )
+    })
+}
+
 fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -> Result<()> {
     if tokio_console {
         #[cfg(feature = "tokio-console")]
@@ -184,8 +204,7 @@ fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -
         }
     }
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
+    let env_filter = load_env_filter(default_filter)?;
 
     match format {
         LogFormat::Json => {
@@ -226,4 +245,88 @@ async fn wait_for_shutdown_signal() -> io::Result<()> {
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() -> io::Result<()> {
     tokio::signal::ctrl_c().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    use xtask::sandbox::prelude::*;
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn new(keys: &[&str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+
+        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&mut self, key: &str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
+        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        env.remove("RUST_LOG");
+
+        load_env_filter("sinex_ingestd=info")?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
+        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        env.set("RUST_LOG", "sinex_ingestd=wat");
+
+        let error =
+            load_env_filter("sinex_ingestd=info").expect_err("invalid directives must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("RUST_LOG"));
+        assert!(message.contains("sinex_ingestd=wat"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
+        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
+
+        let error =
+            load_env_filter("sinex_ingestd=info").expect_err("non-UTF8 RUST_LOG must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("RUST_LOG"));
+        assert!(message.contains("UTF-8"));
+        Ok(())
+    }
 }

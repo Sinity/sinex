@@ -6,7 +6,7 @@ use crate::{
 use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::{HostName, JsonValue, Uuid};
 use sinex_primitives::events::Event;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
 pub struct ServiceInfo {
     service_name: String,
     node_name: String,
-    host: String,
+    host: HostName,
     work_dir: PathBuf,
     dry_run: bool,
     instance_id: String,
@@ -34,7 +34,7 @@ impl ServiceInfo {
     pub fn new(
         service_name: String,
         node_name: String,
-        host: String,
+        host: HostName,
         work_dir: PathBuf,
         dry_run: bool,
         instance_id: String,
@@ -64,7 +64,7 @@ impl ServiceInfo {
     }
 
     #[must_use]
-    pub fn host(&self) -> &str {
+    pub fn host(&self) -> &HostName {
         &self.host
     }
 

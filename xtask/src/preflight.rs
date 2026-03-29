@@ -625,10 +625,11 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
         eprintln!("⚡ Auto-starting NATS...");
     }
 
-    let timeout_secs = std::env::var("SINEX_INFRA_START_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(120);
+    let timeout_secs = crate::parse_positive_u64_env_or_default(
+        "SINEX_INFRA_START_TIMEOUT",
+        120,
+        "infra start timeout",
+    );
 
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Starting stack", 5);
@@ -1145,10 +1146,11 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     }
 
     // Check the preflight result cache before doing any real work.
-    let ttl_secs = std::env::var("SINEX_PREFLIGHT_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
+    let ttl_secs = crate::parse_positive_u64_env_or_default(
+        "SINEX_PREFLIGHT_TTL_SECS",
+        PREFLIGHT_CACHE_DEFAULT_TTL_SECS,
+        "preflight cache ttl",
+    );
 
     match PreflightCache::load() {
         Ok(Some(cache)) => {
@@ -1443,6 +1445,34 @@ mod tests {
         let dir = tempdir()?;
         let error = read_optional_state_file(dir.path(), "state file").unwrap_err();
         assert!(format!("{error:#}").contains("failed to read state file file"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_auto_start_stack_uses_default_for_invalid_timeout_override() -> TestResult<()> {
+        let _guard = crate::tests::EnvGuard::set("SINEX_INFRA_START_TIMEOUT", Some("bogus".into()));
+        assert_eq!(
+            crate::parse_positive_u64_env_or_default(
+                "SINEX_INFRA_START_TIMEOUT",
+                120,
+                "infra start timeout"
+            ),
+            120
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_ready_uses_default_for_invalid_ttl_override() -> TestResult<()> {
+        let _guard = crate::tests::EnvGuard::set("SINEX_PREFLIGHT_TTL_SECS", Some("0".into()));
+        assert_eq!(
+            crate::parse_positive_u64_env_or_default(
+                "SINEX_PREFLIGHT_TTL_SECS",
+                PREFLIGHT_CACHE_DEFAULT_TTL_SECS,
+                "preflight cache ttl"
+            ),
+            PREFLIGHT_CACHE_DEFAULT_TTL_SECS
+        );
         Ok(())
     }
 

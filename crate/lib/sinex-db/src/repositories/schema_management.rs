@@ -683,12 +683,22 @@ impl<'a> SchemaManagementRepository<'a> {
         .await
         .map_err(|e| db_error(e, "fetch validation cache entry"))?;
 
-        Ok(row.map(|row| ValidationResult {
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let errors = match row.validation_errors {
+            Some(value) => serde_json::from_value(value).map_err(|error| {
+                SinexError::serialization(format!(
+                    "deserialize validation cache entry for event {event_id} schema {schema_id}: {error}"
+                ))
+            })?,
+            None => Vec::new(),
+        };
+
+        Ok(Some(ValidationResult {
             is_valid: row.is_valid,
-            errors: row
-                .validation_errors
-                .and_then(|value| serde_json::from_value(value).ok())
-                .unwrap_or_default(),
+            errors,
             warnings: Vec::new(),
         }))
     }
