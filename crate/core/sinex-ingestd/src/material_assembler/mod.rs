@@ -722,6 +722,7 @@ impl MaterialAssembler {
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
         let mut cleanup_error = None;
+        let mut timed_out = false;
 
         loop {
             tokio::select! {
@@ -754,23 +755,17 @@ impl MaterialAssembler {
                         break;
                     }
                 }
-                () = &mut deadline => {
+                () = &mut deadline, if !timed_out => {
+                    timed_out = true;
                     let remaining = tasks.len();
                     warn!(
-                        "Timed out waiting for {} material tasks after {:?}, aborting remaining work",
+                        "Timed out waiting for {} material tasks after {:?}, continuing to drain shutdown work",
                         remaining,
                         timeout
                     );
-                    tasks.abort_all();
-                    while let Some(result) = tasks.join_next().await {
-                        if let Err(error) = result {
-                            debug!(error = ?error, "Material task aborted during shutdown cleanup");
-                        }
-                    }
                     if cleanup_error.is_none() {
                         cleanup_error = Some(material_task_timeout(remaining, timeout));
                     }
-                    break;
                 }
             }
         }
@@ -1164,8 +1159,11 @@ mod tests {
     #[sinex_test]
     async fn wait_for_material_tasks_times_out_hung_tasks() -> TestResult<()> {
         let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
-        tasks.spawn(async {
+        let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let completed_flag = completed.clone();
+        tasks.spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
+            completed_flag.store(true, std::sync::atomic::Ordering::Release);
             ("material stale cleanup task", Ok(Ok(())))
         });
 
@@ -1177,7 +1175,11 @@ mod tests {
         .expect("hung task should time out");
 
         assert!(error.to_string().contains("timed out waiting"));
-        assert!(tasks.is_empty(), "timed out tasks should be aborted and drained");
+        assert!(
+            completed.load(std::sync::atomic::Ordering::Acquire),
+            "timed out shutdown should still let the material task finish"
+        );
+        assert!(tasks.is_empty(), "timed out tasks should still be drained");
         Ok(())
     }
 
