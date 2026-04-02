@@ -22,7 +22,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{Operation, Provenance};
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::privacy;
-use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
+use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent, TimeRange};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination, Uuid};
 
@@ -291,11 +291,9 @@ where
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
         match checkpoint_state.data {
             Some(data) => {
-                let persisted: PersistedState<N::State> = decode_checkpoint_data(
-                    data,
-                    "derived checkpoint state",
-                    self.node.name(),
-                )?;
+                let mut persisted: PersistedState<N::State> =
+                    decode_checkpoint_data(data, "derived checkpoint state", self.node.name())?;
+                restore_resume_position(&mut persisted, &checkpoint_state.checkpoint);
                 info!(
                     node = %self.node.name(),
                     events_processed = persisted.events_processed,
@@ -310,10 +308,10 @@ where
                 self.last_revision = checkpoint_state.revision;
             }
             None => {
-                return Err(
-                    SinexError::checkpoint("Derived checkpoint KV entry is missing state data")
-                        .with_context("node", self.node.name()),
-                );
+                return Err(SinexError::checkpoint(
+                    "Derived checkpoint KV entry is missing state data",
+                )
+                .with_context("node", self.node.name()));
             }
         }
 
@@ -326,18 +324,16 @@ where
             return Ok(None);
         };
         let Some(data) = file_state.data else {
-            return Err(
-                SinexError::checkpoint("Derived hot reload checkpoint file is missing state data")
-                    .with_context("node", self.node.name())
-                    .with_context("path", checkpoint_path.display().to_string()),
-            );
+            return Err(SinexError::checkpoint(
+                "Derived hot reload checkpoint file is missing state data",
+            )
+            .with_context("node", self.node.name())
+            .with_context("path", checkpoint_path.display().to_string()));
         };
 
-        let persisted: PersistedState<N::State> = decode_checkpoint_data(
-            data,
-            "derived hot reload state",
-            self.node.name(),
-        )?;
+        let mut persisted: PersistedState<N::State> =
+            decode_checkpoint_data(data, "derived hot reload state", self.node.name())?;
+        restore_resume_position(&mut persisted, &file_state.checkpoint);
         info!(
             node = %self.node.name(),
             events_processed = persisted.events_processed,
@@ -364,10 +360,7 @@ where
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         let checkpoint_state = CheckpointState {
-            checkpoint: Checkpoint::external(
-                serde_json::json!({"version": self.persisted_state.version}),
-                format!("derived_node_{}", self.node.name()),
-            ),
+            checkpoint: self.checkpoint_position(),
             processed_count: self.persisted_state.events_processed,
             last_activity: Timestamp::now(),
             data: Some(state_json),
@@ -388,10 +381,7 @@ where
             .map_err(|e| SinexError::processing(format!("Failed to serialize state: {e}")))?;
 
         let checkpoint_state = CheckpointState {
-            checkpoint: Checkpoint::external(
-                serde_json::json!({"version": self.persisted_state.version}),
-                format!("derived_node_{}", self.node.name()),
-            ),
+            checkpoint: self.checkpoint_position(),
             processed_count: self.persisted_state.events_processed,
             last_activity: Timestamp::now(),
             data: Some(state_json),
@@ -419,16 +409,26 @@ where
                 >= Duration::from_secs(self.config.checkpoint_timeout_secs)
     }
 
-    fn current_checkpoint_internal(&self) -> NodeResult<Checkpoint> {
-        let state_json = serde_json::to_value(&self.persisted_state).map_err(|error| {
-            SinexError::serialization("failed to serialize current derived node checkpoint state")
-                .with_context("node", self.node.name().to_string())
-                .with_std_error(&error)
-        })?;
-        Ok(Checkpoint::external(
-            state_json,
-            format!("derived_node_{}", self.node.name()),
-        ))
+    fn checkpoint_position(&self) -> Checkpoint {
+        if let Some(event_id) = self.persisted_state.last_input_event_id {
+            return Checkpoint::internal(event_id, self.persisted_state.events_processed);
+        }
+
+        if self.persisted_state.events_processed > 0 {
+            return Checkpoint::timestamp(self.persisted_state.last_checkpoint, None);
+        }
+
+        Checkpoint::None
+    }
+
+    fn current_checkpoint_internal(&self) -> Checkpoint {
+        self.checkpoint_position()
+    }
+
+    fn record_processed_input(&mut self, event_id: Id<Event<JsonValue>>) {
+        self.persisted_state.last_input_event_id = Some(*event_id.as_uuid());
+        self.persisted_state.events_processed += 1;
+        self.events_since_checkpoint += 1;
     }
 
     // ── Event Processing ───────────────────────────────────────────────
@@ -466,8 +466,7 @@ where
         match result {
             Ok(outputs) => {
                 let output_events = self.build_output_events(outputs, source_event_id, &context)?;
-                self.persisted_state.events_processed += 1;
-                self.events_since_checkpoint += 1;
+                self.record_processed_input(source_event_id);
                 Ok(output_events)
             }
             Err(e) => {
@@ -475,14 +474,12 @@ where
                 match action {
                     ErrorAction::Skip => {
                         warn!(node = %self.node.name(), error = %e, "Skipping event");
-                        self.persisted_state.events_processed += 1;
-                        self.events_since_checkpoint += 1;
+                        self.record_processed_input(source_event_id);
                         Ok(Vec::new())
                     }
                     ErrorAction::SendToDLQ => {
                         self.send_to_dlq_or_fail(&event, &e).await?;
-                        self.persisted_state.events_processed += 1;
-                        self.events_since_checkpoint += 1;
+                        self.record_processed_input(source_event_id);
                         Ok(Vec::new())
                     }
                     ErrorAction::Retry => Err(e.into()),
@@ -521,12 +518,13 @@ where
         } = output;
 
         let privacy_context = self.node.output_privacy_context();
-        let filtered_payload = privacy::process_json(&payload, privacy_context).map_err(|error| {
-            SinexError::configuration("failed to initialize privacy engine".to_string())
-                .with_context("component", "derived_output_payload")
-                .with_context("privacy_context", format!("{privacy_context:?}"))
-                .with_std_error(error)
-        })?;
+        let filtered_payload =
+            privacy::process_json(&payload, privacy_context).map_err(|error| {
+                SinexError::configuration("failed to initialize privacy engine".to_string())
+                    .with_context("component", "derived_output_payload")
+                    .with_context("privacy_context", format!("{privacy_context:?}"))
+                    .with_std_error(error)
+            })?;
         if filtered_payload != payload {
             debug!(
                 node = %self.node.name(),
@@ -536,10 +534,8 @@ where
             );
         }
 
-        let typed_ids: Vec<Id<Event<JsonValue>>> = source_event_ids
-            .into_iter()
-            .map(Id::from_uuid)
-            .collect();
+        let typed_ids: Vec<Id<Event<JsonValue>>> =
+            source_event_ids.into_iter().map(Id::from_uuid).collect();
         let source_event_ids = NonEmptyVec::from_vec(typed_ids)
             .unwrap_or_else(|| NonEmptyVec::single(fallback_source_id));
         let provenance = Provenance::Synthesis {
@@ -663,14 +659,12 @@ where
                     }
                     Ok(None) => {}
                     Err(error) => {
-                        return Err(
-                            SinexError::database(
-                                "Failed to load affected event while deriving invalidation scope keys",
-                            )
-                            .with_context("event_id", id.to_string())
-                            .with_context("node", self.node.name())
-                            .with_source(error),
-                        );
+                        return Err(SinexError::database(
+                            "Failed to load affected event while deriving invalidation scope keys",
+                        )
+                        .with_context("event_id", id.to_string())
+                        .with_context("node", self.node.name())
+                        .with_source(error));
                     }
                 }
             }
@@ -932,7 +926,8 @@ where
                     // Emit success metrics
                     #[cfg(feature = "messaging")]
                     if let Some(ref obs) = self.self_observer {
-                        if let Err(error) = obs.emit_counter("invalidation.processed", 1, None).await
+                        if let Err(error) =
+                            obs.emit_counter("invalidation.processed", 1, None).await
                         {
                             log_self_observation_failure(
                                 node_name,
@@ -1147,7 +1142,7 @@ where
         Ok(ScanReport {
             events_processed: 0,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal()?,
+            final_checkpoint: self.current_checkpoint_internal(),
             time_range: None,
             node_stats: HashMap::from([
                 (
@@ -1168,7 +1163,7 @@ where
     #[cfg(feature = "db")]
     async fn run_historical(
         &mut self,
-        _from: Checkpoint,
+        from: Checkpoint,
         end_time: Timestamp,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
@@ -1193,13 +1188,11 @@ where
             "Starting derived node historical replay"
         );
 
-        let time_range = TimeRange::new(None, Some(end_time))
-            .map_err(|e| SinexError::validation(format!("Invalid time range: {e}")))?;
+        let (time_range, mut cursor) = historical_resume_position(&from, end_time)?;
 
         let mut events_processed = 0u64;
         let mut events_emitted = 0u64;
         let batch_size: i64 = 500;
-        let mut cursor: Option<sinex_primitives::Cursor> = None;
 
         // Extract operation ID from replay args if present
         let operation_id: Option<Id<Operation>> =
@@ -1234,6 +1227,7 @@ where
 
             for query_event in &events {
                 let ctx = DerivedTriggerContext::historical(&query_event.event, operation_id)?;
+                let trigger_event_id = ctx.trigger_event_id;
 
                 match self
                     .node
@@ -1264,7 +1258,9 @@ where
                             }
                             ErrorAction::SendToDLQ => {
                                 let event_for_dlq = query_event.event.clone();
-                                if let Err(dlq_err) = self.send_to_dlq_or_fail(&event_for_dlq, &e).await {
+                                if let Err(dlq_err) =
+                                    self.send_to_dlq_or_fail(&event_for_dlq, &e).await
+                                {
                                     error!(node = %self.node.name(), error = %dlq_err, "Failed to send to DLQ during replay");
                                 }
                             }
@@ -1279,8 +1275,18 @@ where
                     }
                 }
                 events_processed += 1;
-                self.persisted_state.events_processed += 1;
-                self.events_since_checkpoint += 1;
+                self.record_processed_input(trigger_event_id);
+            }
+
+            if self.should_checkpoint() {
+                self.save_state().await.map_err(|e| {
+                    error!(
+                        node = %self.node.name(),
+                        error = %e,
+                        "Failed to save checkpoint during historical replay"
+                    );
+                    e
+                })?;
             }
 
             match next_cursor {
@@ -1307,7 +1313,7 @@ where
         Ok(ScanReport {
             events_processed,
             duration: start.elapsed(),
-            final_checkpoint: self.current_checkpoint_internal()?,
+            final_checkpoint: self.current_checkpoint_internal(),
             time_range: None,
             node_stats: HashMap::from([
                 ("total_processed".to_string(), events_processed),
@@ -1370,6 +1376,64 @@ async fn recv_invalidation(sub: &mut Option<async_nats::Subscriber>) -> Option<V
 #[cfg(not(feature = "messaging"))]
 async fn recv_invalidation(_sub: &mut ()) -> Option<Vec<u8>> {
     std::future::pending().await
+}
+
+fn checkpoint_resume_event_id(checkpoint: &Checkpoint) -> Option<Uuid> {
+    match checkpoint {
+        Checkpoint::Internal { event_id, .. } => Some(*event_id),
+        Checkpoint::Stream {
+            event_id: Some(event_id),
+            ..
+        } => Some(*event_id),
+        _ => None,
+    }
+}
+
+fn restore_resume_position<S>(persisted: &mut PersistedState<S>, checkpoint: &Checkpoint) {
+    if persisted.last_input_event_id.is_none() {
+        persisted.last_input_event_id = checkpoint_resume_event_id(checkpoint);
+    }
+}
+
+fn historical_resume_position(
+    from: &Checkpoint,
+    end_time: Timestamp,
+) -> NodeResult<(TimeRange, Option<sinex_primitives::Cursor>)> {
+    let full_range = || {
+        TimeRange::new(None, Some(end_time))
+            .map_err(|e| SinexError::validation(format!("Invalid time range: {e}")))
+    };
+
+    match from {
+        Checkpoint::None => Ok((full_range()?, None)),
+        Checkpoint::Internal { event_id, .. } => Ok((
+            full_range()?,
+            Some(sinex_primitives::Cursor::after_id(Id::from_uuid(*event_id))),
+        )),
+        Checkpoint::Stream {
+            event_id: Some(event_id),
+            ..
+        } => Ok((
+            full_range()?,
+            Some(sinex_primitives::Cursor::after_id(Id::from_uuid(*event_id))),
+        )),
+        Checkpoint::Timestamp { timestamp, .. } => Ok((
+            TimeRange::new(Some(*timestamp), Some(end_time))
+                .map_err(|e| SinexError::validation(format!("Invalid time range: {e}")))?,
+            None,
+        )),
+        Checkpoint::Stream {
+            message_id,
+            event_id: None,
+        } => Err(SinexError::validation(
+            "Derived historical replay cannot resume from a stream checkpoint without event_id",
+        )
+        .with_context("message_id", message_id.clone())),
+        Checkpoint::External { description, .. } => Err(SinexError::validation(
+            "Derived historical replay cannot resume from an external state-only checkpoint",
+        )
+        .with_context("description", description.clone())),
+    }
 }
 
 // ── Node trait implementation ──────────────────────────────────────────
@@ -1484,7 +1548,7 @@ where
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        self.current_checkpoint_internal()
+        Ok(self.current_checkpoint_internal())
     }
 
     async fn health_check(&self) -> NodeResult<bool> {
@@ -1560,7 +1624,10 @@ where
             recent_activity: Vec::new(),
             total_items: None,
             metadata: HashMap::from([
-                ("runtime_initialized".to_string(), serde_json::json!(runtime_initialized)),
+                (
+                    "runtime_initialized".to_string(),
+                    serde_json::json!(runtime_initialized),
+                ),
                 ("node_model".to_string(), serde_json::json!(node_model)),
             ]),
         })
@@ -1606,27 +1673,27 @@ pub type ScopeReconcilerNodeAdapter<N> =
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
+    use super::signal_shutdown_channel;
+    use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     use crate::derived_node::{
         DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
     };
     use crate::exploration::ExplorationProvider;
     use crate::runtime::stream::{
-        Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo,
+        Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
     };
+    #[cfg(feature = "messaging")]
+    use crate::self_observation::SelfObservationError;
     use crate::shutdown::ShutdownConfig;
     use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
     use crate::{NodeLogicError, TransducerNode};
-    use super::signal_shutdown_channel;
     use camino::Utf8PathBuf;
     use futures::TryStreamExt;
-    use serde_json::json;
-    use tempfile::tempdir;
-    #[cfg(feature = "messaging")]
-    use crate::self_observation::SelfObservationError;
     use serde::{Deserialize, Serialize};
+    use serde_json::json;
+    use sinex_db::DbPoolExt;
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
@@ -1636,6 +1703,7 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use tempfile::tempdir;
     use tokio::sync::{mpsc, watch};
     use xtask::sandbox::prelude::*;
 
@@ -1805,7 +1873,11 @@ mod tests {
         Ok(event)
     }
 
-    async fn make_runtime_state(ctx: &TestContext, node_name: &str, node_run_id: Option<Uuid>) -> TestResult<NodeRuntimeState> {
+    async fn make_runtime_state(
+        ctx: &TestContext,
+        node_name: &str,
+        node_run_id: Option<Uuid>,
+    ) -> TestResult<NodeRuntimeState> {
         let kv = ctx.checkpoint_kv().await?;
         let checkpoint_manager = Arc::new(CheckpointManager::new(
             kv,
@@ -1825,8 +1897,9 @@ mod tests {
         );
         let work_dir = tempdir()?;
         let work_dir_path = work_dir.keep();
-        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone())
-            .map_err(|path| color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display()))?;
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
         Ok(NodeRuntimeState::new(
             ServiceInfo::new(
                 node_name.to_string(),
@@ -1841,6 +1914,54 @@ mod tests {
             handles,
             HashMap::new(),
             work_dir_utf8,
+        ))
+    }
+
+    async fn make_runtime_state_with_db(
+        ctx: &TestContext,
+        node_name: &str,
+        node_run_id: Option<Uuid>,
+    ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>)> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            node_name.to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
+        let emitter = EventEmitter::new(event_sender, false);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = NodeHandles::new(
+            ctx.pool().clone(),
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
+        Ok((
+            NodeRuntimeState::new(
+                ServiceInfo::new(
+                    node_name.to_string(),
+                    node_name.to_string(),
+                    HostName::from_static("test-host"),
+                    work_dir_path,
+                    false,
+                    format!("instance-{}", Uuid::now_v7().simple()),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    node_run_id,
+                ),
+                handles,
+                HashMap::new(),
+                work_dir_utf8,
+            ),
+            event_receiver,
         ))
     }
 
@@ -1865,9 +1986,8 @@ mod tests {
 
     #[sinex_test]
     async fn stale_output_ids_or_skip_scope_returns_empty_ids_on_success() -> TestResult<()> {
-        let stale_ids =
-            stale_output_ids_or_skip_scope("test-derived", "scope-a", Ok(Vec::new()))
-                .expect("successful stale query should not skip scope");
+        let stale_ids = stale_output_ids_or_skip_scope("test-derived", "scope-a", Ok(Vec::new()))
+            .expect("successful stale query should not skip scope");
         assert!(stale_ids.is_empty());
         Ok(())
     }
@@ -1988,10 +2108,7 @@ mod tests {
         manager.save_checkpoint(&CheckpointState::default()).await?;
 
         let mut keys = kv.keys().await?;
-        let key = keys
-            .try_next()
-            .await?
-            .expect("checkpoint key should exist");
+        let key = keys.try_next().await?.expect("checkpoint key should exist");
         let corrupt = serde_json::to_vec(&CheckpointState {
             checkpoint: Checkpoint::stream("restored", None),
             processed_count: 0,
@@ -2024,7 +2141,10 @@ mod tests {
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(node));
 
         let error = adapter
-            .process_batch(vec![make_input_event("first")?, make_input_event("second")?])
+            .process_batch(vec![
+                make_input_event("first")?,
+                make_input_event("second")?,
+            ])
             .await
             .expect_err("retry errors must stop the batch");
 
@@ -2058,7 +2178,13 @@ mod tests {
             )
             .await?,
         );
-        adapter.checkpoint_manager = Some(adapter.runtime.as_ref().expect("runtime set").checkpoint_manager());
+        adapter.checkpoint_manager = Some(
+            adapter
+                .runtime
+                .as_ref()
+                .expect("runtime set")
+                .checkpoint_manager(),
+        );
 
         let error = adapter
             .process_batch(vec![make_input_event("checkpoint")?])
@@ -2088,6 +2214,103 @@ mod tests {
             .expect("emitting node should produce one output event");
 
         assert_eq!(output.node_run_id, Some(node_run_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn current_checkpoint_tracks_last_processed_input_event() -> TestResult<()> {
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        let input = make_input_event("checkpoint-me")?;
+        let input_id = input.id.expect("test input must have an id");
+
+        let _ = adapter.process_one(input).await?;
+
+        assert_eq!(
+            adapter.current_checkpoint_internal(),
+            Checkpoint::internal(*input_id.as_uuid(), 1)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_restores_resume_position_from_checkpoint_metadata() -> TestResult<()> {
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir
+            .path()
+            .join("derived-legacy-resume-position.checkpoint.json");
+        let resume_event_id = Uuid::now_v7();
+        let legacy_state = serde_json::json!({
+            "state": null,
+            "events_processed": 7,
+            "last_checkpoint": Timestamp::now(),
+            "version": 1
+        });
+        CheckpointState {
+            checkpoint: Checkpoint::internal(resume_event_id, 7),
+            processed_count: 7,
+            last_activity: Timestamp::now(),
+            data: Some(legacy_state),
+            version: 2,
+            revision: 0,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+            TransducerWrapper(TestDerivedNode),
+            ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path.clone()),
+                ..ShutdownConfig::default()
+            },
+        );
+
+        adapter.load_state().await?;
+
+        assert_eq!(
+            adapter.current_checkpoint_internal(),
+            Checkpoint::internal(resume_event_id, 7)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn historical_replay_resumes_from_internal_checkpoint(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let inserted = ctx
+            .pool()
+            .events()
+            .insert_batch(vec![
+                make_input_event("first")?,
+                make_input_event("second")?,
+                make_input_event("third")?,
+            ])
+            .await?;
+        let second_id = inserted[1].id.expect("inserted event must have an id");
+        let third_id = inserted[2].id.expect("inserted event must have an id");
+
+        let (runtime, _event_receiver) =
+            make_runtime_state_with_db(&ctx, "derived-history-resume-test", None).await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+        adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+        adapter.event_sender = Some(runtime.event_sender());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let report = adapter
+            .run_historical(
+                Checkpoint::internal(*second_id.as_uuid(), 2),
+                Timestamp::now(),
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 1);
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::internal(*third_id.as_uuid(), 1)
+        );
         Ok(())
     }
 }
