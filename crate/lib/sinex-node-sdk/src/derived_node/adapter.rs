@@ -84,6 +84,20 @@ fn log_self_observation_failure(
     );
 }
 
+#[cfg(feature = "db")]
+struct PreparedInvalidation {
+    outputs: Vec<Event<JsonValue>>,
+    scopes: Vec<PreparedInvalidationScope>,
+    operation_uuid: Uuid,
+}
+
+#[cfg(feature = "db")]
+struct PreparedInvalidationScope {
+    scope_key: String,
+    stale_ids: Vec<Uuid>,
+    new_event_ids: Vec<(Uuid, Option<String>)>,
+}
+
 /// Shared runtime adapter for all derived node models.
 ///
 /// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
@@ -737,27 +751,23 @@ where
 
     // ── Invalidation Processing ──────────────────────────────────────────
 
-    /// Process a scope invalidation signal.
-    ///
-    /// For each affected scope:
-    /// 1. Loads the current working set from DB (events matching `scope_key` + `input_event_type`)
-    /// 2. Archives existing derived outputs for that scope (moves to `audit.archived_events`)
-    /// 3. Calls `process_invalidation_derived()` to recompute
-    /// 4. Records replacement relations in `audit.event_replacements` (old→new linkage)
-    /// 5. Returns replacement events for emission
-    ///
-    /// Transducer nodes return empty — their outputs are archived with their inputs.
     #[cfg(feature = "db")]
-    pub async fn process_invalidation(
+    async fn prepare_invalidation(
         &mut self,
         invalidation: &super::invalidation::DerivedScopeInvalidation,
-    ) -> NodeResult<Vec<Event<JsonValue>>> {
-        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
+    ) -> NodeResult<PreparedInvalidation> {
+        use sinex_db::repositories::DbPoolExt;
         use sinex_primitives::prelude::*;
 
         // Only process invalidations for our input type
         if !invalidation.matches_input(self.node.input_event_type()) {
-            return Ok(Vec::new());
+            return Ok(PreparedInvalidation {
+                outputs: Vec::new(),
+                scopes: Vec::new(),
+                operation_uuid: invalidation
+                    .operation_id
+                    .unwrap_or_else(|| *Id::<Operation>::new().as_uuid()),
+            });
         }
 
         let pool = {
@@ -813,12 +823,17 @@ where
                 action = %invalidation.action,
                 "No scope keys to recompute"
             );
-            return Ok(Vec::new());
+            return Ok(PreparedInvalidation {
+                outputs: Vec::new(),
+                scopes: Vec::new(),
+                operation_uuid,
+            });
         }
 
         let output_source = self.node.output_event_source();
         let output_type = self.node.output_event_type();
         let mut all_outputs = Vec::new();
+        let mut prepared_scopes = Vec::new();
 
         for scope_key in &scope_keys {
             // ── Step 1: Find existing derived outputs for this scope ──
@@ -840,39 +855,7 @@ where
                 continue;
             };
 
-            // ── Step 2: Archive stale outputs ──
-            if !stale_ids.is_empty() {
-                match pool
-                    .events()
-                    .execute_cascade_archive(
-                        &stale_ids,
-                        "scope_invalidation_recompute",
-                        &operation_uuid.to_string(),
-                        &format!("derived:{}", self.node.name()),
-                    )
-                    .await
-                {
-                    Ok(archived) => {
-                        info!(
-                            node = %self.node.name(),
-                            scope_key,
-                            archived_count = archived,
-                            "Archived stale derived outputs before recomputation"
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            node = %self.node.name(),
-                            scope_key,
-                            error = %e,
-                            "Failed to archive stale outputs — skipping scope to prevent duplicates"
-                        );
-                        continue;
-                    }
-                }
-            }
-
-            // ── Step 3: Load working set (input events for this scope) ──
+            // ── Step 2: Load working set (input events for this scope) ──
             let query = EventQuery {
                 event_types: vec![EventType::new(self.node.input_event_type())?],
                 scope_key: Some(scope_key.clone()),
@@ -908,7 +891,7 @@ where
                 "Recomputing scope from working set"
             );
 
-            // ── Step 4: Recompute via trait implementation ──
+            // ── Step 3: Recompute via trait implementation ──
             let outputs = self
                 .node
                 .process_invalidation_derived(
@@ -934,14 +917,71 @@ where
                 all_outputs.push(output_event);
             }
 
-            // ── Step 5: Record replacement relations ──
-            if !stale_ids.is_empty() && !new_event_ids.is_empty() {
-                let replacements: Vec<ReplacementRecord> = stale_ids
+            prepared_scopes.push(PreparedInvalidationScope {
+                scope_key: scope_key.clone(),
+                stale_ids,
+                new_event_ids,
+            });
+        }
+
+        Ok(PreparedInvalidation {
+            outputs: all_outputs,
+            scopes: prepared_scopes,
+            operation_uuid,
+        })
+    }
+
+    #[cfg(feature = "db")]
+    async fn apply_prepared_invalidation(
+        &self,
+        operation_uuid: Uuid,
+        scopes: Vec<PreparedInvalidationScope>,
+    ) -> NodeResult<()> {
+        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
+
+        let pool = {
+            let runtime = self.runtime.as_ref().ok_or_else(|| {
+                SinexError::lifecycle("Cannot finalize invalidation: runtime not initialized")
+            })?;
+            runtime.db_pool().clone()
+        };
+
+        for scope in scopes {
+            if !scope.stale_ids.is_empty() {
+                let archived = pool
+                    .events()
+                    .execute_cascade_archive(
+                        &scope.stale_ids,
+                        "scope_invalidation_recompute",
+                        &operation_uuid.to_string(),
+                        &format!("derived:{}", self.node.name()),
+                    )
+                    .await
+                    .map_err(|error| {
+                        SinexError::processing(
+                            "Failed to archive stale outputs after recomputation",
+                        )
+                        .with_context("scope_key", scope.scope_key.clone())
+                        .with_context("node", self.node.name())
+                        .with_source(error)
+                    })?;
+
+                info!(
+                    node = %self.node.name(),
+                    scope_key = scope.scope_key,
+                    archived_count = archived,
+                    "Archived stale derived outputs after successful recomputation emission"
+                );
+            }
+
+            if !scope.stale_ids.is_empty() && !scope.new_event_ids.is_empty() {
+                let scope_key = scope.scope_key.clone();
+                let replacements: Vec<ReplacementRecord> = scope
+                    .stale_ids
                     .iter()
                     .flat_map(|old_id| {
-                        new_event_ids
-                            .iter()
-                            .map(move |(new_id, eq_key)| ReplacementRecord {
+                        let scope_key = scope_key.clone();
+                        scope.new_event_ids.iter().map(move |(new_id, eq_key)| ReplacementRecord {
                                 old_event_id: *old_id,
                                 new_event_id: *new_id,
                                 relation_kind: ReplacementKind::Recomputed,
@@ -951,29 +991,57 @@ where
                     })
                     .collect();
 
-                if let Err(e) = pool
+                if let Err(error) = pool
                     .events()
                     .record_replacements(operation_uuid, &replacements)
                     .await
                 {
                     warn!(
                         node = %self.node.name(),
-                        scope_key,
-                        error = %e,
+                        scope_key = %scope.scope_key,
+                        error = %error,
                         "Failed to record replacement relations — events still correct"
                     );
                 }
             }
         }
 
+        Ok(())
+    }
+
+    /// Process a scope invalidation signal.
+    ///
+    /// For each affected scope:
+    /// 1. Loads the current working set from DB (events matching `scope_key` + `input_event_type`)
+    /// 2. Calls `process_invalidation_derived()` to recompute
+    /// 3. Archives existing derived outputs for that scope (moves to `audit.archived_events`)
+    /// 4. Records replacement relations in `audit.event_replacements` (old→new linkage)
+    /// 5. Returns replacement events for emission
+    ///
+    /// `handle_invalidation_message()` uses the same preparation path but emits replacement
+    /// outputs before step 3, so channel/transport failures cannot create an empty scope by
+    /// archiving stale outputs first.
+    ///
+    /// Transducer nodes return empty — their outputs are archived with their inputs.
+    #[cfg(feature = "db")]
+    pub async fn process_invalidation(
+        &mut self,
+        invalidation: &super::invalidation::DerivedScopeInvalidation,
+    ) -> NodeResult<Vec<Event<JsonValue>>> {
+        let prepared = self.prepare_invalidation(invalidation).await?;
+        let scope_count = prepared.scopes.len();
+        let output_count = prepared.outputs.len();
+        self.apply_prepared_invalidation(prepared.operation_uuid, prepared.scopes)
+            .await?;
+
         info!(
             node = %self.node.name(),
-            scopes_recomputed = scope_keys.len(),
-            outputs_produced = all_outputs.len(),
+            scopes_recomputed = scope_count,
+            outputs_produced = output_count,
             "Invalidation processing complete"
         );
 
-        Ok(all_outputs)
+        Ok(prepared.outputs)
     }
 
     // ── Continuous + Historical ─────────────────────────────────────────
@@ -1030,8 +1098,13 @@ where
 
         #[cfg(feature = "db")]
         {
-            match self.process_invalidation(&invalidation).await {
-                Ok(outputs) => {
+            match self.prepare_invalidation(&invalidation).await {
+                Ok(prepared) => {
+                    let PreparedInvalidation {
+                        outputs,
+                        scopes,
+                        operation_uuid,
+                    } = prepared;
                     let count = match self
                         .emit_output_events(outputs, "scope invalidation recomputation")
                         .await
@@ -1059,6 +1132,30 @@ where
                             return None;
                         }
                     };
+                    if let Err(error) = self
+                        .apply_prepared_invalidation(operation_uuid, scopes)
+                        .await
+                    {
+                        error!(
+                            node = %node_name,
+                            error = %error,
+                            action = %invalidation.action,
+                            "Invalidation archive finalization failed after output emission"
+                        );
+                        #[cfg(feature = "messaging")]
+                        if let Some(ref obs) = self.self_observer {
+                            if let Err(obs_error) =
+                                obs.emit_counter("invalidation.errors", 1, None).await
+                            {
+                                log_self_observation_failure(
+                                    node_name,
+                                    "invalidation.errors",
+                                    &obs_error,
+                                );
+                            }
+                        }
+                        return None;
+                    }
                     self.record_state_mutation();
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
@@ -2817,6 +2914,7 @@ mod tests {
     ) -> TestResult<()> {
         use sinex_db::DbPoolExt;
         use sinex_primitives::events::DynamicPayload;
+        use sinex_primitives::query::{AggregationMode, EventQuery, EventQueryResult};
         use sinex_primitives::{EventSource, EventType};
         use super::super::DerivedScopeInvalidation;
 
@@ -2840,6 +2938,15 @@ mod tests {
             .first()
             .and_then(|event| event.id)
             .expect("inserted input should have id");
+        let mut stale_output = DynamicPayload::new(
+            "adapter-regression-scope-reconciler",
+            "measurement.aggregate",
+            serde_json::json!({ "total": 5_i64, "count": 1_u64 }),
+        )
+        .from_parents(vec![input_id])?
+        .build()?;
+        stale_output.scope_key = Some(scope_key.to_string());
+        ctx.pool().events().insert_batch(vec![stale_output]).await?;
 
         let (runtime, event_receiver) = make_runtime_state_with_db(
             &ctx,
@@ -2867,6 +2974,42 @@ mod tests {
         assert!(
             result.is_none(),
             "output send failures must fail invalidation handling"
+        );
+        let live_output_count = match ctx
+            .pool()
+            .events()
+            .query(EventQuery {
+                sources: vec![EventSource::new("adapter-regression-scope-reconciler")?],
+                event_types: vec![EventType::new("measurement.aggregate")?],
+                scope_key: Some(scope_key.to_string()),
+                aggregation: Some(AggregationMode::Count),
+                ..EventQuery::default()
+            })
+            .await?
+        {
+            EventQueryResult::Count { count } => count,
+            other => panic!("expected count result, got {other:?}"),
+        };
+        assert_eq!(
+            live_output_count, 1,
+            "stale outputs must remain live when replacement emission fails"
+        );
+
+        let archived_output_count = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*)::bigint as "count!"
+            FROM audit.archived_events
+            WHERE source = $1 AND event_type = $2 AND scope_key = $3
+            "#,
+            "adapter-regression-scope-reconciler",
+            "measurement.aggregate",
+            scope_key
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+        assert_eq!(
+            archived_output_count, 0,
+            "replacement emission failure must not archive stale outputs"
         );
         Ok(())
     }
