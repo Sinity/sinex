@@ -89,19 +89,18 @@ impl NatsConnectionConfig {
     /// Deployed systems should usually prefer the file-backed auth variants.
     #[must_use]
     pub fn from_env() -> Self {
-        let url =
-            std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
-        let name = std::env::var("SINEX_NATS_NAME").ok();
+        use crate::env;
 
-        let require_tls = env_bool("SINEX_NATS_REQUIRE_TLS");
-
-        let ca_cert = env_path("SINEX_NATS_CA_CERT");
-        let client_cert = env_path("SINEX_NATS_CLIENT_CERT");
-        let client_key = env_path("SINEX_NATS_CLIENT_KEY");
-        let creds_file = env_path("SINEX_NATS_CREDS_FILE");
-        let nkey_seed_file = env_path("SINEX_NATS_NKEY_SEED_FILE");
-        let token = std::env::var("SINEX_NATS_TOKEN").ok();
-        let token_file = env_path("SINEX_NATS_TOKEN_FILE");
+        let url = env::var_or("SINEX_NATS_URL", "nats://localhost:4222", "NATS connection");
+        let name = env::var_optional("SINEX_NATS_NAME", "NATS connection");
+        let require_tls = env::bool_or("SINEX_NATS_REQUIRE_TLS", false, "NATS connection");
+        let ca_cert = env::path_optional("SINEX_NATS_CA_CERT", "NATS TLS");
+        let client_cert = env::path_optional("SINEX_NATS_CLIENT_CERT", "NATS TLS");
+        let client_key = env::path_optional("SINEX_NATS_CLIENT_KEY", "NATS TLS");
+        let creds_file = env::path_optional("SINEX_NATS_CREDS_FILE", "NATS auth");
+        let nkey_seed_file = env::path_optional("SINEX_NATS_NKEY_SEED_FILE", "NATS auth");
+        let token = env::var_optional("SINEX_NATS_TOKEN", "NATS auth");
+        let token_file = env::path_optional("SINEX_NATS_TOKEN_FILE", "NATS auth");
 
         Self {
             url,
@@ -310,7 +309,7 @@ mod tests {
     // provider installation behavior and private KV error classification directly.
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_test]
     async fn tls_provider_installation_is_idempotent() -> xtask::sandbox::TestResult<()> {
@@ -330,6 +329,20 @@ mod tests {
     async fn non_tls_config_skips_provider_installation() -> xtask::sandbox::TestResult<()> {
         let cfg = NatsConnectionConfig::default();
         cfg.ensure_rustls_crypto_provider()?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn from_env_parses_require_tls_strictly() -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_NATS_REQUIRE_TLS", "true");
+        assert!(NatsConnectionConfig::from_env().require_tls);
+
+        env.set("SINEX_NATS_REQUIRE_TLS", "tru");
+        assert!(
+            !NatsConnectionConfig::from_env().require_tls,
+            "invalid TLS override must fall back to the default rather than silently enabling TLS"
+        );
         Ok(())
     }
 
@@ -411,13 +424,4 @@ impl JetStreamTopology {
             consumer_durable,
         }
     }
-}
-
-fn env_bool(key: &str) -> bool {
-    std::env::var(key)
-        .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-}
-
-fn env_path(key: &str) -> Option<PathBuf> {
-    std::env::var(key).ok().map(PathBuf::from)
 }
