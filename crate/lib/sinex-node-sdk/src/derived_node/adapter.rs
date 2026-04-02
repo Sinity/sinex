@@ -465,7 +465,8 @@ where
 
         match result {
             Ok(outputs) => {
-                let output_events = self.build_output_events(outputs, source_event_id, &context)?;
+                let output_events =
+                    self.build_output_events(outputs, Some(source_event_id), &context)?;
                 self.record_processed_input(source_event_id);
                 Ok(output_events)
             }
@@ -491,7 +492,7 @@ where
     fn build_output_events(
         &self,
         outputs: Vec<DerivedOutput<JsonValue>>,
-        fallback_source_id: Id<Event<JsonValue>>,
+        fallback_source_id: Option<Id<Event<JsonValue>>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         outputs
@@ -504,7 +505,7 @@ where
     fn build_output_event(
         &self,
         output: DerivedOutput<JsonValue>,
-        fallback_source_id: Id<Event<JsonValue>>,
+        fallback_source_id: Option<Id<Event<JsonValue>>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
         let DerivedOutput {
@@ -536,8 +537,26 @@ where
 
         let typed_ids: Vec<Id<Event<JsonValue>>> =
             source_event_ids.into_iter().map(Id::from_uuid).collect();
-        let source_event_ids = NonEmptyVec::from_vec(typed_ids)
-            .unwrap_or_else(|| NonEmptyVec::single(fallback_source_id));
+        let source_event_ids = match NonEmptyVec::from_vec(typed_ids) {
+            Some(source_event_ids) => source_event_ids,
+            None => {
+                if let Some(fallback_source_id) = fallback_source_id {
+                    NonEmptyVec::single(fallback_source_id)
+                } else {
+                    return Err(SinexError::validation(
+                        "derived invalidation output missing source event ids",
+                    )
+                    .with_context("node", self.node.name())
+                    .with_context("output_event_type", self.node.output_event_type())
+                    .with_context("processing_mode", format!("{:?}", context.processing_mode))
+                    .with_context("trigger_kind", format!("{:?}", context.trigger_kind))
+                    .with_context(
+                        "scope_key",
+                        scope_key.clone().unwrap_or_else(|| "<none>".to_string()),
+                    ));
+                }
+            }
+        };
         let provenance = Provenance::Synthesis {
             source_event_ids,
             operation_id: context.operation_id(),
@@ -791,11 +810,10 @@ where
                 })?;
 
             // Build output events
-            let fallback_id = Id::new();
             let mut new_event_ids = Vec::new();
             for output in outputs {
                 let equivalence_key = output.equivalence_key.clone();
-                let output_event = self.build_output_event(output, fallback_id, &context)?;
+                let output_event = self.build_output_event(output, None, &context)?;
                 let new_id = *output_event.id.unwrap_or_else(Id::new).as_uuid();
                 new_event_ids.push((new_id, equivalence_key));
                 all_outputs.push(output_event);
@@ -1240,7 +1258,7 @@ where
                 {
                     Ok(outputs) => {
                         let output_events =
-                            self.build_output_events(outputs, ctx.trigger_event_id, &ctx)?;
+                            self.build_output_events(outputs, Some(ctx.trigger_event_id), &ctx)?;
                         if let Some(ref sender) = self.event_sender {
                             for output_event in output_events {
                                 sender.send(output_event).await.map_err(|_| {
