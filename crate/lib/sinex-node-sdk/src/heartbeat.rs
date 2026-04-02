@@ -5,8 +5,8 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::runtime::stream::NodeRuntimeState;
 use crate::error_helpers::{elapsed_seconds_with_warning, env_parse_with_default};
+use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::NodeName;
@@ -244,24 +244,27 @@ impl HeartbeatEmitter {
 
     /// Determine status based on the 5-minute sliding window and configured thresholds.
     fn determine_status(&self) -> ProcessStatus {
+        let recent_errors = self.recent_error_count();
+        let failed_threshold = get_failed_threshold();
+        let degraded_threshold = get_degraded_threshold();
+
+        if recent_errors >= failed_threshold {
+            ProcessStatus::Failed
+        } else if recent_errors >= degraded_threshold {
+            ProcessStatus::Degraded
+        } else {
+            ProcessStatus::Healthy
+        }
+    }
+
+    fn recent_error_count(&self) -> usize {
         const WINDOW_DURATION: Duration = Duration::from_mins(5); // 5 minutes
         let now = Instant::now();
 
         // Clean up old errors and count recent ones
         let mut window = self.error_window.lock();
         window.retain(|timestamp| now.duration_since(*timestamp) < WINDOW_DURATION);
-        let recent_errors = window.len();
-
-        let failed_threshold = get_failed_threshold();
-        let degraded_threshold = get_degraded_threshold();
-
-        if recent_errors > failed_threshold {
-            ProcessStatus::Failed
-        } else if recent_errors > degraded_threshold {
-            ProcessStatus::Degraded
-        } else {
-            ProcessStatus::Healthy
-        }
+        window.len()
     }
 
     /// Get approximate memory usage in MB
@@ -544,6 +547,7 @@ impl HeartbeatEmitter {
         }
 
         let next_status = metrics.status;
+        let recent_errors_in_window = self.recent_error_count() as u32;
         *last_status = next_status;
 
         match next_status {
@@ -554,20 +558,25 @@ impl HeartbeatEmitter {
                 );
             }
             ProcessStatus::Degraded => {
-                self.log_process_alert("process.degraded", metrics);
+                self.log_process_alert("process.degraded", metrics, recent_errors_in_window);
             }
             ProcessStatus::Failed => {
-                self.log_process_alert("process.failed", metrics);
+                self.log_process_alert("process.failed", metrics, recent_errors_in_window);
             }
         }
     }
 
-    fn log_process_alert(&self, event_type: &str, metrics: &HeartbeatMetrics) {
+    fn log_process_alert(
+        &self,
+        event_type: &str,
+        metrics: &HeartbeatMetrics,
+        recent_errors_in_window: u32,
+    ) {
         let payload = if event_type == "process.failed" {
             serde_json::to_value(ProcessFailedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
-                errors_in_window: metrics.errors_count,
+                errors_in_window: recent_errors_in_window,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
@@ -576,7 +585,7 @@ impl HeartbeatEmitter {
             serde_json::to_value(ProcessDegradedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
-                errors_in_window: metrics.errors_count,
+                errors_in_window: recent_errors_in_window,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
@@ -594,7 +603,7 @@ impl HeartbeatEmitter {
                 "event_type": event_type,
                 "service_name": metrics.service_name,
                 "status": metrics.status,
-                "errors_count": metrics.errors_count,
+                "errors_count": recent_errors_in_window,
                 "last_error_message": metrics.last_error_message,
                 "uptime_seconds": metrics.uptime_seconds,
                 "metadata": metrics.metadata,
@@ -607,7 +616,7 @@ impl HeartbeatEmitter {
         warn!(
             service = %metrics.service_name,
             status = %metrics.status,
-            errors = metrics.errors_count,
+            errors = recent_errors_in_window,
             event_type = %event_type,
             "Node transitioned to state"
         );
