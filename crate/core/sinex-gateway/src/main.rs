@@ -133,6 +133,15 @@ fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
     }
 }
 
+fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
+    match database_url {
+        Some(database_url) => GatewayConfig::load_with_database_url(database_url)
+            .map_err(|error| eyre!("Failed to load gateway config").wrap_err(error)),
+        None => GatewayConfig::load()
+            .map_err(|error| eyre!("Failed to load gateway config").wrap_err(error)),
+    }
+}
+
 async fn wait_for_shutdown_signal() -> io::Result<&'static str> {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await?;
@@ -170,9 +179,6 @@ async fn main() -> Result<()> {
 
     setup_tracing(cli.log_format, tokio_console)?;
 
-    // Load the typed gateway config (defaults → env overrides).
-    let base_config = GatewayConfig::load()?;
-
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -201,7 +207,8 @@ async fn main() -> Result<()> {
             cors_origins,
         } => {
             // CLI args override the loaded config before the runtime starts.
-            let config = base_config.with_cli_overrides(database_url, tcp_listen, cors_origins);
+            let config =
+                load_gateway_config(database_url)?.with_cli_overrides(None, tcp_listen, cors_origins);
 
             info!("Starting RPC server on {}", config.tcp_listen);
 
@@ -221,7 +228,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::NativeMessaging { database_url } => {
-            let config = base_config.with_cli_overrides(database_url, None, None);
+            let config = load_gateway_config(database_url)?;
 
             info!("Starting native messaging mode");
 
@@ -253,46 +260,12 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::prelude::*;
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::EnvGuard;
 
     #[sinex_serial_test]
     async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
-        env.remove("RUST_LOG");
+        let mut env = EnvGuard::new();
+        env.clear("RUST_LOG");
 
         load_env_filter("sinex_gateway=info")?;
         Ok(())
@@ -300,7 +273,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinex_gateway=wat");
 
         let error =
@@ -315,7 +288,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
         let error =
@@ -324,6 +297,28 @@ mod tests {
 
         assert!(message.contains("RUST_LOG"));
         assert!(message.contains("UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn load_gateway_config_uses_cli_database_url_without_env() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.clear("DATABASE_URL");
+
+        let config = load_gateway_config(Some("postgresql://gateway-cli/sinex".to_string()))?;
+
+        assert_eq!(config.database_url, "postgresql://gateway-cli/sinex");
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn load_gateway_config_cli_database_url_overrides_malformed_env() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "not-a-database-url");
+
+        let config = load_gateway_config(Some("postgresql://gateway-cli/sinex".to_string()))?;
+
+        assert_eq!(config.database_url, "postgresql://gateway-cli/sinex");
         Ok(())
     }
 }
