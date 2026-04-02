@@ -801,6 +801,8 @@ struct ReplayExecutionEngine {
     checkpoint_failures_remaining: Option<Arc<AtomicUsize>>,
     #[cfg(test)]
     scope_metadata_failures_remaining: Option<Arc<AtomicUsize>>,
+    #[cfg(test)]
+    replacement_record_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug)]
@@ -823,6 +825,8 @@ impl ReplayExecutionEngine {
             checkpoint_failures_remaining: None,
             #[cfg(test)]
             scope_metadata_failures_remaining: None,
+            #[cfg(test)]
+            replacement_record_failures_remaining: None,
         }
     }
 
@@ -850,6 +854,15 @@ impl ReplayExecutionEngine {
         scope_metadata_failures_remaining: Arc<AtomicUsize>,
     ) -> Self {
         self.scope_metadata_failures_remaining = Some(scope_metadata_failures_remaining);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_replacement_record_failures(
+        mut self,
+        replacement_record_failures_remaining: Arc<AtomicUsize>,
+    ) -> Self {
+        self.replacement_record_failures_remaining = Some(replacement_record_failures_remaining);
         self
     }
 
@@ -1170,6 +1183,23 @@ impl ReplayExecutionEngine {
 
     #[cfg(not(test))]
     fn maybe_fail_scope_metadata_collection(&self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn maybe_fail_replacement_recording(&self) -> Result<()> {
+        if let Some(remaining) = &self.replacement_record_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay replacement recording failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_replacement_recording(&self) -> Result<()> {
         Ok(())
     }
 
@@ -1629,11 +1659,15 @@ impl ReplayExecutionEngine {
             return Ok(());
         }
 
+        self.maybe_fail_replacement_recording()
+            .wrap_err("Failed to record replay replacement relations")?;
+
         let count = pool
             .events()
             .record_replacements(operation_id, &replacements)
             .await
-            .map_err(|e| eyre!("{e}"))?;
+            .map_err(|e| eyre!("{e}"))
+            .wrap_err("Failed to record replay replacement relations")?;
 
         info!(
             operation_id = %operation_id,
@@ -1997,16 +2031,8 @@ impl ReplayExecutionEngine {
                 checkpoint.updated_at = sinex_primitives::temporal::now();
 
                 // Record replacement relations between archived and newly-created events
-                if let Err(e) = self
-                    .record_event_replacements(pool, operation_id, &cascade_ids)
-                    .await
-                {
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %e,
-                        "Failed to record event replacements (non-fatal)"
-                    );
-                }
+                self.record_event_replacements(pool, operation_id, &cascade_ids)
+                    .await?;
 
                 Ok(count)
             }
@@ -3308,6 +3334,155 @@ mod tests {
         scan_handle
             .await
             .map_err(|e| eyre!("fake checkpoint-fail-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_fails_when_replacement_recording_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-replacement-record-fail"))
+            .await?;
+        let mut event = DynamicPayload::new(
+            "replacement-record-fail-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-replacement-record-fail.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.equivalence_key = Some("replacement-record-eq".to_string());
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+            nats_client.clone(),
+            env,
+            "replacement-record-fail-test",
+            1,
+            0,
+        )
+        .await?;
+
+        let mut scope = sample_scope();
+        scope.node_id = "replacement-record-fail-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:replacement-record-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let replacement_material = ctx
+            .create_source_material(Some("replay-replacement-record-fail-output"))
+            .await?;
+        let mut replacement_event = DynamicPayload::new(
+            "replacement-output-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-replacement-record-fail-output.txt" }),
+        )
+        .from_material(replacement_material)
+        .build()?;
+        replacement_event.equivalence_key = Some("replacement-record-eq".to_string());
+        replacement_event.created_by_operation_id = Some(planned.operation_id);
+        let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
+        let replacement_id = replacement_inserted
+            .id
+            .expect("replacement replay event must have an id")
+            .to_uuid();
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
+            .with_replacement_record_failures(Arc::new(AtomicUsize::new(1)))
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("replacement-record failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to record replay replacement relations")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed.error_details.as_deref().is_some_and(|details| {
+                details.contains("Failed to record replay replacement relations")
+            }),
+            "failure details should include replacement recording context: {:?}",
+            failed.error_details
+        );
+
+        let live_target_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_target_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let live_replacement_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(replacement_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        assert_eq!(
+            live_target_count, 0,
+            "replacement-record failure occurs after the original event has already been archived"
+        );
+        assert_eq!(
+            archived_target_count, 1,
+            "replacement-record failure must leave the archived target in audit storage"
+        );
+        assert_eq!(
+            live_replacement_count, 1,
+            "replacement-record failure must not delete already-emitted replay outputs"
+        );
+
+        let replacements = ctx
+            .pool
+            .events()
+            .get_replacements_by_operation(planned.operation_id)
+            .await?;
+        assert!(
+            replacements.is_empty(),
+            "failed replacement recording must not partially insert lineage rows"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake replacement-record-fail-test node task failed: {e}"))?;
 
         Ok(())
     }
