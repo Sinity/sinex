@@ -560,7 +560,11 @@ pub fn has_pending_schema_apply() -> Result<bool> {
 
 fn parse_schema_apply_probe_output(output: &std::process::Output) -> Result<bool> {
     let pending_flag = String::from_utf8_lossy(&output.stdout)
-        .trim()
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| eyre!("schema readiness probe returned empty output"))?
         .parse::<i32>()
         .wrap_err_with(|| {
             format!(
@@ -1599,6 +1603,18 @@ mod tests {
         })
         .unwrap_err();
         assert!(format!("{error:#}").contains("schema readiness probe returned invalid output"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix() -> TestResult<()> {
+        let pending = parse_schema_apply_probe_output(&std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"SET\n0\n".to_vec(),
+            stderr: Vec::new(),
+        })?;
+
+        assert!(!pending);
         Ok(())
     }
 
