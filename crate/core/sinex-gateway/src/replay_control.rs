@@ -124,7 +124,7 @@ fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
 /// results as a JSON blob suitable for embedding in a preview response under
 /// `"safety_analysis"`.
 ///
-/// This is best-effort: on error the result is `null` with a warning logged so that
+/// This is best-effort: on error the result becomes a structured failure object so that
 /// the preview remains useful even when the analyzer cannot complete (e.g., timeout,
 /// memory limit exceeded).
 async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_json::Value {
@@ -177,8 +177,12 @@ async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_js
             })
         }
         Err(e) => {
-            warn!(error = %e, "Cascade safety analysis failed; omitting from preview");
-            serde_json::Value::Null
+            warn!(error = %e, "Cascade safety analysis failed");
+            serde_json::json!({
+                "status": "failed",
+                "error": e.to_string(),
+                "warning": "Cascade impact could not be determined. Approve with caution."
+            })
         }
     }
 }
@@ -930,12 +934,18 @@ impl ReplayExecutionEngine {
                 error = %err,
                 "Replay execution failed"
             );
-            self.replay
+            if let Err(mark_err) = self.replay
                 .mark_failed(operation_id, format!("{err:#}"))
                 .await
-                .wrap_err_with(|| {
-                    format!("failed to mark replay operation as failed for operation {operation_id}")
-                })?;
+            {
+                error!(
+                    operation_id = %operation_id,
+                    mark_error = %mark_err,
+                    execution_error = %err,
+                    "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
+                     Run: sinexctl replay recover --operation {operation_id}"
+                );
+            }
         }
 
         Ok(())
@@ -2562,6 +2572,36 @@ mod tests {
         let connected = client.health_snapshot();
         assert!(connected.connected);
         assert!(connected.last_error.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_preview_surfaces_safety_analysis_failure(ctx: TestContext) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let pool = ctx.pool.clone();
+        pool.close().await;
+
+        let analysis = run_safety_analysis(&pool, &[Uuid::now_v7()]).await;
+
+        assert_eq!(
+            analysis
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        assert!(
+            analysis
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| !message.is_empty()),
+            "expected concrete analyzer failure message, got: {analysis:?}"
+        );
+        assert_eq!(
+            analysis
+                .get("warning")
+                .and_then(serde_json::Value::as_str),
+            Some("Cascade impact could not be determined. Approve with caution.")
+        );
         Ok(())
     }
 
