@@ -236,6 +236,24 @@ impl DlqRetryHandler {
                 continue;
             }
 
+            let retry_count = dlq_stored_retry_count(&message.headers)?;
+            if retry_count >= self.config.max_retries {
+                warn!(
+                    event_id,
+                    sequence,
+                    retry_count,
+                    max_retries = self.config.max_retries,
+                    "DLQ event exceeded max retries during direct retry request; permanently failing it instead of requeueing"
+                );
+                self.permanently_fail_stream_message(&stream, &message).await?;
+                return Err(
+                    SinexError::processing("DLQ event exceeded max retries and was permanently failed")
+                        .with_context("event_id", event_id.to_string())
+                        .with_context("retry_count", retry_count.to_string())
+                        .with_context("max_retries", self.config.max_retries.to_string()),
+                );
+            }
+
             self.retry_stream_message(&js, &stream, &message).await?;
             info!(event_id, sequence, "Successfully retried DLQ event by ID");
             return Ok(());
@@ -370,13 +388,26 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
 
+        self.permanently_fail_stream_message(stream, message).await?;
+
+        Ok(())
+    }
+
+    async fn permanently_fail_stream_message(
+        &self,
+        stream: &jetstream::stream::Stream,
+        message: &async_nats::jetstream::message::StreamMessage,
+    ) -> NodeResult<()> {
         let deleted = stream
             .delete_message(message.sequence)
             .await
-            .map_err(|e| SinexError::processing("Failed to delete retried DLQ message").with_source(e))?;
+            .map_err(|e| {
+                SinexError::processing("Failed to delete permanently settled DLQ message")
+                    .with_source(e)
+            })?;
         if !deleted {
             return Err(SinexError::processing(format!(
-                "DLQ stream refused to delete retried message sequence {}",
+                "DLQ stream refused to delete permanently settled message sequence {}",
                 message.sequence
             )));
         }

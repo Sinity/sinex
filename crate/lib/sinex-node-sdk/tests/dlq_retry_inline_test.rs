@@ -100,7 +100,8 @@ async fn dlq_retry_by_id_requeues_node_sdk_entry(ctx: TestContext) -> TestResult
     event.id = Some(Id::new());
     let event_id = event.id.expect("event id").to_string();
 
-    let original_subject = env.nats_subject("events.raw.test_source.test_input");
+    let original_subject =
+        env.nats_raw_event_subject_with_namespace(None, event.source.as_str(), event.event_type.as_str());
     let mut original_sub = client.subscribe(original_subject.clone()).await?;
 
     publisher.publish_to_dlq(&event, "boom", "test.node").await?;
@@ -232,5 +233,75 @@ async fn dlq_retry_by_id_rejects_invalid_retry_count_header(ctx: TestContext) ->
 
     assert!(error.to_string().contains("Retry-Count"));
     assert!(error.to_string().contains("not-a-number"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_retry_by_id_honors_max_retry_limit(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = ctx.env().clone();
+    ensure_retry_streams(&client, &env).await?;
+
+    let event_id = Uuid::now_v7().to_string();
+    let original_subject = env.nats_subject("events.raw.test_source.test_input");
+    let original_event = json!({
+        "id": event_id,
+        "source": "test.source",
+        "event_type": "test.input",
+        "ts_orig": Timestamp::now().format_rfc3339(),
+        "host": "test-host",
+        "payload": { "value": "max retries reached" }
+    });
+    let dlq_entry = json!({
+        "nats_msg_id": event_id,
+        "error": "db failure",
+        "original_payload": original_event,
+        "failed_at": Timestamp::now().format_rfc3339()
+    });
+
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    headers.insert("Original-Subject", original_subject.as_str());
+    headers.insert("Retry-Count", "1");
+    headers.insert("Event-Id", event_id.as_str());
+
+    let mut original_sub = client.subscribe(original_subject).await?;
+    client
+        .publish_with_headers(
+            env.nats_subject("events.dlq.ingestd"),
+            headers,
+            serde_json::to_vec(&dlq_entry)?.into(),
+        )
+        .await?;
+    client.flush().await?;
+
+    let handler = DlqRetryHandler::new(
+        client.clone(),
+        env,
+        DlqRetryConfig {
+            max_retries: 1,
+            ..DlqRetryConfig::default()
+        },
+    );
+    let error = handler
+        .retry_by_id(&event_id)
+        .await
+        .expect_err("retry_by_id must enforce the configured max retry limit");
+
+    assert!(error.to_string().contains("exceeded max retries"));
+    assert!(error.to_string().contains(event_id.as_str()));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), original_sub.next())
+            .await
+            .is_err(),
+        "maxed-out DLQ entries must not be requeued back onto the original subject"
+    );
+
+    let stats = handler.get_stats().await?;
+    assert_eq!(
+        stats.total_messages, 0,
+        "maxed-out DLQ entry should be permanently removed instead of left pending"
+    );
     Ok(())
 }
