@@ -2679,24 +2679,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 return Err(Self::confirmed_event_missing_error(event_id));
                             }
                         }
-                        None => match Self::build_event_from_provisional(provisional) {
-                            Ok(event) => Some(event),
-                            Err(err) => {
-                                warn!(error = %err, "Failed to build event from provisional payload");
-                                None
-                            }
-                        },
+                        None => Some(
+                            Self::build_event_from_provisional(provisional).map_err(|error| {
+                                Self::provisional_decode_error(event_id, error)
+                            })?,
+                        ),
                     }
                 }
                 #[cfg(not(feature = "db"))]
                 {
-                    match Self::build_event_from_provisional(provisional) {
-                        Ok(event) => Some(event),
-                        Err(err) => {
-                            warn!(error = %err, "Failed to build event from provisional payload");
-                            None
-                        }
-                    }
+                    Some(Self::build_event_from_provisional(provisional).map_err(|error| {
+                        Self::provisional_decode_error(event_id, error)
+                    })?)
                 }
             };
 
@@ -2716,6 +2710,13 @@ impl<T: Node + 'static> NodeRunner<T> {
     fn confirmed_event_missing_error(event_id: &EventId) -> SinexError {
         SinexError::processing("Confirmed event missing from database")
             .with_context("event_id", event_id.to_string())
+    }
+
+    #[cfg(feature = "messaging")]
+    fn provisional_decode_error(event_id: &EventId, error: SinexError) -> SinexError {
+        SinexError::processing("Confirmed event could not be reconstructed from provisional payload")
+            .with_context("event_id", event_id.to_string())
+            .with_source(error)
     }
 
     /// Process a batch of events, falling back to per-event processing with DLQ
@@ -3328,6 +3329,49 @@ mod tests {
         let error = NodeRunner::<RuntimeTestNode>::build_event_from_provisional(&provisional)
             .expect_err("invalid persisted node_run_id must fail honestly");
         assert!(error.to_string().contains("Invalid UUID for node_run_id"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db()
+    -> TestResult<()> {
+        let provisional = ProvisionalEvent {
+            event_id: EventId::from(Uuid::now_v7()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({
+                "source": "runtime-test-source",
+                "event_type": "runtime.test",
+                "host": "runtime-test-host",
+                "payload": {"ok": true},
+                "source_event_ids": [Uuid::now_v7().to_string()],
+                "node_run_id": "not-a-uuid"
+            }),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
+        };
+
+        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+            &[provisional],
+            &None,
+        )
+        .await
+        {
+            Ok(_) => {
+                return Err(color_eyre::eyre::eyre!(
+                    "invalid provisional payloads must fail honestly when no db pool is available"
+                )
+                .into());
+            }
+            Err(error) => error,
+        };
+
+        let message = format!("{error:#}");
+        assert!(message.contains(
+            "Confirmed event could not be reconstructed from provisional payload"
+        ));
+        assert!(message.contains("Invalid UUID for node_run_id"));
         Ok(())
     }
 
