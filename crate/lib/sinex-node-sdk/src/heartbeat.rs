@@ -19,7 +19,7 @@ use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Configurable health thresholds.
 ///
@@ -422,6 +422,9 @@ impl HeartbeatEmitter {
                 {
                     Ok(true) => {}
                     Ok(false) => {
+                        self.record_error(&format!(
+                            "Heartbeat did not persist because the node manifest row is missing for {node_name}"
+                        ));
                         warn!(
                             node = %node_name,
                             service = %metrics.service_name,
@@ -430,11 +433,14 @@ impl HeartbeatEmitter {
                         );
                     }
                     Err(e) => {
-                        debug!(
+                        self.record_error(&format!(
+                            "Failed to persist node manifest heartbeat to database: {e}"
+                        ));
+                        warn!(
                             node = %node_name,
                             service = %metrics.service_name,
                             error = %e,
-                            "Failed to persist node manifest heartbeat to database (non-fatal)"
+                            "Failed to persist node manifest heartbeat to database"
                         );
                     }
                 }
@@ -444,6 +450,9 @@ impl HeartbeatEmitter {
                 match pool.state().update_node_run_heartbeat(node_run_id).await {
                     Ok(true) => {}
                     Ok(false) => {
+                        self.record_error(&format!(
+                            "Heartbeat did not persist because the node run row is missing for {node_run_id}"
+                        ));
                         warn!(
                             service = %metrics.service_name,
                             node_run_id = %node_run_id,
@@ -451,11 +460,14 @@ impl HeartbeatEmitter {
                         );
                     }
                     Err(e) => {
-                        debug!(
+                        self.record_error(&format!(
+                            "Failed to persist node run heartbeat to database: {e}"
+                        ));
+                        warn!(
                             service = %metrics.service_name,
                             node_run_id = %node_run_id,
                             error = %e,
-                            "Failed to persist node run heartbeat to database (non-fatal)"
+                            "Failed to persist node run heartbeat to database"
                         );
                     }
                 }
