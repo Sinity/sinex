@@ -383,7 +383,7 @@ mod tests {
         ShellType, Utf8PathBuf, get_shell_version, get_shell_version_impl, read_optional_env_var,
         utf8_home_dir_from,
     };
-    use xtask::sandbox::{EnvGuard, sinex_serial_test};
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 
     #[sinex_serial_test]
@@ -396,8 +396,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn get_shell_version_impl_rejects_unknown_shell() {
+    #[sinex_test]
+    async fn get_shell_version_impl_rejects_unknown_shell() -> xtask::sandbox::TestResult<()> {
         let error = get_shell_version_impl(&ShellType::Unknown(
             "__sinex_nonexistent_shell__".to_string(),
         ))
@@ -406,25 +406,29 @@ mod tests {
             error.to_string().contains("__sinex_nonexistent_shell__"),
             "unexpected error: {error}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn get_shell_version_surfaces_failure_as_none() {
+    #[sinex_test]
+    async fn get_shell_version_surfaces_failure_as_none() -> xtask::sandbox::TestResult<()> {
         assert_eq!(
             get_shell_version(&ShellType::Unknown("__sinex_nonexistent_shell__".to_string())),
             None
         );
+        Ok(())
     }
 
-    #[test]
-    fn executable_names_use_real_shell_binaries() {
+    #[sinex_test]
+    async fn executable_names_use_real_shell_binaries() -> xtask::sandbox::TestResult<()> {
         assert_eq!(ShellType::Nushell.executable_name(), "nu");
         assert_eq!(ShellType::PowerShell.executable_name(), "pwsh");
         assert_eq!(ShellType::Bash.executable_name(), "bash");
+        Ok(())
     }
 
-    #[test]
-    fn unsupported_native_history_stores_do_not_advertise_default_paths() {
+    #[sinex_test]
+    async fn unsupported_native_history_stores_do_not_advertise_default_paths()
+    -> xtask::sandbox::TestResult<()> {
         let home = Some(Utf8PathBuf::from("/tmp/home"));
 
         assert_eq!(ShellType::Fish.default_history_path_from(home.clone()), None);
@@ -433,6 +437,7 @@ mod tests {
             ShellType::Nushell.default_history_path_from(Some(Utf8PathBuf::from("/tmp/home"))),
             Some(Utf8PathBuf::from("/tmp/home/.config/nushell/history.txt"))
         );
+        Ok(())
     }
 
     #[sinex_serial_test]
@@ -448,13 +453,14 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn utf8_home_dir_from_rejects_non_utf8_paths() {
+    #[sinex_test]
+    async fn utf8_home_dir_from_rejects_non_utf8_paths() -> xtask::sandbox::TestResult<()> {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
         use std::path::PathBuf;
 
         let non_utf8 = PathBuf::from(OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
         assert!(utf8_home_dir_from(Some(non_utf8), "test").is_none());
+        Ok(())
     }
 }

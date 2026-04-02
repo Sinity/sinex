@@ -560,6 +560,53 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
 }
 
 #[sinex_test]
+async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("node-run-heartbeat-terminal");
+
+    let manifest = repo
+        .register_node(&node_name, NodeType::Ingestor, "1.2.3", Some("node run test"))
+        .await?;
+
+    let run = repo
+        .start_node_run(
+            manifest.id,
+            "sinex-terminal-ingestor",
+            "host-123-run",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    assert!(repo
+        .update_node_run_status(run.id, NodeState::Stopped)
+        .await?);
+    assert!(
+        !repo.update_node_run_heartbeat(run.id).await?,
+        "terminal runs must not be revived by a late heartbeat"
+    );
+
+    let refreshed = sqlx::query!(
+        r#"
+        SELECT
+            status,
+            ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
+        FROM core.node_runs
+        WHERE id = $1::uuid
+        "#,
+        run.id
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(refreshed.status, "stopped");
+    assert!(refreshed.ended_at.is_some());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn run_system_health_checks_preserves_clean_probe_state(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
 
