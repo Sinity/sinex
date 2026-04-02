@@ -105,6 +105,24 @@ pub(crate) enum GatewayRpcError {
     },
     #[error("RPC response missing result field")]
     MissingResult,
+    #[error("RPC protocol violation: {0}")]
+    ProtocolViolation(String),
+}
+
+#[derive(Serialize)]
+struct JsonRpcRequest<'a> {
+    jsonrpc: &'a str,
+    method: &'a str,
+    params: Value,
+    id: u64,
+}
+
+#[derive(Deserialize)]
+struct JsonRpcResponse {
+    jsonrpc: String,
+    result: Option<Value>,
+    error: Option<JsonRpcError>,
+    id: u64,
 }
 
 impl Default for ClientConfig {
@@ -176,7 +194,9 @@ impl GatewayClient {
             if config.ca_cert.is_none() {
                 let native_certs = rustls_native_certs::load_native_certs();
                 for cert in native_certs.certs {
-                    root_store.add(cert).ok();
+                    if let Err(error) = root_store.add(cert) {
+                        tracing::debug!(error = %error, "Skipped invalid system root certificate");
+                    }
                 }
             }
 
@@ -231,29 +251,13 @@ impl GatewayClient {
 
     /// Perform a single RPC call attempt (without retry)
     async fn call_rpc_once(&self, method: &str, params: Value) -> Result<Value> {
-        #[derive(Serialize)]
-        struct JsonRpcRequest<'a> {
-            jsonrpc: &'a str,
-            method: &'a str,
-            params: Value,
-            id: u64,
-        }
-
-        #[derive(Deserialize)]
-        struct JsonRpcResponse {
-            #[allow(dead_code)]
-            jsonrpc: String,
-            result: Option<Value>,
-            error: Option<JsonRpcError>,
-            #[allow(dead_code)]
-            id: u64,
-        }
+        const REQUEST_ID: u64 = 1;
 
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             method,
             params,
-            id: 1,
+            id: REQUEST_ID,
         };
 
         let response = self
@@ -272,6 +276,7 @@ impl GatewayClient {
         }
 
         let rpc_response: JsonRpcResponse = response.json().await?;
+        Self::validate_rpc_response(&rpc_response, REQUEST_ID)?;
 
         // Check for JSON-RPC error
         if let Some(error) = rpc_response.error {
@@ -292,6 +297,33 @@ impl GatewayClient {
             .ok_or_else(|| GatewayRpcError::MissingResult.into())
     }
 
+    fn validate_rpc_response(rpc_response: &JsonRpcResponse, expected_id: u64) -> Result<()> {
+        if rpc_response.jsonrpc != "2.0" {
+            return Err(GatewayRpcError::ProtocolViolation(format!(
+                "expected jsonrpc=2.0, got {}",
+                rpc_response.jsonrpc
+            ))
+            .into());
+        }
+        if rpc_response.id != expected_id {
+            return Err(GatewayRpcError::ProtocolViolation(format!(
+                "expected response id {expected_id}, got {}",
+                rpc_response.id
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
+    fn expect_string_result(method: &str, result: Value) -> Result<String> {
+        result.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+            GatewayRpcError::ProtocolViolation(format!(
+                "{method} returned non-string result: {result}"
+            ))
+            .into()
+        })
+    }
+
     /// Determine if an error is retryable (transient network/server issues)
     fn is_retryable_error(err: &color_eyre::Report) -> bool {
         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
@@ -310,7 +342,7 @@ impl GatewayClient {
                 }
                 // JSON-RPC reserved server error range (-32099..=-32000)
                 GatewayRpcError::JsonRpc { code, .. } => (-32099..=-32000).contains(code),
-                GatewayRpcError::MissingResult => false,
+                GatewayRpcError::MissingResult | GatewayRpcError::ProtocolViolation(_) => false,
             };
         }
 
@@ -394,13 +426,13 @@ impl GatewayClient {
     /// Ping the gateway
     pub async fn ping(&self) -> Result<String> {
         let result = self.call_rpc("ping", json!({})).await?;
-        Ok(result.as_str().unwrap_or("pong").to_string())
+        Self::expect_string_result("ping", result)
     }
 
     /// Get gateway version
     pub async fn version(&self) -> Result<String> {
         let result = self.call_rpc("version", json!({})).await?;
-        Ok(result.as_str().unwrap_or("unknown").to_string())
+        Self::expect_string_result("version", result)
     }
 
     /// Publish a single event through the gateway's events.ingest RPC endpoint.
@@ -575,6 +607,9 @@ impl GatewayClient {
             serde_json::to_value(&approve_req)?,
         )
         .await?;
+
+        // Execution requires a stored preview summary first.
+        self.replay_preview(operation_id).await?;
 
         // Then execute
         let exec_req = ReplayExecuteRequest {

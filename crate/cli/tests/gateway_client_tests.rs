@@ -4,7 +4,7 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -452,6 +452,96 @@ async fn test_gateway_client_handles_missing_result() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_gateway_client_rejects_jsonrpc_version_mismatch() -> TestResult<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "1.0",
+            "result": "pong",
+            "id": 1
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ClientConfig {
+        url: mock_server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..Default::default()
+    };
+
+    let client = GatewayClient::new(config).unwrap();
+    let result = client.ping().await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("expected jsonrpc=2.0"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_gateway_client_rejects_jsonrpc_id_mismatch() -> TestResult<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "result": "pong",
+            "id": 99
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ClientConfig {
+        url: mock_server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..Default::default()
+    };
+
+    let client = GatewayClient::new(config).unwrap();
+    let result = client.ping().await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("expected response id 1, got 99"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_gateway_client_rejects_non_string_ping_result() -> TestResult<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "result": { "pong": true },
+            "id": 1
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ClientConfig {
+        url: mock_server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..Default::default()
+    };
+
+    let client = GatewayClient::new(config).unwrap();
+    let result = client.ping().await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("ping returned non-string result"));
+    Ok(())
+}
+
 // ============================================================================
 // Timeout Tests
 // ============================================================================
@@ -808,6 +898,122 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
     assert_eq!(
         health.components.nats.detail.as_deref(),
         Some("jetstream responsive")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResult<()> {
+    fn replay_operation_json(state: &str, preview_summary: Option<serde_json::Value>) -> serde_json::Value {
+        json!({
+            "operation_id": "00000000-0000-0000-0000-000000000123",
+            "state": state,
+            "scope": {
+                "node_id": "test-node",
+                "time_window": null,
+                "material_filter": null,
+                "filters": {}
+            },
+            "preview_summary": preview_summary,
+            "checkpoint": {
+                "processed_events": 0,
+                "total_events": 1,
+                "last_event_id": null,
+                "batch_number": 0,
+                "savepoint_id": null,
+                "updated_at": "2026-04-02T00:00:00Z"
+            },
+            "actor": "service:test",
+            "created_at": "2026-04-02T00:00:00Z",
+            "approved_by": "service:test",
+            "approved_at": "2026-04-02T00:00:01Z",
+            "executor_node": null,
+            "started_at": null,
+            "finished_at": null,
+            "outcome": null,
+            "error_details": null
+        })
+    }
+
+    let mock_server = MockServer::start().await;
+    let seen_methods = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen_methods_clone = Arc::clone(&seen_methods);
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(move |req: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).expect("valid rpc body");
+            let method = body["method"].as_str().unwrap_or_default().to_string();
+            seen_methods_clone.lock().expect("record methods").push(method.clone());
+
+            let response = match method.as_str() {
+                "replay.approve_operation" => json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "operation": replay_operation_json("Approved", None)
+                    },
+                    "id": 1
+                }),
+                "replay.preview_operation" => json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "operation": replay_operation_json("Approved", Some(json!({
+                            "total_events": 1,
+                            "time_window": {
+                                "start": "2026-04-01T00:00:00Z",
+                                "end": "2026-04-02T00:00:00Z"
+                            }
+                        }))),
+                        "preview": {
+                            "total_events": 1,
+                            "time_window": {
+                                "start": "2026-04-01T00:00:00Z",
+                                "end": "2026-04-02T00:00:00Z"
+                            }
+                        }
+                    },
+                    "id": 1
+                }),
+                "replay.execute_operation" => json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "operation": replay_operation_json("Executing", Some(json!({
+                            "total_events": 1,
+                            "time_window": {
+                                "start": "2026-04-01T00:00:00Z",
+                                "end": "2026-04-02T00:00:00Z"
+                            }
+                        })))
+                    },
+                    "id": 1
+                }),
+                other => panic!("unexpected replay method {other}"),
+            };
+
+            ResponseTemplate::new(200).set_body_json(response)
+        })
+        .mount(&mock_server)
+        .await;
+
+    let config = ClientConfig {
+        url: mock_server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..Default::default()
+    };
+
+    let client = GatewayClient::new(config).unwrap();
+    let operation = client.replay_submit("00000000-0000-0000-0000-000000000123").await?;
+
+    assert_eq!(operation.state, sinex_primitives::rpc::replay::ReplayState::Executing);
+    assert_eq!(
+        seen_methods.lock().expect("read methods").as_slice(),
+        &[
+            "replay.approve_operation".to_string(),
+            "replay.preview_operation".to_string(),
+            "replay.execute_operation".to_string()
+        ]
     );
     Ok(())
 }
