@@ -2,51 +2,9 @@ use sinex_node_sdk::{AutomatonConfig, EventSourceConfig, NodeConfig};
 use sinex_primitives::Seconds;
 use xtask::sandbox::prelude::*;
 
-struct ScopedEnvGuard {
-    keys: Vec<(String, Option<String>)>,
-}
-
-impl ScopedEnvGuard {
-    fn new(keys: &[&str]) -> Self {
-        let previous = keys
-            .iter()
-            .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-            .collect();
-        Self { keys: previous }
-    }
-
-    fn set(&mut self, key: &str, value: &str) {
-        unsafe { std::env::set_var(key, value) };
-    }
-
-    fn remove(&mut self, key: &str) {
-        unsafe { std::env::remove_var(key) };
-    }
-}
-
-impl Drop for ScopedEnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.keys.drain(..) {
-            unsafe {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-}
-
 #[sinex_test]
 async fn node_config_uses_global_env_defaults() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_LOG_LEVEL",
-        "SINEX_NATS_URL",
-        "SINEX_DB_POOL_SIZE",
-        "SINEX_WORK_DIR",
-        "SINEX_DRY_RUN",
-        "DATABASE_URL",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_LOG_LEVEL", "debug");
     env.set("SINEX_NATS_URL", "tls://global-nats:4222");
     env.set("SINEX_DB_POOL_SIZE", "32");
@@ -72,16 +30,7 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
 
 #[sinex_test]
 async fn service_scoped_env_overrides_global_values() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_LOG_LEVEL",
-        "SINEX_MERGE_TEST_LOG_LEVEL",
-        "SINEX_NATS_URL",
-        "SINEX_MERGE_TEST_NATS_URL",
-        "SINEX_DB_POOL_SIZE",
-        "SINEX_MERGE_TEST_DB_POOL_SIZE",
-        "SINEX_DRY_RUN",
-        "SINEX_MERGE_TEST_DRY_RUN",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_LOG_LEVEL", "warn");
     env.set("SINEX_MERGE_TEST_LOG_LEVEL", "debug");
     env.set("SINEX_NATS_URL", "nats://global:4222");
@@ -101,12 +50,7 @@ async fn service_scoped_env_overrides_global_values() -> TestResult<()> {
 
 #[sinex_test]
 async fn event_source_config_loads_env_overrides() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_BATCH_SIZE",
-        "SINEX_BATCH_TIMEOUT_SECS",
-        "SINEX_FILESYSTEM_WATCHER_BATCH_SIZE",
-        "SINEX_FILESYSTEM_WATCHER_BATCH_TIMEOUT_SECS",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_BATCH_SIZE", "25");
     env.set("SINEX_BATCH_TIMEOUT_SECS", "7");
     env.set("SINEX_FILESYSTEM_WATCHER_BATCH_SIZE", "50");
@@ -121,18 +65,7 @@ async fn event_source_config_loads_env_overrides() -> TestResult<()> {
 
 #[sinex_test]
 async fn automaton_config_loads_env_overrides() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_CONSUMER_GROUP",
-        "SINEX_CONSUMER_NAME",
-        "SINEX_TOPICS",
-        "SINEX_PROCESSING_BATCH_SIZE",
-        "SINEX_CHECKPOINT_INTERVAL_SECS",
-        "SINEX_TERMINAL_CANONICALIZER_CONSUMER_GROUP",
-        "SINEX_TERMINAL_CANONICALIZER_CONSUMER_NAME",
-        "SINEX_TERMINAL_CANONICALIZER_TOPICS",
-        "SINEX_TERMINAL_CANONICALIZER_PROCESSING_BATCH_SIZE",
-        "SINEX_TERMINAL_CANONICALIZER_CHECKPOINT_INTERVAL_SECS",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_CONSUMER_GROUP", "global-group");
     env.set("SINEX_CONSUMER_NAME", "global-instance");
     env.set("SINEX_TOPICS", "sinex:events:global");
@@ -166,14 +99,7 @@ async fn automaton_config_loads_env_overrides() -> TestResult<()> {
 
 #[sinex_test]
 async fn node_config_defaults_without_env() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_LOG_LEVEL",
-        "SINEX_NATS_URL",
-        "SINEX_DB_POOL_SIZE",
-        "SINEX_WORK_DIR",
-        "SINEX_DRY_RUN",
-        "DATABASE_URL",
-    ]);
+    let mut env = EnvGuard::new();
     for key in [
         "SINEX_LOG_LEVEL",
         "SINEX_NATS_URL",
@@ -182,7 +108,7 @@ async fn node_config_defaults_without_env() -> TestResult<()> {
         "SINEX_DRY_RUN",
         "DATABASE_URL",
     ] {
-        env.remove(key);
+        env.clear(key);
     }
 
     let config = NodeConfig::load_from_env("defaults-node")?;
@@ -196,7 +122,7 @@ async fn node_config_defaults_without_env() -> TestResult<()> {
 
 #[sinex_test]
 async fn node_config_rejects_invalid_boolean_env_overrides() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&["SINEX_DRY_RUN"]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_DRY_RUN", "sometimes");
 
     let error =
@@ -205,5 +131,19 @@ async fn node_config_rejects_invalid_boolean_env_overrides() -> TestResult<()> {
 
     assert!(message.contains("SINEX_DRY_RUN"));
     assert!(message.contains("sometimes"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn node_config_rejects_invalid_nested_nats_tls_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_NATS_URL", "nats://localhost:4222");
+    env.set("SINEX_NATS_REQUIRE_TLS", "true");
+
+    let error = NodeConfig::load_from_env("defaults-node")
+        .expect_err("nested NATS config must be validated during load");
+    let message = error.to_string();
+
+    assert!(message.contains("NATS URL must use tls:// or wss://"));
     Ok(())
 }
