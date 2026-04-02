@@ -199,6 +199,67 @@ async fn stream_batch_insert_accepts_large_material_batches(ctx: TestContext) ->
 }
 
 #[sinex_test]
+async fn lifecycle_id_queries_order_same_timestamp_rows_by_id(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("lifecycle-id-ordering-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let source = EventSource::new("test.lifecycle.order")?;
+    let ts_orig = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
+
+    let first_id = Uuid::now_v7();
+    let second_id = Uuid::now_v7();
+    let (lower_id, higher_id) = if first_id.as_u128() <= second_id.as_u128() {
+        (first_id, second_id)
+    } else {
+        (second_id, first_id)
+    };
+
+    let mut higher_row = stream_batch_material_row(material_id, 1)?;
+    higher_row.id = higher_id;
+    higher_row.source = source.clone();
+    higher_row.ts_orig = ts_orig;
+
+    let mut lower_row = stream_batch_material_row(material_id, 0)?;
+    lower_row.id = lower_id;
+    lower_row.source = source.clone();
+    lower_row.ts_orig = ts_orig;
+
+    ctx.pool()
+        .events()
+        .insert_stream_batch(&[higher_row, lower_row])
+        .await?;
+
+    let live_ids = ctx.pool().events().get_live_event_ids(Some(&source), None, 10).await?;
+    assert_eq!(live_ids, vec![lower_id, higher_id]);
+
+    let archive_operation_id = Uuid::now_v7().to_string();
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[higher_id, lower_id],
+            "archive lifecycle ordering regression",
+            &archive_operation_id,
+            "test",
+        )
+        .await?;
+
+    let archived_ids = ctx
+        .pool()
+        .events()
+        .get_archived_event_ids(Some(&source), None, 10)
+        .await?;
+    assert_eq!(archived_ids, vec![lower_id, higher_id]);
+    Ok(())
+}
+
+#[sinex_test]
 async fn stream_batch_insert_rejects_self_referential_synthesis_rows(ctx: TestContext) -> TestResult<()> {
     let _ = ctx;
     let event_id = Uuid::now_v7();

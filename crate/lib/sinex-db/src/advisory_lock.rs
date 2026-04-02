@@ -24,6 +24,40 @@ impl std::fmt::Debug for AdvisoryLock {
 }
 
 impl AdvisoryLock {
+    fn guard_from_connection(lock_id: i64, connection: PoolConnection<Postgres>) -> ResourceGuard<Self> {
+        let lock = AdvisoryLock {
+            lock_id,
+            connection: Some(connection),
+        };
+
+        let cleanup = |mut lock: AdvisoryLock| async move {
+            if let Some(mut connection) = lock.connection.take()
+                && let Err(error) = unlock_or_close_connection(
+                    &mut connection,
+                    lock.lock_id,
+                    "guard cleanup",
+                )
+                .await
+            {
+                tracing::warn!(
+                    lock_id = lock.lock_id,
+                    error = %error,
+                    "Advisory lock cleanup failed; closing pooled connection to avoid lock leakage"
+                );
+
+                if let Err(close_error) = connection.close().await {
+                    tracing::warn!(
+                        lock_id = lock.lock_id,
+                        error = %close_error,
+                        "Failed to close pooled connection after advisory lock cleanup failure"
+                    );
+                }
+            }
+        };
+
+        ResourceGuard::new(lock, cleanup)
+    }
+
     /// Try to acquire an advisory lock immediately (non-blocking).
     #[instrument(skip(pool), fields(key = key))]
     pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
@@ -39,20 +73,7 @@ impl AdvisoryLock {
             return Ok(None);
         }
 
-        let lock = AdvisoryLock {
-            lock_id,
-            connection: Some(connection),
-        };
-
-        let cleanup = |mut lock: AdvisoryLock| async move {
-            if let Some(mut connection) = lock.connection.take() {
-                let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock.lock_id)
-                    .fetch_one(&mut *connection)
-                    .await;
-            }
-        };
-
-        Ok(Some(ResourceGuard::new(lock, cleanup)))
+        Ok(Some(Self::guard_from_connection(lock_id, connection)))
     }
 
     /// Acquire an advisory lock, blocking until available or timeout.
@@ -62,10 +83,18 @@ impl AdvisoryLock {
         key: &str,
         timeout: Duration,
     ) -> CoreResult<ResourceGuard<Self>> {
+        let lock_id = hash_key_to_i64(key);
+        let mut connection = pool.acquire().await.map_err(SinexError::from)?;
+
         let timeout_future = tokio::time::timeout(timeout, async {
             loop {
-                if let Some(lock) = Self::try_acquire(pool, key).await? {
-                    return Ok(lock);
+                let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
+                    .fetch_one(&mut *connection)
+                    .await?
+                    .unwrap_or(false);
+
+                if acquired {
+                    return Ok(());
                 }
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -74,7 +103,8 @@ impl AdvisoryLock {
         .await;
 
         match timeout_future {
-            Ok(result) => result,
+            Ok(Ok(())) => Ok(Self::guard_from_connection(lock_id, connection)),
+            Ok(Err(error)) => Err(error),
             Err(_) => Err(SinexError::timeout(format!(
                 "Advisory lock timeout for key: {key}"
             ))),
@@ -93,13 +123,41 @@ impl AdvisoryLock {
             .unwrap_or(false);
 
         if acquired {
-            let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_id)
-                .fetch_one(&mut *connection)
-                .await;
+            if let Err(error) =
+                unlock_or_close_connection(&mut connection, lock_id, "is_locked check").await
+            {
+                if let Err(close_error) = connection.close().await {
+                    tracing::warn!(
+                        lock_id,
+                        error = %close_error,
+                        "Failed to close pooled connection after advisory lock probe failure"
+                    );
+                }
+                return Err(error);
+            }
             Ok(false)
         } else {
             Ok(true)
         }
+    }
+}
+
+async fn unlock_or_close_connection(
+    connection: &mut PoolConnection<Postgres>,
+    lock_id: i64,
+    context: &'static str,
+) -> CoreResult<()> {
+    let unlocked: bool = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_id)
+        .fetch_one(&mut **connection)
+        .await?
+        .unwrap_or(false);
+
+    if unlocked {
+        Ok(())
+    } else {
+        Err(SinexError::invalid_state(format!(
+            "Advisory lock {lock_id} was not held during {context}"
+        )))
     }
 }
 

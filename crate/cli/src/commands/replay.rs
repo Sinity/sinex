@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::eyre;
 use sinex_primitives::rpc::replay::ReplayState;
 use tokio::time::{Duration, sleep};
 
@@ -467,10 +468,7 @@ async fn execute_run(
 
     eprintln!("Computing preview...");
     let (_operation, preview) = client.replay_preview(&op_id).await?;
-    let total = preview
-        .get("total_events")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
+    let total = preview_total_events(&preview)?;
     eprintln!("  Preview: {total} direct events in scope");
 
     // Show cascade impact if available
@@ -498,12 +496,12 @@ async fn execute_run(
 
     if total == 0 {
         eprintln!("No events to replay. Cancelling.");
-        let _ = client.replay_cancel(&op_id, Some("empty scope")).await;
+        client.replay_cancel(&op_id, Some("empty scope")).await?;
         return Ok(());
     }
 
     eprintln!("Approving...");
-    let _ = client.replay_approve(&op_id).await?;
+    client.replay_approve(&op_id).await?;
 
     eprintln!(
         "{}...",
@@ -519,6 +517,13 @@ async fn execute_run(
 
     let _ = operation;
     Ok(())
+}
+
+fn preview_total_events(preview: &serde_json::Value) -> Result<u64> {
+    preview
+        .get("total_events")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| eyre!("Replay preview is missing numeric `total_events`"))
 }
 
 fn format_replay_plan_table(operation: &ReplayOperation) -> String {
@@ -706,4 +711,33 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
         ));
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_total_events;
+    use serde_json::json;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn preview_total_events_accepts_valid_counts() -> TestResult<()> {
+        assert_eq!(preview_total_events(&json!({ "total_events": 0 }))?, 0);
+        assert_eq!(preview_total_events(&json!({ "total_events": 42 }))?, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn preview_total_events_rejects_missing_field() -> TestResult<()> {
+        let error = preview_total_events(&json!({})).expect_err("missing total_events must fail");
+        assert!(error.to_string().contains("total_events"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn preview_total_events_rejects_non_numeric_field() -> TestResult<()> {
+        let error = preview_total_events(&json!({ "total_events": "zero" }))
+            .expect_err("non-numeric total_events must fail");
+        assert!(error.to_string().contains("total_events"));
+        Ok(())
+    }
 }

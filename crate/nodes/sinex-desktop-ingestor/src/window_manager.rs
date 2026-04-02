@@ -1249,41 +1249,6 @@ mod tests {
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
 
     #[sinex_test]
     async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
@@ -1396,15 +1361,12 @@ mod tests {
     #[sinex_serial_test]
     async fn resolve_hyprland_socket_paths_rejects_non_utf8_event_socket_override()
     -> TestResult<()> {
-        let mut env = EnvGuard::new(&[
-            "SINEX_HYPRLAND_EVENT_SOCKET",
-            "SINEX_HYPRLAND_COMMAND_SOCKET",
-        ]);
+        let mut env = EnvGuard::new();
         env.set(
             "SINEX_HYPRLAND_EVENT_SOCKET",
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
         );
-        env.remove("SINEX_HYPRLAND_COMMAND_SOCKET");
+        env.clear("SINEX_HYPRLAND_COMMAND_SOCKET");
 
         let error = resolve_hyprland_socket_paths()
             .expect_err("non-UTF8 event socket overrides must fail honestly");
@@ -1418,12 +1380,12 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn resolve_hyprland_runtime_dir_rejects_non_utf8_override() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["SINEX_HYPRLAND_RUNTIME_DIR", "XDG_RUNTIME_DIR"]);
+        let mut env = EnvGuard::new();
         env.set(
             "SINEX_HYPRLAND_RUNTIME_DIR",
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
         );
-        env.remove("XDG_RUNTIME_DIR");
+        env.clear("XDG_RUNTIME_DIR");
 
         let error = resolve_hyprland_runtime_dir()
             .expect_err("non-UTF8 runtime dir overrides must fail honestly");

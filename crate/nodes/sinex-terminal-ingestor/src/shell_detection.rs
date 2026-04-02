@@ -40,6 +40,16 @@ impl ShellType {
         }
     }
 
+    /// Get the executable name used to invoke this shell.
+    #[must_use]
+    pub fn executable_name(&self) -> &str {
+        match self {
+            ShellType::PowerShell => "pwsh",
+            ShellType::Nushell => "nu",
+            _ => self.name(),
+        }
+    }
+
     /// Check if this shell supports hooks
     #[must_use]
     pub fn supports_hooks(&self) -> bool {
@@ -50,6 +60,12 @@ impl ShellType {
     #[must_use]
     pub fn default_config_path(&self) -> Option<Utf8PathBuf> {
         let home = get_home_dir()?;
+        self.default_config_path_from(Some(home))
+    }
+
+    #[must_use]
+    fn default_config_path_from(&self, home: Option<Utf8PathBuf>) -> Option<Utf8PathBuf> {
+        let home = home?;
 
         match self {
             ShellType::Bash => Some(home.join(".bashrc")),
@@ -79,13 +95,21 @@ impl ShellType {
     #[must_use]
     pub fn default_history_path(&self) -> Option<Utf8PathBuf> {
         let home = get_home_dir()?;
+        self.default_history_path_from(Some(home))
+    }
+
+    #[must_use]
+    fn default_history_path_from(&self, home: Option<Utf8PathBuf>) -> Option<Utf8PathBuf> {
+        let home = home?;
 
         match self {
             ShellType::Bash => Some(home.join(".bash_history")),
             ShellType::Zsh => Some(home.join(".zsh_history")),
-            ShellType::Fish => Some(home.join(".local/share/fish/fish_history")),
+            // Native fish history is not an ingestible text or SQLite source by default.
+            ShellType::Fish => None,
             ShellType::Nushell => Some(home.join(".config/nushell/history.txt")),
-            ShellType::Elvish => Some(home.join(".config/elvish/db")),
+            // Native Elvish history is a custom binary database and not ingestible by default.
+            ShellType::Elvish => None,
             ShellType::PowerShell => None,
             ShellType::Unknown(_) => None,
         }
@@ -249,7 +273,7 @@ fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
         _ => "--version",
     };
 
-    let output = Command::new(shell_type.name())
+    let output = Command::new(shell_type.executable_name())
         .arg(version_flag)
         .output()
         .map_err(|error| {
@@ -257,7 +281,7 @@ fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
                 error.kind(),
                 format!(
                     "failed to execute {} {}: {error}",
-                    shell_type.name(),
+                    shell_type.executable_name(),
                     version_flag
                 ),
             )
@@ -356,45 +380,15 @@ fn get_home_dir() -> Option<Utf8PathBuf> {
 mod tests {
     // Inline because this covers local env/cache/version failure semantics.
     use super::{
-        ShellType, get_shell_version, get_shell_version_impl, read_optional_env_var,
+        ShellType, Utf8PathBuf, get_shell_version, get_shell_version_impl, read_optional_env_var,
         utf8_home_dir_from,
     };
-    use xtask::sandbox::sinex_serial_test;
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<String>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: &str) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
 
     #[sinex_serial_test]
     async fn read_optional_env_var_returns_none_without_value() -> xtask::sandbox::TestResult<()> {
-        let _env = ScopedEnvGuard::new(&["SINEX_UNUSED_OPTIONAL_ENV"]);
+        let _env = EnvGuard::new();
         assert_eq!(
             read_optional_env_var("SINEX_UNUSED_OPTIONAL_ENV", "test context"),
             None
@@ -402,8 +396,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn get_shell_version_impl_rejects_unknown_shell() {
+    #[sinex_test]
+    async fn get_shell_version_impl_rejects_unknown_shell() -> xtask::sandbox::TestResult<()> {
         let error = get_shell_version_impl(&ShellType::Unknown(
             "__sinex_nonexistent_shell__".to_string(),
         ))
@@ -412,19 +406,43 @@ mod tests {
             error.to_string().contains("__sinex_nonexistent_shell__"),
             "unexpected error: {error}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn get_shell_version_surfaces_failure_as_none() {
+    #[sinex_test]
+    async fn get_shell_version_surfaces_failure_as_none() -> xtask::sandbox::TestResult<()> {
         assert_eq!(
             get_shell_version(&ShellType::Unknown("__sinex_nonexistent_shell__".to_string())),
             None
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn executable_names_use_real_shell_binaries() -> xtask::sandbox::TestResult<()> {
+        assert_eq!(ShellType::Nushell.executable_name(), "nu");
+        assert_eq!(ShellType::PowerShell.executable_name(), "pwsh");
+        assert_eq!(ShellType::Bash.executable_name(), "bash");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn unsupported_native_history_stores_do_not_advertise_default_paths()
+    -> xtask::sandbox::TestResult<()> {
+        let home = Some(Utf8PathBuf::from("/tmp/home"));
+
+        assert_eq!(ShellType::Fish.default_history_path_from(home.clone()), None);
+        assert_eq!(ShellType::Elvish.default_history_path_from(home), None);
+        assert_eq!(
+            ShellType::Nushell.default_history_path_from(Some(Utf8PathBuf::from("/tmp/home"))),
+            Some(Utf8PathBuf::from("/tmp/home/.config/nushell/history.txt"))
+        );
+        Ok(())
     }
 
     #[sinex_serial_test]
     async fn session_id_falls_back_to_term_session_id() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_SESSION_ID", "TERM_SESSION_ID"]);
+        let mut env = EnvGuard::new();
         env.set("TERM_SESSION_ID", "term-session");
 
         let session_id = read_optional_env_var("SINEX_SESSION_ID", "test context")
@@ -435,13 +453,14 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn utf8_home_dir_from_rejects_non_utf8_paths() {
+    #[sinex_test]
+    async fn utf8_home_dir_from_rejects_non_utf8_paths() -> xtask::sandbox::TestResult<()> {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
         use std::path::PathBuf;
 
         let non_utf8 = PathBuf::from(OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
         assert!(utf8_home_dir_from(Some(non_utf8), "test").is_none());
+        Ok(())
     }
 }

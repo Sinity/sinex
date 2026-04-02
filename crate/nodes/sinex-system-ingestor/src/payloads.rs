@@ -277,7 +277,6 @@ impl Default for DbusConfig {
             include_interfaces: vec![],
             exclude_interfaces: vec![
                 // Exclude noisy interfaces by default
-                "org.freedesktop.DBus.Properties".to_string(),
                 "org.freedesktop.DBus.Introspectable".to_string(),
                 "org.freedesktop.DBus.Peer".to_string(),
             ],
@@ -465,52 +464,13 @@ mod tests {
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{EnvGuard, sinex_test};
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
 
     #[sinex_test]
     async fn default_journal_cursor_path_prefers_explicit_env()
     -> xtask::sandbox::TestResult<()> {
-        let mut env = EnvGuard::new(&[
-            "SINEX_JOURNAL_CURSOR_FILE",
-            "SINEX_STATE_DIR",
-            "XDG_STATE_HOME",
-        ]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_JOURNAL_CURSOR_FILE", "/tmp/custom.cursor");
         env.set("SINEX_STATE_DIR", "/tmp/state");
         env.set("XDG_STATE_HOME", "/tmp/xdg");
@@ -522,12 +482,8 @@ mod tests {
     #[sinex_test]
     async fn default_journal_cursor_path_uses_state_dir_when_present()
     -> xtask::sandbox::TestResult<()> {
-        let mut env = EnvGuard::new(&[
-            "SINEX_JOURNAL_CURSOR_FILE",
-            "SINEX_STATE_DIR",
-            "XDG_STATE_HOME",
-        ]);
-        env.remove("SINEX_JOURNAL_CURSOR_FILE");
+        let mut env = EnvGuard::new();
+        env.clear("SINEX_JOURNAL_CURSOR_FILE");
         env.set("SINEX_STATE_DIR", "/tmp/state");
         env.set("XDG_STATE_HOME", "/tmp/xdg");
 
@@ -538,7 +494,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_test]
     async fn optional_utf8_env_rejects_non_utf8_values() -> xtask::sandbox::TestResult<()> {
-        let mut env = EnvGuard::new(&["SINEX_STATE_DIR"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_STATE_DIR", OsString::from_vec(vec![0xff]));
 
         assert_eq!(optional_utf8_env("SINEX_STATE_DIR"), None);
@@ -549,14 +505,10 @@ mod tests {
     #[sinex_test]
     async fn default_journal_cursor_path_ignores_non_utf8_state_dir()
     -> xtask::sandbox::TestResult<()> {
-        let mut env = EnvGuard::new(&[
-            "SINEX_JOURNAL_CURSOR_FILE",
-            "SINEX_STATE_DIR",
-            "XDG_STATE_HOME",
-        ]);
-        env.remove("SINEX_JOURNAL_CURSOR_FILE");
+        let mut env = EnvGuard::new();
+        env.clear("SINEX_JOURNAL_CURSOR_FILE");
         env.set("SINEX_STATE_DIR", OsString::from_vec(vec![0xff]));
-        env.remove("XDG_STATE_HOME");
+        env.clear("XDG_STATE_HOME");
 
         assert_eq!(default_journal_cursor_path(), "/var/lib/sinex/journal.cursor");
         Ok(())

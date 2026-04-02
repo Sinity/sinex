@@ -12,7 +12,7 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::{Id, JsonValue, Timestamp};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
@@ -28,6 +28,7 @@ const BATCH_MAX_IDS: usize = 32;
 
 /// Per-client channel capacity. Slow consumers get gap notifications.
 const CLIENT_CHANNEL_CAPACITY: usize = 256;
+const RECENT_DELIVERED_EVENT_IDS: usize = 1024;
 
 /// Hard cap on concurrent SSE subscriptions. Each one owns a buffered channel,
 /// so leaving this unbounded makes memory exhaustion trivial.
@@ -101,6 +102,8 @@ struct SubscriptionState {
     /// Running gap counter — when we fail to send, track how many events were dropped.
     gap_start: Option<u64>,
     gap_count: u64,
+    recent_delivered_event_ids: VecDeque<Id<Event<JsonValue>>>,
+    recent_delivered_event_id_set: HashSet<Id<Event<JsonValue>>>,
 }
 
 enum DeliveryOutcome {
@@ -114,6 +117,19 @@ struct IndexedEvents {
     duplicate_id_count: usize,
 }
 
+fn remember_recent_event_id(state: &mut SubscriptionState, event_id: Id<Event<JsonValue>>) {
+    if !state.recent_delivered_event_id_set.insert(event_id) {
+        return;
+    }
+
+    state.recent_delivered_event_ids.push_back(event_id);
+    while state.recent_delivered_event_ids.len() > RECENT_DELIVERED_EVENT_IDS {
+        if let Some(evicted) = state.recent_delivered_event_ids.pop_front() {
+            state.recent_delivered_event_id_set.remove(&evicted);
+        }
+    }
+}
+
 impl SubscriptionSlot {
     fn new(filter: SubscriptionFilter) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
         let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
@@ -124,6 +140,8 @@ impl SubscriptionSlot {
                 next_seq: 1,
                 gap_start: None,
                 gap_count: 0,
+                recent_delivered_event_ids: VecDeque::with_capacity(RECENT_DELIVERED_EVENT_IDS),
+                recent_delivered_event_id_set: HashSet::with_capacity(RECENT_DELIVERED_EVENT_IDS),
             }),
         });
         (slot, rx)
@@ -135,6 +153,12 @@ impl SubscriptionSlot {
 
     fn deliver(&self, event: &Arc<Event<JsonValue>>) -> DeliveryOutcome {
         let mut state = self.state.lock();
+        if let Some(event_id) = event.id
+            && state.recent_delivered_event_id_set.contains(&event_id)
+        {
+            return DeliveryOutcome::Delivered;
+        }
+
         let seq = state.next_seq;
         state.next_seq = state.next_seq.saturating_add(1);
 
@@ -166,7 +190,12 @@ impl SubscriptionSlot {
         };
 
         match self.tx.try_send(msg) {
-            Ok(()) => DeliveryOutcome::Delivered,
+            Ok(()) => {
+                if let Some(event_id) = event.id {
+                    remember_recent_event_id(&mut state, event_id);
+                }
+                DeliveryOutcome::Delivered
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 if state.gap_start.is_none() {
                     state.gap_start = Some(seq);
@@ -443,16 +472,27 @@ impl SubscriptionBus {
             return;
         }
 
+        let mut duplicate_confirmation_count = 0usize;
+        let mut seen_ids = HashSet::with_capacity(ids.len());
+        let mut unique_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            if seen_ids.insert(id) {
+                unique_ids.push(id);
+            } else {
+                duplicate_confirmation_count = duplicate_confirmation_count.saturating_add(1);
+            }
+        }
+
         // Batch-fetch from DB (buffer-cache hot — events were JUST written)
-        let events = match pool.events().get_by_ids(&ids).await {
+        let events = match pool.events().get_by_ids(&unique_ids).await {
             Ok(events) => events,
             Err(e) => {
                 warn!(
                     ?e,
-                    count = ids.len(),
+                    count = unique_ids.len(),
                     "Failed to fetch events for SSE fan-out; preserving batch for retry"
                 );
-                *id_buffer = ids;
+                *id_buffer = unique_ids;
                 return;
             }
         };
@@ -462,16 +502,17 @@ impl SubscriptionBus {
             missing_id_count,
             duplicate_id_count,
         } = Self::index_events_by_id(events);
-        if missing_id_count > 0 || duplicate_id_count > 0 {
+        if missing_id_count > 0 || duplicate_id_count > 0 || duplicate_confirmation_count > 0 {
             warn!(
                 events_without_id = missing_id_count,
                 duplicate_event_ids = duplicate_id_count,
+                duplicate_confirmation_ids = duplicate_confirmation_count,
                 "SSE fan-out fetch returned malformed events; preserving unresolved confirmations for retry"
             );
         }
         let mut events = Vec::new();
         let mut missing_ids = Vec::new();
-        for id in ids {
+        for id in unique_ids {
             if let Some(event) = events_by_id.remove(&id) {
                 events.push(event);
             } else {
@@ -513,12 +554,13 @@ impl SubscriptionBus {
 
 #[cfg(test)]
 mod tests {
-    use super::{SseMessage, SubscriptionBus};
+    use super::{DeliveryOutcome, SseMessage, SubscriptionBus, SubscriptionSlot};
     use serde_json::json;
     use sinex_db::DbPoolExt;
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::query::SubscriptionFilter;
     use sinex_primitives::{Id, JsonValue, Uuid};
+    use std::sync::Arc;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
 
@@ -649,6 +691,70 @@ mod tests {
             id_buffer,
             vec![missing_id],
             "missing confirmed event ids must remain buffered for retry"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deliver_suppresses_recently_redelivered_events() -> TestResult<()> {
+        let (slot, mut rx) = SubscriptionSlot::new(SubscriptionFilter::default());
+        let mut event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
+            .from_material(Id::from_uuid(Uuid::now_v7()))
+            .build()?;
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+        let event = Arc::new(event);
+
+        assert!(matches!(slot.deliver(&event), DeliveryOutcome::Delivered));
+        assert!(matches!(slot.deliver(&event), DeliveryOutcome::Delivered));
+
+        let message = timeout(Duration::from_secs(1), rx.recv())
+            .await?
+            .expect("first delivery should reach the receiver");
+        match message {
+            SseMessage::Event { event: delivered, .. } => {
+                assert_eq!(delivered.id, event.id);
+            }
+            other => panic!("expected first SSE event, got {other:?}"),
+        }
+
+        assert!(
+            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            "duplicate delivery should be suppressed for recently delivered events"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn flush_batch_dedupes_duplicate_confirmation_ids(ctx: TestContext) -> TestResult<()> {
+        let bus = SubscriptionBus::new();
+        let (_, mut rx) = bus
+            .register(SubscriptionFilter::default())
+            .expect("test subscription should register");
+
+        let event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
+            .from_material(ctx.create_source_material(Some("sse-duplicate-confirmations")).await?)
+            .build()?;
+        let event = ctx.pool().events().insert(event).await?;
+        let event_id = event.id.expect("inserted event must have id");
+
+        let mut id_buffer = vec![event_id, event_id];
+        bus.flush_batch(&mut id_buffer, ctx.pool()).await;
+
+        let message = timeout(Duration::from_secs(1), rx.recv())
+            .await?
+            .expect("subscription should receive the deduped event");
+        match message {
+            SseMessage::Event { event, .. } => assert_eq!(event.id, Some(event_id)),
+            other => panic!("expected deduped event payload, got {other:?}"),
+        }
+
+        assert!(
+            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            "duplicate confirmation ids should not trigger a second delivery"
+        );
+        assert!(
+            id_buffer.is_empty(),
+            "duplicate confirmations should not be re-buffered after a successful flush"
         );
         Ok(())
     }

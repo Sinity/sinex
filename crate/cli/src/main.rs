@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
@@ -15,13 +15,8 @@ use sinexctl::{Config, default_rpc_url};
 #[command(name = "sinexctl", about = "Sinex control CLI", version)]
 struct Cli {
     /// Gateway RPC URL
-    #[arg(
-        long,
-        env = "SINEX_RPC_URL",
-        default_value = "https://127.0.0.1:9999",
-        global = true
-    )]
-    rpc_url: String,
+    #[arg(long, env = "SINEX_RPC_URL", global = true)]
+    rpc_url: Option<String>,
 
     /// Authentication token
     #[arg(long, env = "SINEX_RPC_TOKEN", global = true)]
@@ -77,6 +72,10 @@ fn load_env_filter(default_filter: &str) -> color_eyre::eyre::Result<tracing_sub
             tracing_subscriber::EnvFilter::DEFAULT_ENV
         )
     })
+}
+
+fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
+    matches.value_source(id) == Some(ValueSource::CommandLine)
 }
 
 #[derive(Debug, Subcommand)]
@@ -192,8 +191,13 @@ async fn main() -> color_eyre::Result<()> {
         .with_env_filter(load_env_filter("warn")?)
         .init();
 
-    // Parse CLI arguments
-    let cli = Cli::parse();
+    // Parse CLI arguments and preserve whether values came from the command line,
+    // the environment, or clap defaults.
+    let matches = Cli::command().get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
 
     // Handle config commands early (they don't need a gateway client)
     if let Commands::Config { cmd } = cli.command {
@@ -219,22 +223,24 @@ async fn main() -> color_eyre::Result<()> {
     });
 
     // Override with explicit CLI args.
-    let rpc_url_override = if cli.rpc_url == default_rpc_url() {
-        None
-    } else {
-        Some(cli.rpc_url.clone())
-    };
+    let rpc_url_override =
+        cli_value_is_explicit(&matches, "rpc_url").then(|| cli.rpc_url.clone().unwrap_or_else(default_rpc_url));
+    let token_override = cli_value_is_explicit(&matches, "token")
+        .then(|| cli.token.clone())
+        .flatten();
+    let timeout_override = cli_value_is_explicit(&matches, "timeout").then_some(cli.timeout);
+    let format_override = cli_value_is_explicit(&matches, "format").then_some(cli.format);
 
     config.merge_cli_args(
         rpc_url_override,
-        cli.token,
+        token_override,
         cli.token_file,
         cli.ca_cert,
         cli.client_cert,
         cli.client_key,
         cli.insecure,
-        Some(cli.timeout),
-        Some(cli.format),
+        timeout_override,
+        format_override,
     );
 
     // Convert to ClientConfig and create gateway client
@@ -280,46 +286,18 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::prelude::*;
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
+    use xtask::sandbox::EnvGuard;
 
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
+    fn parse_cli(args: &[&str]) -> color_eyre::Result<(clap::ArgMatches, Cli)> {
+        let matches = Cli::command().try_get_matches_from(args)?;
+        let cli = Cli::from_arg_matches(&matches).map_err(|error| eyre!(error.to_string()))?;
+        Ok((matches, cli))
     }
 
     #[sinex_serial_test]
     async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
-        env.remove("RUST_LOG");
+        let mut env = EnvGuard::new();
+        env.clear("RUST_LOG");
 
         load_env_filter("warn")?;
         Ok(())
@@ -327,7 +305,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinexctl=wat");
 
         let error = load_env_filter("warn").expect_err("invalid directives must fail honestly");
@@ -338,10 +316,38 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_serial_test]
+    async fn env_token_is_not_treated_as_explicit_cli_override() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_RPC_TOKEN", "env-token");
+
+        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        let token_override = cli_value_is_explicit(&matches, "token")
+            .then(|| cli.token.clone())
+            .flatten();
+
+        assert_eq!(cli.token.as_deref(), Some("env-token"));
+        assert_eq!(matches.value_source("token"), Some(ValueSource::EnvVariable));
+        assert_eq!(token_override, None);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn cli_token_is_treated_as_explicit_override() -> TestResult<()> {
+        let (matches, cli) = parse_cli(&["sinexctl", "--token", "cli-token", "status"])?;
+        let token_override = cli_value_is_explicit(&matches, "token")
+            .then(|| cli.token.clone())
+            .flatten();
+
+        assert_eq!(matches.value_source("token"), Some(ValueSource::CommandLine));
+        assert_eq!(token_override.as_deref(), Some("cli-token"));
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
         let error = load_env_filter("warn").expect_err("non-UTF8 RUST_LOG must fail honestly");
@@ -349,6 +355,60 @@ mod tests {
 
         assert!(message.contains("RUST_LOG"));
         assert!(message.contains("UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn rpc_url_is_only_explicit_when_passed_on_command_line() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.clear("SINEX_RPC_URL");
+
+        let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
+        assert!(
+            !cli_value_is_explicit(&default_matches, "rpc_url"),
+            "default RPC URL must not be treated as an explicit override"
+        );
+        assert_eq!(default_cli.rpc_url, None);
+
+        let explicit_default = default_rpc_url();
+        let (explicit_matches, explicit_cli) =
+            parse_cli(&["sinexctl", "--rpc-url", explicit_default.as_str(), "status"])?;
+        assert!(
+            cli_value_is_explicit(&explicit_matches, "rpc_url"),
+            "explicit --rpc-url must remain an explicit override even when equal to the default"
+        );
+        assert_eq!(explicit_cli.rpc_url.as_deref(), Some(explicit_default.as_str()));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn env_provided_rpc_url_is_not_treated_as_cli_override() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_RPC_URL", "https://env-only:9443");
+
+        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        assert!(
+            !cli_value_is_explicit(&matches, "rpc_url"),
+            "environment-provided RPC URL must not masquerade as a command-line override"
+        );
+        assert_eq!(cli.rpc_url.as_deref(), Some("https://env-only:9443"));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn timeout_and_format_are_only_explicit_when_passed_on_command_line() -> TestResult<()> {
+        let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
+        assert!(!cli_value_is_explicit(&default_matches, "timeout"));
+        assert!(!cli_value_is_explicit(&default_matches, "format"));
+        assert_eq!(default_cli.timeout, 30);
+        assert!(matches!(default_cli.format, OutputFormat::Table));
+
+        let (explicit_matches, explicit_cli) =
+            parse_cli(&["sinexctl", "--timeout", "45", "--format", "json", "status"])?;
+        assert!(cli_value_is_explicit(&explicit_matches, "timeout"));
+        assert!(cli_value_is_explicit(&explicit_matches, "format"));
+        assert_eq!(explicit_cli.timeout, 45);
+        assert!(matches!(explicit_cli.format, OutputFormat::Json));
         Ok(())
     }
 }

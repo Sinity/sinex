@@ -101,6 +101,36 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_INGESTD_STRICT_VALIDATION", "1");
+    env.set("SINEX_INGESTD_GITOPS_ENABLED", "true");
+    env.set("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS", "123");
+    env.set("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS", "17");
+
+    let config = IngestdConfig::from_args(
+        Some("postgresql://custom/db".to_string()),
+        "nats://custom:4222".to_string(),
+        false,
+        50,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )?;
+
+    assert!(config.strict_validation);
+    assert!(config.gitops_enabled);
+    assert_eq!(config.schema_reload_interval_secs, 123);
+    assert_eq!(config.stats_log_interval_secs, 17);
+    Ok(())
+}
+
+#[sinex_test]
 async fn requires_tls_when_enabled() -> TestResult<()> {
     let mut config = IngestdConfig::default();
     config.nats.require_tls = true;

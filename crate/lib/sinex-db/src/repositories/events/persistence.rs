@@ -2028,7 +2028,7 @@ impl<'a> EventRepository<'a> {
         let rows = match (source, before) {
             (Some(s), Some(b)) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig, id LIMIT $3"#,
                     s.as_str(),
                     *b,
                     limit
@@ -2038,7 +2038,7 @@ impl<'a> EventRepository<'a> {
             }
             (Some(s), None) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 ORDER BY ts_orig LIMIT $2"#,
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 ORDER BY ts_orig, id LIMIT $2"#,
                     s.as_str(),
                     limit
                 )
@@ -2047,7 +2047,7 @@ impl<'a> EventRepository<'a> {
             }
             (None, Some(b)) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE ts_orig < $1 ORDER BY ts_orig, id LIMIT $2"#,
                     *b,
                     limit
                 )
@@ -2056,7 +2056,7 @@ impl<'a> EventRepository<'a> {
             }
             (None, None) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM audit.archived_events ORDER BY ts_orig LIMIT $1"#,
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events ORDER BY ts_orig, id LIMIT $1"#,
                     limit
                 )
                 .fetch_all(self.pool)
@@ -2080,7 +2080,7 @@ impl<'a> EventRepository<'a> {
         let rows = match (source, before) {
             (Some(s), Some(b)) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig, id LIMIT $3"#,
                     s.as_str(),
                     *b,
                     limit
@@ -2090,7 +2090,7 @@ impl<'a> EventRepository<'a> {
             }
             (Some(s), None) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 ORDER BY ts_orig LIMIT $2"#,
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 ORDER BY ts_orig, id LIMIT $2"#,
                     s.as_str(),
                     limit
                 )
@@ -2099,7 +2099,7 @@ impl<'a> EventRepository<'a> {
             }
             (None, Some(b)) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM core.events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE ts_orig < $1 ORDER BY ts_orig, id LIMIT $2"#,
                     *b,
                     limit
                 )
@@ -2108,7 +2108,7 @@ impl<'a> EventRepository<'a> {
             }
             (None, None) => {
                 sqlx::query_scalar!(
-                    r#"SELECT id::uuid as "id!" FROM core.events ORDER BY ts_orig LIMIT $1"#,
+                    r#"SELECT id::uuid as "id!" FROM core.events ORDER BY ts_orig, id LIMIT $1"#,
                     limit
                 )
                 .fetch_all(self.pool)

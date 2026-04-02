@@ -8,13 +8,13 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
-use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool};
 use std::ops::Bound;
 use std::str::FromStr;
@@ -567,7 +567,7 @@ impl StateRepository<'_> {
     /// Get failed operations
     pub async fn get_failed_operations(
         &self,
-        _since: Option<Timestamp>,
+        since: Option<Timestamp>,
         limit: Option<i64>,
     ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
@@ -586,9 +586,11 @@ impl StateRepository<'_> {
                 duration_ms
             FROM core.operations_log 
             WHERE result_status = 'failure'
+              AND ($1::timestamptz IS NULL OR uuid_extract_timestamp(id) >= $1)
             ORDER BY id DESC
-            LIMIT $1
+            LIMIT $2
             "#,
+            since.map(|timestamp| *timestamp),
             limit
         )
         .fetch_all(self.pool)
@@ -599,7 +601,7 @@ impl StateRepository<'_> {
     /// Get operation statistics
     pub async fn get_operation_statistics(
         &self,
-        _since: Option<Timestamp>,
+        since: Option<Timestamp>,
     ) -> DbResult<OperationStatistics> {
         let result = sqlx::query!(
             r#"
@@ -608,9 +610,12 @@ impl StateRepository<'_> {
                 COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
                 COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
                 COUNT(*) FILTER (WHERE result_status = 'cancelled') as "cancelled!",
-                AVG(duration_ms) as "avg_duration_ms"
+                AVG(duration_ms) as "avg_duration_ms?"
             FROM core.operations_log
+            WHERE ($1::timestamptz IS NULL OR uuid_extract_timestamp(id) >= $1)
             "#
+            ,
+            since.map(|timestamp| *timestamp)
         )
         .fetch_one(self.pool)
         .await
@@ -621,10 +626,11 @@ impl StateRepository<'_> {
             successful: result.successful,
             failed: result.failed,
             cancelled: result.cancelled,
-            avg_duration_ms: result.avg_duration_ms.and_then(|d: BigDecimal| {
-                use std::str::FromStr;
-                i64::from_str(&d.to_string()).ok()
-            }),
+            avg_duration_ms: result
+                .avg_duration_ms
+                .and_then(|duration| duration.to_f64())
+                .map(f64::round)
+                .and_then(|duration| i64::try_from(duration as i128).ok()),
         })
     }
 
@@ -962,6 +968,7 @@ impl StateRepository<'_> {
             SET last_heartbeat_at = NOW(),
                 status = 'running'
             WHERE id = $1::uuid
+              AND status = 'running'
             "#,
             node_run_id,
         )
@@ -1424,42 +1431,11 @@ mod tests {
     };
     use sinex_primitives::error::SinexError;
     use std::time::Duration;
-    use xtask::sandbox::sinex_serial_test;
-
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<String>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: &str) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
     async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_NODE_HEARTBEAT_STALE_SECS"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "bogus");
 
         assert_eq!(
@@ -1471,7 +1447,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn node_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_NODE_HEARTBEAT_STALE_SECS"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "0");
 
         assert_eq!(
@@ -1481,19 +1457,21 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn probe_health_preserves_error_text() {
+    #[sinex_test]
+    async fn probe_health_preserves_error_text() -> xtask::sandbox::TestResult<()> {
         let (_value, error) =
             probe_health::<()>(Err(SinexError::configuration("probe failed")));
         assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
+        Ok(())
     }
 
-    #[test]
-    fn probe_health_bool_preserves_error_text() {
+    #[sinex_test]
+    async fn probe_health_bool_preserves_error_text() -> xtask::sandbox::TestResult<()> {
         let (value, error) =
             probe_health_bool(Err(SinexError::configuration("probe failed")));
         assert!(!value);
         assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
+        Ok(())
     }
 }
 
