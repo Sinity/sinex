@@ -4,37 +4,6 @@ use sinex_node_sdk::{HealthMetrics, HealthThresholds};
 use std::sync::atomic::Ordering;
 use xtask::sandbox::prelude::*;
 
-struct ScopedEnvGuard {
-    keys: Vec<(String, Option<String>)>,
-}
-
-impl ScopedEnvGuard {
-    fn new(keys: &[&str]) -> Self {
-        let previous = keys
-            .iter()
-            .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-            .collect();
-        Self { keys: previous }
-    }
-
-    fn set(&mut self, key: &str, value: &str) {
-        unsafe { std::env::set_var(key, value) };
-    }
-}
-
-impl Drop for ScopedEnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.keys.drain(..) {
-            unsafe {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-}
-
 #[sinex_test]
 async fn test_health_metrics_error_rate() -> TestResult<()> {
     let metrics = HealthMetrics::default();
@@ -88,11 +57,7 @@ async fn test_process_status_calculation() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_health_thresholds_from_env_accepts_valid_overrides() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_HEALTH_ERROR_RATE_DEGRADED",
-        "SINEX_HEALTH_ERROR_RATE_FAILED",
-        "SINEX_HEALTH_WINDOW_SECONDS",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_HEALTH_ERROR_RATE_DEGRADED", "0.10");
     env.set("SINEX_HEALTH_ERROR_RATE_FAILED", "0.40");
     env.set("SINEX_HEALTH_WINDOW_SECONDS", "120");
@@ -106,7 +71,7 @@ async fn test_health_thresholds_from_env_accepts_valid_overrides() -> TestResult
 
 #[sinex_test]
 async fn test_health_thresholds_from_env_rejects_invalid_override() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&["SINEX_HEALTH_ERROR_RATE_DEGRADED"]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_HEALTH_ERROR_RATE_DEGRADED", "bogus");
 
     let error =

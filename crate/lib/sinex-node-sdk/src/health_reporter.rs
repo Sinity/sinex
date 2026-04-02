@@ -7,6 +7,7 @@ use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
 use parking_lot::RwLock;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
+use sinex_primitives::env as shared_env;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -98,17 +99,7 @@ where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
 {
-    match std::env::var(name) {
-        Ok(value) => value.parse::<T>().map(Some).map_err(|error| {
-            SinexError::configuration(format!(
-                "Environment variable {name} has invalid value `{value}`: {error}"
-            ))
-        }),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-    }
+    shared_env::strict_parsed(name)
 }
 
 /// Standardized health reporter for nodes

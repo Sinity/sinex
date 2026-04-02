@@ -11,6 +11,7 @@ use crate::{NodeResult, SinexError};
 pub use services::verify_service_dependencies;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::constants::timeouts;
+use sinex_primitives::env as shared_env;
 use std::process::Output;
 
 /// Run an external command with a timeout to prevent indefinite hangs during preflight.
@@ -60,19 +61,9 @@ pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
 }
 
 pub fn resolve_database_url() -> NodeResult<String> {
-    let base_url = match std::env::var("DATABASE_URL") {
-        Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => {
-            return Err(SinexError::configuration(
-                "Database URL environment variable not set (DATABASE_URL)",
-            ));
-        }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            return Err(SinexError::configuration(
-                "Environment variable 'DATABASE_URL' is not valid UTF-8",
-            ));
-        }
-    };
+    let base_url = shared_env::strict_var("DATABASE_URL")?.ok_or_else(|| {
+        SinexError::configuration("Database URL environment variable not set (DATABASE_URL)")
+    })?;
 
     sinex_db::resolve_effective_database_url(&base_url).map_err(|err| {
         SinexError::configuration("Failed to validate DATABASE_URL").with_std_error(&err)
@@ -81,14 +72,10 @@ pub fn resolve_database_url() -> NodeResult<String> {
 
 pub(crate) fn env_string_with_fallback(names: &[&str]) -> NodeResult<Option<String>> {
     for name in names {
-        match std::env::var(name) {
-            Ok(value) => return Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => {}
-            Err(std::env::VarError::NotUnicode(_)) => {
-                return Err(SinexError::configuration(format!(
-                    "Environment variable '{name}' is not valid UTF-8"
-                )));
-            }
+        match shared_env::strict_var(name) {
+            Ok(Some(value)) => return Ok(Some(value)),
+            Ok(None) => {}
+            Err(e) => return Err(e),
         }
     }
     Ok(None)

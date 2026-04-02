@@ -4,37 +4,6 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::{domain::{NodeName, NodeType}, Seconds};
 use xtask::sandbox::prelude::*;
 
-struct ScopedEnvGuard {
-    keys: Vec<(String, Option<String>)>,
-}
-
-impl ScopedEnvGuard {
-    fn new(keys: &[&str]) -> Self {
-        let previous = keys
-            .iter()
-            .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-            .collect();
-        Self { keys: previous }
-    }
-
-    fn set(&mut self, key: &str, value: &str) {
-        unsafe { std::env::set_var(key, value) };
-    }
-}
-
-impl Drop for ScopedEnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.keys.drain(..) {
-            unsafe {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-}
-
 #[sinex_test]
 async fn heartbeat_emitter_tracks_metadata() -> TestResult<()> {
     let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
@@ -78,10 +47,7 @@ async fn emit_heartbeat_macro_compiles() -> TestResult<()> {
 
 #[sinex_test]
 async fn heartbeat_invalid_threshold_overrides_fall_back_to_defaults() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_HEARTBEAT_DEGRADED_THRESHOLD",
-        "SINEX_HEARTBEAT_FAILED_THRESHOLD",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_HEARTBEAT_DEGRADED_THRESHOLD", "bogus");
     env.set("SINEX_HEARTBEAT_FAILED_THRESHOLD", "bogus");
 
