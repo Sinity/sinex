@@ -52,21 +52,18 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
 type MaterialTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
 
 fn material_task_cleanup_failure(name: &'static str, error: &SinexError) -> SinexError {
-    SinexError::service(format!("material task failed during shutdown: {name}"))
-        .with_source(error.clone())
+    crate::service::task_shutdown_error("material", name, error)
 }
 
 fn material_task_join_failure(
     name: &'static str,
     error: &tokio::task::JoinError,
 ) -> SinexError {
-    SinexError::service(format!("material task join failed during shutdown: {name}"))
-        .with_context("join_error", error.to_string())
+    crate::service::task_shutdown_error("material", name, error)
 }
 
 fn material_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
-    SinexError::service("material task monitor join failed during shutdown")
-        .with_context("join_error", error.to_string())
+    crate::service::task_shutdown_error("material", "monitor", error)
 }
 
 fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {

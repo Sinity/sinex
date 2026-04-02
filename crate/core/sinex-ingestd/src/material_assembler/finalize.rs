@@ -881,9 +881,29 @@ impl MaterialAssembler {
         // - Disk writes were incomplete due to process crash during slice write
         // - Filesystem corruption or out-of-space errors during assembly
         // - Race between finalization and ongoing slice writes (prevented by finalizing flag)
-        let file_size = tokio::fs::metadata(&final_state.temp_path)
-            .await
-            .map_or(0, |m| m.len() as i64);
+        let file_size = match tokio::fs::metadata(&final_state.temp_path).await {
+            Ok(m) => m.len() as i64,
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    path = %final_state.temp_path.display(),
+                    %error,
+                    "Failed to stat assembled material file; routing to DLQ"
+                );
+                self.route_material_error(
+                    material_id,
+                    "material_stat_failed",
+                    serde_json::json!({
+                        "path": final_state.temp_path.display().to_string(),
+                        "error": error.to_string(),
+                    }),
+                )
+                .await;
+                self.finalize_failed_material_claimed(material_id, "material_stat_failed")
+                    .await;
+                return Ok(());
+            }
+        };
         if file_size != assembled_bytes {
             warn!(
                 material_id = %material_id,
@@ -1257,6 +1277,74 @@ mod tests {
         assert!(
             !assembler.assembler_state.contains_key(&material_id),
             "invalid end timestamp should clean up assembler state instead of retrying forever"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn try_finalize_pending_end_routes_missing_material_file_to_dlq(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::from_uuid(material_id);
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://missing-material-file"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        tokio::fs::write(&state.temp_path, b"data").await?;
+        let missing_path = state.temp_path.clone();
+        tokio::fs::remove_file(&missing_path).await?;
+        state.material_kind = "test".to_string();
+        state.source_identifier = "test://missing-material-file".to_string();
+        state.phase = AssemblyPhase::Accumulating;
+        state.expected_offset = 4;
+        state.slice_count = 1;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            content_hash: blake3::hash(b"data").to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: 4,
+            metadata: json!({}),
+        });
+        let state_handle = assembler.insert_state_handle(material_id, state).await;
+
+        assembler
+            .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+            .await?;
+
+        let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+        let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
+        assert_eq!(payload["error"], "material_stat_failed");
+        assert_eq!(payload["material_id"], material_id.to_string());
+        assert_eq!(payload["context"]["path"], missing_path.display().to_string());
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+        assert_eq!(material.status.as_str(), status::FAILED);
+        assert!(
+            !assembler.assembler_state.contains_key(&material_id),
+            "missing staged material file should clean up assembler state"
         );
 
         Ok(())
