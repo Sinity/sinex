@@ -14,18 +14,13 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use sinex_primitives::env as shared_env;
 use tracing::info;
 
 use super::VerificationStatus;
 
 fn env_string(name: &str) -> NodeResult<Option<String>> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable '{name}' is not valid UTF-8"
-        ))),
-    }
+    shared_env::strict_var(name)
 }
 
 fn configured_state_dir() -> NodeResult<String> {
@@ -216,13 +211,17 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
 }
 
 async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
+    let state_dir = configured_state_dir()?;
     let data_dir = configured_data_dir()?;
     let tmp_dir = configured_tmp_dir()?;
     let log_dir = configured_log_dir()?;
-    let paths_to_check = vec![
-        (data_dir, "Sinex data directory".to_string(), 10.0), // 10GB minimum
-        (tmp_dir, "Temporary directory".to_string(), 5.0),    // 5GB minimum
-        (log_dir, "Sinex log directory".to_string(), 2.0),    // 2GB minimum
+    let work_dir = configured_work_dir()?;
+    let paths_to_check: Vec<(String, String, f64)> = vec![
+        (state_dir, "Sinex state directory".to_string(), 5.0),
+        (data_dir, "Sinex data directory".to_string(), 10.0),
+        (tmp_dir, "Temporary directory".to_string(), 5.0),
+        (log_dir, "Sinex log directory".to_string(), 2.0),
+        (work_dir, "Sinex work directory".to_string(), 5.0),
     ];
 
     let mut disk_info = HashMap::new();
@@ -274,6 +273,7 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
                         "meets_requirements": false
                     }),
                 );
+                has_issues = true;
             }
         }
     }
@@ -394,6 +394,7 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
                         "writable": false
                     }),
                 );
+                has_issues = true;
             }
         }
     }
@@ -697,34 +698,10 @@ fn check_process_limits_info() -> NodeResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_hostname_resolution_probe, resolution_target_host};
-    use xtask::sandbox::sinex_test;
-
-    struct EnvGuard {
-        saved: Vec<(&'static str, Option<String>)>,
-    }
-
-    impl EnvGuard {
-        fn new() -> Self {
-            Self { saved: Vec::new() }
-        }
-
-        fn set(&mut self, key: &'static str, value: &str) {
-            self.saved.push((key, std::env::var(key).ok()));
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..).rev() {
-                match value {
-                    Some(value) => unsafe { std::env::set_var(key, value) },
-                    None => unsafe { std::env::remove_var(key) },
-                }
-            }
-        }
-    }
+    use super::{configured_hostname_resolution_probe, resolution_target_host, verify_disk_space};
+    use std::fs;
+    use tempfile::tempdir;
+    use xtask::sandbox::{sinex_test, EnvGuard};
 
     #[sinex_test]
     async fn resolution_target_host_skips_local_and_socket_targets()
@@ -791,6 +768,47 @@ mod tests {
             probe.invalid_inputs[0]
                 .error
                 .contains("not a URL or host:port target")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn verify_disk_space_rejects_unprobeable_required_paths()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = tempdir()?;
+        let state_dir = root.path().join("state");
+        let data_dir = root.path().join("data");
+        let log_dir = root.path().join("logs");
+        let tmp_dir = root.path().join("tmp");
+        let missing_work_dir = root.path().join("work-missing");
+
+        for dir in [&state_dir, &data_dir, &log_dir, &tmp_dir] {
+            fs::create_dir_all(dir)?;
+        }
+
+        let mut env = EnvGuard::new();
+        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
+        env.set("TMPDIR", &tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+
+        let mut messages = Vec::new();
+        let error = verify_disk_space(&mut messages)
+            .await
+            .expect_err("missing required disk probe path must fail, not downgrade to warning");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Insufficient disk space on one or more required paths")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("Could not check disk space")
+                    && message.contains(&missing_work_dir.display().to_string())),
+            "disk probe failure should mention the unprobeable required path: {messages:#?}"
         );
         Ok(())
     }
