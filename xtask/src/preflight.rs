@@ -100,6 +100,8 @@ const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
+const SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS: u64 = 30;
+const SCHEMA_APPLY_LOCK_WAIT_POLL_INTERVAL_MILLIS: u64 = 250;
 const SCHEMA_READINESS_PROBE_SQL: &str = "SET statement_timeout = '5s';
 SELECT CASE
          WHEN to_regclass('core.events') IS NULL THEN 1
@@ -602,7 +604,7 @@ impl InfraStatus {
     /// Check if all infrastructure is ready.
     #[must_use]
     pub fn all_ready(&self) -> bool {
-        self.postgres && self.nats && !self.schema_apply_pending
+        self.postgres && self.nats && self.tls && !self.schema_apply_pending
     }
 
     /// Check if stack (Postgres + NATS) is running.
@@ -910,8 +912,12 @@ fn auto_apply_schema(verbose: bool) -> Result<bool> {
     // LOCK_EX | LOCK_NB — exclusive, non-blocking
     let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if lock_result != 0 {
-        // Another process is applying schema — skip, it'll complete it
-        eprintln!("ℹ️  Schema apply already in progress (lock held) — skipping");
+        // Another process is applying schema. Wait for readiness instead of claiming
+        // success immediately while the schema may still be mid-mutation.
+        eprintln!("ℹ️  Schema apply already in progress (lock held) — waiting for readiness");
+        wait_for_schema_apply_completion(std::time::Duration::from_secs(
+            SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS,
+        ))?;
         return Ok(true);
     }
 
@@ -920,6 +926,43 @@ fn auto_apply_schema(verbose: bool) -> Result<bool> {
     // Lock released automatically when lock_file is dropped
     drop(lock_file);
     result
+}
+
+fn wait_for_schema_apply_completion(timeout: std::time::Duration) -> Result<()> {
+    wait_for_schema_apply_completion_with(
+        timeout,
+        std::time::Duration::from_millis(SCHEMA_APPLY_LOCK_WAIT_POLL_INTERVAL_MILLIS),
+        has_pending_schema_apply,
+    )
+}
+
+fn wait_for_schema_apply_completion_with<F>(
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+    mut pending_check: F,
+) -> Result<()>
+where
+    F: FnMut() -> Result<bool>,
+{
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Waiting for concurrent schema apply", 5);
+
+    loop {
+        if !pending_check()? {
+            return Ok(());
+        }
+
+        if start.elapsed() >= timeout {
+            bail!(
+                "schema apply is still pending after {:.1}s while another xtask holds the schema lock",
+                timeout.as_secs_f64()
+            );
+        }
+
+        if !poll_interval.is_zero() {
+            std::thread::sleep(poll_interval);
+        }
+    }
 }
 
 /// Inner implementation of schema apply, separated for the flock wrapper.
@@ -1271,8 +1314,16 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                 );
                 false
             }) {
-                tracing::debug!("preflight cache: skipping preflight (cache valid)");
-                return Ok(());
+                let live_status = InfraStatus::capture();
+                if live_status.all_ready() {
+                    tracing::debug!("preflight cache: skipping preflight (cache valid)");
+                    return Ok(());
+                }
+
+                tracing::debug!(
+                    ?live_status,
+                    "preflight cache valid but live infrastructure is no longer ready; continuing with full preflight"
+                );
             }
         }
         Ok(None) => {}
@@ -1548,6 +1599,51 @@ mod tests {
         })
         .unwrap_err();
         assert!(format!("{error:#}").contains("schema readiness probe returned invalid output"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infra_status_all_ready_requires_tls() -> TestResult<()> {
+        assert!(InfraStatus {
+            postgres: true,
+            nats: true,
+            tls: true,
+            schema_apply_pending: false,
+        }
+        .all_ready());
+
+        assert!(!InfraStatus {
+            postgres: true,
+            nats: true,
+            tls: false,
+            schema_apply_pending: false,
+        }
+        .all_ready());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wait_for_schema_apply_completion_returns_when_pending_clears() -> TestResult<()> {
+        let mut pending = vec![true, true, false].into_iter();
+
+        wait_for_schema_apply_completion_with(
+            std::time::Duration::from_millis(10),
+            std::time::Duration::ZERO,
+            || Ok(pending.next().unwrap_or(false)),
+        )?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears() -> TestResult<()> {
+        let error = wait_for_schema_apply_completion_with(
+            std::time::Duration::from_millis(1),
+            std::time::Duration::ZERO,
+            || Ok(true),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("schema apply is still pending"));
         Ok(())
     }
 
