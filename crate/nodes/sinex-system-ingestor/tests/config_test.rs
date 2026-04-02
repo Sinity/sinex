@@ -77,7 +77,7 @@ async fn test_dbus_config_defaults() -> TestResult<()> {
     assert!(config.monitor_session);
     assert!(config.monitor_system);
     assert_eq!(config.include_interfaces.len(), 0);
-    assert_eq!(config.exclude_interfaces.len(), 3); // DBus, Introspectable, Peer
+    assert_eq!(config.exclude_interfaces.len(), 2); // Introspectable, Peer
     assert!(config.extract_notifications);
     assert!(config.extract_media);
     assert!(config.extract_power);

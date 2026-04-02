@@ -66,14 +66,16 @@ pub struct DesktopConfig {
     pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
-fn default_activitywatch_db_path_from(home_dir: Option<std::path::PathBuf>) -> Option<Utf8PathBuf> {
-    let home_dir = home_dir?;
-    match Utf8PathBuf::from_path_buf(home_dir.clone()) {
-        Ok(home) => Some(home.join(".local/share/activitywatch/aw-server-rust/sqlite.db")),
+fn default_activitywatch_db_path_from(
+    data_dir: Option<std::path::PathBuf>,
+) -> Option<Utf8PathBuf> {
+    let data_dir = data_dir?;
+    match Utf8PathBuf::from_path_buf(data_dir.clone()) {
+        Ok(data_dir) => Some(data_dir.join("activitywatch/aw-server-rust/sqlite.db")),
         Err(path) => {
             warn!(
                 path = %path.display(),
-                "Home directory path is not valid UTF-8; default ActivityWatch history path is unavailable"
+                "Data directory path is not valid UTF-8; default ActivityWatch history path is unavailable"
             );
             None
         }
@@ -91,7 +93,7 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
-            activitywatch_db_path: default_activitywatch_db_path_from(dirs::home_dir()),
+            activitywatch_db_path: default_activitywatch_db_path_from(dirs::data_local_dir()),
         }
     }
 }
@@ -1101,43 +1103,8 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use serde_json::json;
     use std::time::Duration;
-    use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test};
+    use xtask::sandbox::{EnvGuard, node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test};
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
 
     fn sample_activitywatch_entry(
         kind: ActivityWatchEntryKind,
@@ -1158,27 +1125,27 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn desktop_default_activitywatch_db_path_uses_utf8_home_dir()
+    async fn desktop_default_activitywatch_db_path_uses_utf8_data_dir()
     -> xtask::sandbox::TestResult<()> {
-        let path = default_activitywatch_db_path_from(Some(std::path::PathBuf::from("/tmp/home")))
+        let path = default_activitywatch_db_path_from(Some(std::path::PathBuf::from("/tmp/data")))
             .ok_or_else(|| color_eyre::eyre::eyre!("default ActivityWatch path should exist"))?;
 
         assert_eq!(
             path,
-            Utf8PathBuf::from("/tmp/home/.local/share/activitywatch/aw-server-rust/sqlite.db")
+            Utf8PathBuf::from("/tmp/data/activitywatch/aw-server-rust/sqlite.db")
         );
         Ok(())
     }
 
     #[cfg(unix)]
     #[sinex_test]
-    async fn desktop_default_activitywatch_db_path_rejects_non_utf8_home_dir()
+    async fn desktop_default_activitywatch_db_path_rejects_non_utf8_data_dir()
     -> xtask::sandbox::TestResult<()> {
-        let invalid_home = std::path::PathBuf::from(OsString::from_vec(vec![
+        let invalid_dir = std::path::PathBuf::from(OsString::from_vec(vec![
             b'/', b't', b'm', b'p', b'/', 0xff,
         ]));
 
-        assert_eq!(default_activitywatch_db_path_from(Some(invalid_home)), None);
+        assert_eq!(default_activitywatch_db_path_from(Some(invalid_dir)), None);
         Ok(())
     }
 
@@ -1300,15 +1267,12 @@ mod tests {
     #[sinex_serial_test]
     async fn desktop_env_override_rejects_non_unicode_activitywatch_db_path()
     -> xtask::sandbox::TestResult<()> {
-        let mut env = EnvGuard::new(&[
-            "SINEX_ACTIVITYWATCH_DB_PATH",
-            "SINEX_DESKTOP_REQUIRE_HYPRLAND",
-        ]);
+        let mut env = EnvGuard::new();
         env.set(
             "SINEX_ACTIVITYWATCH_DB_PATH",
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
         );
-        env.remove("SINEX_DESKTOP_REQUIRE_HYPRLAND");
+        env.clear("SINEX_DESKTOP_REQUIRE_HYPRLAND");
 
         let mut config = DesktopConfig::default();
         let error = DesktopNode::apply_env_overrides(&mut config)
