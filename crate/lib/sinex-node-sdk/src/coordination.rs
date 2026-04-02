@@ -69,7 +69,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, instrument, warn};
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use std::future::Future;
 
 /// Instance mode determines node behavior
@@ -238,6 +238,34 @@ mod tests {
             err.to_string()
                 .contains("Failed to decode handoff request"),
             "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn forward_handoff_requests_closes_channel_when_subscription_ends(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        let (handoff_sender, mut handoff_receiver) = mpsc::channel(1);
+        let handoff_drops = CoordinationPrimitive::event_counter(0, "coordination_handoff_drops");
+
+        NodeCoordination::forward_handoff_requests(
+            futures::stream::empty::<async_nats::Message>(),
+            "target-instance".to_string(),
+            handoff_sender,
+            handoff_drops.clone(),
+            "coordination-test".to_string(),
+        )
+        .await;
+
+        assert!(
+            handoff_receiver.recv().await.is_none(),
+            "monitor shutdown should close the handoff channel"
+        );
+        assert_eq!(
+            handoff_drops.get(),
+            1,
+            "subscription shutdown should increment the handoff drop counter"
         );
         Ok(())
     }
@@ -845,7 +873,6 @@ pub struct NodeCoordination {
     kv_client: CoordinationKvClient,
     nats_client: async_nats::Client,
     current_mode: InstanceMode,
-    handoff_receiver: Option<mpsc::Receiver<HandoffRequest>>,
     work_tracker: Arc<RwLock<WorkTracker>>,
     leadership_failures: CoordinationPrimitive,
     handoff_drops: CoordinationPrimitive,
@@ -871,6 +898,49 @@ impl NodeCoordination {
         )
     }
 
+    async fn forward_handoff_requests<S>(
+        mut sub: S,
+        target_instance_id: String,
+        handoff_sender: mpsc::Sender<HandoffRequest>,
+        handoff_drops: CoordinationPrimitive,
+        service_name: String,
+    ) where
+        S: Stream<Item = async_nats::Message> + Unpin,
+    {
+        while let Some(message) = sub.next().await {
+            match Self::decode_handoff_request(&message.payload, "handoff request") {
+                Ok(request) => {
+                    if request.target_instance_id != target_instance_id {
+                        continue;
+                    }
+
+                    if handoff_sender.send(request).await.is_err() {
+                        let _ = handoff_drops.add(1);
+                        warn!(
+                            service = %service_name,
+                            handoff_drops = handoff_drops.get(),
+                            "Handoff monitor channel closed while delivering request"
+                        );
+                        return;
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        service = %service_name,
+                        error = %error,
+                        "Ignoring malformed handoff request"
+                    );
+                }
+            }
+        }
+
+        let _ = handoff_drops.add(1);
+        warn!(
+            service = %service_name,
+            "Handoff subscription closed while monitoring; leader can no longer receive handoff requests"
+        );
+    }
+
     pub async fn new(
         service_name: String,
         instance_id: String,
@@ -890,7 +960,6 @@ impl NodeCoordination {
             kv_client,
             nats_client,
             current_mode: InstanceMode::Standby,
-            handoff_receiver: None,
             work_tracker,
             leadership_failures: CoordinationPrimitive::event_counter(
                 0,
@@ -1075,14 +1144,12 @@ impl NodeCoordination {
 
         // Start leader tasks
         // Use a larger channel to absorb handoff bursts.
-        let (handoff_sender, handoff_receiver) = mpsc::channel(100);
-        self.handoff_receiver = Some(handoff_receiver);
+        let (handoff_sender, mut handoff_rx) = mpsc::channel(100);
 
         // Spawn handoff monitor.
         let nats_clone = self.nats_client.clone();
         let service_name_clone = self.instance.service_name.clone();
         let instance_id_clone = self.instance.instance_id.clone();
-        let handoff_sender_clone = handoff_sender.clone();
         let handoff_drops_clone = self.handoff_drops.clone();
 
         // Monitor spawned task health.
@@ -1090,32 +1157,18 @@ impl NodeCoordination {
         let _monitor_handle = AbortOnDrop(Some(tokio::spawn(async move {
             let subject = format!("sinex.coordination.{service_name_clone}.handoff");
             match nats_clone.subscribe(subject.clone()).await {
-                Ok(mut sub) => {
-                    while let Some(msg) = sub.next().await {
-                        match Self::decode_handoff_request(&msg.payload, "handoff request") {
-                            Ok(req) => {
-                                if req.target_instance_id == instance_id_clone
-                                    && handoff_sender_clone.send(req).await.is_err()
-                                {
-                                    let _ = handoff_drops_clone.add(1);
-                                    warn!(
-                                        handoff_drops = handoff_drops_clone.get(),
-                                        "Handoff channel backpressure: dropped handoff request"
-                                    );
-                                }
-                            }
-                            Err(error) => {
-                                warn!(
-                                    service = %service_name_health,
-                                    error = %error,
-                                    "Ignoring malformed handoff request"
-                                );
-                            }
-                        }
-                    }
-                    // Normal completion
+                Ok(sub) => {
+                    Self::forward_handoff_requests(
+                        sub,
+                        instance_id_clone,
+                        handoff_sender,
+                        handoff_drops_clone,
+                        service_name_health,
+                    )
+                    .await;
                 }
                 Err(e) => {
+                    let _ = handoff_drops_clone.add(1);
                     error!(
                         service = %service_name_health,
                         error = %e,
@@ -1130,10 +1183,6 @@ impl NodeCoordination {
         let kv_client = self.kv_client.clone();
         let instance_id = self.instance.instance_id.clone();
         let instance = self.instance.clone();
-        let mut handoff_rx = self
-            .handoff_receiver
-            .take()
-            .ok_or(SinexError::invalid_state("No handoff receiver"))?;
         let process_events_future = process_events();
         tokio::pin!(process_events_future);
 
@@ -1181,10 +1230,23 @@ impl NodeCoordination {
                }
 
                // Handoffs
-               Some(request) = handoff_rx.recv() => {
-                   info!("Received handoff request");
-                   self.handle_graceful_handoff(request).await?;
-                   return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
+               request = handoff_rx.recv() => {
+                   match request {
+                       Some(request) => {
+                           info!("Received handoff request");
+                           self.handle_graceful_handoff(request).await?;
+                           return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
+                       }
+                       None => {
+                           warn!(service = %self.instance.service_name,
+                               instance_id = %self.instance.instance_id,
+                               "Handoff monitor terminated unexpectedly; cannot receive handoff requests"
+                           );
+                           return Err(SinexError::channel_receive(
+                               "Handoff monitor channel closed while leader is running",
+                           ));
+                       }
+                   }
                }
             }
         }
