@@ -287,45 +287,17 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 mod tests {
     // Inline because this covers local env parsing semantics in the pool module.
     use super::{
-        DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_with_default,
-        parse_env_override_value,
+        DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default,
     };
     use xtask::sandbox::sinex_serial_test;
 
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<String>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: &str) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::EnvGuard;
 
     #[test]
     fn env_parse_override_rejects_invalid_numeric_values() {
-        let parsed = parse_env_override_value::<u64>("SINEX_UNUSED", "bogus", "test context");
+        let mut env = EnvGuard::new();
+        env.set("SINEX_UNUSED", "bogus");
+        let parsed = env_parse_override::<u64>("SINEX_UNUSED", "test context");
         assert!(parsed.is_none());
     }
 
@@ -341,11 +313,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn pool_config_from_env_ignores_invalid_overrides() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&[
-            "SINEX_DB_MAX_CONNECTIONS",
-            "SINEX_DB_MIN_CONNECTIONS",
-            "SINEX_DB_ACQUIRE_TIMEOUT_SECS",
-        ]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_DB_MAX_CONNECTIONS", "bogus");
         env.set("SINEX_DB_MIN_CONNECTIONS", "bogus");
         env.set("SINEX_DB_ACQUIRE_TIMEOUT_SECS", "bogus");
