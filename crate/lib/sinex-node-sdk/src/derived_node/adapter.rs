@@ -452,7 +452,8 @@ where
             match &result {
                 Ok(_) => reporter.record_success(),
                 Err(e) => {
-                    let sinex_error = SinexError::processing(e.to_string());
+                    let sinex_error = SinexError::processing("derived node processing error")
+                        .with_source(e.to_string());
                     reporter.record_error(&sinex_error);
                 }
             }
@@ -555,7 +556,7 @@ where
             payload: filtered_payload,
             ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
-            node_run_id: None,
+            node_run_id: self.runtime.as_ref().and_then(|r| r.node_run_id()),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -569,25 +570,36 @@ where
     }
 
     /// Process a batch of events.
+    ///
+    /// Events that fail with `ErrorAction::Retry` halt the batch — the checkpoint
+    /// is NOT advanced past them and the first retry error is returned.
     pub async fn process_batch(
         &mut self,
         events: Vec<Event<JsonValue>>,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         let mut outputs = Vec::new();
+        let mut retry_error: Option<SinexError> = None;
 
         for event in events {
             match self.process_one(event).await {
                 Ok(mut output_events) => outputs.append(&mut output_events),
                 Err(e) => {
-                    error!(node = %self.node.name(), error = %e, "Error processing event in batch");
+                    error!(node = %self.node.name(), error = %e, "Retryable error processing event in batch; halting batch");
+                    retry_error = Some(e);
+                    break;
                 }
             }
         }
 
-        if self.should_checkpoint()
-            && let Err(e) = self.save_state().await
-        {
-            warn!(node = %self.node.name(), error = %e, "Failed to save checkpoint after batch");
+        if self.should_checkpoint() {
+            self.save_state().await.map_err(|e| {
+                error!(node = %self.node.name(), error = %e, "Failed to save checkpoint after batch");
+                e
+            })?;
+        }
+
+        if let Some(e) = retry_error {
+            return Err(e);
         }
 
         Ok(outputs)
@@ -1245,7 +1257,25 @@ where
                         }
                     }
                     Err(e) => {
-                        warn!(node = %self.node.name(), error = %e, "Error in historical replay, skipping");
+                        let action = self.node.handle_error_derived(&e);
+                        match action {
+                            ErrorAction::Skip => {
+                                warn!(node = %self.node.name(), error = %e, "Skipping event in historical replay");
+                            }
+                            ErrorAction::SendToDLQ => {
+                                let event_for_dlq = query_event.event.clone();
+                                if let Err(dlq_err) = self.send_to_dlq_or_fail(&event_for_dlq, &e).await {
+                                    error!(node = %self.node.name(), error = %dlq_err, "Failed to send to DLQ during replay");
+                                }
+                            }
+                            ErrorAction::Retry => {
+                                error!(node = %self.node.name(), error = %e, "Retryable error in historical replay; halting replay");
+                                if let Err(cp_err) = self.save_state().await {
+                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay error");
+                                }
+                                return Err(e.into());
+                            }
+                        }
                     }
                 }
                 events_processed += 1;
@@ -1261,9 +1291,10 @@ where
             }
         }
 
-        if let Err(e) = self.save_state().await {
-            warn!(node = %self.node.name(), error = %e, "Failed to save checkpoint after replay");
-        }
+        self.save_state().await.map_err(|e| {
+            error!(node = %self.node.name(), error = %e, "Failed to save checkpoint after replay");
+            e
+        })?;
 
         info!(
             node = %self.node.name(),
@@ -1578,24 +1609,35 @@ mod tests {
     use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
-    use crate::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerWrapper};
+    use crate::derived_node::{
+        DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
+    };
     use crate::exploration::ExplorationProvider;
-    use crate::runtime::stream::Checkpoint;
+    use crate::runtime::stream::{
+        Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo,
+    };
     use crate::shutdown::ShutdownConfig;
-    use crate::{CheckpointManager, CheckpointState, SinexError};
+    use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
     use crate::{NodeLogicError, TransducerNode};
     use super::signal_shutdown_channel;
+    use camino::Utf8PathBuf;
     use futures::TryStreamExt;
+    use serde_json::json;
     use tempfile::tempdir;
     #[cfg(feature = "messaging")]
     use crate::self_observation::SelfObservationError;
     use serde::{Deserialize, Serialize};
-    use sinex_primitives::JsonValue;
+    use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
-    use std::sync::Arc;
-    use tokio::sync::watch;
-    use xtask::sandbox::sinex_test;
+    use sinex_primitives::{HostName, Id, JsonValue, Uuid};
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::sync::{mpsc, watch};
+    use xtask::sandbox::prelude::*;
 
     #[derive(Debug, Default, Serialize, Deserialize)]
     struct TestDerivedState;
@@ -1631,6 +1673,175 @@ mod tests {
         ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
             Ok(None)
         }
+    }
+
+    struct RetryDerivedNode {
+        seen: Arc<AtomicUsize>,
+    }
+
+    impl TransducerNode for RetryDerivedNode {
+        type State = TestDerivedState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "derived-adapter-retry-test"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "test.input"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "test.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            _state: &mut Self::State,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            self.seen.fetch_add(1, Ordering::SeqCst);
+            Err(NodeLogicError::Processing("retry requested".to_string()))
+        }
+
+        fn handle_error(&self, _error: &NodeLogicError) -> crate::ErrorAction {
+            crate::ErrorAction::Retry
+        }
+    }
+
+    struct EmittingDerivedNode;
+
+    impl TransducerNode for EmittingDerivedNode {
+        type State = TestDerivedState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "derived-adapter-emitting-test"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "test.input"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "test.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            _state: &mut Self::State,
+            _input: Self::Input,
+            context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(Some(DerivedOutput::transduced(
+                json!({"ok": true}),
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                context.trigger_uuid(),
+            )))
+        }
+    }
+
+    #[derive(Default, Deserialize)]
+    struct UnserializableDerivedState;
+
+    impl Serialize for UnserializableDerivedState {
+        fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("state serialization exploded"))
+        }
+    }
+
+    struct UnserializableDerivedNode;
+
+    impl TransducerNode for UnserializableDerivedNode {
+        type State = UnserializableDerivedState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "adapter-regression-unserializable-checkpoint"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "test.input"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "test.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            _state: &mut Self::State,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(None)
+        }
+    }
+
+    fn make_input_event(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
+        let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
+            .from_parents([Id::<Event<JsonValue>>::new()])?
+            .build()?;
+        event.id = Some(event.id.unwrap_or_else(Id::new));
+        Ok(event)
+    }
+
+    async fn make_runtime_state(ctx: &TestContext, node_name: &str, node_run_id: Option<Uuid>) -> TestResult<NodeRuntimeState> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            node_name.to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
+        let emitter = EventEmitter::new(event_sender, false);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = NodeHandles::new_edge(
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone())
+            .map_err(|path| color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display()))?;
+        Ok(NodeRuntimeState::new(
+            ServiceInfo::new(
+                node_name.to_string(),
+                node_name.to_string(),
+                HostName::from_static("test-host"),
+                work_dir_path,
+                false,
+                format!("instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                node_run_id,
+            ),
+            handles,
+            HashMap::new(),
+            work_dir_utf8,
+        ))
     }
 
     #[sinex_test]
@@ -1801,6 +2012,82 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("missing state data"));
         assert!(message.contains("derived-adapter-test"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_batch_halts_on_retry_error() -> TestResult<()> {
+        let seen = Arc::new(AtomicUsize::new(0));
+        let node = RetryDerivedNode {
+            seen: Arc::clone(&seen),
+        };
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(node));
+
+        let error = adapter
+            .process_batch(vec![make_input_event("first")?, make_input_event("second")?])
+            .await
+            .expect_err("retry errors must stop the batch");
+
+        assert!(
+            error.to_string().contains("retry"),
+            "retryable batch failure should propagate an explicit error: {error:#}"
+        );
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            1,
+            "batch processing must stop at the first retryable error"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_batch_surfaces_checkpoint_save_failures(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let mut adapter = DerivedNodeAdapter::with_config(
+            TransducerWrapper(UnserializableDerivedNode),
+            DerivedNodeConfig {
+                checkpoint_interval: 1,
+                ..DerivedNodeConfig::default()
+            },
+        );
+        adapter.runtime = Some(
+            make_runtime_state(
+                &ctx,
+                "adapter-regression-unserializable-checkpoint",
+                Some(Uuid::now_v7()),
+            )
+            .await?,
+        );
+        adapter.checkpoint_manager = Some(adapter.runtime.as_ref().expect("runtime set").checkpoint_manager());
+
+        let error = adapter
+            .process_batch(vec![make_input_event("checkpoint")?])
+            .await
+            .expect_err("checkpoint serialization failures must fail the batch");
+
+        assert!(
+            error.to_string().contains("serialize state"),
+            "checkpoint save failure should surface serialization context: {error:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn derived_outputs_propagate_runtime_node_run_id(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let node_run_id = Uuid::now_v7();
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+        adapter.runtime = Some(
+            make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(node_run_id)).await?,
+        );
+
+        let outputs = adapter.process_one(make_input_event("emit")?).await?;
+        let output = outputs
+            .into_iter()
+            .next()
+            .expect("emitting node should produce one output event");
+
+        assert_eq!(output.node_run_id, Some(node_run_id));
         Ok(())
     }
 }
