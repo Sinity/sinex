@@ -124,6 +124,7 @@ impl CheckpointState {
         let record = FileCheckpointRecord {
             magic: FILE_CHECKPOINT_MAGIC.to_string(),
             version: FILE_CHECKPOINT_VERSION,
+            revision: self.revision,
             state: self.clone(),
         };
 
@@ -191,13 +192,16 @@ impl CheckpointState {
             );
         }
 
+        let mut state = record.state;
+        state.revision = record.revision;
+
         info!(
             path = %path.display(),
-            processed_count = record.state.processed_count,
+            processed_count = state.processed_count,
             "Loaded checkpoint from file"
         );
 
-        Ok(Some(record.state))
+        Ok(Some(state))
     }
 
     /// Delete the checkpoint file if it exists.
@@ -226,6 +230,8 @@ const FILE_CHECKPOINT_VERSION: u32 = 1;
 struct FileCheckpointRecord {
     magic: String,
     version: u32,
+    #[serde(default)]
+    revision: u64,
     state: CheckpointState,
 }
 

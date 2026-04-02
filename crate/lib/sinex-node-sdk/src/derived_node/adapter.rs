@@ -315,9 +315,10 @@ where
     async fn load_state(&mut self) -> NodeResult<()> {
         // Priority 1: file-based checkpoint (hot reload)
         if self.shutdown_config.restore_state_on_startup
-            && let Some(persisted) = self.try_restore_from_file().await?
+            && let Some((persisted, revision)) = self.try_restore_from_file().await?
         {
             self.persisted_state = persisted;
+            self.last_revision = revision;
             return Ok(());
         }
 
@@ -356,7 +357,9 @@ where
         Ok(())
     }
 
-    async fn try_restore_from_file(&self) -> NodeResult<Option<PersistedState<N::State>>> {
+    async fn try_restore_from_file(
+        &self,
+    ) -> NodeResult<Option<(PersistedState<N::State>, u64)>> {
         let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
         let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
             return Ok(None);
@@ -385,7 +388,7 @@ where
                     .with_context("path", checkpoint_path.display().to_string())
                     .with_std_error(&error)
             })?;
-        Ok(Some(persisted))
+        Ok(Some((persisted, file_state.revision)))
     }
 
     pub async fn save_state_to_file(&self) -> std::io::Result<()> {
@@ -2489,6 +2492,72 @@ mod tests {
         assert_eq!(
             adapter.current_checkpoint_internal(),
             Checkpoint::internal(resume_event_id, 7)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_restores_hot_reload_revision_for_followup_save(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = Arc::new(CheckpointManager::new(
+            kv,
+            "derived-adapter-hot-reload-revision-test".to_string(),
+            "test-group".to_string(),
+            "hot-reload-consumer".to_string(),
+        ));
+
+        let persisted_json = serde_json::json!({
+            "state": null,
+            "events_processed": 3,
+            "last_checkpoint": Timestamp::now(),
+            "version": 1,
+            "last_input_event_id": Uuid::now_v7(),
+        });
+        let baseline_revision = manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::internal(Uuid::now_v7(), 3),
+                processed_count: 3,
+                last_activity: Timestamp::now(),
+                data: Some(persisted_json.clone()),
+                version: 2,
+                revision: 0,
+            })
+            .await?;
+
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir
+            .path()
+            .join("derived-hot-reload-revision.checkpoint.json");
+        CheckpointState {
+            checkpoint: Checkpoint::internal(Uuid::now_v7(), 3),
+            processed_count: 3,
+            last_activity: Timestamp::now(),
+            data: Some(persisted_json),
+            version: 2,
+            revision: baseline_revision,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+            TransducerWrapper(TestDerivedNode),
+            ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path.clone()),
+                ..ShutdownConfig::default()
+            },
+        );
+        adapter.checkpoint_manager = Some(Arc::clone(&manager));
+
+        adapter.load_state().await?;
+        assert_eq!(adapter.last_revision, baseline_revision);
+
+        adapter.save_state().await?;
+        assert!(
+            adapter.last_revision > baseline_revision,
+            "restored hot reload state must keep the prior KV revision so the next save updates instead of blind-creating"
         );
         Ok(())
     }
