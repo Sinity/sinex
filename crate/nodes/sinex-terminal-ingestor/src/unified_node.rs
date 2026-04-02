@@ -21,6 +21,7 @@ use sinex_node_sdk::{
         Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
+    wait_for_shutdown_signal,
 };
 use sinex_primitives::{
     Bytes, Seconds,
@@ -3038,7 +3039,7 @@ impl IngestorNode for TerminalNode {
         );
 
         let mut shutdown_rx = shutdown_rx;
-        if shutdown_rx.changed().await.is_err() {
+        if !wait_for_shutdown_signal(&mut shutdown_rx).await {
             let warning =
                 "terminal continuous monitoring shutdown channel dropped before explicit shutdown";
             warn!("{warning}");
@@ -5364,6 +5365,68 @@ mod tests {
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_returns_immediately_when_shutdown_already_requested(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-pre-signaled-shutdown")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let _ = shutdown_tx.send(true);
+
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+        )
+        .await??;
+        assert!(
+            report.warnings.is_empty(),
+            "pre-signaled shutdown should not be reported as a dropped shutdown channel: {:?}",
+            report.warnings
+        );
+
+        node.shutdown(&state).await?;
         Ok(())
     }
 

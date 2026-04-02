@@ -27,6 +27,7 @@ use sinex_node_sdk::{
         TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
+    wait_for_shutdown_signal,
 };
 use sinex_primitives::{
     Seconds, Uuid,
@@ -635,7 +636,7 @@ impl IngestorNode for FilesystemNode {
 
         // Wait for shutdown signal instead of awaiting pending
         let mut shutdown_rx = shutdown_rx;
-        if shutdown_rx.changed().await.is_err() {
+        if !wait_for_shutdown_signal(&mut shutdown_rx).await {
             warn!("Filesystem watcher shutdown channel dropped before explicit shutdown");
         }
 
@@ -1353,6 +1354,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
+    use xtask::sandbox::node_runtime::TestRuntimeBuilder;
     use xtask::sandbox::sinex_test;
 
     #[cfg(unix)]
@@ -1589,6 +1591,48 @@ mod tests {
             message.contains("watcher_index"),
             "watcher index should be preserved in shutdown failure context: {message}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_run_continuous_returns_immediately_when_shutdown_already_requested(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let runtime = TestRuntimeBuilder::new(&ctx, "filesystem-pre-signaled-shutdown")
+            .with_dry_run(true)
+            .build()
+            .await?;
+
+        let temp_root = tempdir()?;
+        let watch_path = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?
+            .to_string();
+
+        let mut node = FilesystemNode::new();
+        let config = FilesystemConfig {
+            watch_paths: vec![watch_path],
+            ..FilesystemConfig::default()
+        };
+        let mut state = FilesystemCheckpoint::default();
+        node.initialize(config, &runtime.runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let _ = shutdown_tx.send(true);
+
+        let report = timeout(
+            Duration::from_secs(1),
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+        )
+        .await??;
+        assert!(
+            report.warnings.is_empty(),
+            "pre-signaled shutdown should not be reported as a dropped shutdown channel: {:?}",
+            report.warnings
+        );
+
+        node.shutdown(&state).await?;
         Ok(())
     }
 
