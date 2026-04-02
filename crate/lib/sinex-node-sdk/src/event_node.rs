@@ -247,10 +247,18 @@ impl EventBatcher {
 
     /// Store failed events in dead letter queue
     async fn store_dead_letter_events(events: &[Event<JsonValue>]) -> NodeResult<()> {
-        // Write to local file for now - could be enhanced with database storage
-        let dead_letter_path = environment()
-            .temp_dir()
+        let env = environment();
+        let dead_letter_path = env
+            .work_directory(
+                dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")),
+            )
+            .join("sinex")
             .join("sinex_dead_letter_events.json");
+        warn!(
+            path = ?dead_letter_path,
+            events = events.len(),
+            "Writing failed events to local DLQ file"
+        );
         Self::store_dead_letter_events_at_path(events, &dead_letter_path).await
     }
 
@@ -355,8 +363,17 @@ mod tests {
     use super::EventBatcher;
     use sinex_primitives::{DynamicPayload, Provenance, Uuid, events::EventId};
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{TestResult, sinex_serial_test, sinex_test};
+
+    async fn remove_if_exists(path: &Path) -> TestResult<()> {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
 
     #[sinex_test]
     async fn dead_letter_write_failure_is_propagated() -> TestResult<()> {
@@ -383,6 +400,39 @@ mod tests {
 
         fs::set_permissions(temp_dir.path(), original_permissions)?;
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn dead_letter_write_uses_namespaced_work_directory() -> TestResult<()> {
+        let event = DynamicPayload::new(
+            "dlq.test",
+            "dead_letter.path",
+            serde_json::json!({"ok": true}),
+        )
+        .with_provenance(Provenance::from_synthesis_safe(
+            EventId::from_uuid(Uuid::now_v7()),
+            Vec::new(),
+        ))
+        .build()
+        .expect("infallible: test provenance set");
+
+        let env = sinex_primitives::environment();
+        let dead_letter_path = env
+            .work_directory(
+                dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")),
+            )
+            .join("sinex")
+            .join("sinex_dead_letter_events.json");
+
+        remove_if_exists(&dead_letter_path).await?;
+        EventBatcher::store_dead_letter_events(&[event]).await?;
+        assert!(
+            dead_letter_path.exists(),
+            "expected DLQ file at {:?}",
+            dead_letter_path
+        );
+        remove_if_exists(&dead_letter_path).await?;
         Ok(())
     }
 }
