@@ -2437,7 +2437,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 &transport,
                 resolve_result.events,
             )
-            .await;
+            .await?;
 
             processed_events += batch_count;
             events_since_checkpoint += batch_count;
@@ -2726,7 +2726,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         node: &mut T,
         transport: &EventTransport,
         events: Vec<Event<JsonValue>>,
-    ) -> u64 {
+    ) -> NodeResult<u64> {
         let batch_size = events.len();
         let events_backup = events.clone();
 
@@ -2739,7 +2739,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                         "Processed event batch"
                     );
                 }
-                stats.processed as u64
+                Ok(stats.processed as u64)
             }
             Err(batch_err) => {
                 warn!(
@@ -2765,11 +2765,25 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .send_to_dlq(&event, &event_err.to_string(), &node_name)
                                 .await
                             {
-                                error!(
-                                    error = %event_err,
-                                    dlq_error = %dlq_err,
-                                    ?event_id,
-                                    "Failed to route event to DLQ"
+                                return Err(
+                                    SinexError::processing(
+                                        "failed to route failed automaton event to DLQ",
+                                    )
+                                    .with_context("node", node_name.clone())
+                                    .with_context(
+                                        "event_id",
+                                        event_id
+                                            .as_ref()
+                                            .map(std::string::ToString::to_string)
+                                            .unwrap_or_else(|| "missing".to_string()),
+                                    )
+                                    .with_context("source", event.source.as_str().to_string())
+                                    .with_context(
+                                        "event_type",
+                                        event.event_type.as_str().to_string(),
+                                    )
+                                    .with_context("processing_error", event_err.to_string())
+                                    .with_source(dlq_err),
                                 );
                             }
                         }
@@ -2778,7 +2792,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let dlq_count = batch_size as u64 - succeeded;
                 info!(succeeded, dlq_count, "Per-event fallback complete");
                 // Count DLQ'd events as processed for checkpoint advancement
-                batch_size as u64
+                Ok(batch_size as u64)
             }
         }
     }
@@ -2979,6 +2993,9 @@ mod tests {
     #[derive(Default)]
     struct FailingShutdownNode;
 
+    #[derive(Default)]
+    struct FailingBatchNode;
+
     impl Node for RuntimeTestNode {
         type Config = ();
 
@@ -3056,6 +3073,51 @@ mod tests {
 
         async fn shutdown(&mut self) -> NodeResult<()> {
             Err(SinexError::processing("node shutdown failed"))
+        }
+    }
+
+    impl Node for FailingBatchNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "runtime-failing-batch-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn process_event_batch(
+            &mut self,
+            _events: Vec<Event<JsonValue>>,
+        ) -> NodeResult<ProcessingStats> {
+            Err(SinexError::processing("batch processing boom"))
         }
     }
 
@@ -3266,6 +3328,54 @@ mod tests {
         let error = NodeRunner::<RuntimeTestNode>::build_event_from_provisional(&provisional)
             .expect_err("invalid persisted node_run_id must fail honestly");
         assert!(error.to_string().contains("Invalid UUID for node_run_id"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+        let mut node = FailingBatchNode;
+        let event = Event {
+            id: Some(EventId::from(Uuid::now_v7())),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({"ok": true}),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        let error = NodeRunner::<FailingBatchNode>::process_batch_with_dlq_fallback(
+            &mut node,
+            &transport,
+            vec![event],
+        )
+        .await
+        .expect_err("failed DLQ routing must stop checkpoint advancement");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to route failed automaton event to DLQ"));
+        assert!(message.contains("batch processing boom"));
+        assert!(message.contains("runtime-failing-batch-node"));
         Ok(())
     }
 
