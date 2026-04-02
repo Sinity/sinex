@@ -152,6 +152,99 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
+async fn state_repository_statistics_respect_since_and_round_fractional_averages(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.state();
+
+    repo.log_operation(Operation {
+        id: None,
+        operation_type: "purge".to_string(),
+        operator: "test-service@localhost".to_string(),
+        scope: None,
+        result_status: OperationStatus::Success,
+        result_message: None,
+        preview_summary: None,
+        duration_ms: Some(5),
+    })
+    .await?;
+
+    let since = Timestamp::now();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    repo.log_operation(Operation {
+        id: None,
+        operation_type: "purge".to_string(),
+        operator: "test-service@localhost".to_string(),
+        scope: None,
+        result_status: OperationStatus::Success,
+        result_message: None,
+        preview_summary: None,
+        duration_ms: Some(100),
+    })
+    .await?;
+    repo.log_operation(Operation {
+        id: None,
+        operation_type: "purge".to_string(),
+        operator: "test-service@localhost".to_string(),
+        scope: None,
+        result_status: OperationStatus::Failed,
+        result_message: Some("boom".to_string()),
+        preview_summary: None,
+        duration_ms: Some(101),
+    })
+    .await?;
+
+    let stats = repo.get_operation_statistics(Some(since)).await?;
+    assert_eq!(stats.total, 2);
+    assert_eq!(stats.successful, 1);
+    assert_eq!(stats.failed, 1);
+    assert_eq!(stats.cancelled, 0);
+    assert_eq!(stats.avg_duration_ms, Some(101));
+    Ok(())
+}
+
+#[sinex_test]
+async fn state_repository_failed_operations_respect_since_filter(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.state();
+
+    repo.log_operation(Operation {
+        id: None,
+        operation_type: "purge".to_string(),
+        operator: "test-service@localhost".to_string(),
+        scope: None,
+        result_status: OperationStatus::Failed,
+        result_message: Some("old failure".to_string()),
+        preview_summary: None,
+        duration_ms: Some(10),
+    })
+    .await?;
+
+    let since = Timestamp::now();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let recent = repo
+        .log_operation(Operation {
+            id: None,
+            operation_type: "purge".to_string(),
+            operator: "test-service@localhost".to_string(),
+            scope: None,
+            result_status: OperationStatus::Failed,
+            result_message: Some("recent failure".to_string()),
+            preview_summary: None,
+            duration_ms: Some(11),
+        })
+        .await?;
+
+    let failed = repo.get_failed_operations(Some(since), None).await?;
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].id, recent.id);
+    Ok(())
+}
+
+#[sinex_test]
 async fn log_operation_accepts_custom_audit_operation_type(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let logged = repo

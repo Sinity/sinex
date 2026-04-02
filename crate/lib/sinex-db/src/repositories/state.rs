@@ -8,13 +8,13 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
-use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool};
 use std::ops::Bound;
 use std::str::FromStr;
@@ -567,7 +567,7 @@ impl StateRepository<'_> {
     /// Get failed operations
     pub async fn get_failed_operations(
         &self,
-        _since: Option<Timestamp>,
+        since: Option<Timestamp>,
         limit: Option<i64>,
     ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
@@ -586,9 +586,11 @@ impl StateRepository<'_> {
                 duration_ms
             FROM core.operations_log 
             WHERE result_status = 'failure'
+              AND ($1::timestamptz IS NULL OR uuid_extract_timestamp(id) >= $1)
             ORDER BY id DESC
-            LIMIT $1
+            LIMIT $2
             "#,
+            since.map(|timestamp| *timestamp),
             limit
         )
         .fetch_all(self.pool)
@@ -599,7 +601,7 @@ impl StateRepository<'_> {
     /// Get operation statistics
     pub async fn get_operation_statistics(
         &self,
-        _since: Option<Timestamp>,
+        since: Option<Timestamp>,
     ) -> DbResult<OperationStatistics> {
         let result = sqlx::query!(
             r#"
@@ -608,9 +610,12 @@ impl StateRepository<'_> {
                 COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
                 COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
                 COUNT(*) FILTER (WHERE result_status = 'cancelled') as "cancelled!",
-                AVG(duration_ms) as "avg_duration_ms"
+                AVG(duration_ms) as "avg_duration_ms?"
             FROM core.operations_log
+            WHERE ($1::timestamptz IS NULL OR uuid_extract_timestamp(id) >= $1)
             "#
+            ,
+            since.map(|timestamp| *timestamp)
         )
         .fetch_one(self.pool)
         .await
@@ -621,10 +626,11 @@ impl StateRepository<'_> {
             successful: result.successful,
             failed: result.failed,
             cancelled: result.cancelled,
-            avg_duration_ms: result.avg_duration_ms.and_then(|d: BigDecimal| {
-                use std::str::FromStr;
-                i64::from_str(&d.to_string()).ok()
-            }),
+            avg_duration_ms: result
+                .avg_duration_ms
+                .and_then(|duration| duration.to_f64())
+                .map(f64::round)
+                .and_then(|duration| i64::try_from(duration as i128).ok()),
         })
     }
 
