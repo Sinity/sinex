@@ -1104,6 +1104,57 @@ async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> 
 }
 
 #[sinex_test]
+async fn scope_invalidation_surfaces_stale_output_lookup_failures(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-stale-lookup"))
+        .await?;
+    let scope_key = "scope:stale-lookup-failure";
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 2_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some(scope_key.to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
+
+    let bad_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
+    let mut adapter = initialize_scope_reconciler_adapter_with_pool(&ctx, bad_pool).await?;
+
+    let error = adapter
+        .process_invalidation(&invalidation)
+        .await
+        .expect_err("stale output lookup failures must surface instead of skipping scopes");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("Failed to query stale outputs"));
+    assert!(rendered.contains(scope_key));
+    Ok(())
+}
+
+#[sinex_test]
 async fn scope_invalidation_rejects_outputs_without_source_event_ids(
     ctx: TestContext,
 ) -> TestResult<()> {

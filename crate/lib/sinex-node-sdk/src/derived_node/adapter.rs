@@ -46,26 +46,23 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
     true
 }
 
-fn stale_output_ids_or_skip_scope(
+fn stale_output_ids_or_fail_scope(
     node_name: &str,
     scope_key: &str,
     stale_query_result: Result<Vec<QueryResultEvent>, SinexError>,
-) -> Option<Vec<Uuid>> {
+) -> Result<Vec<Uuid>, SinexError> {
     match stale_query_result {
-        Ok(events) => Some(
+        Ok(events) => Ok(
             events
                 .iter()
                 .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
                 .collect(),
         ),
         Err(error) => {
-            error!(
-                node = node_name,
-                scope_key,
-                error = %error,
-                "Failed to query stale outputs — skipping scope to prevent duplicate recomputation"
-            );
-            None
+            Err(SinexError::processing("Failed to query stale outputs for invalidation recompute")
+                .with_context("node", node_name)
+                .with_context("scope_key", scope_key)
+                .with_source(error))
         }
     }
 }
@@ -858,14 +855,12 @@ where
                 ..EventQuery::default()
             };
 
-            let Some(stale_ids) = stale_output_ids_or_skip_scope(
+            let stale_ids = stale_output_ids_or_fail_scope(
                 self.node.name(),
                 scope_key,
                 self.load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
                     .await,
-            ) else {
-                continue;
-            };
+            )?;
 
             // ── Step 2: Load working set (input events for this scope) ──
             let query = EventQuery {
@@ -1987,7 +1982,7 @@ mod tests {
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
     use super::signal_shutdown_channel;
-    use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
+    use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
     use crate::derived_node::{
         DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, ScopeReconcilerWrapper,
         TransducerWrapper,
@@ -2480,21 +2475,26 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stale_output_ids_or_skip_scope_returns_empty_ids_on_success() -> TestResult<()> {
-        let stale_ids = stale_output_ids_or_skip_scope("test-derived", "scope-a", Ok(Vec::new()))
-            .expect("successful stale query should not skip scope");
+    async fn stale_output_ids_or_fail_scope_returns_empty_ids_on_success() -> TestResult<()> {
+        let stale_ids = stale_output_ids_or_fail_scope("test-derived", "scope-a", Ok(Vec::new()))
+            .expect("successful stale query should return ids");
         assert!(stale_ids.is_empty());
         Ok(())
     }
 
     #[sinex_test]
-    async fn stale_output_ids_or_skip_scope_skips_scope_on_query_error() -> TestResult<()> {
-        let stale_ids = stale_output_ids_or_skip_scope(
+    async fn stale_output_ids_or_fail_scope_surfaces_query_error() -> TestResult<()> {
+        let error = stale_output_ids_or_fail_scope(
             "test-derived",
             "scope-a",
             Err(SinexError::invalid_state("corrupt stale output row")),
-        );
-        assert!(stale_ids.is_none());
+        )
+        .expect_err("stale output query errors must fail the invalidation scope");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Failed to query stale outputs"));
+        assert!(rendered.contains("test-derived"));
+        assert!(rendered.contains("scope-a"));
         Ok(())
     }
 
