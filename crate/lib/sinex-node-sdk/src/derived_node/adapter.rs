@@ -542,6 +542,10 @@ where
         self.events_since_checkpoint += 1;
     }
 
+    fn record_state_mutation(&mut self) {
+        self.events_since_checkpoint += 1;
+    }
+
     // ── Event Processing ───────────────────────────────────────────────
 
     /// Process a single event through the derived node's logic.
@@ -1055,6 +1059,7 @@ where
                             return None;
                         }
                     };
+                    self.record_state_mutation();
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
                     if self.should_checkpoint() {
@@ -2121,6 +2126,64 @@ mod tests {
         }
     }
 
+    #[derive(Default, Serialize, Deserialize)]
+    struct StatefulInvalidationState {
+        invalidations_applied: u64,
+    }
+
+    struct StatefulInvalidationNode;
+
+    impl ScopeReconcilerNode for StatefulInvalidationNode {
+        type State = StatefulInvalidationState;
+        type Input = ScopeReconcilerInput;
+        type Output = ScopeReconcilerOutput;
+
+        fn name(&self) -> &'static str {
+            "adapter-regression-stateful-invalidation"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "measurement.taken"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "measurement.aggregate"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        fn scope_keys(
+            &self,
+            _input: &Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> Vec<String> {
+            vec!["default".into()]
+        }
+
+        async fn reconcile(
+            &mut self,
+            _state: &mut Self::State,
+            _scope_key: &str,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(Vec::new())
+        }
+
+        async fn recompute_scope(
+            &mut self,
+            state: &mut Self::State,
+            _scope_key: &str,
+            _working_set: Vec<Self::Input>,
+            _context: &DerivedTriggerContext,
+        ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+            state.invalidations_applied += 1;
+            Ok(Vec::new())
+        }
+    }
+
     struct DlqRetryDerivedNode;
 
     impl TransducerNode for DlqRetryDerivedNode {
@@ -2804,6 +2867,78 @@ mod tests {
         assert!(
             result.is_none(),
             "output send failures must fail invalidation handling"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn handle_invalidation_message_checkpoints_state_only_mutations(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        use sinex_db::DbPoolExt;
+        use sinex_primitives::events::DynamicPayload;
+        use sinex_primitives::{EventSource, EventType};
+        use super::super::DerivedScopeInvalidation;
+
+        let ctx = ctx.with_nats().dedicated().await?;
+        let material_id = ctx
+            .create_source_material(Some("derived-invalidation-state-only"))
+            .await?;
+        let scope_key = "scope:state-only";
+
+        let mut input = DynamicPayload::new(
+            "measurements",
+            "measurement.taken",
+            serde_json::json!({ "value": 7_i64 }),
+        )
+        .from_material(material_id)
+        .build()?;
+        input.scope_key = Some(scope_key.to_string());
+        ctx.pool().events().insert_batch(vec![input]).await?;
+
+        let (runtime, _event_receiver) = make_runtime_state_with_db(
+            &ctx,
+            "adapter-regression-stateful-invalidation",
+            None,
+        )
+        .await?;
+
+        let mut adapter = DerivedNodeAdapter::with_config(
+            ScopeReconcilerWrapper(StatefulInvalidationNode),
+            DerivedNodeConfig {
+                checkpoint_interval: 1,
+                ..DerivedNodeConfig::default()
+            },
+        );
+        adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+        adapter.event_sender = Some(runtime.event_sender());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let invalidation = DerivedScopeInvalidation::replaced(
+            Vec::new(),
+            EventSource::from_static("measurements"),
+            EventType::from_static("measurement.taken"),
+        )
+        .with_scope_keys(vec![scope_key.to_string()]);
+        let payload = serde_json::to_vec(&invalidation)?;
+
+        let processed = adapter.handle_invalidation_message(&payload).await;
+        assert_eq!(
+            processed,
+            Some(0),
+            "state-only invalidation should still be treated as a successful recomputation"
+        );
+        assert_eq!(adapter.persisted_state.state.invalidations_applied, 1);
+        assert!(
+            adapter.last_revision > 0,
+            "state-only invalidation should force a checkpoint-worthy state save"
+        );
+        assert_eq!(
+            adapter.events_since_checkpoint,
+            0,
+            "successful invalidation checkpoint should clear the dirty counter"
         );
         Ok(())
     }
