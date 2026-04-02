@@ -490,8 +490,14 @@ pub async fn handle_lifecycle_restore(
 fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> {
     let duration = humantime::parse_duration(duration_str)
         .map_err(|e| SinexError::validation(format!("Invalid duration '{duration_str}': {e}")))?;
+    let duration = time::Duration::try_from(duration).map_err(|error| {
+        SinexError::validation(format!(
+            "Invalid duration '{duration_str}': cannot represent parsed duration precisely"
+        ))
+        .with_std_error(&error)
+    })?;
 
-    let ts = Timestamp::now() - time::Duration::seconds(duration.as_secs() as i64);
+    let ts = Timestamp::now() - duration;
     Ok(Some(ts))
 }
 
@@ -1215,4 +1221,23 @@ pub async fn handle_tombstone_status(
 
     let response = TombstoneStatusResponse { operation };
     Ok(serde_json::to_value(response)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_duration_to_timestamp_preserves_subsecond_precision() {
+        let before = Timestamp::now();
+        let parsed = parse_duration_to_timestamp("500ms")
+            .expect("500ms should parse")
+            .expect("duration parsing should return a timestamp");
+        let delta_ms = (before - parsed).whole_milliseconds();
+
+        assert!(
+            (400..1000).contains(&delta_ms),
+            "expected roughly 500ms delta, got {delta_ms}ms"
+        );
+    }
 }
