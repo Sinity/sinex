@@ -781,6 +781,18 @@ where
         let operation_uuid = invalidation
             .operation_id
             .unwrap_or_else(|| *Id::<Operation>::new().as_uuid());
+        let trigger_event_id = invalidation
+            .affected_event_ids
+            .first()
+            .copied()
+            .map(Id::<Event<JsonValue>>::from_uuid)
+            .ok_or_else(|| {
+                SinexError::validation("scope invalidation is missing affected event ids")
+                    .with_context("node", self.node.name())
+                    .with_context("action", invalidation.action.to_string())
+                    .with_context("event_type", invalidation.event_type.as_ref())
+                    .with_context("source", invalidation.event_source.as_ref())
+            })?;
 
         // Determine scope keys to recompute
         let scope_keys = if invalidation.affected_scope_keys.is_empty() {
@@ -873,11 +885,11 @@ where
 
             // Build context for invalidation processing
             let context = DerivedTriggerContext {
-                trigger_event_id: Id::new(),
+                trigger_event_id,
                 source: invalidation.event_source.clone(),
                 event_type: invalidation.event_type.clone(),
                 ts_orig: None,
-                ts_coided: Timestamp::now(),
+                ts_coided: trigger_event_id.timestamp(),
                 processing_mode: sinex_primitives::domain::ProcessingMode::Replay,
                 trigger_kind: sinex_primitives::domain::TriggerKind::ScopeInvalidation,
                 created_by_operation_id: operation_id,
@@ -1823,7 +1835,14 @@ where
     }
 
     async fn health_check(&self) -> NodeResult<bool> {
-        Ok(self.runtime.is_some())
+        let runtime_initialized = self.runtime.is_some();
+        if !runtime_initialized {
+            return Ok(false);
+        }
+
+        Ok(self.health_reporter.as_ref().map_or(true, |reporter| {
+            reporter.current_status() == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
+        }))
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
@@ -1880,27 +1899,46 @@ where
         let runtime_initialized = self.runtime.is_some();
         let node_name = self.node.name();
         let node_model = self.node.node_model();
-        let description = if runtime_initialized {
-            format!("{node_name} derived node ({node_model})")
-        } else {
+        let health_status = self
+            .health_reporter
+            .as_ref()
+            .map(|reporter| reporter.current_status());
+        let healthy = runtime_initialized
+            && health_status.is_none_or(|status| {
+                status == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
+            });
+        let description = if !runtime_initialized {
             format!("{node_name} derived node ({node_model}, runtime not initialized)")
+        } else if let Some(status) = health_status {
+            format!("{node_name} derived node ({node_model}, status={status})")
+        } else {
+            format!("{node_name} derived node ({node_model})")
         };
 
         Ok(crate::exploration::SourceState {
             is_connected: runtime_initialized,
-            healthy: runtime_initialized,
+            healthy,
             description,
             last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
-            metadata: HashMap::from([
-                (
-                    "runtime_initialized".to_string(),
-                    serde_json::json!(runtime_initialized),
-                ),
-                ("node_model".to_string(), serde_json::json!(node_model)),
-            ]),
+            metadata: HashMap::from_iter(
+                [
+                    (
+                        "runtime_initialized".to_string(),
+                        serde_json::json!(runtime_initialized),
+                    ),
+                    ("node_model".to_string(), serde_json::json!(node_model)),
+                ]
+                .into_iter()
+                .chain(health_status.map(|status| {
+                    (
+                        "health_status".to_string(),
+                        serde_json::json!(status.to_string()),
+                    )
+                })),
+            ),
         })
     }
 
@@ -1945,6 +1983,8 @@ pub type ScopeReconcilerNodeAdapter<N> =
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     #[cfg(feature = "messaging")]
+    use crate::health_reporter::{HealthReporter, HealthThresholds};
+    #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
     use super::signal_shutdown_channel;
     use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
@@ -1957,7 +1997,7 @@ mod tests {
         Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
     };
     #[cfg(feature = "messaging")]
-    use crate::self_observation::SelfObservationError;
+    use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
     use crate::shutdown::ShutdownConfig;
     use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
     use crate::{ErrorAction, NodeLogicError, ScopeReconcilerNode, TransducerNode};
@@ -1975,6 +2015,8 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    #[cfg(feature = "messaging")]
+    use std::time::Duration;
     use tempfile::tempdir;
     use tokio::sync::{mpsc, watch};
     use xtask::sandbox::prelude::*;
@@ -2483,6 +2525,88 @@ mod tests {
                 .get("runtime_initialized")
                 .and_then(serde_json::Value::as_bool),
             Some(false)
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn derived_source_state_reflects_failed_health_reporter(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.runtime = Some(make_runtime_state(&ctx, "test-derived", None).await?);
+
+        let observer = Arc::new(SelfObserver::new(
+            ctx.nats_client(),
+            SelfObserverConfig {
+                component: "derived-source-state".to_string(),
+                subject_prefix: "sinex.telemetry".to_string(),
+                enabled: true,
+                min_emission_interval: Duration::from_millis(10),
+            },
+        ));
+        let reporter = Arc::new(HealthReporter::new(
+            "derived-source-state".to_string(),
+            observer,
+            HealthThresholds {
+                error_rate_degraded: 0.05,
+                error_rate_failed: 0.20,
+                window_seconds: 60,
+            },
+        ));
+        reporter.record_error(&SinexError::processing("derived node failure"));
+        adapter.health_reporter = Some(reporter);
+
+        let state = ExplorationProvider::get_source_state(&adapter)?;
+
+        assert!(state.is_connected);
+        assert!(!state.healthy);
+        assert!(state.description.contains("status=failed"));
+        assert_eq!(
+            state
+                .metadata
+                .get("health_status")
+                .and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn derived_health_check_reflects_failed_health_reporter(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        adapter.runtime = Some(make_runtime_state(&ctx, "test-derived", None).await?);
+
+        let observer = Arc::new(SelfObserver::new(
+            ctx.nats_client(),
+            SelfObserverConfig {
+                component: "derived-health-check".to_string(),
+                subject_prefix: "sinex.telemetry".to_string(),
+                enabled: true,
+                min_emission_interval: Duration::from_millis(10),
+            },
+        ));
+        let reporter = Arc::new(HealthReporter::new(
+            "derived-health-check".to_string(),
+            observer,
+            HealthThresholds {
+                error_rate_degraded: 0.05,
+                error_rate_failed: 0.20,
+                window_seconds: 60,
+            },
+        ));
+        reporter.record_error(&SinexError::processing("derived node failure"));
+        adapter.health_reporter = Some(reporter);
+
+        assert!(
+            !crate::runtime::stream::Node::health_check(&adapter).await?,
+            "health_check should fail once the reporter marks the node failed"
         );
         Ok(())
     }

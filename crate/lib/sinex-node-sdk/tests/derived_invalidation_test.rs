@@ -22,6 +22,7 @@ use sinex_node_sdk::{
 use sinex_primitives::domain::{
     EventSource, EventType, HostName, InvalidationAction, ProcessingMode, TriggerKind,
 };
+use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
@@ -997,6 +998,60 @@ async fn scope_invalidation_paginates_working_set_and_stale_outputs(
         archived_output_count, expected_count as i64,
         "invalidations must archive every stale scope output, not just the first page"
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let mut adapter = initialize_scope_reconciler_adapter(&ctx).await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-real-trigger"))
+        .await?;
+    let scope_key = "scope:real-trigger";
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 7_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some(scope_key.to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
+
+    let outputs = adapter.process_invalidation(&invalidation).await?;
+    assert_eq!(outputs.len(), 1, "scope should recompute a single aggregate");
+
+    match &outputs[0].provenance {
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            assert_eq!(
+                source_event_ids.as_slice(),
+                [input_id],
+                "invalidation recompute must preserve a real affected event id in fallback provenance"
+            );
+        }
+        other => panic!("expected synthesis provenance, got {other:?}"),
+    }
 
     Ok(())
 }
