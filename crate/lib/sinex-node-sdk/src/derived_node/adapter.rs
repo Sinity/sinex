@@ -272,6 +272,44 @@ where
             })
     }
 
+    async fn emit_output_events(
+        &self,
+        outputs: Vec<Event<JsonValue>>,
+        context: &'static str,
+    ) -> NodeResult<u64> {
+        let count = outputs.len() as u64;
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let sender = self.event_sender.as_ref().ok_or_else(|| {
+            SinexError::lifecycle("derived-node output channel is not initialized")
+                .with_context("node", self.node.name())
+                .with_context("context", context)
+        })?;
+
+        for event in outputs {
+            let event_id = event
+                .id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "<none>".to_string());
+            let event_source = event.source.as_ref().to_string();
+            let event_type = event.event_type.as_ref().to_string();
+
+            sender.send(event).await.map_err(|_| {
+                SinexError::lifecycle("failed to emit derived-node output event")
+                    .with_context("node", self.node.name())
+                    .with_context("context", context)
+                    .with_context("event_id", event_id)
+                    .with_context("source", event_source)
+                    .with_context("event_type", event_type)
+                    .with_context("reason", "event channel closed")
+            })?;
+        }
+
+        Ok(count)
+    }
+
     // ── Checkpoint Management ──────────────────────────────────────────
 
     async fn load_state(&mut self) -> NodeResult<()> {
@@ -917,27 +955,55 @@ where
         {
             match self.process_invalidation(&invalidation).await {
                 Ok(outputs) => {
-                    let count = outputs.len() as u64;
+                    let count = match self
+                        .emit_output_events(outputs, "scope invalidation recomputation")
+                        .await
+                    {
+                        Ok(count) => count,
+                        Err(error) => {
+                            error!(
+                                node = %node_name,
+                                error = %error,
+                                action = %invalidation.action,
+                                "Invalidation output emission failed"
+                            );
+                            #[cfg(feature = "messaging")]
+                            if let Some(ref obs) = self.self_observer {
+                                if let Err(obs_error) =
+                                    obs.emit_counter("invalidation.errors", 1, None).await
+                                {
+                                    log_self_observation_failure(
+                                        node_name,
+                                        "invalidation.errors",
+                                        &obs_error,
+                                    );
+                                }
+                            }
+                            return None;
+                        }
+                    };
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
-                    if let Some(ref sender) = self.event_sender {
-                        for event in outputs {
-                            if let Err(e) = sender.send(event).await {
-                                error!(
-                                    node = %node_name,
-                                    error = %e,
-                                    "Failed to emit invalidation output event"
-                                );
-                            }
-                        }
-                    }
                     if self.should_checkpoint() {
                         if let Err(e) = self.save_state().await {
-                            warn!(
+                            error!(
                                 node = %node_name,
                                 error = %e,
                                 "Failed to checkpoint after invalidation"
                             );
+                            #[cfg(feature = "messaging")]
+                            if let Some(ref obs) = self.self_observer {
+                                if let Err(obs_error) =
+                                    obs.emit_counter("invalidation.errors", 1, None).await
+                                {
+                                    log_self_observation_failure(
+                                        node_name,
+                                        "invalidation.errors",
+                                        &obs_error,
+                                    );
+                                }
+                            }
+                            return None;
                         }
                     }
 
@@ -1279,7 +1345,19 @@ where
                                 if let Err(dlq_err) =
                                     self.send_to_dlq_or_fail(&event_for_dlq, &e).await
                                 {
-                                    error!(node = %self.node.name(), error = %dlq_err, "Failed to send to DLQ during replay");
+                                    error!(
+                                        node = %self.node.name(),
+                                        error = %dlq_err,
+                                        "Failed to send to DLQ during replay"
+                                    );
+                                    if let Err(cp_err) = self.save_state().await {
+                                        error!(
+                                            node = %self.node.name(),
+                                            error = %cp_err,
+                                            "Failed to save checkpoint after replay DLQ error"
+                                        );
+                                    }
+                                    return Err(dlq_err);
                                 }
                             }
                             ErrorAction::Retry => {
@@ -1696,7 +1774,8 @@ mod tests {
     use super::signal_shutdown_channel;
     use super::{DerivedNodeAdapter, stale_output_ids_or_skip_scope};
     use crate::derived_node::{
-        DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
+        DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, ScopeReconcilerWrapper,
+        TransducerWrapper,
     };
     use crate::exploration::ExplorationProvider;
     use crate::runtime::stream::{
@@ -1706,7 +1785,7 @@ mod tests {
     use crate::self_observation::SelfObservationError;
     use crate::shutdown::ShutdownConfig;
     use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
-    use crate::{NodeLogicError, TransducerNode};
+    use crate::{ErrorAction, NodeLogicError, ScopeReconcilerNode, TransducerNode};
     use camino::Utf8PathBuf;
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
@@ -1880,6 +1959,129 @@ mod tests {
             _context: &DerivedTriggerContext,
         ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
             Ok(None)
+        }
+    }
+
+    #[derive(Default, Serialize, Deserialize)]
+    struct TestScopeReconcilerState;
+
+    #[derive(Deserialize)]
+    struct ScopeReconcilerInput {
+        value: i64,
+    }
+
+    #[derive(Serialize)]
+    struct ScopeReconcilerOutput {
+        total: i64,
+        count: usize,
+    }
+
+    struct TestScopeReconcilerNode;
+
+    impl ScopeReconcilerNode for TestScopeReconcilerNode {
+        type State = TestScopeReconcilerState;
+        type Input = ScopeReconcilerInput;
+        type Output = ScopeReconcilerOutput;
+
+        fn name(&self) -> &'static str {
+            "adapter-regression-scope-reconciler"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "measurement.taken"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "measurement.aggregate"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        fn scope_keys(
+            &self,
+            _input: &Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> Vec<String> {
+            vec!["default".into()]
+        }
+
+        async fn reconcile(
+            &mut self,
+            _state: &mut Self::State,
+            scope_key: &str,
+            input: Self::Input,
+            context: &DerivedTriggerContext,
+        ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(vec![DerivedOutput::reconciled(
+                ScopeReconcilerOutput {
+                    total: input.value,
+                    count: 1,
+                },
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                vec![*context.trigger_event_id.as_uuid()],
+                scope_key.to_string(),
+            )])
+        }
+
+        async fn recompute_scope(
+            &mut self,
+            _state: &mut Self::State,
+            scope_key: &str,
+            working_set: Vec<Self::Input>,
+            context: &DerivedTriggerContext,
+        ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+            if working_set.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let total = working_set.iter().map(|input| input.value).sum();
+            let count = working_set.len();
+
+            Ok(vec![DerivedOutput::reconciled(
+                ScopeReconcilerOutput { total, count },
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                vec![*context.trigger_event_id.as_uuid()],
+                scope_key.to_string(),
+            )])
+        }
+    }
+
+    struct DlqRetryDerivedNode;
+
+    impl TransducerNode for DlqRetryDerivedNode {
+        type State = TestDerivedState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "derived-adapter-dlq-retry-test"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "test.input"
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "test.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            _state: &mut Self::State,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Err(NodeLogicError::Processing("route me to dlq".to_string()))
+        }
+
+        fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
+            ErrorAction::SendToDLQ
         }
     }
 
@@ -2329,6 +2531,108 @@ mod tests {
             report.final_checkpoint,
             Checkpoint::internal(*third_id.as_uuid(), 1)
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn handle_invalidation_message_returns_none_when_output_emit_fails(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        use sinex_db::DbPoolExt;
+        use sinex_primitives::events::DynamicPayload;
+        use sinex_primitives::{EventSource, EventType};
+        use super::super::DerivedScopeInvalidation;
+
+        let ctx = ctx.with_nats().dedicated().await?;
+        let material_id = ctx
+            .create_source_material(Some("derived-invalidation-output-send-failure"))
+            .await?;
+        let scope_key = "scope:output-send-failure";
+
+        let mut input = DynamicPayload::new(
+            "measurements",
+            "measurement.taken",
+            serde_json::json!({ "value": 5_i64 }),
+        )
+        .from_material(material_id)
+        .build()?;
+        input.scope_key = Some(scope_key.to_string());
+
+        let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+        let input_id = inserted
+            .first()
+            .and_then(|event| event.id)
+            .expect("inserted input should have id");
+
+        let (runtime, event_receiver) = make_runtime_state_with_db(
+            &ctx,
+            "adapter-regression-scope-reconciler",
+            None,
+        )
+        .await?;
+        drop(event_receiver);
+
+        let mut adapter = DerivedNodeAdapter::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
+        adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+        adapter.event_sender = Some(runtime.event_sender());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let invalidation = DerivedScopeInvalidation::replaced(
+            vec![*input_id.as_uuid()],
+            EventSource::from_static("measurements"),
+            EventType::from_static("measurement.taken"),
+        )
+        .with_scope_keys(vec![scope_key.to_string()]);
+        let payload = serde_json::to_vec(&invalidation)?;
+
+        let result = adapter.handle_invalidation_message(&payload).await;
+        assert!(
+            result.is_none(),
+            "output send failures must fail invalidation handling"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn historical_replay_fails_when_dlq_routing_fails(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        use sinex_db::DbPoolExt;
+
+        let ctx = ctx.with_nats().dedicated().await?;
+        let inserted = ctx
+            .pool()
+            .events()
+            .insert_batch(vec![make_input_event("route-to-dlq")?])
+            .await?;
+        let input_id = inserted[0].id.expect("inserted event should have an id");
+
+        let (runtime, _event_receiver) =
+            make_runtime_state_with_db(&ctx, "derived-adapter-dlq-retry-test", None).await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(DlqRetryDerivedNode));
+        adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+        adapter.event_sender = Some(runtime.event_sender());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let error = adapter
+            .run_historical(Checkpoint::None, Timestamp::now(), ScanArgs::default())
+            .await
+            .expect_err("historical replay must fail when DLQ routing fails");
+
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to send derived-node event to DLQ"));
+        assert!(rendered.contains("route me to dlq"));
+        assert!(rendered.contains("derived-adapter-dlq-retry-test"));
+        assert!(
+            adapter.events_processed() == 0,
+            "failing DLQ routing must not advance replay progress past the bad event"
+        );
+        assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
+        assert_eq!(input_id, inserted[0].id.expect("id should stay available"));
         Ok(())
     }
 }
