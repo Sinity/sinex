@@ -27,6 +27,7 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Pagination, Uuid};
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -110,6 +111,7 @@ where
     events_since_checkpoint: u64,
     last_checkpoint_time: Instant,
     last_revision: u64,
+    pending_hot_reload_cleanup: Option<PathBuf>,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
@@ -135,6 +137,7 @@ where
             events_since_checkpoint: 0,
             last_checkpoint_time: Instant::now(),
             last_revision: 0,
+            pending_hot_reload_cleanup: None,
             #[cfg(feature = "messaging")]
             health_reporter: None,
             #[cfg(feature = "messaging")]
@@ -175,6 +178,52 @@ impl<N> DerivedNodeAdapter<N>
 where
     N: DerivedNodeImpl,
 {
+    async fn cleanup_hot_reload_file_best_effort(
+        path: &Path,
+        node_name: &str,
+        reason: &'static str,
+    ) {
+        if let Err(error) = CheckpointState::delete_file(path).await {
+            warn!(
+                node = node_name,
+                path = %path.display(),
+                error = %error,
+                reason,
+                "Failed to clean up hot reload checkpoint file"
+            );
+        }
+    }
+
+    async fn finalize_restored_hot_reload_file(
+        &mut self,
+        checkpoint_state: &CheckpointState,
+    ) -> NodeResult<()> {
+        let Some(path) = self.pending_hot_reload_cleanup.take() else {
+            return Ok(());
+        };
+
+        match CheckpointState::delete_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(delete_error) => {
+                warn!(
+                    node = %self.node.name(),
+                    path = %path.display(),
+                    error = %delete_error,
+                    "Failed to delete restored hot reload checkpoint file after syncing to NATS KV; rewriting it with the latest durable state"
+                );
+                checkpoint_state.save_to_file(&path).await.map_err(|error| {
+                    SinexError::io(
+                        "Failed to synchronize restored hot reload file after checkpoint save",
+                    )
+                    .with_context("node", self.node.name())
+                    .with_context("path", path.display().to_string())
+                    .with_context("delete_error", delete_error.to_string())
+                    .with_std_error(&error)
+                })
+            }
+        }
+    }
+
     #[cfg(feature = "db")]
     async fn load_query_events_paginated(
         &self,
@@ -313,13 +362,29 @@ where
     // ── Checkpoint Management ──────────────────────────────────────────
 
     async fn load_state(&mut self) -> NodeResult<()> {
+        let hot_reload_path = self.shutdown_config.checkpoint_path(self.node.name());
+        let mut invalid_hot_reload_file = None;
+
         // Priority 1: file-based checkpoint (hot reload)
-        if self.shutdown_config.restore_state_on_startup
-            && let Some((persisted, revision)) = self.try_restore_from_file().await?
-        {
-            self.persisted_state = persisted;
-            self.last_revision = revision;
-            return Ok(());
+        if self.shutdown_config.restore_state_on_startup {
+            match self.try_restore_from_file().await {
+                Ok(Some((persisted, revision))) => {
+                    self.persisted_state = persisted;
+                    self.last_revision = revision;
+                    return Ok(());
+                }
+                Ok(None) => {}
+                Err(error) if self.checkpoint_manager.is_some() => {
+                    warn!(
+                        node = %self.node.name(),
+                        path = %hot_reload_path.display(),
+                        error = %error,
+                        "Failed to restore hot reload checkpoint file; falling back to NATS KV"
+                    );
+                    invalid_hot_reload_file = Some(hot_reload_path.clone());
+                }
+                Err(error) => return Err(error),
+            }
         }
 
         // Priority 2: NATS KV checkpoint
@@ -354,11 +419,20 @@ where
             }
         }
 
+        if let Some(path) = invalid_hot_reload_file {
+            Self::cleanup_hot_reload_file_best_effort(
+                &path,
+                self.node.name(),
+                "discarding invalid hot reload checkpoint file after successful NATS KV restore",
+            )
+            .await;
+        }
+
         Ok(())
     }
 
     async fn try_restore_from_file(
-        &self,
+        &mut self,
     ) -> NodeResult<Option<(PersistedState<N::State>, u64)>> {
         let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
         let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
@@ -380,14 +454,7 @@ where
             events_processed = persisted.events_processed,
             "Restored state from hot reload file"
         );
-        CheckpointState::delete_file(&checkpoint_path)
-            .await
-            .map_err(|error| {
-                SinexError::io("Failed to delete hot reload file after loading state")
-                    .with_context("node", self.node.name())
-                    .with_context("path", checkpoint_path.display().to_string())
-                    .with_std_error(&error)
-            })?;
+        self.pending_hot_reload_cleanup = Some(checkpoint_path);
         Ok(Some((persisted, file_state.revision)))
     }
 
@@ -421,7 +488,7 @@ where
         let state_json = serde_json::to_value(&self.persisted_state)
             .map_err(|e| SinexError::processing(format!("Failed to serialize state: {e}")))?;
 
-        let checkpoint_state = CheckpointState {
+        let mut checkpoint_state = CheckpointState {
             checkpoint: self.checkpoint_position(),
             processed_count: self.persisted_state.events_processed,
             last_activity: Timestamp::now(),
@@ -431,6 +498,9 @@ where
         };
 
         self.last_revision = checkpoint_mgr.save_checkpoint(&checkpoint_state).await?;
+        checkpoint_state.revision = self.last_revision;
+        self.finalize_restored_hot_reload_file(&checkpoint_state)
+            .await?;
         self.events_since_checkpoint = 0;
         self.last_checkpoint_time = Instant::now();
 
@@ -2272,7 +2342,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let adapter = DerivedNodeAdapter::with_shutdown_config(
+        let mut adapter = DerivedNodeAdapter::with_shutdown_config(
             TransducerWrapper(TestDerivedNode),
             ShutdownConfig {
                 checkpoint_path: Some(checkpoint_path.clone()),
@@ -2553,11 +2623,85 @@ mod tests {
 
         adapter.load_state().await?;
         assert_eq!(adapter.last_revision, baseline_revision);
+        assert!(
+            CheckpointState::load_from_file(&checkpoint_path)
+                .await?
+                .is_some(),
+            "restored hot reload file must remain until the state is durably re-saved"
+        );
 
         adapter.save_state().await?;
         assert!(
             adapter.last_revision > baseline_revision,
             "restored hot reload state must keep the prior KV revision so the next save updates instead of blind-creating"
+        );
+        assert!(
+            CheckpointState::load_from_file(&checkpoint_path)
+                .await?
+                .is_none(),
+            "restored hot reload file should be cleaned up after successful KV sync"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_falls_back_to_kv_when_hot_reload_file_is_corrupt(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = Arc::new(CheckpointManager::new(
+            kv,
+            "derived-adapter-hot-reload-fallback-test".to_string(),
+            "test-group".to_string(),
+            "hot-reload-fallback-consumer".to_string(),
+        ));
+
+        let persisted_json = serde_json::json!({
+            "state": null,
+            "events_processed": 9,
+            "last_checkpoint": Timestamp::now(),
+            "version": 1,
+            "last_input_event_id": Uuid::now_v7(),
+        });
+        let revision = manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::internal(Uuid::now_v7(), 9),
+                processed_count: 9,
+                last_activity: Timestamp::now(),
+                data: Some(persisted_json),
+                version: 2,
+                revision: 0,
+            })
+            .await?;
+
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir
+            .path()
+            .join("derived-hot-reload-fallback.checkpoint.json");
+        tokio::fs::write(&checkpoint_path, "{ definitely not valid json").await?;
+
+        let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+            TransducerWrapper(TestDerivedNode),
+            ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path.clone()),
+                ..ShutdownConfig::default()
+            },
+        );
+        adapter.checkpoint_manager = Some(Arc::clone(&manager));
+
+        adapter
+            .load_state()
+            .await
+            .expect("corrupt hot reload file should fall back to healthy KV state");
+
+        assert_eq!(adapter.last_revision, revision);
+        assert_eq!(adapter.persisted_state.events_processed, 9);
+        assert!(
+            CheckpointState::load_from_file(&checkpoint_path)
+                .await?
+                .is_none(),
+            "corrupt hot reload file should be discarded after successful KV restore"
         );
         Ok(())
     }
