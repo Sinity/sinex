@@ -791,7 +791,7 @@ fn extract_fix_from_children(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn test_parse_empty_output() -> TestResult<()> {
@@ -912,7 +912,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_run_cargo_with_timeout_rejects_invalid_timeout_override() -> TestResult<()> {
-        let _guard = super::super::tests::EnvGuard::set("SINEX_CARGO_TIMEOUT", Some("bogus".into()));
+        let mut _guard = EnvGuard::new();
+        _guard.set("SINEX_CARGO_TIMEOUT", "bogus");
 
         let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
         assert!(success);
@@ -922,7 +923,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_run_cargo_with_timeout_rejects_zero_timeout_override() -> TestResult<()> {
-        let _guard = super::super::tests::EnvGuard::set("SINEX_CARGO_TIMEOUT", Some("0".into()));
+        let mut _guard = EnvGuard::new();
+        _guard.set("SINEX_CARGO_TIMEOUT", "0");
 
         let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
         assert!(success);
