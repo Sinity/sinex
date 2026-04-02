@@ -248,6 +248,14 @@ impl IngestdConfig {
     ) -> IngestdResult<Self> {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
+        let strict_validation = env_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
+        let gitops_enabled = env_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
+        let schema_reload_interval_secs: u64 =
+            env_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
+                .unwrap_or_else(default_schema_reload_interval_secs);
+        let stats_log_interval_secs: u64 =
+            env_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
+                .unwrap_or_else(default_stats_log_interval_secs);
         let pool_acquire_timeout_secs: u64 =
             env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
                 .unwrap_or_else(default_pool_acquire_timeout_secs);
@@ -273,6 +281,10 @@ impl IngestdConfig {
         config.dry_run = dry_run;
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
+        config.strict_validation = strict_validation;
+        config.gitops_enabled = gitops_enabled;
+        config.schema_reload_interval_secs = schema_reload_interval_secs;
+        config.stats_log_interval_secs = stats_log_interval_secs;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
 
@@ -312,22 +324,6 @@ impl IngestdConfig {
 
         self
     }
-
-    /// Validate configuration and exit with appropriate status code
-    pub async fn validate_and_exit(&self) -> ! {
-        info!("Validating configuration...");
-        match self.validate().await {
-            Ok(()) => {
-                info!("✅ Configuration is valid");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                error!("❌ Configuration validation failed: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
         use validator::Validate as ValidateTrait;
@@ -458,27 +454,18 @@ where
 fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
     use sinex_primitives::validation::validate_path;
 
-    match std::env::var(name) {
-        Ok(path) => match validate_path(&path) {
-            Ok(validated) => Some(validated),
-            Err(error) => {
-                warn!(
-                    env = name,
-                    value = %path,
-                    %error,
-                    "Invalid path override for {context}; ignoring override"
-                );
-                None
-            }
-        },
-        Err(std::env::VarError::NotUnicode(_)) => {
+    let raw = shared_env::var_optional(name, context)?;
+    match validate_path(&raw) {
+        Ok(validated) => Some(validated),
+        Err(error) => {
             warn!(
                 env = name,
-                "Path override for {context} is not valid UTF-8; ignoring override"
+                value = %raw,
+                %error,
+                "Invalid path override for {context}; ignoring override"
             );
             None
         }
-        Err(std::env::VarError::NotPresent) => None,
     }
 }
 
@@ -852,38 +839,11 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::sinex_serial_test;
 
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                match value {
-                    Some(value) => unsafe { std::env::set_var(&key, value) },
-                    None => unsafe { std::env::remove_var(&key) },
-                }
-            }
-        }
-    }
+    use xtask::sandbox::EnvGuard;
 
     #[sinex_serial_test]
     async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_INGESTD_WORK_DIR", "XDG_CACHE_HOME"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_INGESTD_WORK_DIR", "../../etc");
         env.set("XDG_CACHE_HOME", "/tmp/sinex-ingestd-config-cache");
 
@@ -898,11 +858,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&[
-            "SINEX_INGESTD_WORK_DIR",
-            "SINEX_ANNEX_PATH",
-            "SINEX_INGESTD_GITOPS_WORK_DIR",
-        ]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-config-root");
         env.set("SINEX_ANNEX_PATH", "../../bad-annex");
         env.set("SINEX_INGESTD_GITOPS_WORK_DIR", "../../bad-gitops");
@@ -921,7 +877,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn env_validated_path_rejects_non_utf8_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_CONFIG_PATH_OVERRIDE"]);
+        let mut env = EnvGuard::new();
         env.set(
             "SINEX_CONFIG_PATH_OVERRIDE",
             OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x70, 0x80]),
@@ -934,7 +890,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn from_args_rejects_non_utf8_database_url_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["DATABASE_URL"]);
+        let mut env = EnvGuard::new();
         env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
 
         let error = IngestdConfig::from_args(

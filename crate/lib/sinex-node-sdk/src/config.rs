@@ -224,7 +224,7 @@ impl NodeConfig {
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = Self::env_prefix(service_name);
-        Ok(Self {
+        let config = Self {
             service_name: defaults.service_name,
             log_level: service_or_global_env_string(&env_prefix, "LOG_LEVEL")?
                 .unwrap_or_else(default_log_level),
@@ -239,7 +239,9 @@ impl NodeConfig {
             work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")?
                 .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
             dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?.unwrap_or(defaults.dry_run),
-        })
+        };
+        config.validate_config()?;
+        Ok(config)
     }
 
     /// Validate configuration
@@ -247,6 +249,11 @@ impl NodeConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
+
+        #[cfg(feature = "messaging")]
+        self.nats
+            .validate()
             .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Additional runtime validation - check if parent directory exists
@@ -277,7 +284,7 @@ impl EventSourceConfig {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
 
-        Ok(Self {
+        let config = Self {
             base: NodeConfig::load_from_env(service_name)?,
             batch_size: service_or_global_env_parse(&env_prefix, "BATCH_SIZE")?
                 .unwrap_or(defaults.batch_size),
@@ -287,7 +294,9 @@ impl EventSourceConfig {
             )?
             .map_or(defaults.batch_timeout_secs, Seconds::from_secs),
             source_config: HashMap::new(),
-        })
+        };
+        config.validate_config()?;
+        Ok(config)
     }
 
     /// Validate event source configuration
@@ -322,7 +331,7 @@ impl AutomatonConfig {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
 
-        Ok(Self {
+        let config = Self {
             base: NodeConfig::load_from_env(service_name)?,
             consumer_group: service_or_global_env_string(&env_prefix, "CONSUMER_GROUP")?
                 .unwrap_or(defaults.consumer_group),
@@ -340,7 +349,9 @@ impl AutomatonConfig {
             )?
             .map_or(defaults.checkpoint_interval_secs, Seconds::from_secs),
             automaton_config: HashMap::new(),
-        })
+        };
+        config.validate_config()?;
+        Ok(config)
     }
 
     /// Validate automaton configuration
@@ -388,8 +399,12 @@ fn default_work_dir() -> Utf8PathBuf {
     // Validate the default path
     match validate_path(work_dir.to_string_lossy().as_ref()) {
         Ok(validated) => validated,
-        Err(_) => {
-            // Fallback to a safe default if validation fails
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                path = %work_dir.display(),
+                "Work directory path failed validation; falling back to /tmp/sinex"
+            );
             Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex"))
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"))
         }
@@ -398,8 +413,19 @@ fn default_work_dir() -> Utf8PathBuf {
 
 fn get_cache_dir_or_fallback() -> Utf8PathBuf {
     dirs::cache_dir().map_or_else(
-        || Utf8PathBuf::from("/tmp"),
-        |p| Utf8PathBuf::from_path_buf(p).unwrap_or_else(|_| Utf8PathBuf::from("/tmp")),
+        || {
+            tracing::warn!("Cache directory unavailable; falling back to /tmp/sinex");
+            Utf8PathBuf::from("/tmp")
+        },
+        |p| {
+            Utf8PathBuf::from_path_buf(p).unwrap_or_else(|non_utf8_path| {
+                tracing::warn!(
+                    path = %non_utf8_path.display(),
+                    "Cache directory path is not valid UTF-8; falling back to /tmp"
+                );
+                Utf8PathBuf::from("/tmp")
+            })
+        },
     )
 }
 

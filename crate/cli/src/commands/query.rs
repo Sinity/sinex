@@ -10,7 +10,7 @@ use sinex_primitives::validation::query_validation::{self, DEFAULT_MAX_LIMIT};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::CommandOutput;
+use crate::fmt::{CommandOutput, format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
@@ -141,12 +141,110 @@ async fn execute_query(
                 .display(&format)?;
         }
         other => {
-            // Aggregation results — just serialize as JSON
-            let json = serde_json::to_string_pretty(&other)?;
-            println!("{json}");
+            println!("{}", render_non_event_query_result(&other, format)?);
         }
     }
     Ok(())
+}
+
+fn render_non_event_query_result(result: &EventQueryResult, format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Table => Ok(format_non_event_query_result_table(result)),
+        OutputFormat::Json | OutputFormat::Dot => format_json(result),
+        OutputFormat::Yaml => format_yaml(result),
+    }
+}
+
+fn format_non_event_query_result_table(result: &EventQueryResult) -> String {
+    match result {
+        EventQueryResult::Events { events, .. } => format_table_results(events),
+        EventQueryResult::Count { count } => {
+            let mut output = String::from("Count\n");
+            output.push_str("─────\n");
+            output.push_str(&format!("{count}\n"));
+            output
+        }
+        EventQueryResult::GroupedCounts { groups } => format_grouped_counts_table(groups),
+        EventQueryResult::TimeSeries { buckets } => format_time_series_table(buckets),
+        EventQueryResult::SourceStats { sources } => format_source_stats_table(sources),
+    }
+}
+
+fn format_grouped_counts_table(groups: &[sinex_primitives::query::GroupedCount]) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut builder = Builder::default();
+    builder.push_record(["Key", "Count"]);
+
+    for group in groups {
+        builder.push_record([group.key.clone(), group.count.to_string()]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_time_series_table(buckets: &[sinex_primitives::query::TimeBucketEntry]) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut builder = Builder::default();
+    builder.push_record(["Bucket", "Count"]);
+
+    for bucket in buckets {
+        builder.push_record([format_query_timestamp(&bucket.bucket), bucket.count.to_string()]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_source_stats_table(sources: &[sinex_primitives::query::SourceStatsEntry]) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut builder = Builder::default();
+    builder.push_record([
+        "Source",
+        "Events",
+        "Types",
+        "Hosts",
+        "First Event",
+        "Last Event",
+        "Avg Delay (s)",
+    ]);
+
+    for source in sources {
+        builder.push_record([
+            source.source.to_string(),
+            source.event_count.to_string(),
+            source.event_type_count.to_string(),
+            source.host_count.to_string(),
+            source
+                .first_event
+                .as_ref()
+                .map_or_else(|| "-".to_string(), format_query_timestamp),
+            source
+                .last_event
+                .as_ref()
+                .map_or_else(|| "-".to_string(), format_query_timestamp),
+            source
+                .avg_ingest_delay_secs
+                .map_or_else(|| "-".to_string(), |delay| format!("{delay:.2}")),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_query_timestamp(timestamp: &Timestamp) -> String {
+    timestamp
+        .format(&time::macros::format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second]"
+        ))
+        .unwrap_or_else(|_| timestamp.to_string())
 }
 
 /// Interactive query builder
@@ -389,6 +487,7 @@ mod tests {
     use sinex_primitives::temporal::Duration;
     use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
     use xtask::sandbox::{sinex_proptest, sinex_test};
+    use xtask::TestResult;
 
     #[sinex_test]
     async fn test_parse_relative_duration() -> TestResult<()> {
@@ -563,6 +662,33 @@ mod tests {
         assert!(parse_time("2d").is_ok());
         assert!(parse_time("2025-01-15").is_ok());
         assert!(parse_time("2025-01-15T10:00:00Z").is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn render_non_event_query_result_respects_json_format() -> TestResult<()> {
+        let rendered =
+            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Json)?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+        assert_eq!(value["count"], serde_json::json!(7));
+        Ok(())
+    }
+
+    #[test]
+    fn render_non_event_query_result_respects_yaml_format() -> TestResult<()> {
+        let rendered =
+            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Yaml)?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&rendered)?;
+        assert_eq!(value["count"], serde_yaml::Value::from(7));
+        Ok(())
+    }
+
+    #[test]
+    fn render_non_event_query_result_uses_table_renderer_for_counts() -> TestResult<()> {
+        let rendered =
+            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Table)?;
+        assert!(rendered.contains("Count"));
+        assert!(rendered.contains('7'));
         Ok(())
     }
 

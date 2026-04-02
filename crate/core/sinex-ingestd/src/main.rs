@@ -104,24 +104,11 @@ async fn main() -> Result<()> {
 
     info!("Starting Sinex Ingestion Daemon");
 
-    // Load configuration from environment and command line arguments
-    let config = IngestdConfig::from_args(
-        args.database_url,
-        args.nats_url,
-        args.nats_require_tls,
-        args.pool_size,
-        args.consumer_fetch_max_messages,
-        args.consumer_fetch_timeout_ms,
-        args.consumer_max_ack_pending,
-        args.material_slices_max_ack_pending,
-        args.dry_run,
-        args.annex_path,
-        args.assembler_state_dir,
-        args.namespace,
-    )?;
+    let config = load_runtime_config(&args).await?;
 
     if args.validate_config {
-        config.validate_and_exit().await;
+        info!("Configuration is valid");
+        return Ok(());
     }
 
     info!(?config, "Configuration loaded");
@@ -159,6 +146,26 @@ async fn main() -> Result<()> {
 
     info!("Sinex Ingestion Daemon stopped");
     Ok(())
+}
+
+async fn load_runtime_config(args: &Args) -> Result<IngestdConfig> {
+    let config = IngestdConfig::from_args(
+        args.database_url.clone(),
+        args.nats_url.clone(),
+        args.nats_require_tls,
+        args.pool_size,
+        args.consumer_fetch_max_messages,
+        args.consumer_fetch_timeout_ms,
+        args.consumer_max_ack_pending,
+        args.material_slices_max_ack_pending,
+        args.dry_run,
+        args.annex_path.clone(),
+        args.assembler_state_dir.clone(),
+        args.namespace.clone(),
+    )?;
+
+    config.validate().await?;
+    Ok(config)
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -256,46 +263,12 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::prelude::*;
 
-    struct EnvGuard {
-        saved: Vec<(String, Option<std::ffi::OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                    .collect(),
-            }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-
-        fn remove(&mut self, key: &str) {
-            unsafe { std::env::remove_var(key) };
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::EnvGuard;
 
     #[sinex_serial_test]
     async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
-        env.remove("RUST_LOG");
+        let mut env = EnvGuard::new();
+        env.clear("RUST_LOG");
 
         load_env_filter("sinex_ingestd=info")?;
         Ok(())
@@ -303,7 +276,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinex_ingestd=wat");
 
         let error =
@@ -318,7 +291,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
-        let mut env = EnvGuard::new(&["RUST_LOG"]);
+        let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
         let error =
@@ -327,6 +300,43 @@ mod tests {
 
         assert!(message.contains("RUST_LOG"));
         assert!(message.contains("UTF-8"));
+        Ok(())
+    }
+
+    fn test_args() -> Args {
+        Args {
+            database_url: Some("postgresql://localhost/test".to_string()),
+            nats_url: "nats://localhost:4222".to_string(),
+            nats_require_tls: false,
+            pool_size: 16,
+            consumer_fetch_max_messages: None,
+            consumer_fetch_timeout_ms: None,
+            consumer_max_ack_pending: None,
+            material_slices_max_ack_pending: None,
+            log_level: "info".to_string(),
+            log_format: LogFormat::Text,
+            #[cfg(feature = "tokio-console")]
+            tokio_console: false,
+            dry_run: false,
+            validate_config: false,
+            annex_path: None,
+            assembler_state_dir: None,
+            namespace: None,
+        }
+    }
+
+    #[sinex_serial_test]
+    async fn load_runtime_config_rejects_invalid_database_url_before_service_start() -> TestResult<()> {
+        let mut args = test_args();
+        args.database_url = Some("mysql://localhost/test".to_string());
+
+        let error = load_runtime_config(&args)
+            .await
+            .expect_err("normal startup must validate the loaded config");
+        let message = error.to_string();
+
+        assert!(message.contains("Validation failed"));
+        assert!(message.contains("PostgreSQL"));
         Ok(())
     }
 }

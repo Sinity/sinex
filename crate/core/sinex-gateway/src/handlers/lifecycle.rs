@@ -490,8 +490,14 @@ pub async fn handle_lifecycle_restore(
 fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> {
     let duration = humantime::parse_duration(duration_str)
         .map_err(|e| SinexError::validation(format!("Invalid duration '{duration_str}': {e}")))?;
+    let duration = time::Duration::try_from(duration).map_err(|error| {
+        SinexError::validation(format!(
+            "Invalid duration '{duration_str}': cannot represent parsed duration precisely"
+        ))
+        .with_std_error(&error)
+    })?;
 
-    let ts = Timestamp::now() - time::Duration::seconds(duration.as_secs() as i64);
+    let ts = Timestamp::now() - duration;
     Ok(Some(ts))
 }
 
@@ -966,7 +972,6 @@ pub async fn handle_tombstone_approve(
 
     let repo = pool.events();
     let operation_uuid = parse_operation_uuid(&request.operation_id)?;
-    let start_time = std::time::Instant::now();
 
     // Execute tombstone
     let tombstoned_count = match repo
@@ -1011,10 +1016,9 @@ pub async fn handle_tombstone_approve(
         }
     };
 
-    let duration_ms = start_time.elapsed().as_millis() as i32;
-
     // Mark as completed and persist
     let finished_at = Timestamp::now();
+    let duration_ms = tombstone_duration_ms(&operation, finished_at)?.unwrap_or(0);
     operation.state = TombstoneOperationState::Completed;
     operation.finished_at = Some(finished_at.format_rfc3339());
     operation.tombstoned_count = Some(tombstoned_count);
@@ -1215,4 +1219,52 @@ pub async fn handle_tombstone_status(
 
     let response = TombstoneStatusResponse { operation };
     Ok(serde_json::to_value(response)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_duration_to_timestamp_preserves_subsecond_precision() {
+        let before = Timestamp::now();
+        let parsed = parse_duration_to_timestamp("500ms")
+            .expect("500ms should parse")
+            .expect("duration parsing should return a timestamp");
+        let delta_ms = (before - parsed).whole_milliseconds();
+
+        assert!(
+            (400..1000).contains(&delta_ms),
+            "expected roughly 500ms delta, got {delta_ms}ms"
+        );
+    }
+
+    #[test]
+    fn tombstone_duration_ms_clamps_large_elapsed_values() {
+        let operation = TombstoneOperation {
+            operation_id: "op-test".to_string(),
+            phase: TombstoneOperationPhase::Executing,
+            state: TombstoneOperationState::Executing,
+            before: None,
+            source: None,
+            event_ids: None,
+            limit: 1,
+            reason: "test".to_string(),
+            cascade_analysis: None,
+            created_by: "tester".to_string(),
+            created_at: "1900-01-01T00:00:00Z".to_string(),
+            expires_at: "1900-01-01T01:00:00Z".to_string(),
+            approved_by: None,
+            approved_at: None,
+            started_at: None,
+            finished_at: None,
+            tombstoned_count: None,
+            error_details: None,
+        };
+
+        let duration_ms = tombstone_duration_ms(&operation, Timestamp::now())
+            .expect("old timestamps should still produce a bounded duration");
+
+        assert_eq!(duration_ms, Some(i32::MAX));
+    }
 }

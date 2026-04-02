@@ -262,7 +262,7 @@ fn default_polling_interval() -> Seconds {
 }
 
 fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {
-    match source.shell.to_lowercase().as_str() {
+    match normalize_shell_name(&source.shell).as_str() {
         "fish" => match crate::fish_history::ensure_fish_sqlite_history(&source.path) {
             Ok(()) => HistorySourceMode::FishSqlite,
             Err(error) => HistorySourceMode::ConfiguredError(format!(
@@ -283,6 +283,10 @@ fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {
         )),
         _ => HistorySourceMode::Text,
     }
+}
+
+fn normalize_shell_name(shell: &str) -> String {
+    shell.trim().to_ascii_lowercase()
 }
 
 #[derive(Clone)]
@@ -2219,7 +2223,7 @@ fn parse_shell_unix_timestamp(raw: &str) -> Result<Timestamp, &'static str> {
 }
 
 fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a> {
-    if shell == "bash"
+    if shell.eq_ignore_ascii_case("bash")
         && let Some(raw) = line.strip_prefix('#')
         && raw.chars().all(|ch| ch.is_ascii_digit())
     {
@@ -2233,11 +2237,25 @@ fn parse_text_history_line<'a>(shell: &str, line: &'a str) -> TextHistoryLine<'a
         };
     }
 
-    if shell == "zsh"
+    if shell.eq_ignore_ascii_case("zsh")
         && let Some(history) = line.strip_prefix(": ")
-        && let Some((timestamp, remainder)) = history.split_once(':')
-        && let Some((_, command)) = remainder.split_once(';')
     {
+        let Some((timestamp, remainder)) = history.split_once(':') else {
+            return TextHistoryLine::MalformedMetadata {
+                kind: "zsh extended history entry",
+                reason: "missing ':' separator after timestamp",
+                raw_line: line,
+            };
+        };
+
+        let Some((_, command)) = remainder.split_once(';') else {
+            return TextHistoryLine::MalformedMetadata {
+                kind: "zsh extended history entry",
+                reason: "missing ';' separator before command",
+                raw_line: line,
+            };
+        };
+
         return match parse_shell_unix_timestamp(timestamp) {
             Ok(timestamp) => TextHistoryLine::Command {
                 command,
@@ -2590,6 +2608,7 @@ impl TerminalNode {
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
+            let normalized_shell = normalize_shell_name(&source.shell);
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "terminal-history",
@@ -2613,7 +2632,7 @@ impl TerminalNode {
                 acquisition,
                 stage_context,
                 metrics: Arc::clone(&self.metrics),
-                shell: source.shell.clone(),
+                shell: normalized_shell,
                 path: source.path.clone(),
                 max_capture_bytes: self.config.max_capture_bytes,
                 polling_interval: Duration::from_secs(self.config.polling_interval_secs.as_secs()),
@@ -3409,6 +3428,42 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn parse_text_history_line_accepts_mixed_case_shell_names() -> TestResult<()> {
+        match parse_text_history_line("Bash", "#1710877544") {
+            TextHistoryLine::TimestampMarker(timestamp) => {
+                assert_eq!(
+                    timestamp,
+                    Timestamp::from_unix_timestamp(1_710_877_544).expect("valid timestamp")
+                );
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected bash timestamp marker, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        match parse_text_history_line("Zsh", ": 1710877544:0;echo hello") {
+            TextHistoryLine::Command { command, timestamp } => {
+                assert_eq!(command, "echo hello");
+                assert_eq!(
+                    timestamp,
+                    Timestamp::from_unix_timestamp(1_710_877_544)
+                );
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected zsh extended history command, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn parse_text_history_line_rejects_malformed_shell_metadata() -> TestResult<()> {
         match parse_text_history_line("bash", "#999999999999999999999999") {
             TextHistoryLine::MalformedMetadata {
@@ -3445,6 +3500,63 @@ mod tests {
                 ));
             }
         }
+
+        match parse_text_history_line("zsh", ": 1710877544:0echo hello") {
+            TextHistoryLine::MalformedMetadata {
+                kind,
+                reason,
+                raw_line,
+            } => {
+                assert_eq!(kind, "zsh extended history entry");
+                assert_eq!(reason, "missing ';' separator before command");
+                assert_eq!(raw_line, ": 1710877544:0echo hello");
+            }
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected malformed zsh metadata without command separator, got {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn build_history_contexts_normalizes_shell_names(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-history-shell-normalization")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("history"))
+            .map_err(|path| {
+                color_eyre::eyre::eyre!("invalid temp path should be utf-8: {}", path.display())
+            })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "Zsh".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let context = node
+            .build_history_contexts(tokio::sync::watch::channel(false).1)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal history context"))?;
+
+        assert_eq!(context.shell, "zsh");
+        assert_eq!(context.checkpoint_key(), format!("zsh:{history_path}"));
 
         Ok(())
     }

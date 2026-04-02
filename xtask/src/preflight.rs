@@ -73,9 +73,14 @@ pub fn is_nats_ready() -> bool {
 /// Check if TLS certificates exist in `.sinex/tls/`.
 #[must_use]
 pub fn tls_certs_exist() -> bool {
-    let tls_dir = std::path::Path::new(".sinex/tls");
+    tls_dir_ready(std::path::Path::new(".sinex/tls"))
+}
+
+#[must_use]
+fn tls_dir_ready(tls_dir: &Path) -> bool {
     tls_dir.join("ca.pem").exists()
         && tls_dir.join("server.pem").exists()
+        && tls_dir.join("server-key.pem").exists()
         && tls_dir.join("client.pem").exists()
 }
 
@@ -95,6 +100,8 @@ const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
+const SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS: u64 = 30;
+const SCHEMA_APPLY_LOCK_WAIT_POLL_INTERVAL_MILLIS: u64 = 250;
 const SCHEMA_READINESS_PROBE_SQL: &str = "SET statement_timeout = '5s';
 SELECT CASE
          WHEN to_regclass('core.events') IS NULL THEN 1
@@ -553,7 +560,11 @@ pub fn has_pending_schema_apply() -> Result<bool> {
 
 fn parse_schema_apply_probe_output(output: &std::process::Output) -> Result<bool> {
     let pending_flag = String::from_utf8_lossy(&output.stdout)
-        .trim()
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| eyre!("schema readiness probe returned empty output"))?
         .parse::<i32>()
         .wrap_err_with(|| {
             format!(
@@ -597,7 +608,7 @@ impl InfraStatus {
     /// Check if all infrastructure is ready.
     #[must_use]
     pub fn all_ready(&self) -> bool {
-        self.postgres && self.nats && !self.schema_apply_pending
+        self.postgres && self.nats && self.tls && !self.schema_apply_pending
     }
 
     /// Check if stack (Postgres + NATS) is running.
@@ -639,16 +650,17 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Starting stack", 5);
 
-    let mut child = match std::process::Command::new("xtask")
+    let mut command = std::process::Command::new("xtask");
+    command
         .args(["infra", "start"])
         .stdout(if verbose {
             std::process::Stdio::inherit()
         } else {
             std::process::Stdio::null()
         })
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::inherit());
+
+    let mut child = match spawn_process_group_leader(&mut command) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("✗ Failed to start stack: {e}");
@@ -656,28 +668,23 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
         }
     };
 
-    let pid = child.id();
     let timeout = std::time::Duration::from_secs(timeout_secs);
-
-    // Spawn a watchdog that kills the child if it runs too long.
-    // Uses a channel to signal early exit when the child finishes before timeout.
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || {
-        if done_rx.recv_timeout(timeout).is_err() {
-            // Timeout — kill the process group
-            eprintln!("✗ Stack start timed out after {timeout_secs}s — killing subprocess");
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGTERM);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
+    let exit_status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .wrap_err("failed to poll infra start status")?
+        {
+            break Ok(status);
         }
-    });
 
-    let exit_status = child.wait();
-    let _ = done_tx.send(()); // Signal watchdog: we're done
+        if start.elapsed() >= timeout {
+            eprintln!("✗ Stack start timed out after {timeout_secs}s — terminating subprocess tree");
+            terminate_child_process_tree(&mut child)?;
+            break Err(eyre!("infra start timed out after {timeout_secs}s"));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
 
     let elapsed = start.elapsed();
     match exit_status {
@@ -693,6 +700,78 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
             eprintln!("✗ Failed to start stack: {e}");
             Err(e).wrap_err("failed to wait for infra start")
         }
+    }
+}
+
+fn spawn_process_group_leader(command: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: `setpgid(0, 0)` is async-signal-safe per POSIX and runs in the child
+        // between fork and exec so the spawned process becomes the leader of its own group.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    command.spawn()
+}
+
+fn terminate_child_process_tree(child: &mut std::process::Child) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+
+        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => {
+                return Err(eyre!("failed to send SIGTERM to infra start process group: {error}"));
+            }
+        }
+
+        let grace_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if child
+                .try_wait()
+                .wrap_err("failed to poll infra start after SIGTERM")?
+                .is_some()
+            {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= grace_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => {
+                return Err(eyre!("failed to send SIGKILL to infra start process group: {error}"));
+            }
+        }
+
+        child
+            .wait()
+            .wrap_err("failed to reap timed-out infra start process")?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        child
+            .kill()
+            .wrap_err("failed to kill timed-out infra start process")?;
+        child
+            .wait()
+            .wrap_err("failed to reap timed-out infra start process")?;
+        Ok(())
     }
 }
 
@@ -837,8 +916,12 @@ fn auto_apply_schema(verbose: bool) -> Result<bool> {
     // LOCK_EX | LOCK_NB — exclusive, non-blocking
     let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if lock_result != 0 {
-        // Another process is applying schema — skip, it'll complete it
-        eprintln!("ℹ️  Schema apply already in progress (lock held) — skipping");
+        // Another process is applying schema. Wait for readiness instead of claiming
+        // success immediately while the schema may still be mid-mutation.
+        eprintln!("ℹ️  Schema apply already in progress (lock held) — waiting for readiness");
+        wait_for_schema_apply_completion(std::time::Duration::from_secs(
+            SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS,
+        ))?;
         return Ok(true);
     }
 
@@ -847,6 +930,43 @@ fn auto_apply_schema(verbose: bool) -> Result<bool> {
     // Lock released automatically when lock_file is dropped
     drop(lock_file);
     result
+}
+
+fn wait_for_schema_apply_completion(timeout: std::time::Duration) -> Result<()> {
+    wait_for_schema_apply_completion_with(
+        timeout,
+        std::time::Duration::from_millis(SCHEMA_APPLY_LOCK_WAIT_POLL_INTERVAL_MILLIS),
+        has_pending_schema_apply,
+    )
+}
+
+fn wait_for_schema_apply_completion_with<F>(
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+    mut pending_check: F,
+) -> Result<()>
+where
+    F: FnMut() -> Result<bool>,
+{
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Waiting for concurrent schema apply", 5);
+
+    loop {
+        if !pending_check()? {
+            return Ok(());
+        }
+
+        if start.elapsed() >= timeout {
+            bail!(
+                "schema apply is still pending after {:.1}s while another xtask holds the schema lock",
+                timeout.as_secs_f64()
+            );
+        }
+
+        if !poll_interval.is_zero() {
+            std::thread::sleep(poll_interval);
+        }
+    }
 }
 
 /// Inner implementation of schema apply, separated for the flock wrapper.
@@ -1198,8 +1318,16 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                 );
                 false
             }) {
-                tracing::debug!("preflight cache: skipping preflight (cache valid)");
-                return Ok(());
+                let live_status = InfraStatus::capture();
+                if live_status.all_ready() {
+                    tracing::debug!("preflight cache: skipping preflight (cache valid)");
+                    return Ok(());
+                }
+
+                tracing::debug!(
+                    ?live_status,
+                    "preflight cache valid but live infrastructure is no longer ready; continuing with full preflight"
+                );
             }
         }
         Ok(None) => {}
@@ -1291,35 +1419,10 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
-    use std::ffi::OsString;
+    use crate::sandbox::{EnvGuard, sinex_test};
     use std::os::unix::process::ExitStatusExt;
     use tempfile::tempdir;
 
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: Option<&str>) -> Self {
-            let original = std::env::var_os(key);
-            match value {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     #[sinex_test]
     async fn test_infra_status_capture() -> TestResult<()> {
@@ -1504,6 +1607,63 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix() -> TestResult<()> {
+        let pending = parse_schema_apply_probe_output(&std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"SET\n0\n".to_vec(),
+            stderr: Vec::new(),
+        })?;
+
+        assert!(!pending);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infra_status_all_ready_requires_tls() -> TestResult<()> {
+        assert!(InfraStatus {
+            postgres: true,
+            nats: true,
+            tls: true,
+            schema_apply_pending: false,
+        }
+        .all_ready());
+
+        assert!(!InfraStatus {
+            postgres: true,
+            nats: true,
+            tls: false,
+            schema_apply_pending: false,
+        }
+        .all_ready());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wait_for_schema_apply_completion_returns_when_pending_clears() -> TestResult<()> {
+        let mut pending = vec![true, true, false].into_iter();
+
+        wait_for_schema_apply_completion_with(
+            std::time::Duration::from_millis(10),
+            std::time::Duration::ZERO,
+            || Ok(pending.next().unwrap_or(false)),
+        )?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears() -> TestResult<()> {
+        let error = wait_for_schema_apply_completion_with(
+            std::time::Duration::from_millis(1),
+            std::time::Duration::ZERO,
+            || Ok(true),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("schema apply is still pending"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_schema_readiness_probe_sql_sets_statement_timeout() -> TestResult<()> {
         assert!(SCHEMA_READINESS_PROBE_SQL.contains("SET statement_timeout = '5s'"));
         assert!(SCHEMA_READINESS_PROBE_SQL.contains("to_regclass('core.events')"));
@@ -1520,7 +1680,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_auto_start_stack_uses_default_for_invalid_timeout_override() -> TestResult<()> {
-        let _guard = crate::tests::EnvGuard::set("SINEX_INFRA_START_TIMEOUT", Some("bogus".into()));
+        let mut _guard = EnvGuard::new();
+        _guard.set("SINEX_INFRA_START_TIMEOUT", "bogus");
         assert_eq!(
             crate::parse_positive_u64_env_or_default(
                 "SINEX_INFRA_START_TIMEOUT",
@@ -1533,8 +1694,24 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_tls_dir_ready_requires_server_key() -> TestResult<()> {
+        let dir = tempdir()?;
+        std::fs::write(dir.path().join("ca.pem"), "ca")?;
+        std::fs::write(dir.path().join("server.pem"), "server")?;
+        std::fs::write(dir.path().join("client.pem"), "client")?;
+
+        assert!(!tls_dir_ready(dir.path()));
+
+        std::fs::write(dir.path().join("server-key.pem"), "server-key")?;
+
+        assert!(tls_dir_ready(dir.path()));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_ensure_ready_uses_default_for_invalid_ttl_override() -> TestResult<()> {
-        let _guard = crate::tests::EnvGuard::set("SINEX_PREFLIGHT_TTL_SECS", Some("0".into()));
+        let mut _guard = EnvGuard::new();
+        _guard.set("SINEX_PREFLIGHT_TTL_SECS", "0");
         assert_eq!(
             crate::parse_positive_u64_env_or_default(
                 "SINEX_PREFLIGHT_TTL_SECS",
@@ -1588,10 +1765,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_set_dev_token_if_missing_adds_admin_role_suffix() -> TestResult<()> {
-        let _env_guard = EnvGuard::set("SINEX_ENVIRONMENT", None);
-        let _token_guard = EnvGuard::set("SINEX_RPC_TOKEN", None);
-        let _token_file_guard = EnvGuard::set("SINEX_RPC_TOKEN_FILE", None);
-        let _admin_file_guard = EnvGuard::set("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
+        let mut _guard = EnvGuard::new();
+        _guard.set_optional("SINEX_ENVIRONMENT", None);
+        _guard.set_optional("SINEX_RPC_TOKEN", None);
+        _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
 
         set_dev_token_if_missing();
 
@@ -1604,12 +1782,13 @@ mod tests {
     #[sinex_test]
     async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -> TestResult<()>
     {
-        let _env_guard = EnvGuard::set("SINEX_ENVIRONMENT", None);
-        let _token_guard = EnvGuard::set("SINEX_RPC_TOKEN", None);
-        let _token_file_guard = EnvGuard::set("SINEX_RPC_TOKEN_FILE", None);
-        let _admin_file_guard = EnvGuard::set("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
-        let _tls_cert_guard = EnvGuard::set("SINEX_GATEWAY_TLS_CERT", None);
-        let _tls_key_guard = EnvGuard::set("SINEX_GATEWAY_TLS_KEY", None);
+        let mut _guard = EnvGuard::new();
+        _guard.set_optional("SINEX_ENVIRONMENT", None);
+        _guard.set_optional("SINEX_RPC_TOKEN", None);
+        _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_GATEWAY_TLS_CERT", None);
+        _guard.set_optional("SINEX_GATEWAY_TLS_KEY", None);
 
         let overrides = local_runtime_env_overrides();
 
@@ -1622,6 +1801,21 @@ mod tests {
         assert!(overrides.iter().any(|(key, value)| {
             key == "SINEX_GATEWAY_TLS_KEY" && value.ends_with("server-key.pem")
         }));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn test_spawn_process_group_leader_creates_dedicated_group() -> TestResult<()> {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        let mut child = spawn_process_group_leader(&mut command)?;
+        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+        let process_group = nix::unistd::getpgid(Some(pid))?;
+
+        assert_eq!(process_group, pid);
+
+        terminate_child_process_tree(&mut child)?;
         Ok(())
     }
 }

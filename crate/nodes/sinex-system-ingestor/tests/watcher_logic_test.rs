@@ -523,9 +523,9 @@ async fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
 async fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> {
     let config = sinex_system_ingestor::DbusConfig::default();
 
-    // Three noisy interfaces excluded by default
+    // Introspectable and Peer are noisy; Properties must remain visible for media/session extraction.
     assert!(
-        config
+        !config
             .exclude_interfaces
             .contains(&"org.freedesktop.DBus.Properties".to_string())
     );
@@ -539,6 +539,7 @@ async fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> 
             .exclude_interfaces
             .contains(&"org.freedesktop.DBus.Peer".to_string())
     );
+    assert!(config.extract_media);
     Ok(())
 }
 
