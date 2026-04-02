@@ -1261,7 +1261,6 @@ impl WorkflowGraph {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
-    use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
@@ -1281,27 +1280,12 @@ mod tests {
         Ok(())
     }
 
-    struct ScopedEnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
+    use xtask::sandbox::EnvGuard;
 
-    impl ScopedEnvGuard {
-        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                unsafe { std::env::set_var(self.key, previous) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
+    fn env_set_path(key: &str, value: &std::path::Path) -> EnvGuard {
+        let mut guard = EnvGuard::new();
+        guard.set(key, value);
+        guard
     }
 
     #[sinex_test]
@@ -1369,7 +1353,7 @@ mod tests {
     #[sinex_test]
     async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", tempdir.path());
+        let _history_db_guard = env_set_path("XTASK_HISTORY_DB", tempdir.path());
         let coordinator = JobCoordinator::new()?;
 
         assert!(
@@ -1747,7 +1731,7 @@ mod tests {
     #[sinex_test]
     async fn test_state_surfaces_unreadable_state_path() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let _state_guard = ScopedEnvGuard::set_path("SINEX_STATE_DIR", tempdir.path());
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
         let coordinator = JobCoordinator::new()?;
         let state_path = tempdir.path().join("coordinator/check.state.json");
         fs::create_dir_all(&state_path)?;
@@ -1765,7 +1749,7 @@ mod tests {
     #[sinex_test]
     async fn test_request_surfaces_stale_state_cleanup_failures() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let _state_guard = ScopedEnvGuard::set_path("SINEX_STATE_DIR", tempdir.path());
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
         let coordinator = JobCoordinator::new()?;
         let coordinator_dir = tempdir.path().join("coordinator");
         let state_path = coordinator_dir.join("check.state.json");

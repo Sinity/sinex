@@ -906,42 +906,20 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
 
-    pub(crate) struct EnvGuard {
-        key: &'static str,
-        original: Option<std::ffi::OsString>,
-    }
+    use crate::sandbox::EnvGuard;
 
-    impl EnvGuard {
-        pub(crate) fn set(key: &'static str, value: Option<std::ffi::OsString>) -> Self {
-            let original = std::env::var_os(key);
-            match value {
-                Some(value) => unsafe {
-                    std::env::set_var(key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(key);
-                },
-            }
-            Self { key, original }
+    fn env_set(key: &str, value: Option<std::ffi::OsString>) -> EnvGuard {
+        let mut guard = EnvGuard::new();
+        match value {
+            Some(v) => guard.set(key, v),
+            None => guard.clear(key),
         }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
-            }
-        }
+        guard
     }
 
     #[sinex_test]
     async fn parse_positive_u64_env_or_default_rejects_invalid_values() -> TestResult<()> {
-        let _guard = EnvGuard::set("SINEX_TEST_TIMEOUT", Some("not-a-number".into()));
+        let _guard = env_set("SINEX_TEST_TIMEOUT", Some("not-a-number".into()));
 
         assert_eq!(
             parse_positive_u64_env_or_default("SINEX_TEST_TIMEOUT", 42, "test timeout"),
@@ -952,7 +930,7 @@ mod tests {
 
     #[sinex_test]
     async fn parse_positive_u64_env_or_default_rejects_zero() -> TestResult<()> {
-        let _guard = EnvGuard::set("SINEX_TEST_TIMEOUT", Some("0".into()));
+        let _guard = env_set("SINEX_TEST_TIMEOUT", Some("0".into()));
 
         assert_eq!(
             parse_positive_u64_env_or_default("SINEX_TEST_TIMEOUT", 42, "test timeout"),
@@ -963,7 +941,7 @@ mod tests {
 
     #[sinex_test]
     async fn parse_one_shot_i64_env_returns_value_and_clears_env() -> TestResult<()> {
-        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some("123".into()));
+        let _guard = env_set("SINEX_TEST_CLAIM", Some("123".into()));
 
         assert_eq!(
             parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
@@ -978,7 +956,7 @@ mod tests {
 
     #[sinex_test]
     async fn parse_one_shot_i64_env_rejects_invalid_values_and_clears_env() -> TestResult<()> {
-        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some("abc".into()));
+        let _guard = env_set("SINEX_TEST_CLAIM", Some("abc".into()));
 
         assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
         assert!(
@@ -994,7 +972,7 @@ mod tests {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
-        let _guard = EnvGuard::set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
+        let _guard = env_set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
 
         assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
         assert!(
