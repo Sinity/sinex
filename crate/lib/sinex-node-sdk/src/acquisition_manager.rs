@@ -51,6 +51,7 @@ impl Default for RotationPolicy {
 /// Material acquisition manager
 pub struct AcquisitionManager {
     nats_client: NatsClient,
+    js: async_nats::jetstream::Context,
     rotation_policy: RotationPolicy,
     env: SinexEnvironment,
     namespace: Option<String>,
@@ -273,8 +274,10 @@ impl AcquisitionManager {
             env_nonempty_string_optional("SINEX_WORK_DIR", "acquisition manager work dir")
                 .map(PathBuf::from);
 
+        let js = async_nats::jetstream::new(nats_client.clone());
         Self {
             nats_client,
+            js,
             rotation_policy,
             env,
             namespace,
@@ -388,7 +391,7 @@ impl AcquisitionManager {
             .nats_subject_with_namespace(self.namespace.as_deref(), "source_material.begin");
         let payload = serde_json::to_vec(&msg)?;
 
-        let js = async_nats::jetstream::new(self.nats_client.clone());
+        let js = &self.js;
         js.publish(subject, payload.into())
             .await
             .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {e}")))?
@@ -501,7 +504,7 @@ impl AcquisitionManager {
         headers.insert("Offset", offset_str.as_str());
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
-        let js = async_nats::jetstream::new(self.nats_client.clone());
+        let js = &self.js;
         js.publish_with_headers(subject, headers, data.to_vec().into())
             .await
             .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {e}")))?
@@ -610,7 +613,7 @@ impl AcquisitionManager {
             .nats_subject_with_namespace(self.namespace.as_deref(), "source_material.end");
         let payload = serde_json::to_vec(&msg)?;
 
-        let js = async_nats::jetstream::new(self.nats_client.clone());
+        let js = &self.js;
         js.publish(subject, payload.into())
             .await
             .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {e}")))?

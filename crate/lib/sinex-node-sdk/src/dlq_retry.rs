@@ -309,9 +309,7 @@ impl DlqRetryHandler {
         subject: &str,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        SinexError::network(operation)
-            .with_context("subject", subject)
-            .with_source(error.to_string())
+        crate::error_helpers::nats_settlement_error(operation, subject, None, error)
     }
 
     async fn retry_message(
