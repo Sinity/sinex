@@ -246,6 +246,12 @@ impl IngestdConfig {
         assembler_state_dir: Option<String>,
         namespace: Option<String>,
     ) -> IngestdResult<Self> {
+        let work_dir_override =
+            strict_env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir")?;
+        let annex_repo_env_override =
+            strict_env_validated_path("SINEX_ANNEX_PATH", "annex repository path")?;
+        let gitops_work_dir_override =
+            strict_env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")?;
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let strict_validation = env_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
@@ -287,6 +293,15 @@ impl IngestdConfig {
         config.stats_log_interval_secs = stats_log_interval_secs;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
+        if let Some(path) = work_dir_override {
+            config.work_dir = path;
+        }
+        if let Some(path) = annex_repo_env_override {
+            config.annex_repo_path = path;
+        }
+        if let Some(path) = gitops_work_dir_override {
+            config.gitops_work_dir = path;
+        }
 
         // Override fetch config if specified
         if let Some(max_msgs) = consumer_fetch_max_messages {
@@ -467,6 +482,24 @@ fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
             None
         }
     }
+}
+
+fn strict_env_validated_path(name: &str, context: &str) -> IngestdResult<Option<Utf8PathBuf>> {
+    let Some(raw) = shared_env::strict_var(name)? else {
+        return Ok(None);
+    };
+
+    sinex_primitives::validation::validate_path(&raw)
+        .map(Some)
+        .map_err(|error| {
+            SinexError::configuration(format!(
+                "Environment variable {name} has invalid path value"
+            ))
+            .with_context("environment_variable", name)
+            .with_context("context", context)
+            .with_context("raw_value", raw)
+            .with_std_error(&error)
+        })
 }
 
 fn default_path_base_dir() -> Utf8PathBuf {

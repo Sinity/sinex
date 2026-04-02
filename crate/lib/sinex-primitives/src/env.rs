@@ -10,9 +10,11 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use camino::Utf8PathBuf;
 use tracing::warn;
 
 use crate::error::{Result, SinexError};
+use crate::validation::validate_path;
 
 // ─── Strict helpers ──────────────────────────────────────────
 
@@ -60,6 +62,23 @@ pub fn strict_flag(name: &str) -> Result<Option<bool>> {
                 "Environment variable {name} has invalid boolean value `{raw}`"
             ))),
         },
+    }
+}
+
+/// Read and validate an env var as a UTF-8 path strictly.
+///
+/// Returns `Err` on invalid UTF-8 or invalid path content.
+pub fn strict_validated_path(name: &str) -> Result<Option<Utf8PathBuf>> {
+    match strict_var(name)? {
+        None => Ok(None),
+        Some(raw) => validate_path(&raw).map(Some).map_err(|error| {
+            SinexError::configuration(format!(
+                "Environment variable {name} has invalid path value"
+            ))
+            .with_context("environment_variable", name)
+            .with_context("raw_value", raw)
+            .with_std_error(&error)
+        }),
     }
 }
 

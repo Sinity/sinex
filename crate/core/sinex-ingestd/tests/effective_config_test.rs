@@ -169,3 +169,30 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
     assert!(message.contains("soon"));
     Ok(())
 }
+
+#[sinex_test]
+async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_INGESTD_WORK_DIR", "../../bad-work-dir");
+
+    let error = IngestdConfig::from_args(
+        Some("postgresql://cli/override".to_string()),
+        "nats://localhost:4222".to_string(),
+        false,
+        16,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect_err("invalid ingestd path override must fail config construction");
+
+    let message = error.to_string();
+    assert!(message.contains("SINEX_INGESTD_WORK_DIR"));
+    assert!(message.contains("invalid path value"));
+    Ok(())
+}

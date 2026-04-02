@@ -1,17 +1,18 @@
 //! Node configuration environment validation tests.
 
 use sinex_node_sdk::NodeConfig;
-use xtask::sandbox::sinex_test;
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]
 async fn test_node_environment_path_validation() -> TestResult<()> {
-    unsafe { std::env::set_var("SINEX_WORK_DIR", "../../../etc") };
+    let mut env = EnvGuard::new();
+    env.set("SINEX_WORK_DIR", "../../../etc");
 
-    let config = NodeConfig::load_from_env("test-node")?;
-    assert!(!config.work_dir.as_str().contains("../../"));
-    assert!(config.work_dir.is_absolute());
-
-    unsafe { std::env::remove_var("SINEX_WORK_DIR") };
+    let error =
+        NodeConfig::load_from_env("test-node").expect_err("invalid work dir override must fail");
+    let message = error.to_string();
+    assert!(message.contains("SINEX_WORK_DIR"));
+    assert!(message.contains("invalid path value"));
     Ok(())
 }
 
