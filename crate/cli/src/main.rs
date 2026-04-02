@@ -225,12 +225,15 @@ async fn main() -> color_eyre::Result<()> {
     // Override with explicit CLI args.
     let rpc_url_override =
         cli_value_is_explicit(&matches, "rpc_url").then(|| cli.rpc_url.clone().unwrap_or_else(default_rpc_url));
+    let token_override = cli_value_is_explicit(&matches, "token")
+        .then(|| cli.token.clone())
+        .flatten();
     let timeout_override = cli_value_is_explicit(&matches, "timeout").then_some(cli.timeout);
     let format_override = cli_value_is_explicit(&matches, "format").then_some(cli.format);
 
     config.merge_cli_args(
         rpc_url_override,
-        cli.token,
+        token_override,
         cli.token_file,
         cli.ca_cert,
         cli.client_cert,
@@ -310,6 +313,34 @@ mod tests {
 
         assert!(message.contains("RUST_LOG"));
         assert!(message.contains("sinexctl=wat"));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn env_token_is_not_treated_as_explicit_cli_override() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_RPC_TOKEN", "env-token");
+
+        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        let token_override = cli_value_is_explicit(&matches, "token")
+            .then(|| cli.token.clone())
+            .flatten();
+
+        assert_eq!(cli.token.as_deref(), Some("env-token"));
+        assert_eq!(matches.value_source("token"), Some(ValueSource::EnvVariable));
+        assert_eq!(token_override, None);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn cli_token_is_treated_as_explicit_override() -> TestResult<()> {
+        let (matches, cli) = parse_cli(&["sinexctl", "--token", "cli-token", "status"])?;
+        let token_override = cli_value_is_explicit(&matches, "token")
+            .then(|| cli.token.clone())
+            .flatten();
+
+        assert_eq!(matches.value_source("token"), Some(ValueSource::CommandLine));
+        assert_eq!(token_override.as_deref(), Some("cli-token"));
         Ok(())
     }
 
