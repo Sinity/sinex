@@ -1779,10 +1779,11 @@ impl<'a> EventRepository<'a> {
 
     // ========== Analytics Queries ==========
 
-    /// Delete all events from a specific source (with audit trail)
+    /// Delete all events from a specific source (with audit trail).
     ///
-    /// Note: This includes a safety constraint that only deletes events that appear
-    /// to be test events. Use `hard_delete_by_source` for unconditional deletion.
+    /// This still goes through the archive trigger path; the helper sets
+    /// `sinex.operation_id` and the trigger moves deleted rows into
+    /// `audit.archived_events`.
     pub async fn delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
         self.delete_events_with_filter(Some(source), None, "system", "Delete by source")
             .await

@@ -50,6 +50,10 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
     assert_eq!(envelope["source"], "gateway.test");
     assert_eq!(envelope["event_type"], "inline.event");
     assert_eq!(envelope["anchor_byte"], 0);
+    assert!(
+        envelope.get("source_event_ids").is_none(),
+        "events.ingest must publish material provenance, not synthesis provenance"
+    );
 
     let material_id = envelope["source_material_id"]
         .as_str()
@@ -82,6 +86,8 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
     );
     assert_eq!(record.metadata["event_source"].as_str(), Some("gateway.test"));
     assert_eq!(record.metadata["event_type"].as_str(), Some("inline.event"));
+    assert_eq!(record.metadata["inline_payload"].as_bool(), Some(true));
+    assert_eq!(record.metadata["payload_bytes"].as_i64(), Some(12));
     assert_eq!(record.metadata["file_size_bytes"].as_i64(), Some(12));
 
     Ok(())

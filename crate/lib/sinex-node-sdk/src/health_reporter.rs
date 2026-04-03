@@ -105,13 +105,59 @@ impl Default for HealthThresholds {
 }
 
 impl HealthThresholds {
+    fn validate_rate(name: &str, value: f64) -> Result<()> {
+        if !value.is_finite() {
+            return Err(
+                SinexError::configuration(format!("{name} must be a finite number"))
+                    .with_context("value", value.to_string()),
+            );
+        }
+
+        if !(0.0..=1.0).contains(&value) {
+            return Err(
+                SinexError::configuration(format!("{name} must be between 0.0 and 1.0"))
+                    .with_context("value", value.to_string()),
+            );
+        }
+
+        Ok(())
+    }
+
+    fn validate(self) -> Result<Self> {
+        Self::validate_rate("health degraded threshold", self.error_rate_degraded)?;
+        Self::validate_rate("health failed threshold", self.error_rate_failed)?;
+
+        if self.error_rate_degraded > self.error_rate_failed {
+            return Err(
+                SinexError::configuration(
+                    "health degraded threshold must not exceed the failed threshold".to_string(),
+                )
+                .with_context(
+                    "error_rate_degraded",
+                    self.error_rate_degraded.to_string(),
+                )
+                .with_context("error_rate_failed", self.error_rate_failed.to_string()),
+            );
+        }
+
+        if self.window_seconds == 0 {
+            return Err(
+                SinexError::configuration("health window must be greater than zero".to_string())
+                    .with_context("window_seconds", self.window_seconds.to_string()),
+            );
+        }
+
+        Ok(self)
+    }
+
     /// Load thresholds from environment variables
     pub fn from_env() -> Result<Self> {
-        Ok(Self {
+        Self {
             error_rate_degraded: env_parsed("SINEX_HEALTH_ERROR_RATE_DEGRADED")?.unwrap_or(0.05),
             error_rate_failed: env_parsed("SINEX_HEALTH_ERROR_RATE_FAILED")?.unwrap_or(0.20),
             window_seconds: env_parsed("SINEX_HEALTH_WINDOW_SECONDS")?.unwrap_or(300),
-        })
+        }
+        .validate()
     }
 }
 

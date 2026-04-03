@@ -57,6 +57,32 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn declarative_diff_accepts_normalized_source_material_status_constraint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sqlx::query(
+        r#"
+        ALTER TABLE raw.source_material_registry
+            DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+            ADD CONSTRAINT source_material_registry_status_check
+            CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !drift
+            .iter()
+            .any(|entry| entry.contains("source_material_registry_status_check")),
+        "normalized Postgres CHECK definition must not be reported as drift: {drift:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
 
@@ -151,6 +177,38 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     assert!(
         summary_exists,
         "schema apply must recreate recent_activity_summary after rebuilding telemetry dependencies"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext) -> TestResult<()> {
+    drop_telemetry_relation(&ctx.pool, "recent_activity_summary").await?;
+    drop_telemetry_relation(&ctx.pool, "command_frequency_hourly").await?;
+    sqlx::query(
+        r#"
+        CREATE MATERIALIZED VIEW sinex_telemetry.command_frequency_hourly AS
+        SELECT
+            NOW() AS bucket,
+            'broken'::text AS command,
+            NULL::text AS shell,
+            0::bigint AS total_executions,
+            0::bigint AS successful_executions,
+            0::bigint AS failed_executions,
+            NULL::float8 AS avg_duration_ms
+        WITH NO DATA
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        drift.iter().any(|entry| {
+            entry.contains("command_frequency_hourly") && entry.contains("expected a view")
+        }),
+        "diff must report command_frequency_hourly kind drift, got: {drift:?}"
     );
 
     Ok(())

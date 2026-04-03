@@ -76,6 +76,20 @@ fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
     })
 }
 
+fn is_recoverable_history_schema_version_error(error: &color_eyre::Report) -> bool {
+    error.chain().any(|cause| {
+        match cause.downcast_ref::<rusqlite::Error>() {
+            Some(rusqlite::Error::SqliteFailure(inner, _)) => matches!(
+                inner.code,
+                rusqlite::ffi::ErrorCode::DatabaseCorrupt
+                    | rusqlite::ffi::ErrorCode::NotADatabase
+            ),
+            Some(rusqlite::Error::FromSqlConversionFailure(..)) => true,
+            _ => false,
+        }
+    })
+}
+
 fn with_sqlite_lock_retry<T, F>(action: &str, mut operation: F) -> Result<T>
 where
     F: FnMut() -> Result<T>,
@@ -285,6 +299,13 @@ enum StaleCleanupOutcome {
 impl HistoryDb {
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_schema_version_probe(path, Self::schema_version)
+    }
+
+    fn open_with_schema_version_probe<F>(path: &Path, schema_version_probe: F) -> Result<Self>
+    where
+        F: FnOnce(&Self) -> Result<i32>,
+    {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -362,7 +383,59 @@ impl HistoryDb {
             conn,
             is_synthetic: false,
         };
-        let current_version = db.schema_version()?;
+        let current_version = match schema_version_probe(&db) {
+            Ok(version) => version,
+            Err(error) if is_recoverable_history_schema_version_error(&error) => {
+                drop(db);
+                let backup_path = path.with_extension("db.schema-version-read-failure.bak");
+                match std::fs::copy(path, &backup_path) {
+                    Ok(_) => eprintln!(
+                        "⚠️  History DB schema version read failed at {}, backed up to {} and recreating",
+                        path.display(),
+                        backup_path.display()
+                    ),
+                    Err(copy_error) => eprintln!(
+                        "⚠️  History DB schema version read failed at {}, backup failed ({}), recreating anyway",
+                        path.display(),
+                        copy_error
+                    ),
+                }
+                remove_history_artifact(
+                    path,
+                    "failed to remove unreadable history database before recreation",
+                )?;
+                let wal_path = path.with_extension("db-wal");
+                let shm_path = path.with_extension("db-shm");
+                remove_history_artifact(
+                    &wal_path,
+                    "failed to remove unreadable history database WAL before recreation",
+                )?;
+                remove_history_artifact(
+                    &shm_path,
+                    "failed to remove unreadable history database SHM before recreation",
+                )?;
+                let conn = Connection::open(path).with_context(|| {
+                    format!(
+                        "failed to recreate history database after unreadable schema version: {}",
+                        path.display()
+                    )
+                })?;
+                conn.execute_batch(
+                    "PRAGMA journal_mode=WAL;
+                     PRAGMA busy_timeout=5000;",
+                )?;
+                let recreated = Self {
+                    conn,
+                    is_synthetic: false,
+                };
+                recreated.init_schema()?;
+                recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                return Ok(recreated);
+            }
+            Err(error) => {
+                return Err(error).context("failed to read history DB schema version");
+            }
+        };
         if current_version != HISTORY_DB_SCHEMA_VERSION {
             // Schema mismatch — backup then drop and recreate. History DB is
             // dev tooling data (command timings, test results), not user data.
@@ -3892,6 +3965,24 @@ mod tests {
                 live_stage TEXT,
                 is_background INTEGER NOT NULL DEFAULT 0
             );
+
+            INSERT INTO invocations (
+                command,
+                started_at,
+                status,
+                host,
+                cwd,
+                live_stage,
+                is_background
+            ) VALUES (
+                'check',
+                '2000-01-01T00:00:00Z',
+                'running',
+                'localhost',
+                '/tmp',
+                NULL,
+                1
+            );
             ",
         )?;
         drop(db);
@@ -3932,6 +4023,26 @@ mod tests {
                 live_stage TEXT,
                 is_background INTEGER NOT NULL DEFAULT 0,
                 pid INTEGER
+            );
+
+            INSERT INTO invocations (
+                command,
+                started_at,
+                status,
+                host,
+                cwd,
+                live_stage,
+                is_background,
+                pid
+            ) VALUES (
+                'check',
+                '2000-01-01T00:00:00Z',
+                'running',
+                'localhost',
+                '/tmp',
+                NULL,
+                1,
+                12345
             );
             ",
         )?;
@@ -4034,6 +4145,47 @@ mod tests {
 
         let unlock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
         assert_eq!(unlock_result, 0, "cleanup lock should release cleanly");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_recreates_when_schema_version_read_is_unreadable()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-open-schema-version-read-failure.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 0.1)?;
+        drop(db);
+
+        let reopened = HistoryDb::open_with_schema_version_probe(&db_path, |_db| {
+            Err::<i32, color_eyre::Report>(
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "synthetic schema version read failure",
+                    )),
+                )
+                .into(),
+            )
+        })?;
+
+        assert_eq!(reopened.schema_version()?, HISTORY_DB_SCHEMA_VERSION);
+        let recent = reopened.get_recent(10, None)?;
+        assert!(
+            recent.is_empty(),
+            "history DB should be recreated after unreadable schema version"
+        );
+        assert!(
+            db_path
+                .with_extension("db.schema-version-read-failure.bak")
+                .exists(),
+            "schema-version read failure should preserve a backup before recreation"
+        );
         Ok(())
     }
 

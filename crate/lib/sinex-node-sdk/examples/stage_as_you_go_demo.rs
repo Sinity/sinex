@@ -134,11 +134,7 @@ async fn main() -> Result<()> {
     };
 
     // 2. Initialize AcquisitionManager
-    let manager = Arc::new(AcquisitionManager::with_defaults(
-        client,
-        "demo-source",
-        "/tmp",
-    ));
+    let manager = Arc::new(AcquisitionManager::with_defaults(client, "demo-source"));
 
     // 3. Initialize StageAsYouGoContext
     // We use a mock channel for events since we don't have a full event emitter loop here

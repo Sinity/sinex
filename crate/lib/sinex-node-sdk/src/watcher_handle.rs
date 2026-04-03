@@ -48,7 +48,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::Duration;
 
 use sinex_primitives::{Result as SinexResult, SinexError};
-use tracing::debug;
+use tracing::{debug, warn};
 
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
@@ -98,6 +98,19 @@ pub struct WatcherHandle<M = ()> {
 }
 
 impl<M> WatcherHandle<M> {
+    fn forced_shutdown_timeout_error(
+        watcher_name: &'static str,
+        task_name: &'static str,
+    ) -> SinexError {
+        SinexError::processing("Watcher task exceeded shutdown grace period and was aborted")
+            .with_context("watcher_name", watcher_name)
+            .with_context("task", task_name.to_string())
+            .with_context(
+                "grace_period_ms",
+                SHUTDOWN_GRACE_PERIOD.as_millis().to_string(),
+            )
+    }
+
     fn shutdown_join_result(
         watcher_name: &'static str,
         task_name: &str,
@@ -105,19 +118,27 @@ impl<M> WatcherHandle<M> {
     ) -> SinexResult<()> {
         match result {
             Ok(()) => {
-                debug!(watcher = watcher_name, task = task_name, "Watcher task finished before shutdown");
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    "Watcher task finished before shutdown"
+                );
                 Ok(())
             }
             Err(join_error) if join_error.is_cancelled() => {
-                debug!(watcher = watcher_name, task = task_name, "Watcher task aborted during shutdown");
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    "Watcher task aborted during shutdown"
+                );
                 Ok(())
             }
-            Err(join_error) => {
-                Err(SinexError::processing("Watcher task failed during shutdown")
+            Err(join_error) => Err(
+                SinexError::processing("Watcher task failed during shutdown")
                     .with_context("watcher_name", watcher_name)
                     .with_context("task", task_name.to_string())
-                    .with_context("join_error", join_error.to_string()))
-            }
+                    .with_context("join_error", join_error.to_string()),
+            ),
         }
     }
 
@@ -288,7 +309,7 @@ impl<M> WatcherHandle<M> {
     }
 
     /// Gracefully shutdown the watcher, first waiting briefly for tasks to exit,
-    /// then aborting as a fallback, and finally marking as stopped.
+    /// then forcing cancellation as a last resort and surfacing that failure.
     ///
     /// This is also automatically called on `Drop`, but calling explicitly
     /// allows for proper async cleanup of material contexts and awaiting task completion.
@@ -318,7 +339,17 @@ impl<M> WatcherHandle<M> {
                     "Watcher task did not exit within shutdown grace period; aborting"
                 );
                 task.abort();
-                Self::shutdown_join_result(watcher_name, task_name, task.await)
+                match task.await {
+                    Ok(()) => Err(Self::forced_shutdown_timeout_error(watcher_name, task_name)
+                        .with_context("post_abort_result", "task returned after abort request")),
+                    Err(join_error) if join_error.is_cancelled() => {
+                        Err(Self::forced_shutdown_timeout_error(watcher_name, task_name))
+                    }
+                    Err(join_error) => {
+                        Err(Self::forced_shutdown_timeout_error(watcher_name, task_name)
+                            .with_context("post_abort_join_error", join_error.to_string()))
+                    }
+                }
             }
         }
     }
@@ -330,22 +361,30 @@ impl<M> WatcherHandle<M> {
     ) -> SinexResult<()> {
         match tokio::time::timeout(SHUTDOWN_GRACE_PERIOD, &mut *task).await {
             Ok(Ok(Ok(()))) => {
-                debug!(watcher = watcher_name, task = task_name, "Watcher task finished before shutdown");
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    "Watcher task finished before shutdown"
+                );
                 Ok(())
             }
             Ok(Ok(Err(error))) => Err(error
                 .with_context("watcher_name", watcher_name)
                 .with_context("task", task_name.to_string())),
             Ok(Err(join_error)) if join_error.is_cancelled() => {
-                debug!(watcher = watcher_name, task = task_name, "Watcher task aborted during shutdown");
+                debug!(
+                    watcher = watcher_name,
+                    task = task_name,
+                    "Watcher task aborted during shutdown"
+                );
                 Ok(())
             }
-            Ok(Err(join_error)) => Err(
-                SinexError::processing("Watcher task failed during shutdown")
-                    .with_context("watcher_name", watcher_name)
-                    .with_context("task", task_name.to_string())
-                    .with_context("join_error", join_error.to_string()),
-            ),
+            Ok(Err(join_error)) => Err(SinexError::processing(
+                "Watcher task failed during shutdown",
+            )
+            .with_context("watcher_name", watcher_name)
+            .with_context("task", task_name.to_string())
+            .with_context("join_error", join_error.to_string())),
             Err(_) => {
                 debug!(
                     watcher = watcher_name,
@@ -355,17 +394,22 @@ impl<M> WatcherHandle<M> {
                 );
                 task.abort();
                 match task.await {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(error)) => Err(error
-                        .with_context("watcher_name", watcher_name)
-                        .with_context("task", task_name.to_string())),
-                    Err(join_error) if join_error.is_cancelled() => Ok(()),
-                    Err(join_error) => Err(
-                        SinexError::processing("Watcher task failed during shutdown")
-                            .with_context("watcher_name", watcher_name)
-                            .with_context("task", task_name.to_string())
-                            .with_context("join_error", join_error.to_string()),
-                    ),
+                    Ok(Ok(())) => Err(Self::forced_shutdown_timeout_error(watcher_name, task_name)
+                        .with_context(
+                            "post_abort_result",
+                            "forwarder returned success after abort request",
+                        )),
+                    Ok(Err(error)) => {
+                        Err(Self::forced_shutdown_timeout_error(watcher_name, task_name)
+                            .with_context("post_abort_error", error.to_string()))
+                    }
+                    Err(join_error) if join_error.is_cancelled() => {
+                        Err(Self::forced_shutdown_timeout_error(watcher_name, task_name))
+                    }
+                    Err(join_error) => {
+                        Err(Self::forced_shutdown_timeout_error(watcher_name, task_name)
+                            .with_context("post_abort_join_error", join_error.to_string()))
+                    }
                 }
             }
         }
@@ -377,17 +421,12 @@ impl<M> WatcherHandle<M> {
         let mut errors = Vec::new();
         match &mut self.state {
             WatcherState::Running { task, forwarder } => {
-                if let Err(error) = Self::shutdown_task(watcher_name, "watcher task", task).await
-                {
+                if let Err(error) = Self::shutdown_task(watcher_name, "watcher task", task).await {
                     errors.push(error);
                 }
                 if let Some(mut fwd) = forwarder.take() {
-                    if let Err(error) = Self::shutdown_forwarder(
-                        watcher_name,
-                        "watcher forwarder",
-                        &mut fwd,
-                    )
-                    .await
+                    if let Err(error) =
+                        Self::shutdown_forwarder(watcher_name, "watcher forwarder", &mut fwd).await
                     {
                         errors.push(error);
                     }
@@ -400,14 +439,36 @@ impl<M> WatcherHandle<M> {
 
     /// Synchronous abort for Drop (best-effort).
     fn abort_tasks_sync(&mut self) {
+        let mut aborted = Vec::new();
+
         match &self.state {
             WatcherState::Running { task, forwarder } => {
-                task.abort();
+                if !task.is_finished() {
+                    task.abort();
+                    aborted.push("watcher task");
+                }
                 if let Some(fwd) = forwarder {
-                    fwd.abort();
+                    if !fwd.is_finished() {
+                        fwd.abort();
+                        aborted.push("watcher forwarder");
+                    }
                 }
             }
             WatcherState::Initialized | WatcherState::Stopped => {}
+        }
+
+        if !aborted.is_empty() {
+            let aborted_tasks = aborted.join(", ");
+            warn!(
+                watcher = self.name,
+                tasks = %aborted_tasks,
+                "Watcher dropped without explicit shutdown; aborting running tasks"
+            );
+            self.with_health_write(|health| {
+                health.last_error = Some(format!(
+                    "Watcher dropped without explicit shutdown; aborted {aborted_tasks}"
+                ));
+            });
         }
     }
 }

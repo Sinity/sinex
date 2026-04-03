@@ -41,6 +41,7 @@ pub struct StageAsYouGoContext {
 #[derive(Debug, Clone)]
 struct StageMaterialInfo {
     metadata: JsonValue,
+    started_at: sinex_primitives::temporal::Timestamp,
     last_activity: sinex_primitives::temporal::Timestamp,
 }
 
@@ -205,7 +206,7 @@ mod tests {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
         let acquisition = Arc::new(
-            AcquisitionManager::with_defaults(ctx.nats_client(), "stage-retry-test", "/stage")
+            AcquisitionManager::with_defaults(ctx.nats_client(), "stage-retry-test")
                 .with_work_dir(work_dir.path()),
         );
         let (tx, _rx) = mpsc::channel(1);
@@ -451,6 +452,7 @@ impl StageAsYouGoContext {
             .await
             .map_err(|e| SinexError::processing(format!("Failed to begin material: {e}")))?;
         let material_id = handle.material_id;
+        let started_at = handle.started_at();
         self.acquisition_handles
             .lock()
             .await
@@ -464,6 +466,7 @@ impl StageAsYouGoContext {
 
         let info = StageMaterialInfo {
             metadata,
+            started_at,
             last_activity: sinex_primitives::temporal::Timestamp::now(),
         };
 
@@ -478,19 +481,29 @@ impl StageAsYouGoContext {
     /// Get the `started_at` timestamp for an in-flight material.
     ///
     /// This is the wall-clock time recorded when the material capture began.
-    /// Once the material emits durably, ingestd persists the same value as the
-    /// `staged_at` ledger entry. Use it as the fallback `ts_orig` for events that
-    /// lack an intrinsic timestamp — it is reproducible on replay because it
-    /// traces to a persisted ledger row after the material actually starts.
+    /// `register_in_flight()` now publishes BEGIN before it returns, so ingestd
+    /// can durably persist the same value as the `staged_at` ledger entry. Use
+    /// it as the fallback `ts_orig` for events that lack an intrinsic timestamp
+    /// — it is reproducible on replay because it traces to that persisted row.
     pub async fn material_started_at(
         &self,
         material_id: Uuid,
     ) -> Option<sinex_primitives::temporal::Timestamp> {
-        self.acquisition_handles
+        if let Some(started_at) = self
+            .acquisition_handles
             .lock()
             .await
             .get(&material_id)
             .map(super::acquisition_manager::SourceMaterialHandle::started_at)
+        {
+            return Some(started_at);
+        }
+
+        self.material_registry
+            .lock()
+            .await
+            .get(&material_id)
+            .map(|info| info.started_at)
     }
 
     async fn require_material_started_at(
@@ -894,10 +907,13 @@ async fn reconcile_shared(
                 }
             }
         } else {
+            if let Some(info) = info {
+                registry.lock().await.insert(material_id, info);
+            }
             summary.skipped += 1;
             warn!(
                 %material_id,
-                "Stale Stage-as-You-Go material had no acquisition handle"
+                "Stale Stage-as-You-Go material had no acquisition handle; preserving registry state"
             );
         }
     }

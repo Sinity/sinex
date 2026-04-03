@@ -56,7 +56,6 @@ pub struct AcquisitionManager {
     env: SinexEnvironment,
     namespace: Option<String>,
     source_type: String,
-    _source_path: String,
     streams_ready: Arc<AtomicBool>,
     streams_bootstrap_lock: Arc<Mutex<()>>,
     work_dir: Option<PathBuf>,
@@ -157,24 +156,11 @@ impl AcquisitionManager {
     /// # use sinex_node_sdk::acquisition_manager::AcquisitionManager;
     /// # async fn example() {
     /// let nats_client = async_nats::connect("nats://localhost").await.unwrap();
-    /// let manager = AcquisitionManager::with_defaults(
-    ///     nats_client,
-    ///     "terminal",
-    ///     "/dev/pts/0"
-    /// );
+    /// let manager = AcquisitionManager::with_defaults(nats_client, "terminal");
     /// # }
     /// ```
-    pub fn with_defaults(
-        nats_client: NatsClient,
-        source_type: impl Into<String>,
-        source_path: impl Into<String>,
-    ) -> Self {
-        Self::new(
-            nats_client,
-            RotationPolicy::default(),
-            source_type.into(),
-            source_path.into(),
-        )
+    pub fn with_defaults(nats_client: NatsClient, source_type: impl Into<String>) -> Self {
+        Self::new(nats_client, RotationPolicy::default(), source_type.into())
     }
 
     /// Create an acquisition manager from `NodeHandles` with default rotation.
@@ -183,9 +169,8 @@ impl AcquisitionManager {
     pub fn from_handles_with_defaults(
         handles: &NodeHandles,
         source_type: impl Into<String>,
-        source_path: impl Into<String>,
     ) -> NodeResult<Self> {
-        Self::from_handles(handles, RotationPolicy::default(), source_type, source_path)
+        Self::from_handles(handles, RotationPolicy::default(), source_type)
     }
 
     /// Ensure `JetStream` streams required for material capture exist.
@@ -267,9 +252,8 @@ impl AcquisitionManager {
         nats_client: NatsClient,
         rotation_policy: RotationPolicy,
         source_type: String,
-        source_path: String,
     ) -> Self {
-        Self::new_with_namespace(nats_client, rotation_policy, source_type, source_path, None)
+        Self::new_with_namespace(nats_client, rotation_policy, source_type, None)
     }
 
     /// Create new acquisition manager with an optional namespace.
@@ -277,7 +261,6 @@ impl AcquisitionManager {
         nats_client: NatsClient,
         rotation_policy: RotationPolicy,
         source_type: String,
-        source_path: String,
         namespace: Option<String>,
     ) -> Self {
         let env = environment().clone();
@@ -293,7 +276,6 @@ impl AcquisitionManager {
             env,
             namespace,
             source_type,
-            _source_path: source_path,
             streams_ready: Arc::new(AtomicBool::new(false)),
             streams_bootstrap_lock: Arc::new(Mutex::new(())),
             work_dir,
@@ -305,18 +287,12 @@ impl AcquisitionManager {
         handles: &NodeHandles,
         rotation_policy: RotationPolicy,
         source_type: impl Into<String>,
-        source_path: impl Into<String>,
     ) -> NodeResult<Self> {
         let nats_client = match handles.transport() {
             crate::event_node::EventTransport::Nats(publisher) => publisher.nats_client().clone(),
         };
 
-        Ok(Self::new(
-            nats_client,
-            rotation_policy,
-            source_type.into(),
-            source_path.into(),
-        ))
+        Ok(Self::new(nats_client, rotation_policy, source_type.into()))
     }
 
     /// Override the working directory for temporary material buffers.
@@ -771,7 +747,7 @@ impl<'a> MaterialBuilder<'a> {
             "Created new source material"
         );
 
-        Ok(SourceMaterialHandle {
+        let mut handle = SourceMaterialHandle {
             material_id,
             temp_file: Some(temp_file),
             temp_path,
@@ -784,7 +760,15 @@ impl<'a> MaterialBuilder<'a> {
                 metadata: self.metadata,
             }),
             pending_published_slice: None,
-        })
+        };
+
+        // Publish BEGIN before handing the material ID to callers. Stage-as-you-go
+        // events may be emitted immediately after `register_in_flight`, so the
+        // source material must already be durable rather than lazily published on
+        // first slice/finalize.
+        self.manager.ensure_begin_published(&mut handle).await?;
+
+        Ok(handle)
     }
 }
 
@@ -859,11 +843,8 @@ mod tests {
     #[sinex_test]
     async fn concurrent_stream_bootstrap_waits_for_completion(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let manager = Arc::new(AcquisitionManager::with_defaults(
-            ctx.nats_client(),
-            "bootstrap-test",
-            "/bootstrap",
-        ));
+        let manager =
+            Arc::new(AcquisitionManager::with_defaults(ctx.nats_client(), "bootstrap-test"));
         let attempts = Arc::new(AtomicUsize::new(0));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -919,7 +900,7 @@ mod tests {
     #[sinex_test]
     async fn failed_stream_bootstrap_remains_retryable(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "retry-test", "/retry");
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "retry-test");
         let attempts = Arc::new(AtomicUsize::new(0));
 
         let err = manager
@@ -961,7 +942,7 @@ mod tests {
     async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
-        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test", "/oversized")
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
             .with_work_dir(work_dir.path());
         let mut handle = manager.begin_material("test://oversized").await?;
         let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];

@@ -93,8 +93,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
     // Create AcquisitionManager
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "test-source", "/test/path");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-source");
 
     // Begin material
     let mut handle = manager.begin_material("test-identifier").await?;
@@ -184,8 +183,7 @@ async fn material_acquisition_drop_before_first_slice_does_not_publish_orphan(
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "drop-source", "/drop/path");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "drop-source");
 
     let handle = manager.begin_material("drop-before-first-slice").await?;
     let material_id = handle.material_id;
@@ -237,8 +235,7 @@ async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestCont
     let dlq_subject = sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject).await?;
 
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "empty-source", "/empty/path");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "empty-source");
 
     let handle = manager.begin_material("empty-finalize").await?;
     let material_id = handle.material_id;
@@ -289,8 +286,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source", "/cancel/path");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source");
 
     let mut handle = manager.begin_material("cancel-identifier").await?;
     let material_id = handle.material_id;
@@ -633,8 +629,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     .await?;
     wait_for_material_assembler_ready(&nats, &nats_client).await?;
 
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "restart-test");
 
     let mut handle = manager
         .begin_material(&format!("restart-session-{run_suffix}"))
@@ -747,11 +742,8 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     .await?;
 
     let futures = (0..4).map(|idx| {
-        let manager = AcquisitionManager::with_defaults(
-            nats_client.clone(),
-            format!("concurrent-{idx}"),
-            format!("/concurrent/{idx}"),
-        );
+        let manager =
+            AcquisitionManager::with_defaults(nats_client.clone(), format!("concurrent-{idx}"));
         let synchronizer = synchronizer.clone();
         async move {
             let session_id = format!("session-{idx}");
@@ -824,8 +816,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
         max_age_seconds: Seconds::from_secs(3600),
     };
 
-    let manager =
-        AcquisitionManager::with_defaults(nats_client.clone(), "test-rotation", "/test/rotation");
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-rotation");
 
     // Use AppendStreamAcquirer for automatic rotation
     let mut acquirer = sinex_node_sdk::AppendStreamAcquirer::new(std::sync::Arc::new(manager));

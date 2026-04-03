@@ -116,9 +116,9 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
         nats_client.clone(),
         RotationPolicy::default(),
         "crash_early_stream".to_string(),
-        "/test/crash_early.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/crash_early.log");
 
     let handle = acquisition_mgr.begin_material("crash-early-source").await?;
     let material_id = handle.material_id;
@@ -163,9 +163,9 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
         nats_client.clone(),
         RotationPolicy::default(),
         "crash_mid_stream".to_string(),
-        "/test/crash_mid.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/crash_mid.log");
 
     let mut handle = acquisition_mgr.begin_material("crash-mid-source").await?;
     let material_id = handle.material_id;
@@ -216,16 +216,16 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         nats_client.clone(),
         RotationPolicy::default(),
         "orphan_stream_1".to_string(),
-        "/test/orphan1.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/orphan1.log");
     let acq_mgr2 = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "orphan_stream_2".to_string(),
-        "/test/orphan2.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/orphan2.log");
 
     let mut handle1 = acq_mgr1.begin_material("orphan-source-1").await?;
     let material_id1 = handle1.material_id;
@@ -342,9 +342,9 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
                 nats_clone,
                 RotationPolicy::default(),
                 format!("concurrent_stream_{worker_id}"),
-                format!("/test/concurrent_{worker_id}.log"),
                 Some(ns),
-            );
+            )
+            .with_work_dir(format!("/test/concurrent_{worker_id}.log"));
 
             let mut handle = acquisition_mgr
                 .begin_material(&format!("concurrent-source-{worker_id}"))
@@ -459,9 +459,9 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
         nats_client,
         RotationPolicy::default(),
         "crash_finalize_stream".to_string(),
-        "/test/crash_finalize.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/crash_finalize.log");
 
     let mut handle = acquisition_mgr
         .begin_material("crash-finalize-source")
@@ -511,9 +511,9 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         nats_client,
         RotationPolicy::default(),
         "recovery_stream".to_string(),
-        "/test/recovery.log".to_string(),
         Some(namespace.clone()),
-    );
+    )
+    .with_work_dir("/test/recovery.log");
 
     let mut handle = acquisition_mgr.begin_material("recovery-source").await?;
     let material_id = handle.material_id;

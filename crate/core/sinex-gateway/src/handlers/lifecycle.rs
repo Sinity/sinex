@@ -54,6 +54,16 @@ fn stringify_event_ids(event_ids: &[Uuid]) -> Vec<String> {
         .collect()
 }
 
+fn parse_unique_event_ids(raw_ids: &[String]) -> Result<Vec<Uuid>> {
+    let mut event_ids = raw_ids
+        .iter()
+        .map(|raw| parse_uuid_str(raw))
+        .collect::<Result<Vec<_>>>()?;
+    event_ids.sort_unstable();
+    event_ids.dedup();
+    Ok(event_ids)
+}
+
 fn fresh_cascade_session_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::now_v7().simple())
 }
@@ -184,6 +194,7 @@ pub async fn handle_lifecycle_archive(
     );
 
     let repo = pool.events();
+    let explicit_event_ids = request.event_ids.is_some();
 
     // Parse filters
     let before_ts = if let Some(before_str) = &request.before {
@@ -194,9 +205,7 @@ pub async fn handle_lifecycle_archive(
 
     // Get live event IDs matching filters
     let event_ids = if let Some(ids) = &request.event_ids {
-        ids.iter()
-            .map(|s| parse_uuid_str(s))
-            .collect::<Result<Vec<_>>>()?
+        parse_unique_event_ids(ids)?
     } else {
         repo.get_live_event_ids(request.source.as_ref(), before_ts, limit)
             .await
@@ -222,14 +231,17 @@ pub async fn handle_lifecycle_archive(
         event_ids.len(),
         request.dry_run,
     );
-    let scope = json!({
+    let mut scope = json!({
         "source": request.source.as_ref().map(|source| source.to_string()),
         "before": request.before.clone(),
-        "requested_event_ids": request.event_ids.clone(),
+        "requested_event_ids": Value::Null,
         "limit": limit,
         "reason": request.reason.clone(),
         "dry_run": request.dry_run,
     });
+    if explicit_event_ids {
+        scope["requested_event_ids"] = json!(stringify_event_ids(&event_ids));
+    }
     let operation = pool
         .state()
         .start_operation("archive", auth.actor_id(), scope)
@@ -353,21 +365,17 @@ pub async fn handle_lifecycle_restore(
         return Err(SinexError::validation("No event IDs provided for restore"));
     }
 
+    // Parse event IDs
+    let event_ids = parse_unique_event_ids(&request.event_ids)?;
+
     info!(
         actor = %auth.actor_id(),
-        event_count = request.event_ids.len(),
+        event_count = event_ids.len(),
         dry_run = request.dry_run,
         "Lifecycle restore operation initiated"
     );
 
     let repo = pool.events();
-
-    // Parse event IDs
-    let event_ids: Vec<Uuid> = request
-        .event_ids
-        .iter()
-        .map(|s| parse_uuid_str(s))
-        .collect::<Result<Vec<_>>>()?;
 
     let (cascade_ids, max_depth) =
         collect_cascade_ids(pool, "restore", &event_ids, CascadeSource::Archive).await?;
@@ -381,7 +389,7 @@ pub async fn handle_lifecycle_restore(
         request.dry_run,
     );
     let scope = json!({
-        "requested_event_ids": request.event_ids.clone(),
+        "requested_event_ids": stringify_event_ids(&event_ids),
         "dry_run": request.dry_run,
     });
     let operation = pool

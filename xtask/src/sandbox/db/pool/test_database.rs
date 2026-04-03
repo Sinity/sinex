@@ -120,6 +120,8 @@ impl TestDatabase {
 
     /// Force cleanup of this database (for testing)
     pub async fn force_cleanup(&self) -> TestResult<()> {
-        clean_database(&self.slot, &self.pool, &self.name, self.url()).await
+        clean_database(&self.slot, &self.pool, &self.name, self.url())
+            .await
+            .map(|_| ())
     }
 }

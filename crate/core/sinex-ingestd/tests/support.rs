@@ -76,7 +76,8 @@ pub async fn consume_one_stream_message(
         .await?;
     let mut messages = consumer.messages().await?;
     let next_message = timeout(Duration::from_secs(Timeouts::SHORT), messages.next()).await?;
-    let message = next_message.ok_or_else(|| eyre!("no message available in stream {stream_name}"))?;
+    let message =
+        next_message.ok_or_else(|| eyre!("no message available in stream {stream_name}"))?;
     let message = message.map_err(|error| eyre!(error.to_string()))?;
     Ok(message)
 }
