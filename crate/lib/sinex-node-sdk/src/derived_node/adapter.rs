@@ -1515,10 +1515,7 @@ where
                                         "failed to emit derived-node replay output event",
                                     )
                                     .with_context("node", self.node.name())
-                                    .with_context(
-                                        "trigger_event_id",
-                                        trigger_event_id.to_string(),
-                                    )
+                                    .with_context("trigger_event_id", trigger_event_id.to_string())
                                     .with_source(error)
                                 })?;
                                 events_emitted += 1;
@@ -2005,6 +2002,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use sinex_db::DbPoolExt;
+    use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
@@ -2894,6 +2892,66 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> {
+        struct PrivacyInvalidationNode;
+
+        impl TransducerNode for PrivacyInvalidationNode {
+            type State = TestDerivedState;
+            type Input = JsonValue;
+            type Output = JsonValue;
+
+            fn name(&self) -> &'static str {
+                "derived-adapter-invalidation-privacy-test"
+            }
+
+            fn input_event_type(&self) -> &'static str {
+                "test.input"
+            }
+
+            fn output_event_type(&self) -> &'static str {
+                "test.output"
+            }
+
+            fn output_privacy_context(&self) -> ProcessingContext {
+                ProcessingContext::Command
+            }
+
+            async fn process(
+                &mut self,
+                _state: &mut Self::State,
+                _input: Self::Input,
+                _context: &DerivedTriggerContext,
+            ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>
+            {
+                Ok(None)
+            }
+        }
+
+        let adapter = DerivedNodeAdapter::new(TransducerWrapper(PrivacyInvalidationNode));
+        let output = DerivedOutput::reconciled(
+            json!({ "value": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij" }),
+            Timestamp::now(),
+            vec![Uuid::now_v7()],
+            "scope-a".to_string(),
+        );
+        let context = DerivedTriggerContext {
+            trigger_event_id: Id::new(),
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.invalidation")?,
+            ts_orig: None,
+            ts_coided: Timestamp::now(),
+            processing_mode: ProcessingMode::Replay,
+            trigger_kind: TriggerKind::ScopeInvalidation,
+            created_by_operation_id: None,
+        };
+
+        let event = adapter.build_output_event(output, None, &context)?;
+
+        assert_eq!(event.payload["value"].as_str(), Some("<GITHUB_TOKEN>"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn current_checkpoint_tracks_last_processed_input_event() -> TestResult<()> {
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
         let input = make_input_event("checkpoint-me")?;
@@ -3311,9 +3369,7 @@ mod tests {
 
     #[cfg(feature = "db")]
     #[sinex_test]
-    async fn historical_replay_fails_when_dlq_routing_fails(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> TestResult<()> {
         use sinex_db::DbPoolExt;
 
         let ctx = ctx.with_nats().dedicated().await?;
