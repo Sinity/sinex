@@ -1,29 +1,23 @@
-## Known Issues & Design Tensions
+## Current Issue Summary
 
-### Confirmed Bugs (Critical)
+Canonical current-work backlog lives in:
 
-| Issue | Location | Notes |
-|-------|----------|-------|
-| Payload-to-material correspondence is not strongly enforced end to end | event pipeline | An event can still claim a source material + anchor without byte-level proof that the emitted payload truly corresponds to those bytes. |
+- `.claude/scratch/040-maximalist-remaining-plan.md`
 
-### Confirmed Bugs (High)
+Canonical deferred deployment and horizon backlog lives in:
 
-| Issue | Location | Notes |
-|-------|----------|-------|
-| Browser/webhistory historical capture path is still missing | source capture surface | Chrome/qutebrowser historical import remains a real product/runtime gap; target-vision assumptions here are still unproven. |
+- `.claude/scratch/041-advanced-horizon-plan.md`
 
-### Confirmed Bugs (Medium)
+This include keeps only the compressed memory surface for AGENTS consumers.
+
+### Open Issues Still Worth Remembering
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Checkpoint save failure is still warn-only | node-sdk checkpoint persistence | A crash after a failed checkpoint write can still replay stale work and rely on downstream dedupe/DLQ rather than durable progress. |
-| Full original pull-batch atomicity is still not the consumer contract | `jetstream_consumer.rs` | The current model is explicit per-successful-attempt durability, not whole-pull all-or-nothing settlement. |
-
-### Confirmed Bugs (Low)
-
-| Issue | Location | Notes |
-|-------|----------|-------|
-| TimeSeries COALESCE misleading | `composable_query.rs:306` | ts_orig NOT NULL, COALESCE never fires; real issue is ingestd fills now() |
+| Payload-to-material correspondence is still weak | event pipeline | Still the most important unresolved provenance-integrity gap. |
+| Browser/webhistory historical capture is still missing | source capture surface | Still a real product/runtime gap, but the implementation plan now lives in `040`. |
+| Checkpoint save failure is still warn-only | node-sdk checkpoint persistence | Still a trust gap during crash/restart scenarios. |
+| Full original pull-batch atomicity is not the consumer contract | `jetstream_consumer.rs` | The remaining task is to either keep defending this model or change it intentionally. |
 
 ### Recently Fixed (verified 2026-04-03)
 

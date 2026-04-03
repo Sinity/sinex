@@ -1,5 +1,9 @@
 ## Deployment Readiness
 
+Canonical deferred deployment/host-activation backlog lives in:
+
+- `.claude/scratch/041-advanced-horizon-plan.md`
+
 **Current state:** `sinex.enable = false; provisionDatabase = false` on sinnix-prime. Zero production events.
 2.83M ActivityWatch events + 65K Atuin commands sit in parallel capture infrastructure. Only `sinexctl import atuin` exists (pipeline-bypassing). No ActivityWatch import path exists at all. SDK SQLite adapter needed for proper ingestor-driven import.
 
