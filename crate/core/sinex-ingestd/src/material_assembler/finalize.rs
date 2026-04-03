@@ -34,6 +34,13 @@ enum FinalizationCommitOutcome {
     Unknown(SinexError),
 }
 
+fn finalization_commit_outcome_unknown(error: &SinexError) -> bool {
+    error
+        .context_map()
+        .get("commit_outcome")
+        .is_some_and(|value| value == "unknown")
+}
+
 fn rollback_finalization_failure(
     original_error: SinexError,
     rollback_error: impl std::fmt::Display,
@@ -1094,12 +1101,20 @@ impl MaterialAssembler {
             )
             .await
         {
-            self.route_material_error(
-                material_id,
-                "material_persist_failed",
-                serde_json::json!({ "error": e.to_string() }),
-            )
-            .await;
+            if finalization_commit_outcome_unknown(&e) {
+                warn!(
+                    material_id = %material_id,
+                    error = %e,
+                    "Material finalization commit outcome is unknown; preserving retry state without routing a terminal failure"
+                );
+            } else {
+                self.route_material_error(
+                    material_id,
+                    "material_persist_failed",
+                    serde_json::json!({ "error": e.to_string() }),
+                )
+                .await;
+            }
             Self::revert_finalization_start(&state_handle, end).await;
             return Err(e);
         }

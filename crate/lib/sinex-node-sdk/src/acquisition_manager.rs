@@ -747,7 +747,7 @@ impl<'a> MaterialBuilder<'a> {
             "Created new source material"
         );
 
-        Ok(SourceMaterialHandle {
+        let mut handle = SourceMaterialHandle {
             material_id,
             temp_file: Some(temp_file),
             temp_path,
@@ -760,7 +760,15 @@ impl<'a> MaterialBuilder<'a> {
                 metadata: self.metadata,
             }),
             pending_published_slice: None,
-        })
+        };
+
+        // Publish BEGIN before handing the material ID to callers. Stage-as-you-go
+        // events may be emitted immediately after `register_in_flight`, so the
+        // source material must already be durable rather than lazily published on
+        // first slice/finalize.
+        self.manager.ensure_begin_published(&mut handle).await?;
+
+        Ok(handle)
     }
 }
 
