@@ -1060,6 +1060,10 @@ impl ReplayExecutionEngine {
                     "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
                      Run: sinexctl replay cancel {operation_id} --reason 'stuck after mark_failed failure'"
                 );
+                return Err(eyre!(
+                    "Replay execution failed ({err:#}) and marking operation as failed also failed ({mark_err}); \
+                     operation {operation_id} is stuck in Executing state"
+                ));
             }
         }
 
