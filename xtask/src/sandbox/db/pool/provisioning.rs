@@ -635,6 +635,25 @@ pub(super) async fn converge_pool_database_schema(db_name: &str, db_url: &str) -
         .map_err(|apply_err| eyre!(format!("schema apply failed for {db_name}: {apply_err}")))
 }
 
+async fn verify_pool_database_schema_clean(db_name: &str, db_url: &str) -> TestResult<()> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(db_url)
+        .await
+        .map_err(|error| eyre!("failed to connect to {db_name} for schema verification: {error}"))?;
+
+    let drift = super::reset::schema_mismatch_reason(&pool).await;
+    pool.close().await;
+
+    match drift? {
+        Some(reason) => Err(eyre!(
+            "pool database {db_name} still has schema drift after convergence: {reason}"
+        )),
+        None => Ok(()),
+    }
+}
+
 pub(super) async fn mark_pool_database_clean(
     conn: &mut PgConnection,
     db_name: &str,
@@ -642,6 +661,7 @@ pub(super) async fn mark_pool_database_clean(
     extensions: &HashMap<String, String>,
 ) -> TestResult<()> {
     super::reset::ensure_pool_db_invariants(db_url).await?;
+    verify_pool_database_schema_clean(db_name, db_url).await?;
     let meta = PoolMeta {
         fingerprint: Some(schema_fingerprint()?),
         extensions: extensions.clone(),
@@ -978,6 +998,67 @@ mod tests {
         let drift = reset::schema_mismatch_reason(&slot_pool).await?;
         assert_eq!(drift, None, "reconciled pool database should be schema-clean");
         slot_pool.close().await;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_mark_pool_database_clean_rejects_residual_schema_drift() -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_mark_clean_drift_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let expected_extensions = load_pool_meta(&mut admin_conn, &db_name)
+            .await?
+            .expect("pool metadata should exist after recreation")
+            .extensions;
+
+        let slot_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&slot_url)
+            .await?;
+        sqlx::query(
+            r#"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+                ADD CONSTRAINT source_material_registry_status_check
+                CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
+            "#,
+        )
+        .execute(&slot_pool)
+        .await?;
+        let drift = reset::schema_mismatch_reason(&slot_pool).await?;
+        assert!(
+            drift.as_deref().is_some_and(|reason| reason.contains("source_material_registry_status_check")),
+            "expected stale status constraint drift, got {drift:?}"
+        );
+        slot_pool.close().await;
+
+        let error = mark_pool_database_clean(
+            &mut admin_conn,
+            &db_name,
+            &slot_url,
+            &expected_extensions,
+        )
+        .await
+        .expect_err("residual schema drift must prevent clean pool metadata");
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("still has schema drift after convergence"),
+            "unexpected error: {rendered}"
+        );
+        assert!(
+            rendered.contains("source_material_registry_status_check"),
+            "drift detail should be preserved: {rendered}"
+        );
 
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
         wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
