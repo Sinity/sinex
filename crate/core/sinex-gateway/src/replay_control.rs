@@ -805,6 +805,8 @@ struct ReplayExecutionEngine {
     #[cfg(test)]
     scope_metadata_failures_remaining: Option<Arc<AtomicUsize>>,
     #[cfg(test)]
+    scope_invalidation_publish_failures_remaining: Option<Arc<AtomicUsize>>,
+    #[cfg(test)]
     replacement_record_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
@@ -837,6 +839,8 @@ impl ReplayExecutionEngine {
             #[cfg(test)]
             scope_metadata_failures_remaining: None,
             #[cfg(test)]
+            scope_invalidation_publish_failures_remaining: None,
+            #[cfg(test)]
             replacement_record_failures_remaining: None,
         }
     }
@@ -865,6 +869,16 @@ impl ReplayExecutionEngine {
         scope_metadata_failures_remaining: Arc<AtomicUsize>,
     ) -> Self {
         self.scope_metadata_failures_remaining = Some(scope_metadata_failures_remaining);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_scope_invalidation_publish_failures(
+        mut self,
+        scope_invalidation_publish_failures_remaining: Arc<AtomicUsize>,
+    ) -> Self {
+        self.scope_invalidation_publish_failures_remaining =
+            Some(scope_invalidation_publish_failures_remaining);
         self
     }
 
@@ -1198,6 +1212,23 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(test)]
+    fn maybe_fail_scope_invalidation_publish(&self) -> Result<()> {
+        if let Some(remaining) = &self.scope_invalidation_publish_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay scope invalidation publish failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_scope_invalidation_publish(&self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(test)]
     fn maybe_fail_replacement_recording(&self) -> Result<()> {
         if let Some(remaining) = &self.replacement_record_failures_remaining
             && remaining
@@ -1466,9 +1497,9 @@ impl ReplayExecutionEngine {
         &self,
         scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
-    ) {
+    ) -> Result<()> {
         if scope_metadata.is_empty() {
-            return;
+            return Ok(());
         }
 
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
@@ -1477,26 +1508,20 @@ impl ReplayExecutionEngine {
             let event_source = match EventSource::new(bucket.event_source.clone()) {
                 Ok(source) => source,
                 Err(error) => {
-                    warn!(
-                        operation_id = %operation_id,
-                        event_source = %bucket.event_source,
-                        error = %error,
-                        "Skipping scope invalidation publish because archived event source is invalid"
-                    );
-                    continue;
+                    return Err(eyre!(
+                        "Failed to build replay scope invalidation for archived event source '{}': {error}",
+                        bucket.event_source
+                    ));
                 }
             };
             let event_type = match EventType::new(bucket.event_type.clone()) {
                 Ok(event_type) => event_type,
                 Err(error) => {
-                    warn!(
-                        operation_id = %operation_id,
-                        raw_event_type = %bucket.event_type,
-                        scope_count = bucket.scope_keys.len(),
-                        error = %error,
-                        "Skipping scope invalidation publish because archived event type is invalid"
-                    );
-                    continue;
+                    return Err(eyre!(
+                        "Failed to build replay scope invalidation for archived event type '{}' (scope_count={}): {error}",
+                        bucket.event_type,
+                        bucket.scope_keys.len()
+                    ));
                 }
             };
             let invalidation = DerivedScopeInvalidation::archived(
@@ -1509,18 +1534,17 @@ impl ReplayExecutionEngine {
 
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
+                    self.maybe_fail_scope_invalidation_publish()?;
                     if let Err(e) = self
                         .nats_client
                         .publish(invalidation_subject.clone(), payload.into())
                         .await
                     {
-                        warn!(
-                            operation_id = %operation_id,
-                            event_type = %event_type,
-                            scope_count = bucket.scope_keys.len(),
-                            error = %e,
-                            "Failed to publish scope invalidation"
-                        );
+                        return Err(eyre!(
+                            "Failed to publish replay scope invalidation for event type '{}' (scope_count={}): {e}",
+                            event_type,
+                            bucket.scope_keys.len()
+                        ));
                     } else {
                         debug!(
                             operation_id = %operation_id,
@@ -1531,14 +1555,16 @@ impl ReplayExecutionEngine {
                     }
                 }
                 Err(e) => {
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %e,
-                        "Failed to serialize scope invalidation"
-                    );
+                    return Err(eyre!(
+                        "Failed to serialize replay scope invalidation for event type '{}' (scope_count={}): {e}",
+                        event_type,
+                        bucket.scope_keys.len()
+                    ));
                 }
             }
         }
+
+        Ok(())
     }
 
     async fn restore_cascade(
@@ -1573,7 +1599,14 @@ impl ReplayExecutionEngine {
             )));
         }
 
-        self.publish_scope_invalidations(scope_metadata, operation_id).await;
+        if let Err(invalidation_error) = self
+            .publish_scope_invalidations(scope_metadata, operation_id)
+            .await
+        {
+            return Err(error.wrap_err(format!(
+                "Replay dispatch failed before node acknowledgement, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
+            )));
+        }
 
         Err(error.wrap_err(
             "Replay dispatch failed before node acknowledgement; restored archived cascade and published compensating scope invalidations",
@@ -1771,8 +1804,22 @@ impl ReplayExecutionEngine {
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty() {
-            self.publish_scope_invalidations(&scope_metadata, operation_id)
-                .await;
+            if let Err(invalidation_error) = self
+                .publish_scope_invalidations(&scope_metadata, operation_id)
+                .await
+            {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        &cascade_ids,
+                        &scope_metadata,
+                        operation_id,
+                        eyre!(
+                            "Failed to publish replay scope invalidations before dispatch: {invalidation_error}"
+                        ),
+                    )
+                    .await;
+            }
         }
 
         checkpoint.total_events = material_roots.len() as u64;
@@ -3696,6 +3743,118 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-scope-invalidation-publish-failure"))
+            .await?;
+        let mut event = DynamicPayload::new(
+            "scope-invalidation-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-scope-invalidation-publish-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.scope_key = Some("scope://scope-invalidation-test/replay".to_string());
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let mut scope = sample_scope();
+        scope.node_id = "scope-invalidation-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:scope-invalidation-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
+        let mut invalidation_sub = ctx
+            .nats_client()
+            .subscribe(invalidation_subject)
+            .await
+            .map_err(|error| {
+                eyre!("failed to subscribe for invalidation publish failure test: {error}")
+            })?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
+            .with_scope_invalidation_publish_failures(Arc::new(AtomicUsize::new(1)));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("scope invalidation publish failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to publish replay scope invalidations before dispatch")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed.error_details.as_deref().is_some_and(|details| {
+                details.contains("Failed to publish replay scope invalidations before dispatch")
+            }),
+            "failure details should include invalidation publish context: {:?}",
+            failed.error_details
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            live_count, 1,
+            "scope invalidation publish failure must restore the live row"
+        );
+        assert_eq!(
+            archived_count, 0,
+            "scope invalidation publish failure must not leave archived rows behind"
+        );
+
+        let invalidation_msg = tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
+            .await?
+            .expect("compensating invalidation should still publish after restore");
+        let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
+        assert!(payload.contains("scope://scope-invalidation-test/replay"));
+        assert!(payload.contains(&target_id.to_string()));
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn replay_execute_rejects_zero_event_preview_before_execution(
         ctx: TestContext,
     ) -> Result<()> {
@@ -3964,6 +4123,82 @@ mod tests {
         let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
         assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
         assert!(payload.contains(&event_id.to_string()));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
+            .with_scope_invalidation_publish_failures(Arc::new(AtomicUsize::new(1)));
+
+        let material_id = ctx
+            .create_source_material(Some("replay-compensating-invalidation-failure"))
+            .await?;
+        let mut event = DynamicPayload::new(
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-compensating-invalidation-failure.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.scope_key =
+            Some("scope://fs-test/replay-compensating-invalidation-failure".to_string());
+        let inserted = ctx.pool.events().insert(event).await?;
+        let event_id = inserted.id.expect("inserted replay target must have id");
+        let operation_id = Uuid::now_v7();
+
+        let scope_metadata = engine
+            .collect_cascade_scope_metadata(&ctx.pool, &[event_id.to_uuid()])
+            .await?;
+        assert_eq!(scope_metadata.len(), 1);
+
+        ctx.pool
+            .events()
+            .execute_cascade_archive(
+                &[event_id.to_uuid()],
+                "archive before compensating restore failure test",
+                &operation_id.to_string(),
+                "test:replay-compensating-failure",
+            )
+            .await?;
+
+        let err = engine
+            .abort_before_scan_ack(
+                &ctx.pool,
+                &[event_id.to_uuid()],
+                &scope_metadata,
+                operation_id,
+                eyre!("boom"),
+            )
+            .await
+            .expect_err("compensating invalidation publish failure should surface");
+        assert!(
+            err.to_string()
+                .contains("failed to publish compensating scope invalidations"),
+            "unexpected error: {err}"
+        );
+
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(event_id.to_uuid())
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(live_count, 1, "aborted replay should still restore the archived event");
+        assert_eq!(
+            archived_count, 0,
+            "aborted replay should not leave the archived event behind"
+        );
 
         Ok(())
     }
