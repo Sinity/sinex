@@ -979,7 +979,7 @@ impl HistoryWatcherContext {
                         return self.failed_outcome(
                             "load_history_state",
                             format!("failed to restore Fish history watcher state: {error}"),
-                            HistoryState::default(),
+                            self.empty_state(),
                         );
                     }
                 };
@@ -1085,7 +1085,7 @@ impl HistoryWatcherContext {
                         return self.failed_outcome(
                             "load_history_state",
                             format!("failed to restore Atuin history watcher state: {error}"),
-                            HistoryState::default(),
+                            self.empty_state(),
                         );
                     }
                 };
@@ -2760,12 +2760,26 @@ impl TerminalNode {
         ) {
             Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
             Ok(IncomingHistoryCheckpointState::MissingSource) => Ok(context.empty_state()),
-            Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => context
-                .load_state()
-                .await?
-                .map(|state| context.validate_state(state))
-                .transpose()?
-                .map_or_else(|| Ok(context.empty_state()), Ok),
+            Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
+                match context.load_state().await {
+                    Ok(Some(state)) => match context.validate_state(state) {
+                        Ok(state) => Ok(state),
+                        Err(error) => {
+                            warnings.push(context.strict_warning(format!(
+                                "preserved local watcher state is unusable after failure: {error}"
+                            )));
+                            Ok(context.empty_state())
+                        }
+                    },
+                    Ok(None) => Ok(context.empty_state()),
+                    Err(error) => {
+                        warnings.push(context.strict_warning(format!(
+                            "failed to preserve local watcher state after failure: {error}"
+                        )));
+                        Ok(context.empty_state())
+                    }
+                }
+            }
             Err(error) => {
                 warnings.push(context.strict_warning(format!(
                     "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -2913,20 +2927,25 @@ impl IngestorNode for TerminalNode {
                         checkpoint_key.clone(),
                         format!("failed to restore incoming terminal checkpoint state: {error}"),
                     ));
-                    let preserved_state = ctx.load_state().await.map_err(|load_error| {
-                        SinexError::processing(
-                            "failed to preserve local terminal state after checkpoint restore failure",
-                        )
-                        .with_context("source", checkpoint_key.clone())
-                        .with_source(load_error)
-                    })?;
-                    checkpoint_states.insert(
-                        checkpoint_key,
-                        preserved_state
-                            .map(|state| ctx.validate_state(state))
-                            .transpose()?
-                            .unwrap_or_else(|| ctx.empty_state()),
-                    );
+                    let preserved_state = match ctx.load_state().await {
+                        Ok(Some(state)) => match ctx.validate_state(state) {
+                            Ok(state) => state,
+                            Err(load_error) => {
+                                warnings.push(ctx.strict_warning(format!(
+                                    "failed to preserve local terminal state after checkpoint restore failure: {load_error}"
+                                )));
+                                ctx.empty_state()
+                            }
+                        },
+                        Ok(None) => ctx.empty_state(),
+                        Err(load_error) => {
+                            warnings.push(ctx.strict_warning(format!(
+                                "failed to preserve local terminal state after checkpoint restore failure: {load_error}"
+                            )));
+                            ctx.empty_state()
+                        }
+                    };
+                    checkpoint_states.insert(checkpoint_key, preserved_state);
                     continue;
                 }
             };
@@ -3050,57 +3069,59 @@ impl IngestorNode for TerminalNode {
         drop(guard);
         for (watch_ctx, handle) in monitored_contexts.iter().zip(handles) {
             let checkpoint_key = watch_ctx.checkpoint_key();
-            let fallback_state = match Self::incoming_checkpoint_state_for_source_mode(
-                &from,
-                &checkpoint_key,
-                &watch_ctx.source_mode,
-            )? {
-                IncomingHistoryCheckpointState::State(state) => state,
-                IncomingHistoryCheckpointState::MissingSource => watch_ctx.empty_state(),
-                IncomingHistoryCheckpointState::MissingCheckpoint => watch_ctx
-                    .load_state()
-                    .await?
-                    .map(|state| watch_ctx.validate_state(state))
-                    .transpose()?
-                    .unwrap_or_else(|| watch_ctx.empty_state()),
-            };
+            let fallback_state =
+                Self::preserve_checkpoint_state_after_failure(&from, watch_ctx, &mut warnings)
+                    .await?;
+            let mut failure = None;
+
             match handle.await {
-                Ok(Ok(())) => {
-                    successful_targets.push(checkpoint_key.clone());
-                }
+                Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    failed_targets.push((
-                        checkpoint_key.clone(),
-                        format!("terminal watcher failed during continuous monitoring: {error}"),
+                    failure = Some(format!(
+                        "terminal watcher failed during continuous monitoring: {error}"
                     ));
                 }
                 Err(error) => {
-                    failed_targets.push((
-                        checkpoint_key.clone(),
-                        format!(
-                            "terminal watcher task ended with join error during shutdown: {error}"
-                        ),
+                    failure = Some(format!(
+                        "terminal watcher task ended with join error during shutdown: {error}"
                     ));
                 }
             }
+
             let final_state = match watch_ctx.load_state().await {
-                Ok(Some(state)) => watch_ctx.validate_state(state).map_err(|error| {
-                    SinexError::processing(
-                        "failed to restore terminal watcher state after continuous monitoring",
-                    )
-                    .with_context("source", checkpoint_key.clone())
-                    .with_source(error)
-                })?,
-                Ok(None) => fallback_state,
+                Ok(Some(state)) => match watch_ctx.validate_state(state) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        warnings.push(watch_ctx.strict_warning(format!(
+                            "final watcher state is unusable after continuous monitoring: {error}"
+                        )));
+                        if failure.is_none() {
+                            failure = Some(format!(
+                                "failed to restore terminal watcher state after continuous monitoring: {error}"
+                            ));
+                        }
+                        fallback_state.clone()
+                    }
+                },
+                Ok(None) => fallback_state.clone(),
                 Err(error) => {
-                    return Err(SinexError::processing(
-                        "failed to reload terminal watcher state after continuous monitoring",
-                    )
-                    .with_context("source", checkpoint_key)
-                    .with_source(error));
+                    warnings.push(watch_ctx.strict_warning(format!(
+                        "failed to reload terminal watcher state after continuous monitoring: {error}"
+                    )));
+                    if failure.is_none() {
+                        failure = Some(format!(
+                            "failed to reload terminal watcher state after continuous monitoring: {error}"
+                        ));
+                    }
+                    fallback_state.clone()
                 }
             };
             checkpoint_states.insert(watch_ctx.checkpoint_key(), final_state);
+            if let Some(failure) = failure {
+                failed_targets.push((checkpoint_key, failure));
+            } else {
+                successful_targets.push(checkpoint_key);
+            }
         }
         let finished_at = Timestamp::now();
 
@@ -4728,6 +4749,98 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn scan_historical_preserves_empty_sqlite_state_after_invalid_checkpoint_and_corrupt_local_state(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-historical-invalid-checkpoint-corrupt-local")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let state_path = node
+            .build_history_contexts(shutdown_rx)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+        tokio::fs::write(&state_path, "{ definitely not valid json").await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::timestamp(Timestamp::now(), None),
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 0);
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("atuin:{history_path}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("failed to restore incoming terminal checkpoint state"),
+            "unexpected failure payload: {:?}",
+            report.failed_targets
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed to preserve local terminal state after checkpoint restore failure")),
+            "expected explicit fallback warning, got {:?}",
+            report.warnings
+        );
+        let restored = TerminalNode::checkpoint_state_for_source(
+            &report.final_checkpoint,
+            &format!("atuin:{history_path}"),
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing preserved checkpoint state"))?;
+        assert_eq!(restored.sqlite_row_id, Some(0));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn scan_historical_reports_unsupported_fish_history_per_target(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -5303,6 +5416,98 @@ mod tests {
                 .contains("failed to restore incoming terminal checkpoint state"),
             "unexpected error: {error}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_reports_corrupt_local_sqlite_state_per_target(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-corrupt-local-state")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (_, state_shutdown_rx) = tokio::sync::watch::channel(false);
+        let state_path = node
+            .build_history_contexts(state_shutdown_rx)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+        tokio::fs::write(&state_path, "{ definitely not valid json").await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        assert!(report.successful_targets.is_empty());
+        assert_eq!(report.failed_targets.len(), 1);
+        assert_eq!(report.failed_targets[0].0, format!("atuin:{history_path}"));
+        assert!(
+            report.failed_targets[0]
+                .1
+                .contains("failed to decode history watcher state"),
+            "unexpected failure payload: {:?}",
+            report.failed_targets
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed to reload terminal watcher state")),
+            "expected explicit reload warning, got {:?}",
+            report.warnings
+        );
+        let restored = TerminalNode::checkpoint_state_for_source(
+            &report.final_checkpoint,
+            &format!("atuin:{history_path}"),
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing preserved checkpoint state"))?;
+        assert_eq!(restored.sqlite_row_id, Some(0));
         Ok(())
     }
 
