@@ -69,6 +69,33 @@ async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()
 }
 
 #[sinex_test]
+async fn heartbeat_status_transitions_at_exact_thresholds() -> color_eyre::Result<()> {
+    let degraded = HeartbeatEmitter::new("threshold-degraded".to_string(), Seconds::from_secs(1));
+    for _ in 0..10 {
+        degraded.record_error("threshold failure");
+    }
+    let degraded_metrics = degraded.create_heartbeat_metrics(None).await;
+    assert_eq!(
+        degraded_metrics.status,
+        ProcessStatus::Degraded,
+        "Exact degraded threshold should transition to degraded instead of requiring one extra error"
+    );
+
+    let failed = HeartbeatEmitter::new("threshold-failed".to_string(), Seconds::from_secs(1));
+    for _ in 0..50 {
+        failed.record_error("threshold failure");
+    }
+    let failed_metrics = failed.create_heartbeat_metrics(None).await;
+    assert_eq!(
+        failed_metrics.status,
+        ProcessStatus::Failed,
+        "Exact failed threshold should transition to failed instead of requiring one extra error"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn heartbeat_emits_degraded_alert_on_error_spike() -> color_eyre::Result<()> {
     let (emitter, sink) = emitter_with_sink("degraded-service");
 
@@ -86,6 +113,40 @@ async fn heartbeat_emits_degraded_alert_on_error_spike() -> color_eyre::Result<(
     );
     assert_eq!(entries[0]["fields"]["event_type"], "node.heartbeat");
     assert_eq!(entries[1]["fields"]["event_type"], "process.degraded");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn heartbeat_alert_uses_window_error_count() -> color_eyre::Result<()> {
+    let (emitter, sink) = emitter_with_sink("window-count-service");
+
+    for _ in 0..5 {
+        emitter.record_error("first burst");
+    }
+    emitter.emit_heartbeat(None).await;
+
+    for _ in 0..6 {
+        emitter.record_error("second burst");
+    }
+    emitter.emit_heartbeat(None).await;
+
+    let entries = sink.entries.lock();
+    let degraded_entry = entries
+        .iter()
+        .find(|entry| entry["fields"]["event_type"] == "process.degraded")
+        .expect("degraded transition alert should be emitted");
+
+    assert_eq!(
+        degraded_entry["fields"]["errors_count"],
+        serde_json::json!(11),
+        "Alert metadata should report the full sliding-window error count that triggered the transition"
+    );
+    assert_eq!(
+        degraded_entry["fields"]["payload"]["errors_in_window"],
+        serde_json::json!(11),
+        "Alert payload should agree with the sliding-window error count used for status transitions"
+    );
 
     Ok(())
 }

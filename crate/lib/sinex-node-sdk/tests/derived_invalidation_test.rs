@@ -22,6 +22,7 @@ use sinex_node_sdk::{
 use sinex_primitives::domain::{
     EventSource, EventType, HostName, InvalidationAction, ProcessingMode, TriggerKind,
 };
+use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
@@ -342,6 +343,72 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
     }
 }
 
+struct MissingParentsInvalidationReconciler;
+
+impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
+    type State = ReconcilerState;
+    type Input = RInput;
+    type Output = ROutput;
+
+    fn name(&self) -> &'static str {
+        "missing-parents-invalidation-reconciler"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "measurement.taken"
+    }
+    fn output_event_type(&self) -> &'static str {
+        "measurement.aggregate"
+    }
+
+    fn output_privacy_context(&self) -> ProcessingContext {
+        ProcessingContext::Metadata
+    }
+
+    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+        vec!["default".into()]
+    }
+
+    async fn reconcile(
+        &mut self,
+        _state: &mut Self::State,
+        scope_key: &str,
+        input: Self::Input,
+        context: &DerivedTriggerContext,
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+        Ok(vec![DerivedOutput::reconciled(
+            ROutput {
+                total: input.value,
+                count: 1,
+            },
+            context.ts_orig.unwrap_or_else(Timestamp::now),
+            vec![*context.trigger_event_id.as_uuid()],
+            scope_key.to_string(),
+        )])
+    }
+
+    async fn recompute_scope(
+        &mut self,
+        _state: &mut Self::State,
+        scope_key: &str,
+        working_set: Vec<Self::Input>,
+        context: &DerivedTriggerContext,
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+        if working_set.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let total: i64 = working_set.iter().map(|input| input.value).sum();
+        let count = working_set.len();
+
+        Ok(vec![DerivedOutput::reconciled(
+            ROutput { total, count },
+            context.ts_orig.unwrap_or_else(Timestamp::now),
+            Vec::new(),
+            scope_key.to_string(),
+        )])
+    }
+}
+
 #[sinex_test]
 async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
     use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
@@ -618,7 +685,10 @@ async fn windowed_recomputes_from_working_set() -> TestResult<()> {
     let output: serde_json::Value = results[0].payload.clone();
     assert_eq!(output["sum"], 20);
     assert_eq!(output["window_size"], 2);
-    assert!(state.values.is_empty(), "rebuilt window state should replace stale data");
+    assert!(
+        state.values.is_empty(),
+        "rebuilt window state should replace stale data"
+    );
 
     Ok(())
 }
@@ -634,8 +704,8 @@ async fn invalidation_signal_serialization_roundtrip() -> TestResult<()> {
         EventSource::from_static("fs-watcher"),
         EventType::from_static("file.created"),
     )
-        .with_operation(op_id)
-        .with_scope_keys(vec!["scope-a".into()]);
+    .with_operation(op_id)
+    .with_scope_keys(vec!["scope-a".into()]);
 
     // Serialize to JSON (this is what goes over NATS)
     let json = serde_json::to_vec(&inv).expect("should serialize");
@@ -748,16 +818,28 @@ async fn windowed_output_has_latest_input_temporal_policy() -> TestResult<()> {
 async fn initialize_scope_reconciler_adapter(
     ctx: &TestContext,
 ) -> TestResult<ScopeReconcilerNodeAdapter<TestReconciler>> {
-    initialize_scope_reconciler_adapter_with_pool(ctx, ctx.pool().clone()).await
+    initialize_scope_reconciler_adapter_with_node(ctx, ctx.pool().clone(), TestReconciler).await
 }
 
 async fn initialize_scope_reconciler_adapter_with_pool(
     ctx: &TestContext,
     pool: sqlx::PgPool,
 ) -> TestResult<ScopeReconcilerNodeAdapter<TestReconciler>> {
+    initialize_scope_reconciler_adapter_with_node(ctx, pool, TestReconciler).await
+}
+
+async fn initialize_scope_reconciler_adapter_with_node<N>(
+    ctx: &TestContext,
+    pool: sqlx::PgPool,
+    node: N,
+) -> TestResult<ScopeReconcilerNodeAdapter<N>>
+where
+    N: ScopeReconcilerNode,
+{
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;
     let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(nats_client.clone())));
+    let node_name = node.name().to_string();
 
     let kv_store = async_nats::jetstream::new(nats_client)
         .create_key_value(async_nats::jetstream::kv::Config {
@@ -768,21 +850,14 @@ async fn initialize_scope_reconciler_adapter_with_pool(
 
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv_store,
-        "test-reconciler".to_string(),
+        node_name.clone(),
         "default".to_string(),
         format!("test-consumer-{}", Uuid::now_v7().simple()),
     ));
 
     let (event_sender, _event_receiver) = mpsc::channel::<sinex_primitives::Event<JsonValue>>(1024);
     let emitter = EventEmitter::new(event_sender, false);
-    let handles = NodeHandles::new(
-        pool,
-        checkpoint_manager,
-        emitter,
-        transport,
-        None,
-        None,
-    );
+    let handles = NodeHandles::new(pool, checkpoint_manager, emitter, transport, None, None);
 
     let work_dir = std::env::temp_dir().join(format!(
         "sinex-derived-invalidation-{}",
@@ -794,8 +869,8 @@ async fn initialize_scope_reconciler_adapter_with_pool(
         sinex_node_sdk::DerivedNodeConfig::default(),
         HashMap::new(),
         ServiceInfo::new(
-            "test-reconciler".to_string(),
-            "test-reconciler".to_string(),
+            node_name.clone(),
+            node_name,
             HostName::from_static("test-host"),
             work_dir.clone(),
             false,
@@ -812,14 +887,16 @@ async fn initialize_scope_reconciler_adapter_with_pool(
         })?,
     );
 
-    let mut adapter = ScopeReconcilerNodeAdapter::new(ScopeReconcilerWrapper(TestReconciler));
+    let mut adapter = ScopeReconcilerNodeAdapter::new(ScopeReconcilerWrapper(node));
     adapter.initialize(init_context).await?;
 
     Ok(adapter)
 }
 
 #[sinex_test]
-async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestContext) -> TestResult<()> {
+async fn scope_invalidation_paginates_working_set_and_stale_outputs(
+    ctx: TestContext,
+) -> TestResult<()> {
     use sinex_db::DbPoolExt;
     use sinex_primitives::query::{AggregationMode, EventQuery, EventQueryResult};
 
@@ -874,9 +951,19 @@ async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestCon
     .with_scope_keys(vec![scope_key.to_string()]);
 
     let outputs = adapter.process_invalidation(&invalidation).await?;
-    assert_eq!(outputs.len(), 1, "large scope should still recompute one aggregate");
-    assert_eq!(outputs[0].payload["count"], serde_json::json!(expected_count));
-    assert_eq!(outputs[0].payload["total"], serde_json::json!(expected_total));
+    assert_eq!(
+        outputs.len(),
+        1,
+        "large scope should still recompute one aggregate"
+    );
+    assert_eq!(
+        outputs[0].payload["count"],
+        serde_json::json!(expected_count)
+    );
+    assert_eq!(
+        outputs[0].payload["total"],
+        serde_json::json!(expected_total)
+    );
 
     let live_output_count = match ctx
         .pool()
@@ -908,10 +995,63 @@ async fn scope_invalidation_paginates_working_set_and_stale_outputs(ctx: TestCon
     .fetch_one(ctx.pool())
     .await?;
     assert_eq!(
-        archived_output_count,
-        expected_count as i64,
+        archived_output_count, expected_count as i64,
         "invalidations must archive every stale scope output, not just the first page"
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let mut adapter = initialize_scope_reconciler_adapter(&ctx).await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-real-trigger"))
+        .await?;
+    let scope_key = "scope:real-trigger";
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 7_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some(scope_key.to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
+
+    let outputs = adapter.process_invalidation(&invalidation).await?;
+    assert_eq!(outputs.len(), 1, "scope should recompute a single aggregate");
+
+    match &outputs[0].provenance {
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            assert_eq!(
+                source_event_ids.as_slice(),
+                [input_id],
+                "invalidation recompute must preserve a real affected event id in fallback provenance"
+            );
+        }
+        other => panic!("expected synthesis provenance, got {other:?}"),
+    }
 
     Ok(())
 }
@@ -960,5 +1100,110 @@ async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> 
 
     assert!(error.to_string().contains("Failed to load affected event"));
     assert!(error.to_string().contains(&input_id.to_string()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_invalidation_surfaces_stale_output_lookup_failures(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-stale-lookup"))
+        .await?;
+    let scope_key = "scope:stale-lookup-failure";
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 2_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some(scope_key.to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
+
+    let bad_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
+    let mut adapter = initialize_scope_reconciler_adapter_with_pool(&ctx, bad_pool).await?;
+
+    let error = adapter
+        .process_invalidation(&invalidation)
+        .await
+        .expect_err("stale output lookup failures must surface instead of skipping scopes");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("Failed to query stale outputs"));
+    assert!(rendered.contains(scope_key));
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_invalidation_rejects_outputs_without_source_event_ids(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+
+    let ctx = ctx.with_nats().shared().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-missing-parents"))
+        .await?;
+    let scope_key = "scope:missing-parents";
+
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 3_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some(scope_key.to_string());
+
+    let inserted = ctx.pool().events().insert_batch(vec![input]).await?;
+    let input_id = inserted
+        .first()
+        .and_then(|event| event.id)
+        .expect("inserted input should have id");
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec![scope_key.to_string()]);
+
+    let mut adapter = initialize_scope_reconciler_adapter_with_node(
+        &ctx,
+        ctx.pool().clone(),
+        MissingParentsInvalidationReconciler,
+    )
+    .await?;
+
+    let error = adapter
+        .process_invalidation(&invalidation)
+        .await
+        .expect_err("invalidation outputs without parents must fail explicitly");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("missing source event ids"));
+    assert!(rendered.contains("missing-parents-invalidation-reconciler"));
+    assert!(rendered.contains(scope_key));
+
     Ok(())
 }

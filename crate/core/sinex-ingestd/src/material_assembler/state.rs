@@ -248,7 +248,10 @@ pub(super) fn is_terminal_status(status: &str) -> bool {
     use sinex_db::repositories::material_status;
     matches!(
         status,
-        material_status::COMPLETED | material_status::FAILED | material_status::RECOVERED_PARTIAL
+        material_status::COMPLETED
+            | material_status::CANCELLED
+            | material_status::FAILED
+            | material_status::RECOVERED_PARTIAL
     )
 }
 

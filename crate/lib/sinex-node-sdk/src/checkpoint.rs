@@ -124,6 +124,7 @@ impl CheckpointState {
         let record = FileCheckpointRecord {
             magic: FILE_CHECKPOINT_MAGIC.to_string(),
             version: FILE_CHECKPOINT_VERSION,
+            revision: self.revision,
             state: self.clone(),
         };
 
@@ -191,13 +192,16 @@ impl CheckpointState {
             );
         }
 
+        let mut state = record.state;
+        state.revision = record.revision;
+
         info!(
             path = %path.display(),
-            processed_count = record.state.processed_count,
+            processed_count = state.processed_count,
             "Loaded checkpoint from file"
         );
 
-        Ok(Some(record.state))
+        Ok(Some(state))
     }
 
     /// Delete the checkpoint file if it exists.
@@ -226,6 +230,8 @@ const FILE_CHECKPOINT_VERSION: u32 = 1;
 struct FileCheckpointRecord {
     magic: String,
     version: u32,
+    #[serde(default)]
+    revision: u64,
     state: CheckpointState,
 }
 
@@ -321,7 +327,8 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 /// let config = CheckpointCleanupConfig::from_env();
 /// if config.enabled {
 ///     let kv = /* your checkpoint KV store */;
-///     let _cleanup_handle = spawn_checkpoint_cleanup_task(kv, config);
+///     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+///     let _cleanup_handle = spawn_checkpoint_cleanup_task(kv, config, shutdown_rx);
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -792,6 +799,7 @@ fn checkpoint_cleanup_cutoff(
 pub fn spawn_checkpoint_cleanup_task(
     kv: async_nats::jetstream::kv::Store,
     config: CheckpointCleanupConfig,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if !config.enabled {
@@ -808,20 +816,28 @@ pub fn spawn_checkpoint_cleanup_task(
         let mut interval = tokio::time::interval(config.interval);
 
         loop {
-            interval.tick().await;
-
-            match cleanup_stale_checkpoints(&kv, config.max_age).await {
-                Ok(result) => {
-                    if result.deleted > 0 {
-                        info!(
-                            deleted = result.deleted,
-                            scanned = result.scanned,
-                            "Checkpoint cleanup run completed"
-                        );
+            tokio::select! {
+                _ = interval.tick() => {
+                    match cleanup_stale_checkpoints(&kv, config.max_age).await {
+                        Ok(result) => {
+                            if result.deleted > 0 {
+                                info!(
+                                    deleted = result.deleted,
+                                    scanned = result.scanned,
+                                    "Checkpoint cleanup run completed"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Checkpoint cleanup failed");
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!(error = %e, "Checkpoint cleanup failed");
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        debug!("Checkpoint cleanup task received shutdown");
+                        break;
+                    }
                 }
             }
         }
@@ -833,38 +849,7 @@ mod tests {
     // Inline because this covers local checkpoint env/default semantics.
     use super::{CheckpointCleanupConfig, checkpoint_cleanup_cutoff};
     use sinex_primitives::prelude::Timestamp;
-    use xtask::sandbox::sinex_serial_test;
-
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<String>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: &str) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::{sinex_serial_test, EnvGuard};
 
     #[sinex_serial_test]
     async fn checkpoint_cleanup_default_is_disabled() -> xtask::sandbox::TestResult<()> {
@@ -874,11 +859,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn checkpoint_cleanup_from_env_defaults_invalid_overrides() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&[
-            "SINEX_CHECKPOINT_CLEANUP_ENABLED",
-            "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
-            "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
-        ]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_CHECKPOINT_CLEANUP_ENABLED", "maybe");
         env.set("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS", "bogus");
         env.set("SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS", "bogus");

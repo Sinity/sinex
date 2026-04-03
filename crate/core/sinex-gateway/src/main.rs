@@ -23,6 +23,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 use sinex_gateway::config::GatewayConfig;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::{native_messaging, rpc_server};
+use sinex_primitives::strict_env_filter_source;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogFormat {
@@ -77,26 +78,6 @@ enum Commands {
     },
 }
 
-fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter> {
-    let Some(raw) = std::env::var_os(tracing_subscriber::EnvFilter::DEFAULT_ENV) else {
-        return Ok(tracing_subscriber::EnvFilter::new(default_filter));
-    };
-
-    let raw = raw.into_string().map_err(|_| {
-        eyre!(
-            "{} is not valid UTF-8",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })?;
-
-    tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
-        eyre!(
-            "Invalid {} directive `{raw}`: {error}",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })
-}
-
 fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
     if tokio_console {
         #[cfg(feature = "tokio-console")]
@@ -140,6 +121,16 @@ fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
         None => GatewayConfig::load()
             .map_err(|error| eyre!("Failed to load gateway config").wrap_err(error)),
     }
+}
+
+fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter> {
+    let raw = strict_env_filter_source(default_filter)?;
+    tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
+        eyre!(
+            "Invalid {} directive `{raw}`: {error}",
+            tracing_subscriber::EnvFilter::DEFAULT_ENV
+        )
+    })
 }
 
 async fn wait_for_shutdown_signal() -> io::Result<&'static str> {

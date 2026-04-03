@@ -85,13 +85,12 @@ impl JetStreamEventConsumer {
         event_id: Option<impl std::fmt::Display>,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        let mut error = SinexError::network(operation)
-            .with_context("subject", msg.subject.to_string())
-            .with_source(error.to_string());
-        if let Some(event_id) = event_id {
-            error = error.with_context("event_id", event_id.to_string());
-        }
-        error
+        crate::error_helpers::nats_settlement_error(
+            operation,
+            msg.subject.as_str(),
+            event_id.as_ref().map(|id| id.to_string()).as_deref(),
+            error,
+        )
     }
 
     /// Create a new `JetStream` event consumer

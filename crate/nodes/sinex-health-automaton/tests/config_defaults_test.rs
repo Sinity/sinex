@@ -1,27 +1,5 @@
 use sinex_health_automaton::HealthAggregatorConfig;
-use xtask::sandbox::sinex_test;
-
-struct EnvGuard {
-    key: &'static str,
-    original: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let original = std::env::var(key).ok();
-        unsafe { std::env::set_var(key, value) };
-        Self { key, original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => unsafe { std::env::set_var(self.key, value) },
-            None => unsafe { std::env::remove_var(self.key) },
-        }
-    }
-}
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]
 async fn health_aggregator_config_defaults_are_sane() -> xtask::sandbox::TestResult<()> {
@@ -36,19 +14,20 @@ async fn health_aggregator_config_defaults_are_sane() -> xtask::sandbox::TestRes
 
 #[sinex_test]
 async fn invalid_env_overrides_fall_back_to_defaults() -> xtask::sandbox::TestResult<()> {
-    let _window = EnvGuard::set(
+    let mut _guard = EnvGuard::new();
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_AGGREGATION_WINDOW_SECONDS",
         "not-a-number",
     );
-    let _unhealthy = EnvGuard::set(
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_UNHEALTHY_THRESHOLD_MINUTES",
         "still-bad",
     );
-    let _system = EnvGuard::set(
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS",
         "not-a-bool",
     );
-    let _components = EnvGuard::set(
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS",
         "{\"default\":0}",
     );
@@ -77,14 +56,15 @@ async fn invalid_env_overrides_fall_back_to_defaults() -> xtask::sandbox::TestRe
 
 #[sinex_test]
 async fn valid_env_overrides_are_applied() -> xtask::sandbox::TestResult<()> {
-    let _window = EnvGuard::set("SINEX_HEALTH_AGGREGATOR_AGGREGATION_WINDOW_SECONDS", "42");
-    let _unhealthy = EnvGuard::set("SINEX_HEALTH_AGGREGATOR_UNHEALTHY_THRESHOLD_MINUTES", "7");
-    let _system = EnvGuard::set("SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS", "false");
-    let _component_reports = EnvGuard::set(
+    let mut _guard = EnvGuard::new();
+    _guard.set("SINEX_HEALTH_AGGREGATOR_AGGREGATION_WINDOW_SECONDS", "42");
+    _guard.set("SINEX_HEALTH_AGGREGATOR_UNHEALTHY_THRESHOLD_MINUTES", "7");
+    _guard.set("SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS", "false");
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_ENABLE_COMPONENT_HEALTH_REPORTS",
         "false",
     );
-    let _components = EnvGuard::set(
+    _guard.set(
         "SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS",
         "{\"default\":15,\"fast\":2}",
     );

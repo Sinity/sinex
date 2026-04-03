@@ -134,6 +134,8 @@ pub struct AssemblyStatsPayload {
     pub total_started: u64,
     /// Total assemblies completed successfully
     pub total_completed: u64,
+    /// Total assemblies cancelled intentionally after partial capture
+    pub total_cancelled: u64,
     /// Total assemblies failed
     pub total_failed: u64,
     /// Total assemblies timed out

@@ -12,17 +12,22 @@ use crate::sse_bus::{
 };
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::http::header::HeaderName;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::events::Event;
 use sinex_primitives::Timestamp;
 use sinex_primitives::query::SubscriptionFilter;
+use sinex_primitives::{Id, JsonValue};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::rpc_server::AppState;
+
+const LAST_EVENT_ID_HEADER: HeaderName = HeaderName::from_static("last-event-id");
 
 /// Query parameters for the SSE endpoint.
 #[derive(Debug, Deserialize)]
@@ -140,8 +145,23 @@ pub(crate) async fn handle_sse_stream(
         SubscriptionFilter::default()
     };
 
+    let resume_from = match parse_last_event_id(&headers) {
+        Ok(last_event_id) => last_event_id,
+        Err(error) => {
+            let detail = error.to_string();
+            log_access_audit(
+                "sse",
+                "events.stream",
+                AccessOutcome::InvalidRequest,
+                Some(&auth_ctx),
+                Some(&detail),
+            );
+            return (StatusCode::BAD_REQUEST, detail).into_response();
+        }
+    };
+
     // ── Register ──
-    let Some((sub_id, rx)) = bus.register(filter) else {
+    let Some((sub_id, rx)) = bus.register(filter, resume_from) else {
         log_access_audit(
             "sse",
             "events.stream",
@@ -202,15 +222,36 @@ enum MergedItem {
     Msg(SseMessage),
 }
 
+fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>>>, String> {
+    let Some(raw_value) = headers.get(&LAST_EVENT_ID_HEADER) else {
+        return Ok(None);
+    };
+    let value = raw_value
+        .to_str()
+        .map_err(|_| "Last-Event-ID must be valid ASCII".to_string())?
+        .trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse()
+        .map(Some)
+        .map_err(|error| format!("Last-Event-ID must be a persisted event UUID, got '{value}': {error}"))
+}
+
 /// Format an [`SseMessage`] into an axum SSE event.
 fn format_sse_message(msg: SseMessage) -> SseEvent {
     match msg {
         SseMessage::Event { seq, event } => {
             let data = serialize_sse_payload("event", &SseEventPayload { event: &event });
-            SseEvent::default()
-                .event("event")
-                .id(seq.to_string())
-                .data(data)
+            let mut frame = SseEvent::default().event("event").data(data);
+            if let Some(event_id) = event.id {
+                frame = frame.id(event_id.to_string());
+            } else {
+                frame = frame.id(seq.to_string());
+            }
+            frame
         }
         SseMessage::Gap {
             from_seq,
@@ -264,8 +305,11 @@ fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::serialize_sse_payload;
+    use super::{LAST_EVENT_ID_HEADER, parse_last_event_id, serialize_sse_payload};
+    use axum::http::{HeaderMap, HeaderValue};
     use serde::Serialize;
+    use sinex_primitives::events::Event;
+    use sinex_primitives::{Id, JsonValue, Uuid};
     use xtask::sandbox::sinex_test;
 
     struct FailingSerialize;
@@ -290,6 +334,28 @@ mod tests {
                 .as_str()
                 .is_some_and(|message| message.contains("event") && message.contains("boom"))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_last_event_id_accepts_persisted_event_uuid() -> TestResult<()> {
+        let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+        let mut headers = HeaderMap::new();
+        headers.insert(LAST_EVENT_ID_HEADER, HeaderValue::from_str(&event_id.to_string())?);
+
+        let parsed = parse_last_event_id(&headers)
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        assert_eq!(parsed, Some(event_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_last_event_id_rejects_non_uuid_values() -> TestResult<()> {
+        let mut headers = HeaderMap::new();
+        headers.insert(LAST_EVENT_ID_HEADER, HeaderValue::from_static("42"));
+
+        let error = parse_last_event_id(&headers).expect_err("sequence ids must be rejected");
+        assert!(error.contains("persisted event UUID"));
         Ok(())
     }
 }

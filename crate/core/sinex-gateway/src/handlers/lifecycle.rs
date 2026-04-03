@@ -590,6 +590,13 @@ fn merge_preview_summary(preview_summary: Option<Value>, extra: Value) -> Option
     }
 }
 
+fn matches_requested_tombstone_state(
+    requested_state: Option<TombstoneOperationState>,
+    operation: &TombstoneOperation,
+) -> bool {
+    requested_state.is_none_or(|state| operation.state == state)
+}
+
 fn tombstone_duration_ms(
     operation: &TombstoneOperation,
     finished_at: Timestamp,
@@ -875,14 +882,6 @@ pub async fn handle_tombstone_approve(
     let mut operation = operation_record_to_tombstone(&record)?;
     let preview_summary = record.preview_summary.clone();
 
-    // Validate state
-    if !operation.state.can_approve() {
-        return Err(SinexError::invalid_state(format!(
-            "Cannot approve operation in state {:?}",
-            operation.state
-        )));
-    }
-
     let now = Timestamp::now();
     if reconcile_tombstone_expiry(
         pool,
@@ -895,6 +894,13 @@ pub async fn handle_tombstone_approve(
         return Err(SinexError::invalid_state(format!(
             "Tombstone operation {} has expired. Create a new operation.",
             request.operation_id
+        )));
+    }
+
+    if !operation.state.can_approve() {
+        return Err(SinexError::invalid_state(format!(
+            "Cannot approve operation in state {:?}",
+            operation.state
         )));
     }
 
@@ -1174,7 +1180,9 @@ pub async fn handle_tombstone_list(
         .map_err(|e| {
             SinexError::database("Failed to reconcile tombstone expiry").with_source(e.to_string())
         })?;
-        operations.push(operation);
+        if matches_requested_tombstone_state(request.state, &operation) {
+            operations.push(operation);
+        }
     }
 
     // Sort by created_at descending (DB already returns in id DESC order, but created_at may differ)
@@ -1266,5 +1274,39 @@ mod tests {
             .expect("old timestamps should still produce a bounded duration");
 
         assert_eq!(duration_ms, Some(i32::MAX));
+    }
+
+    #[test]
+    fn matches_requested_tombstone_state_uses_reconciled_state() {
+        let operation = TombstoneOperation {
+            operation_id: "op-test".to_string(),
+            phase: TombstoneOperationPhase::Expired,
+            state: TombstoneOperationState::Expired,
+            before: None,
+            source: None,
+            event_ids: None,
+            limit: 1,
+            reason: "test".to_string(),
+            cascade_analysis: None,
+            created_by: "tester".to_string(),
+            created_at: "1900-01-01T00:00:00Z".to_string(),
+            expires_at: "1900-01-01T01:00:00Z".to_string(),
+            approved_by: None,
+            approved_at: None,
+            started_at: None,
+            finished_at: None,
+            tombstoned_count: None,
+            error_details: Some("Expired before approval".to_string()),
+        };
+
+        assert!(matches_requested_tombstone_state(None, &operation));
+        assert!(!matches_requested_tombstone_state(
+            Some(TombstoneOperationState::Previewed),
+            &operation
+        ));
+        assert!(matches_requested_tombstone_state(
+            Some(TombstoneOperationState::Expired),
+            &operation
+        ));
     }
 }

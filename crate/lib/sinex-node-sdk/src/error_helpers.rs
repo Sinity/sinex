@@ -7,6 +7,7 @@ use crate::{SinexError, runtime::stream::NodeRuntimeState};
 use std::collections::HashMap;
 use std::io;
 use std::time::SystemTime;
+use sinex_primitives::env as shared_env;
 use tracing::warn;
 
 /// Convert IO errors to `SinexError` with context
@@ -127,36 +128,26 @@ pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     })
 }
 
-pub fn env_bool_with_default(var: &str, default: bool, context: &str) -> bool {
-    match std::env::var(var) {
-        Ok(raw) => {
-            let normalized = raw.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => true,
-                "0" | "false" | "no" | "off" => false,
-                _ => {
-                    warn!(
-                        variable = var,
-                        value = %raw,
-                        default,
-                        context,
-                        "Invalid environment override; using default"
-                    );
-                    default
-                }
-            }
-        }
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                default,
-                context,
-                "Environment override is not valid UTF-8; using default"
-            );
-            default
-        }
+/// Construct a NATS message settlement error with consistent context.
+///
+/// Used by JetStream consumers and DLQ retry handlers when ack/nak operations fail.
+pub fn nats_settlement_error(
+    operation: &str,
+    subject: &str,
+    event_id: Option<&str>,
+    error: impl std::fmt::Display,
+) -> SinexError {
+    let mut err = SinexError::network(operation)
+        .with_context("subject", subject)
+        .with_source(error.to_string());
+    if let Some(id) = event_id {
+        err = err.with_context("event_id", id);
     }
+    err
+}
+
+pub fn env_bool_with_default(var: &str, default: bool, context: &str) -> bool {
+    shared_env::bool_or(var, default, context)
 }
 
 #[must_use]
@@ -190,18 +181,7 @@ pub fn unix_timestamp_secs_with_warning(timestamp: SystemTime, context: &str) ->
 }
 
 pub fn env_string_optional(var: &str, context: &str) -> Option<String> {
-    match std::env::var(var) {
-        Ok(raw) => Some(raw),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                context,
-                "Environment override is not valid UTF-8; ignoring value"
-            );
-            None
-        }
-    }
+    shared_env::var_optional(var, context)
 }
 
 pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
@@ -224,30 +204,7 @@ where
     T: std::str::FromStr + Clone,
     T::Err: std::fmt::Display,
 {
-    match std::env::var(var) {
-        Ok(raw) => match raw.parse::<T>() {
-            Ok(value) => value,
-            Err(error) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    %error,
-                    context,
-                    "Invalid environment override; using default"
-                );
-                default
-            }
-        },
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                context,
-                "Environment override is not valid UTF-8; using default"
-            );
-            default
-        }
-    }
+    shared_env::parse_or(var, default, context)
 }
 
 /// Path sanitization utilities
@@ -377,42 +334,11 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::time::SystemTime;
-    use xtask::sandbox::{sinex_serial_test, sinex_test};
-
-    struct ScopedEnvGuard {
-        keys: Vec<(String, Option<String>)>,
-    }
-
-    impl ScopedEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let previous = keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-                .collect();
-            Self { keys: previous }
-        }
-
-        fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-            unsafe { std::env::set_var(key, value) };
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.keys.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(key, value),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-    }
+    use xtask::sandbox::{sinex_serial_test, sinex_test, EnvGuard};
 
     #[sinex_serial_test]
     async fn env_bool_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_BOOL_OVERRIDE"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_TEST_BOOL_OVERRIDE", "bogus");
 
         let value = env_bool_with_default("SINEX_TEST_BOOL_OVERRIDE", true, "test");
@@ -422,7 +348,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn env_parse_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_U64_OVERRIDE"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_TEST_U64_OVERRIDE", "bogus");
 
         let value = env_parse_with_default("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
@@ -433,7 +359,7 @@ mod tests {
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn env_string_optional_ignores_non_utf8_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_STRING_OVERRIDE"]);
+        let mut env = EnvGuard::new();
         env.set(
             "SINEX_TEST_STRING_OVERRIDE",
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
@@ -446,7 +372,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()> {
-        let mut env = ScopedEnvGuard::new(&["SINEX_TEST_STRING_OVERRIDE"]);
+        let mut env = EnvGuard::new();
         env.set("SINEX_TEST_STRING_OVERRIDE", "   ");
 
         let value = env_nonempty_string_optional("SINEX_TEST_STRING_OVERRIDE", "test");

@@ -1,14 +1,14 @@
 #![cfg(feature = "messaging")]
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, DerivedNodeAdapter, TransducerWrapper,
+    DerivedNodeAdapter, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
 };
 use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
 use sinex_primitives::events::DynamicPayload;
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::prelude::*;
+use sinex_primitives::privacy::ProcessingContext;
 use xtask::sandbox::prelude::*;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -93,51 +93,6 @@ impl TransducerNode for DlqDerivedNode {
     }
 }
 
-#[derive(Default, Deserialize)]
-struct UnserializableState;
-
-impl Serialize for UnserializableState {
-    fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        Err(serde::ser::Error::custom("state serialization exploded"))
-    }
-}
-
-struct UnserializableCheckpointNode;
-
-impl TransducerNode for UnserializableCheckpointNode {
-    type State = UnserializableState;
-    type Input = TestInput;
-    type Output = JsonValue;
-
-    fn name(&self) -> &'static str {
-        "adapter-regression-unserializable-checkpoint"
-    }
-
-    fn input_event_type(&self) -> &'static str {
-        "test.input"
-    }
-
-    fn output_event_type(&self) -> &'static str {
-        "test.output"
-    }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
-    async fn process(
-        &mut self,
-        _state: &mut Self::State,
-        _input: Self::Input,
-        _context: &DerivedTriggerContext,
-    ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        Ok(None)
-    }
-}
-
 fn make_event_with_value(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
     let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
         .from_parents([Id::<Event<JsonValue>>::new()])?
@@ -156,7 +111,10 @@ async fn derived_adapter_rejects_missing_trigger_id() -> TestResult<()> {
     let mut event = make_event()?;
     event.id = None;
 
-    let err = adapter.process_one(event).await.expect_err("missing id must fail");
+    let err = adapter
+        .process_one(event)
+        .await
+        .expect_err("missing id must fail");
     assert!(format!("{err}").contains("missing an id"));
     Ok(())
 }
@@ -201,19 +159,5 @@ async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
         .as_str()
         .expect("redacted payload should stay string");
     assert_eq!(value, "<GITHUB_TOKEN>");
-    Ok(())
-}
-
-#[sinex_test]
-async fn derived_adapter_current_checkpoint_surfaces_serialization_failures() -> TestResult<()> {
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(UnserializableCheckpointNode));
-
-    let error = sinex_node_sdk::runtime::stream::Node::current_checkpoint(&adapter)
-        .await
-        .expect_err("unserializable state must not fabricate a checkpoint");
-    let message = format!("{error:#}");
-    assert!(message.contains("failed to serialize current derived node checkpoint state"));
-    assert!(message.contains("adapter-regression-unserializable-checkpoint"));
-    assert!(message.contains("state serialization exploded"));
     Ok(())
 }

@@ -147,3 +147,17 @@ async fn node_config_rejects_invalid_nested_nats_tls_overrides() -> TestResult<(
     assert!(message.contains("NATS URL must use tls:// or wss://"));
     Ok(())
 }
+
+#[sinex_test]
+async fn node_config_rejects_invalid_service_scoped_work_dir_override() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_DEFAULTS_NODE_WORK_DIR", "../../bad-work-dir");
+
+    let error = NodeConfig::load_from_env("defaults-node")
+        .expect_err("invalid service-scoped work dir override must fail load");
+    let message = error.to_string();
+
+    assert!(message.contains("SINEX_DEFAULTS_NODE_WORK_DIR"));
+    assert!(message.contains("invalid path value"));
+    Ok(())
+}

@@ -10,7 +10,7 @@ use sinex_primitives::validation::query_validation::{self, DEFAULT_MAX_LIMIT};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
@@ -23,6 +23,9 @@ EXAMPLES:
 
     # Full-text search for 'error'
     sinexctl query -q error -s 24h
+
+    # Resume from a previously returned pagination cursor
+    sinexctl query -s 24h --cursor-json '{\"after\":{\"id\":\"0195f3a1-7b0d-7a6f-9d8f-44a4d6d30b19\"}}'
 
     # Filter by source and event type
     sinexctl query --source shell.atuin --event-type shell.command -s 2d
@@ -78,6 +81,10 @@ pub struct QueryCommand {
     #[arg(long, short = 'n', default_value = "100", value_parser = parse_query_limit_arg)]
     limit: i64,
 
+    /// Resume an event query from a JSON-encoded pagination cursor
+    #[arg(long, value_name = "JSON")]
+    cursor_json: Option<String>,
+
     /// Output format
     #[arg(long, short = 'f', value_enum, default_value = "table")]
     format: OutputFormat,
@@ -101,6 +108,11 @@ impl QueryCommand {
         } else {
             None
         };
+        let cursor = self
+            .cursor_json
+            .as_deref()
+            .map(parse_cursor_json)
+            .transpose()?;
 
         let query = EventQuery {
             sources: self.source.clone(),
@@ -110,6 +122,7 @@ impl QueryCommand {
                 .query
                 .as_ref()
                 .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
+            cursor,
             limit: self.limit,
             direction: SortDirection::Desc,
             has_lineage,
@@ -135,16 +148,44 @@ async fn execute_query(
     format: OutputFormat,
 ) -> Result<()> {
     let result = client.query_events(query).await?;
-    match result {
-        EventQueryResult::Events { events, .. } => {
-            CommandOutput::list(events, "No events found.", format_table_results)
-                .display(&format)?;
-        }
-        other => {
-            println!("{}", render_non_event_query_result(&other, format)?);
-        }
-    }
+    println!("{}", render_query_result(&result, format)?);
     Ok(())
+}
+
+fn render_query_result(result: &EventQueryResult, format: OutputFormat) -> Result<String> {
+    match result {
+        EventQueryResult::Events {
+            events,
+            next_cursor,
+            total_estimate,
+        } => render_event_query_result(events, next_cursor.as_ref(), *total_estimate, format),
+        other => render_non_event_query_result(other, format),
+    }
+}
+
+fn render_event_query_result(
+    events: &[QueryResultEvent],
+    next_cursor: Option<&sinex_primitives::query::Cursor>,
+    total_estimate: Option<i64>,
+    format: OutputFormat,
+) -> Result<String> {
+    match format {
+        OutputFormat::Table => Ok(format_event_query_result_table(
+            events,
+            next_cursor,
+            total_estimate,
+        )),
+        OutputFormat::Json | OutputFormat::Dot => format_json(&EventQueryResult::Events {
+            events: events.to_vec(),
+            next_cursor: next_cursor.cloned(),
+            total_estimate,
+        }),
+        OutputFormat::Yaml => format_yaml(&EventQueryResult::Events {
+            events: events.to_vec(),
+            next_cursor: next_cursor.cloned(),
+            total_estimate,
+        }),
+    }
 }
 
 fn render_non_event_query_result(result: &EventQueryResult, format: OutputFormat) -> Result<String> {
@@ -168,6 +209,35 @@ fn format_non_event_query_result_table(result: &EventQueryResult) -> String {
         EventQueryResult::TimeSeries { buckets } => format_time_series_table(buckets),
         EventQueryResult::SourceStats { sources } => format_source_stats_table(sources),
     }
+}
+
+fn format_event_query_result_table(
+    events: &[QueryResultEvent],
+    next_cursor: Option<&sinex_primitives::query::Cursor>,
+    total_estimate: Option<i64>,
+) -> String {
+    if events.is_empty() {
+        return "No events found.".to_string();
+    }
+
+    let mut output = format_table_results(events);
+    output.push_str("\n\n");
+    output.push_str(&format!("Displayed {} event(s).", events.len()));
+
+    if let Some(total_estimate) = total_estimate {
+        output.push_str(&format!("\nApproximate total matches: {total_estimate}."));
+    }
+
+    if let Some(cursor) = next_cursor {
+        let cursor_json =
+            serde_json::to_string(cursor).unwrap_or_else(|_| "<failed to serialize cursor>".into());
+        output.push_str("\nNext cursor:");
+        output.push_str(&format!("\n  {cursor_json}"));
+        output.push_str("\nReuse with:");
+        output.push_str(&format!("\n  --cursor-json '{}'", cursor_json));
+    }
+
+    output
 }
 
 fn format_grouped_counts_table(groups: &[sinex_primitives::query::GroupedCount]) -> String {
@@ -432,6 +502,11 @@ fn parse_time(s: &str) -> Result<Timestamp> {
     parse_time_input(s)
 }
 
+fn parse_cursor_json(input: &str) -> Result<sinex_primitives::query::Cursor> {
+    serde_json::from_str(input)
+        .map_err(|error| color_eyre::eyre::eyre!("invalid cursor JSON: {error}"))
+}
+
 /// Format search results as a table
 fn format_table_results(results: &[QueryResultEvent]) -> String {
     use console::style;
@@ -484,10 +559,16 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use sinex_primitives::testing::event_fixture;
     use sinex_primitives::temporal::Duration;
+    use sinex_primitives::{Event, Id, JsonValue, Uuid};
     use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
     use xtask::sandbox::{sinex_proptest, sinex_test};
     use xtask::TestResult;
+
+    fn render_count_result(format: OutputFormat) -> TestResult<String> {
+        render_non_event_query_result(&EventQueryResult::Count { count: 7 }, format)
+    }
 
     #[sinex_test]
     async fn test_parse_relative_duration() -> TestResult<()> {
@@ -665,30 +746,92 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn render_non_event_query_result_respects_json_format() -> TestResult<()> {
-        let rendered =
-            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Json)?;
+    #[sinex_test]
+    async fn render_non_event_query_result_respects_json_format() -> TestResult<()> {
+        let rendered = render_count_result(OutputFormat::Json)?;
         let value: serde_json::Value = serde_json::from_str(&rendered)?;
         assert_eq!(value["count"], serde_json::json!(7));
         Ok(())
     }
 
-    #[test]
-    fn render_non_event_query_result_respects_yaml_format() -> TestResult<()> {
-        let rendered =
-            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Yaml)?;
+    #[sinex_test]
+    async fn render_non_event_query_result_respects_yaml_format() -> TestResult<()> {
+        let rendered = render_count_result(OutputFormat::Yaml)?;
         let value: serde_yaml::Value = serde_yaml::from_str(&rendered)?;
         assert_eq!(value["count"], serde_yaml::Value::from(7));
         Ok(())
     }
 
-    #[test]
-    fn render_non_event_query_result_uses_table_renderer_for_counts() -> TestResult<()> {
-        let rendered =
-            render_non_event_query_result(&EventQueryResult::Count { count: 7 }, OutputFormat::Table)?;
+    #[sinex_test]
+    async fn render_non_event_query_result_uses_table_renderer_for_counts() -> TestResult<()> {
+        let rendered = render_count_result(OutputFormat::Table)?;
         assert!(rendered.contains("Count"));
         assert!(rendered.contains('7'));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn render_query_result_preserves_event_pagination_metadata_in_json() -> TestResult<()> {
+        let mut event = event_fixture(
+            sinex_primitives::EventSource::from_static("test"),
+            sinex_primitives::EventType::from_static("test.event"),
+            serde_json::json!({"message": "hello"}),
+        );
+        let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+        event.id = Some(event_id);
+
+        let rendered = render_query_result(
+            &EventQueryResult::Events {
+                events: vec![QueryResultEvent {
+                    event,
+                    relevance_score: Some(0.75),
+                    snippet: Some("hello".to_string()),
+                }],
+                next_cursor: Some(sinex_primitives::query::Cursor::after_id(event_id)),
+                total_estimate: Some(42),
+            },
+            OutputFormat::Json,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["type"], serde_json::json!("events"));
+        assert_eq!(value["total_estimate"], serde_json::json!(42));
+        assert!(value["next_cursor"]["after"]["id"].is_string());
+        assert_eq!(value["events"].as_array().map(Vec::len), Some(1));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_event_query_result_table_shows_cursor_and_total_estimate() -> TestResult<()> {
+        let mut event = event_fixture(
+            sinex_primitives::EventSource::from_static("test"),
+            sinex_primitives::EventType::from_static("test.event"),
+            serde_json::json!({"message": "hello"}),
+        );
+        let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+        event.id = Some(event_id);
+
+        let table = format_event_query_result_table(
+            &[QueryResultEvent {
+                event,
+                relevance_score: None,
+                snippet: Some("hello".to_string()),
+            }],
+            Some(&sinex_primitives::query::Cursor::after_id(event_id)),
+            Some(12),
+        );
+
+        assert!(table.contains("Displayed 1 event(s)."));
+        assert!(table.contains("Approximate total matches: 12."));
+        assert!(table.contains("Next cursor:"));
+        assert!(table.contains("--cursor-json"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_cursor_json_rejects_invalid_json() -> TestResult<()> {
+        let error = parse_cursor_json("{not json]").expect_err("invalid cursor JSON should fail");
+        assert!(error.to_string().contains("invalid cursor JSON"));
         Ok(())
     }
 

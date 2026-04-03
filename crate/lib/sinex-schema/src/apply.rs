@@ -85,6 +85,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     create_tables(pool).await?;
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
+    converge_source_material_registry_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
@@ -151,6 +152,15 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         drifts.push("stale core.operations_log constraint operations_log_operation_type_check".into());
     }
 
+    if relation_exists(pool, "raw.source_material_registry").await?
+        && !source_material_registry_status_constraint_is_current(pool).await?
+    {
+        drifts.push(
+            "stale raw.source_material_registry constraint source_material_registry_status_check"
+                .into(),
+        );
+    }
+
     Ok(drifts)
 }
 
@@ -206,6 +216,56 @@ async fn operations_log_operation_type_constraint_is_current(
     Ok(definition.is_some_and(|def| {
         def.contains("operation_type ~")
             && def.contains("^[a-z][a-z0-9_.-]*$")
+    }))
+}
+
+async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<(), ApplyError> {
+    if !relation_exists(pool, "raw.source_material_registry").await? {
+        return Ok(());
+    }
+
+    if source_material_registry_status_constraint_is_current(pool).await? {
+        return Ok(());
+    }
+
+    execute_sql(
+        pool,
+        r#"
+        ALTER TABLE raw.source_material_registry
+            DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+            ADD CONSTRAINT source_material_registry_status_check
+            CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
+        "#,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn source_material_registry_status_constraint_is_current(
+    pool: &PgPool,
+) -> Result<bool, ApplyError> {
+    let definition = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = 'raw'
+          AND r.relname = 'source_material_registry'
+          AND c.conname = 'source_material_registry_status_check'
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(definition.is_some_and(|def| {
+        def.contains("status IN")
+            && def.contains("'sensing'")
+            && def.contains("'completed'")
+            && def.contains("'cancelled'")
+            && def.contains("'recovered_partial'")
+            && def.contains("'failed'")
     }))
 }
 
@@ -1096,6 +1156,7 @@ SELECT
     time_bucket('1 hour', id) AS bucket,
     MAX((payload->>'active_assemblies')::int) AS max_active_assemblies,
     SUM((payload->>'total_completed')::bigint) AS total_completed,
+    SUM((payload->>'total_cancelled')::bigint) AS total_cancelled,
     SUM((payload->>'total_failed')::bigint) AS total_failed,
     SUM((payload->>'total_timed_out')::bigint) AS total_timed_out,
     AVG((payload->>'avg_duration_ms')::float) AS avg_duration_ms,

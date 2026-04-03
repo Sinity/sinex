@@ -9,6 +9,7 @@ use sinexctl::commands::{
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
+use sinex_primitives::strict_env_filter_source;
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]
@@ -54,28 +55,18 @@ struct Cli {
     command: Commands,
 }
 
+fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
+    matches.value_source(id) == Some(ValueSource::CommandLine)
+}
+
 fn load_env_filter(default_filter: &str) -> color_eyre::eyre::Result<tracing_subscriber::EnvFilter> {
-    let Some(raw) = std::env::var_os(tracing_subscriber::EnvFilter::DEFAULT_ENV) else {
-        return Ok(tracing_subscriber::EnvFilter::new(default_filter));
-    };
-
-    let raw = raw.into_string().map_err(|_| {
-        eyre!(
-            "{} is not valid UTF-8",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })?;
-
+    let raw = strict_env_filter_source(default_filter)?;
     tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
         eyre!(
             "Invalid {} directive `{raw}`: {error}",
             tracing_subscriber::EnvFilter::DEFAULT_ENV
         )
     })
-}
-
-fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
-    matches.value_source(id) == Some(ValueSource::CommandLine)
 }
 
 #[derive(Debug, Subcommand)]

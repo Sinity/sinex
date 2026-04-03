@@ -107,6 +107,11 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     env.set("SINEX_INGESTD_GITOPS_ENABLED", "true");
     env.set("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS", "123");
     env.set("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS", "17");
+    env.set("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES", "321");
+    env.set("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS", "654");
+    env.set("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING", "987");
+    env.set("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING", "1234");
+    env.set("SINEX_ASSEMBLER_STATE_DIR", "/tmp/sinex-ingestd-assembler-state");
 
     let config = IngestdConfig::from_args(
         Some("postgresql://custom/db".to_string()),
@@ -127,6 +132,14 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     assert!(config.gitops_enabled);
     assert_eq!(config.schema_reload_interval_secs, 123);
     assert_eq!(config.stats_log_interval_secs, 17);
+    assert_eq!(config.consumer_fetch_max_messages, 321);
+    assert_eq!(config.consumer_fetch_timeout_ms.as_millis(), 654);
+    assert_eq!(config.consumer_max_ack_pending, 987);
+    assert_eq!(config.material_slices_max_ack_pending, 1234);
+    assert_eq!(
+        config.assembler_state_dir,
+        camino::Utf8PathBuf::from("/tmp/sinex-ingestd-assembler-state")
+    );
     Ok(())
 }
 
@@ -167,5 +180,57 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
     let message = error.to_string();
     assert!(message.contains("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS"));
     assert!(message.contains("soon"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_INGESTD_WORK_DIR", "../../bad-work-dir");
+    env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
+
+    let error = IngestdConfig::from_args(
+        Some("postgresql://cli/override".to_string()),
+        "nats://localhost:4222".to_string(),
+        false,
+        16,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect_err("invalid ingestd path override must fail config construction");
+
+    let message = error.to_string();
+    assert!(message.contains("SINEX_INGESTD_WORK_DIR"));
+    assert!(message.contains("invalid path value"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn from_args_rejects_invalid_direct_path_overrides() -> TestResult<()> {
+    let error = IngestdConfig::from_args(
+        Some("postgresql://cli/override".to_string()),
+        "nats://localhost:4222".to_string(),
+        false,
+        16,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Some("../../bad-annex".to_string()),
+        Some("../../bad-assembler-state".to_string()),
+        None,
+    )
+    .expect_err("invalid direct path overrides must fail config construction");
+
+    let message = error.to_string();
+    assert!(message.contains("invalid path value"));
+    assert!(message.contains("annex repository path"));
     Ok(())
 }

@@ -123,21 +123,24 @@ fn attach_background_shutdown_error(
     error.with_context("background_shutdown_error", cleanup_error.to_string())
 }
 
-fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
-    SinexError::service(format!("critical task failed during shutdown: {name}"))
-        .with_context("task", name)
+/// Shared helper for task shutdown errors across critical, material, and background tasks.
+pub(crate) fn task_shutdown_error(category: &str, name: &str, error: impl std::fmt::Display) -> SinexError {
+    SinexError::service(format!("{category} task join failed during shutdown: {name}"))
+        .with_context("task", name.to_string())
+        .with_context("category", category.to_string())
         .with_source(error.to_string())
+}
+
+fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
+    task_shutdown_error("critical", name, error)
 }
 
 fn cleanup_task_join_failure(name: &'static str, error: &tokio::task::JoinError) -> SinexError {
-    SinexError::service(format!("critical task join failed during shutdown: {name}"))
-        .with_context("task", name)
-        .with_source(error.to_string())
+    task_shutdown_error("critical", name, error)
 }
 
 fn cleanup_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
-    SinexError::service("critical task monitor join failed during shutdown")
-        .with_source(error.to_string())
+    task_shutdown_error("critical", "monitor", error)
 }
 
 fn cleanup_task_timeout(count: usize, timeout: Duration) -> SinexError {
@@ -149,9 +152,7 @@ fn cleanup_task_timeout(count: usize, timeout: Duration) -> SinexError {
 }
 
 fn background_task_join_failure(index: usize, error: &tokio::task::JoinError) -> SinexError {
-    SinexError::service(format!("background task failed during shutdown: {index}"))
-        .with_context("task_index", index.to_string())
-        .with_source(error.to_string())
+    task_shutdown_error("background", &index.to_string(), error)
 }
 
 fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {

@@ -12,9 +12,9 @@ use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
 use serde::Serialize;
 use serde_json::{Value, json};
+use sinex_primitives::env as shared_env;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
-use sinex_primitives::env as shared_env;
 use tracing::info;
 
 use super::VerificationStatus;
@@ -264,7 +264,7 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
                 }
             }
             Err(e) => {
-                messages.push(format!("⚠ Could not check disk space for {path}: {e}"));
+                messages.push(format!("✗ Could not check disk space for {path}: {e}"));
                 disk_info.insert(
                     path.clone(),
                     json!({
@@ -386,7 +386,7 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
                 }
             }
             Err(e) => {
-                messages.push(format!("⚠ Could not check permissions for {dir_path}: {e}"));
+                messages.push(format!("✗ Could not check permissions for {dir_path}: {e}"));
                 permissions_info.insert(
                     dir_path.clone(),
                     json!({
@@ -410,33 +410,20 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     let metadata = match tokio::fs::metadata(path.as_std_path()).await {
         Ok(metadata) => metadata,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(json!({
-                "exists": false,
-                "is_directory": false,
-                "writable": false,
-                "readable": false,
-                "error": "directory does not exist"
-            }));
+            return Err(SinexError::io("Directory does not exist")
+                .with_context("path", dir_path.to_string())
+                .with_std_error(&e));
         }
         Err(e) => {
-            return Ok(json!({
-                "exists": path.exists(),
-                "is_directory": false,
-                "writable": false,
-                "readable": false,
-                "error": e.to_string()
-            }));
+            return Err(SinexError::io("Failed to inspect directory metadata")
+                .with_context("path", dir_path.to_string())
+                .with_std_error(&e));
         }
     };
 
     if !metadata.is_dir() {
-        return Ok(json!({
-            "exists": true,
-            "is_directory": false,
-            "writable": false,
-            "readable": true,
-            "error": "path is not a directory"
-        }));
+        return Err(SinexError::processing("Path is not a directory")
+            .with_context("path", dir_path.to_string()));
     }
 
     // Test write permissions by creating a temporary file
@@ -456,13 +443,11 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
 
             Ok(details)
         }
-        Err(e) => Ok(json!({
-            "exists": true,
-            "is_directory": true,
-            "writable": false,
-            "readable": true,
-            "error": e.to_string()
-        })),
+        Err(e) => Err(
+            SinexError::io("Failed to write directory permission probe file")
+                .with_context("path", dir_path.to_string())
+                .with_std_error(&e),
+        ),
     }
 }
 
@@ -503,8 +488,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
                 "ℹ No valid configured network hostnames to resolve; hostname probe skipped"
                     .to_string()
             } else {
-                "ℹ No configured network hostnames to resolve; hostname probe skipped"
-                    .to_string()
+                "ℹ No configured network hostnames to resolve; hostname probe skipped".to_string()
             },
         );
         network_info.insert(
@@ -529,7 +513,10 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
                 }
                 Err(error) => {
                     failed_hosts.push(format!("{host}: {error}"));
-                    results.insert(host, json!({ "resolved": false, "error": error.to_string() }));
+                    results.insert(
+                        host,
+                        json!({ "resolved": false, "error": error.to_string() }),
+                    );
                 }
             }
         }
@@ -543,10 +530,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
             ));
         }
 
-        network_info.insert(
-            "configured_hostname_resolution",
-            Value::Object(results),
-        );
+        network_info.insert("configured_hostname_resolution", Value::Object(results));
     }
 
     Ok(json!(network_info))
@@ -698,10 +682,14 @@ fn check_process_limits_info() -> NodeResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_hostname_resolution_probe, resolution_target_host, verify_disk_space};
+    use super::{
+        configured_hostname_resolution_probe, resolution_target_host, verify_disk_space,
+        verify_filesystem_permissions,
+    };
+    use serde_json::Value;
     use std::fs;
     use tempfile::tempdir;
-    use xtask::sandbox::{sinex_test, EnvGuard};
+    use xtask::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn resolution_target_host_skips_local_and_socket_targets()
@@ -806,9 +794,50 @@ mod tests {
         assert!(
             messages
                 .iter()
-                .any(|message| message.contains("Could not check disk space")
+                .any(|message| message.contains("✗ Could not check disk space")
                     && message.contains(&missing_work_dir.display().to_string())),
             "disk probe failure should mention the unprobeable required path: {messages:#?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn verify_filesystem_permissions_rejects_unprobeable_required_paths()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = tempdir()?;
+        let state_dir = root.path().join("state");
+        let data_dir = root.path().join("data");
+        let log_dir = root.path().join("logs");
+        let tmp_dir = root.path().join("tmp");
+        let missing_work_dir = root.path().join("work-missing");
+
+        for dir in [&state_dir, &data_dir, &log_dir, &tmp_dir] {
+            fs::create_dir_all(dir)?;
+        }
+
+        let mut env = EnvGuard::new();
+        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
+        env.set("TMPDIR", &tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+
+        let mut messages = Vec::new();
+        let fs_info = verify_filesystem_permissions(&mut messages).await?;
+
+        assert!(
+            !fs_info
+                .get("meets_requirements")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            "filesystem probe should fail when a required path is unprobeable"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("✗ Could not check permissions")
+                    && message.contains(&missing_work_dir.display().to_string())),
+            "filesystem probe failure should mention the unprobeable required path: {messages:#?}"
         );
         Ok(())
     }

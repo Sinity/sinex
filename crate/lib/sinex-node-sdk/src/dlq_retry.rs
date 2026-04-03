@@ -155,8 +155,12 @@ impl DlqRetryHandler {
                     }
                 }
                 Ok(Some(Err(e))) => {
-                    error!("Error reading DLQ message: {e}");
-                    processed += 1;
+                    warn!(
+                        error = %e,
+                        "Error reading DLQ message; leaving retry accounting unchanged"
+                    );
+                    tokio::time::sleep(Duration::from_millis(DEFAULT_DLQ_INTER_BATCH_DELAY_MS))
+                        .await;
                 }
                 // Timeout or stream ended — stop draining
                 Ok(None) | Err(_) => {
@@ -236,6 +240,25 @@ impl DlqRetryHandler {
                 continue;
             }
 
+            let retry_count = dlq_stored_retry_count(&message.headers)?;
+            if retry_count >= self.config.max_retries {
+                warn!(
+                    event_id,
+                    sequence,
+                    retry_count,
+                    max_retries = self.config.max_retries,
+                    "DLQ event exceeded max retries during direct retry request; permanently failing it instead of requeueing"
+                );
+                self.permanently_fail_stream_message(&stream, &message)
+                    .await?;
+                return Err(SinexError::processing(
+                    "DLQ event exceeded max retries and was permanently failed",
+                )
+                .with_context("event_id", event_id.to_string())
+                .with_context("retry_count", retry_count.to_string())
+                .with_context("max_retries", self.config.max_retries.to_string()));
+            }
+
             self.retry_stream_message(&js, &stream, &message).await?;
             info!(event_id, sequence, "Successfully retried DLQ event by ID");
             return Ok(());
@@ -286,19 +309,18 @@ impl DlqRetryHandler {
             }
             Err(e) => {
                 error!("Failed to retry message: {e}");
-                msg
-                    .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                        self.config.retry_delay,
-                    )))
-                    .await
-                    .map_err(|nak_err| {
-                        Self::message_settlement_error(
-                            "failed to NAK DLQ message after retry failure",
-                            msg.subject.as_str(),
-                            nak_err,
-                        )
-                        .with_context("retry_error", e.to_string())
-                    })?;
+                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    self.config.retry_delay,
+                )))
+                .await
+                .map_err(|nak_err| {
+                    Self::message_settlement_error(
+                        "failed to NAK DLQ message after retry failure",
+                        msg.subject.as_str(),
+                        nak_err,
+                    )
+                    .with_context("retry_error", e.to_string())
+                })?;
                 Ok(false)
             }
         }
@@ -309,9 +331,7 @@ impl DlqRetryHandler {
         subject: &str,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        SinexError::network(operation)
-            .with_context("subject", subject)
-            .with_source(error.to_string())
+        crate::error_helpers::nats_settlement_error(operation, subject, None, error)
     }
 
     async fn retry_message(
@@ -336,11 +356,15 @@ impl DlqRetryHandler {
             headers.insert("Nats-Msg-Id", msg_id);
         }
 
-        js.publish_with_headers(target.original_subject, headers, target.original_payload.into())
-            .await
-            .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
-            .await
-            .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        js.publish_with_headers(
+            target.original_subject,
+            headers,
+            target.original_payload.into(),
+        )
+        .await
+        .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
+        .await
+        .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
 
         Ok(())
     }
@@ -352,7 +376,8 @@ impl DlqRetryHandler {
         message: &async_nats::jetstream::message::StreamMessage,
     ) -> NodeResult<()> {
         let retry_count = dlq_stored_retry_count(&message.headers)?;
-        let target = dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
+        let target =
+            dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
 
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = (retry_count + 1).to_string();
@@ -366,19 +391,34 @@ impl DlqRetryHandler {
             headers.insert("Nats-Msg-Id", msg_id);
         }
 
-        js.publish_with_headers(target.original_subject, headers, target.original_payload.into())
-            .await
-            .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
-            .await
-            .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        js.publish_with_headers(
+            target.original_subject,
+            headers,
+            target.original_payload.into(),
+        )
+        .await
+        .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
+        .await
+        .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
 
-        let deleted = stream
-            .delete_message(message.sequence)
-            .await
-            .map_err(|e| SinexError::processing("Failed to delete retried DLQ message").with_source(e))?;
+        self.permanently_fail_stream_message(stream, message)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn permanently_fail_stream_message(
+        &self,
+        stream: &jetstream::stream::Stream,
+        message: &async_nats::jetstream::message::StreamMessage,
+    ) -> NodeResult<()> {
+        let deleted = stream.delete_message(message.sequence).await.map_err(|e| {
+            SinexError::processing("Failed to delete permanently settled DLQ message")
+                .with_source(e)
+        })?;
         if !deleted {
             return Err(SinexError::processing(format!(
-                "DLQ stream refused to delete retried message sequence {}",
+                "DLQ stream refused to delete permanently settled message sequence {}",
                 message.sequence
             )));
         }
@@ -507,7 +547,11 @@ fn dlq_payload_event_id(payload: &[u8]) -> NodeResult<Option<String>> {
         }))
 }
 
-fn dlq_event_id(subject: &str, headers: &async_nats::HeaderMap, payload: &[u8]) -> NodeResult<Option<String>> {
+fn dlq_event_id(
+    subject: &str,
+    headers: &async_nats::HeaderMap,
+    payload: &[u8],
+) -> NodeResult<Option<String>> {
     if let Some(event_id) = headers.get("Event-Id") {
         return Ok(Some(event_id.to_string()));
     }
@@ -540,8 +584,9 @@ fn dlq_requeue_target(
         .map(std::string::ToString::to_string)
         .ok_or_else(|| SinexError::processing("Missing Original-Subject header".to_string()))?;
 
-    let envelope = serde_json::from_slice::<JsonValue>(payload)
-        .map_err(|e| SinexError::processing("Failed to parse DLQ payload envelope").with_source(e))?;
+    let envelope = serde_json::from_slice::<JsonValue>(payload).map_err(|e| {
+        SinexError::processing("Failed to parse DLQ payload envelope").with_source(e)
+    })?;
 
     let original_value = envelope
         .get("original_event")
@@ -600,8 +645,8 @@ fn dlq_requeue_target(
 #[cfg(test)]
 mod tests {
     use super::{
-        combine_retry_counts, dlq_event_id, dlq_payload_event_id, dlq_requeue_target,
-        DlqRetryHandler,
+        DlqRetryHandler, combine_retry_counts, dlq_event_id, dlq_payload_event_id,
+        dlq_requeue_target,
     };
     use xtask::sandbox::sinex_test;
 
@@ -625,7 +670,11 @@ mod tests {
     -> TestResult<()> {
         let error = combine_retry_counts(0, Err("metadata unavailable".to_string()))
             .expect_err("missing delivery metadata without stored retries must fail honestly");
-        assert!(error.to_string().contains("Failed to inspect DLQ delivery metadata"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to inspect DLQ delivery metadata")
+        );
         assert!(error.to_string().contains("metadata unavailable"));
         Ok(())
     }
@@ -666,8 +715,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn dlq_event_id_rejects_payload_parse_failure_without_subject_fallback()
-    -> TestResult<()> {
+    async fn dlq_event_id_rejects_payload_parse_failure_without_subject_fallback() -> TestResult<()>
+    {
         let headers = async_nats::HeaderMap::new();
         let error = dlq_event_id("events.dlq", &headers, br#"{"event_id":"oops""#)
             .expect_err("payload parse failure without subject fallback must fail honestly");

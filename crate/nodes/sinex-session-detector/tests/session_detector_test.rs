@@ -25,28 +25,6 @@ fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
     make_context_with_optional_ts(Some(ts_orig))
 }
 
-struct EnvGuard {
-    key: &'static str,
-    original: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let original = std::env::var(key).ok();
-        unsafe { std::env::set_var(key, value) };
-        Self { key, original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => unsafe { std::env::set_var(self.key, value) },
-            None => unsafe { std::env::remove_var(self.key) },
-        }
-    }
-}
-
 #[sinex_test]
 async fn replay_events_do_not_trigger_gap_from_wall_clock() -> TestResult<()> {
     let mut detector = SessionDetector::default();
@@ -111,7 +89,8 @@ async fn event_time_gap_triggers_session_boundary() -> TestResult<()> {
 
 #[sinex_test]
 async fn invalid_gap_override_falls_back_to_default_threshold() -> TestResult<()> {
-    let _guard = EnvGuard::set("SINEX_SESSION_GAP_SECS", "not-a-number");
+    let mut _guard = EnvGuard::new();
+    _guard.set("SINEX_SESSION_GAP_SECS", "not-a-number");
     let mut detector = SessionDetector::default();
     let mut state = SessionState::default();
 
@@ -134,7 +113,8 @@ async fn invalid_gap_override_falls_back_to_default_threshold() -> TestResult<()
 
 #[sinex_test]
 async fn valid_gap_override_changes_boundary_detection() -> TestResult<()> {
-    let _guard = EnvGuard::set("SINEX_SESSION_GAP_SECS", "600");
+    let mut _guard = EnvGuard::new();
+    _guard.set("SINEX_SESSION_GAP_SECS", "600");
     let mut detector = SessionDetector::default();
     let mut state = SessionState::default();
 
@@ -157,7 +137,8 @@ async fn valid_gap_override_changes_boundary_detection() -> TestResult<()> {
 
 #[sinex_test]
 async fn non_positive_gap_override_falls_back_to_default_threshold() -> TestResult<()> {
-    let _guard = EnvGuard::set("SINEX_SESSION_GAP_SECS", "0");
+    let mut _guard = EnvGuard::new();
+    _guard.set("SINEX_SESSION_GAP_SECS", "0");
     let mut detector = SessionDetector::default();
     let mut state = SessionState::default();
 

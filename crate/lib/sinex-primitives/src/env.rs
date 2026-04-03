@@ -10,9 +10,11 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use camino::Utf8PathBuf;
 use tracing::warn;
 
 use crate::error::{Result, SinexError};
+use crate::validation::validate_path;
 
 // ─── Strict helpers ──────────────────────────────────────────
 
@@ -60,6 +62,23 @@ pub fn strict_flag(name: &str) -> Result<Option<bool>> {
                 "Environment variable {name} has invalid boolean value `{raw}`"
             ))),
         },
+    }
+}
+
+/// Read and validate an env var as a UTF-8 path strictly.
+///
+/// Returns `Err` on invalid UTF-8 or invalid path content.
+pub fn strict_validated_path(name: &str) -> Result<Option<Utf8PathBuf>> {
+    match strict_var(name)? {
+        None => Ok(None),
+        Some(raw) => validate_path(&raw).map(Some).map_err(|error| {
+            SinexError::configuration(format!(
+                "Environment variable {name} has invalid path value"
+            ))
+            .with_context("environment_variable", name)
+            .with_context("raw_value", raw)
+            .with_std_error(&error)
+        }),
     }
 }
 
@@ -160,6 +179,21 @@ pub fn bool_or(name: &str, default: bool, context: &str) -> bool {
 #[must_use]
 pub fn path_optional(name: &str, context: &str) -> Option<PathBuf> {
     var_optional(name, context).map(PathBuf::from)
+}
+
+/// Load the raw `RUST_LOG` filter string or fall back to `default_filter`.
+///
+/// Invalid UTF-8 is treated as a configuration error. Parsing into
+/// `tracing_subscriber::EnvFilter` stays in the caller so this crate does not
+/// need a tracing-subscriber dependency.
+pub fn strict_env_filter_source(default_filter: &str) -> Result<String> {
+    let Some(raw) = std::env::var_os("RUST_LOG") else {
+        return Ok(default_filter.to_string());
+    };
+
+    raw.into_string().map_err(|_| {
+        SinexError::configuration("RUST_LOG is not valid UTF-8".to_string())
+    })
 }
 
 /// Simple bool flag: true if the var is set to a truthy value, false otherwise.

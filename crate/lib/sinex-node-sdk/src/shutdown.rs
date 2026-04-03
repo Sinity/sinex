@@ -51,3 +51,23 @@ impl ShutdownConfig {
             .unwrap_or_else(|| default_checkpoint_path(node_name))
     }
 }
+
+/// Wait until shutdown is explicitly requested or the sender disappears.
+///
+/// Returns `true` once the shutdown flag is observed as set, including when the
+/// flag was already set before the wait begins. Returns `false` if the sender is
+/// dropped before any explicit shutdown request is observed.
+#[cfg(feature = "messaging")]
+pub async fn wait_for_shutdown_signal(
+    shutdown_rx: &mut tokio::sync::watch::Receiver<bool>,
+) -> bool {
+    loop {
+        if *shutdown_rx.borrow() {
+            return true;
+        }
+
+        if shutdown_rx.changed().await.is_err() {
+            return false;
+        }
+    }
+}
