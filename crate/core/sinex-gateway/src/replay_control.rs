@@ -206,6 +206,68 @@ async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_js
     }
 }
 
+fn preview_root_ids_json(root_ids: &[Uuid]) -> serde_json::Value {
+    serde_json::Value::Array(
+        root_ids
+            .iter()
+            .map(|id| serde_json::Value::String(id.to_string()))
+            .collect(),
+    )
+}
+
+fn summarize_uuid_set(ids: &HashSet<Uuid>) -> String {
+    let mut sorted: Vec<_> = ids.iter().copied().collect();
+    sorted.sort_unstable();
+
+    let total = sorted.len();
+    let sample = sorted
+        .into_iter()
+        .take(3)
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>();
+
+    match sample.len() {
+        0 => "none".to_string(),
+        count if total > count => format!("{} ...", sample.join(", ")),
+        _ => sample.join(", "),
+    }
+}
+
+fn replay_scope_drift_error(
+    operation_id: Uuid,
+    expected_total_events: u64,
+    expected_root_ids: &[Uuid],
+    actual_root_ids: &[Uuid],
+) -> color_eyre::eyre::Report {
+    if expected_root_ids.is_empty() {
+        return eyre!(
+            "Operation {} preview is stale: approved preview covered {} material-root events, \
+             but execution matched {}. Refresh preview before execution",
+            operation_id,
+            expected_total_events,
+            actual_root_ids.len()
+        );
+    }
+
+    let expected: HashSet<_> = expected_root_ids.iter().copied().collect();
+    let actual: HashSet<_> = actual_root_ids.iter().copied().collect();
+    let missing: HashSet<_> = expected.difference(&actual).copied().collect();
+    let unexpected: HashSet<_> = actual.difference(&expected).copied().collect();
+
+    eyre!(
+        "Operation {} preview is stale: approved preview covered {} material-root events, \
+         but execution matched {}. Missing previewed roots: {} ({}). Unexpected live roots: {} ({}). \
+         Refresh preview before execution",
+        operation_id,
+        expected_total_events,
+        actual_root_ids.len(),
+        missing.len(),
+        summarize_uuid_set(&missing),
+        unexpected.len(),
+        summarize_uuid_set(&unexpected),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
     pub message: String,
@@ -715,9 +777,11 @@ impl ReplayControlServer {
                 let mut preview = replay.generate_preview_summary(&operation.scope).await?;
 
                 // Augment preview with cascade safety analysis (integrity violations, cycles).
-                let root_ids = replay.collect_scope_root_ids(&operation.scope).await?;
+                let mut root_ids = replay.collect_scope_root_ids(&operation.scope).await?;
+                root_ids.sort_unstable();
                 let safety = run_safety_analysis(replay.pool(), &root_ids).await;
                 if let serde_json::Value::Object(ref mut map) = preview {
+                    map.insert("root_event_ids".to_string(), preview_root_ids_json(&root_ids));
                     map.insert("safety_analysis".to_string(), safety);
                 }
 
@@ -1007,7 +1071,7 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         executor_name: &str,
     ) -> Result<ReplayOperation> {
-        let (initial, total_events, execution_window) =
+        let (initial, total_events, execution_window, preview_root_ids) =
             self.prepare_operation(operation_id, executor_name).await?;
 
         // Initialize checkpoint
@@ -1026,6 +1090,8 @@ impl ReplayExecutionEngine {
                 operation_id,
                 &initial.scope,
                 execution_window,
+                total_events,
+                &preview_root_ids,
                 self.replay.pool(),
                 &mut checkpoint,
                 executor_name,
@@ -1040,7 +1106,7 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         executor_name: &str,
-    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp))> {
+    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(eyre!(
@@ -1064,6 +1130,17 @@ impl ReplayExecutionEngine {
                 operation_id
             ));
         }
+        let mut preview_root_ids = preview_summary.root_event_ids;
+        preview_root_ids.sort_unstable();
+        preview_root_ids.dedup();
+        if !preview_root_ids.is_empty() && preview_root_ids.len() as u64 != total_events {
+            return Err(eyre!(
+                "Operation {} preview summary is inconsistent: total_events={} but root_event_ids contains {} ids",
+                operation_id,
+                total_events,
+                preview_root_ids.len()
+            ));
+        }
         let execution_window = (
             preview_summary.time_window.start,
             preview_summary.time_window.end,
@@ -1084,7 +1161,7 @@ impl ReplayExecutionEngine {
             "Beginning event replay"
         );
 
-        Ok((op, total_events, execution_window))
+        Ok((op, total_events, execution_window, preview_root_ids))
     }
 
     async fn finalize_operation(
@@ -1747,6 +1824,8 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         scope: &ReplayScope,
         execution_window: (Timestamp, Timestamp),
+        expected_total_events: u64,
+        preview_root_ids: &[Uuid],
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
         executor_name: &str,
@@ -1760,13 +1839,26 @@ impl ReplayExecutionEngine {
             ));
         }
 
-        let root_ids: Vec<Uuid> = material_roots
+        let mut root_ids: Vec<Uuid> = material_roots
             .iter()
             .filter_map(|event| event.id.map(|id| *id.as_uuid()))
             .collect();
         if root_ids.is_empty() {
             return Err(eyre!(
                 "Replay scope material roots are missing persistent event ids"
+            ));
+        }
+        root_ids.sort_unstable();
+        root_ids.dedup();
+
+        if (!preview_root_ids.is_empty() && root_ids.as_slice() != preview_root_ids)
+            || (preview_root_ids.is_empty() && root_ids.len() as u64 != expected_total_events)
+        {
+            return Err(replay_scope_drift_error(
+                operation_id,
+                expected_total_events,
+                preview_root_ids,
+                &root_ids,
             ));
         }
 
@@ -2135,6 +2227,8 @@ impl ReplayExecutionEngine {
 struct ReplayPreviewSummary {
     total_events: u64,
     time_window: ReplayPreviewTimeWindow,
+    #[serde(default)]
+    root_event_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4033,6 +4127,102 @@ mod tests {
         assert!(
             err.to_string().contains("matched zero live events"),
             "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(failed.outcome, Some(sinex_primitives::domain::ReplayOutcome::Failed));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execute_fails_when_live_scope_drifts_after_approval(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let first_material = ctx
+            .create_source_material(Some("replay-scope-drift-first"))
+            .await?;
+        let second_material = ctx
+            .create_source_material(Some("replay-scope-drift-second"))
+            .await?;
+
+        let first = DynamicPayload::new(
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-scope-drift-first.txt" }),
+        )
+        .from_material(first_material)
+        .build()?;
+        let second = DynamicPayload::new(
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-scope-drift-second.txt" }),
+        )
+        .from_material(second_material)
+        .build()?;
+
+        let inserted_first = ctx.pool.events().insert(first).await?;
+        let inserted_second = ctx.pool.events().insert(second).await?;
+        let first_event_id = inserted_first.id.expect("first replay target must have id");
+        let second_event_id = inserted_second.id.expect("second replay target must have id");
+        let first_ts = first_event_id.timestamp();
+        let second_ts = second_event_id.timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let client =
+            spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
+                .await?;
+
+        let mut scope = sample_scope();
+        scope.time_window = Some((
+            std::cmp::min(first_ts, second_ts) - time::Duration::milliseconds(1),
+            std::cmp::max(first_ts, second_ts) + time::Duration::milliseconds(1),
+        ));
+        scope.filters.insert(
+            "event_types".to_string(),
+            json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+        );
+
+        let planned = client.plan("test:replay-user".into(), scope).await?;
+        let (previewed, preview) = client.preview(planned.operation_id).await?;
+        assert_eq!(
+            preview
+                .get("total_events")
+                .and_then(serde_json::Value::as_i64),
+            Some(2)
+        );
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        ctx.pool
+            .events()
+            .execute_cascade_archive(
+                &[first_event_id.to_uuid()],
+                "archive one replay target before execution",
+                &Uuid::now_v7().to_string(),
+                "test:archive-before-replay",
+            )
+            .await?;
+
+        let err = client
+            .execute(approved.operation_id, "service:executor-node".into(), false)
+            .await
+            .expect_err("execution should fail once the approved live scope drifts");
+        assert!(
+            err.to_string().contains("preview is stale"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&second_event_id.to_uuid().to_string())
+                || err
+                    .to_string()
+                    .contains(&first_event_id.to_uuid().to_string()),
+            "drift error should expose the changed root set: {err}"
         );
 
         let failed = replay.load_operation(approved.operation_id).await?;

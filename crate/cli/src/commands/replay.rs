@@ -493,7 +493,7 @@ async fn execute_run(
     eprintln!("  Operation: {op_id}");
 
     eprintln!("Computing preview...");
-    let (_operation, preview) = client.replay_preview(&op_id).await?;
+    let (previewed_operation, preview) = client.replay_preview(&op_id).await?;
     let total = preview_total_events(&preview)?;
     eprintln!("  Preview: {total} direct events in scope");
 
@@ -532,7 +532,7 @@ async fn execute_run(
             OutputFormat::Json => println!(
                 "{}",
                 format_json(&serde_json::json!({
-                    "operation": operation,
+                    "operation": previewed_operation,
                     "preview": preview,
                     "dry_run": true,
                 }))?
@@ -540,12 +540,12 @@ async fn execute_run(
             OutputFormat::Yaml => println!(
                 "{}",
                 format_yaml(&serde_json::json!({
-                    "operation": operation,
+                    "operation": previewed_operation,
                     "preview": preview,
                     "dry_run": true,
                 }))?
             ),
-            _ => println!("{}", format_replay_preview_table(&operation, &preview)),
+            _ => println!("{}", format_replay_preview_table(&previewed_operation, &preview)),
         }
         return Ok(());
     }
