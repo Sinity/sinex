@@ -154,6 +154,13 @@ const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
 
+fn is_source_material_fk_constraint_name(value: &str) -> bool {
+    value == EVENTS_SOURCE_MATERIAL_ID_FKEY
+        || value
+            .strip_suffix(EVENTS_SOURCE_MATERIAL_ID_FKEY)
+            .is_some_and(|prefix| prefix.ends_with('_'))
+}
+
 fn is_foreign_key_violation(err: &SinexError) -> bool {
     err.context_map()
         .get("sqlstate")
@@ -170,7 +177,7 @@ fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
         || err
             .context_map()
             .get("constraint")
-            .is_some_and(|value| value == EVENTS_SOURCE_MATERIAL_ID_FKEY)
+            .is_some_and(|value| is_source_material_fk_constraint_name(value))
 }
 
 fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
@@ -2087,6 +2094,33 @@ mod tests {
             .get("additional_settlement_error_1")
             .expect("extra settlement error should stay attached");
         assert!(extra.contains("failed to route persistence error to DLQ"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_fk_constraint_name_accepts_exact_name() -> TestResult<()> {
+        assert!(is_source_material_fk_constraint_name(
+            EVENTS_SOURCE_MATERIAL_ID_FKEY
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_fk_constraint_name_accepts_timescale_chunk_prefix() -> TestResult<()> {
+        assert!(is_source_material_fk_constraint_name(
+            "1_4_events_source_material_id_fkey"
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_fk_constraint_name_rejects_other_constraints() -> TestResult<()> {
+        assert!(!is_source_material_fk_constraint_name(
+            "events_payload_schema_id_fkey"
+        ));
+        assert!(!is_source_material_fk_constraint_name(
+            "events_source_material_id_fkey_extra"
+        ));
         Ok(())
     }
 
