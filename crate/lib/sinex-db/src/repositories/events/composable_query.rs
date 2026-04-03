@@ -212,7 +212,12 @@ struct EventListingRow {
 fn event_listing_cursor(row: &EventListingRow, has_text_search: bool) -> Cursor {
     let mut anchor = CursorAnchor::from_id(Id::from_uuid(row.record.id));
     if has_text_search {
-        anchor = anchor.with_relevance_score(row.relevance_score.unwrap_or(0.0));
+        // Truncate to 6 decimal places to match the TRUNC(...)::float8 projection in
+        // push_text_search_projection. This ensures the cursor value is bit-for-bit
+        // identical to the projected score, preventing float8 round-trip precision loss
+        // (f64 → JSON → f64) from causing rows to be skipped or duplicated during pagination.
+        let score = (row.relevance_score.unwrap_or(0.0) * 1_000_000.0).trunc() / 1_000_000.0;
+        anchor = anchor.with_relevance_score(score);
     }
     Cursor::after_anchor(anchor)
 }
@@ -715,11 +720,15 @@ fn push_text_search_projection(qb: &mut QueryBuilder<'_, Postgres>, terms: &[Str
     // A in an Or(A, B) will be ranked and highlighted as if both A and B were relevant.
     // This is correct enough for display — the filter WHERE clause still enforces the exact
     // combinator semantics — but may produce lower-quality snippets for multi-term Or queries.
-    qb.push(", ts_rank_cd(");
+    qb.push(", TRUNC(ts_rank_cd(");
     push_text_search_vector_expr(qb);
     qb.push(", ");
     push_text_search_query_expr(qb, terms);
-    qb.push(")::float8 AS relevance_score");
+    // Truncate to 6 decimal places so the stored projection value exactly matches the
+    // cursor value built in event_listing_cursor. Without truncation, float8 round-trip
+    // through JSON serialization (f64 → JSON number → f64) can lose precision, causing
+    // rows to be skipped or duplicated across pages.
+    qb.push(")::numeric, 6)::float8 AS relevance_score");
 
     // COALESCE ensures callers always receive '' rather than NULL when ts_headline finds no
     // highlighted fragment (e.g. very short payloads, or the matched tsquery lexeme does not
