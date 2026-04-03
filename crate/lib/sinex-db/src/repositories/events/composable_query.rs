@@ -709,19 +709,28 @@ fn direction_sql(dir: SortDirection) -> &'static str {
 }
 
 fn push_text_search_projection(qb: &mut QueryBuilder<'_, Postgres>, terms: &[String]) {
+    // Known limitation: when TextSearch filters are nested in Or/And combinators,
+    // relevance scoring and snippet generation use a single combined tsquery (all positive
+    // terms OR'd together) regardless of combinator semantics. A row that matches only term
+    // A in an Or(A, B) will be ranked and highlighted as if both A and B were relevant.
+    // This is correct enough for display — the filter WHERE clause still enforces the exact
+    // combinator semantics — but may produce lower-quality snippets for multi-term Or queries.
     qb.push(", ts_rank_cd(");
     push_text_search_vector_expr(qb);
     qb.push(", ");
     push_text_search_query_expr(qb, terms);
     qb.push(")::float8 AS relevance_score");
 
-    qb.push(", CASE WHEN ");
+    // COALESCE ensures callers always receive '' rather than NULL when ts_headline finds no
+    // highlighted fragment (e.g. very short payloads, or the matched tsquery lexeme does not
+    // align with any word boundary that MaxFragments/MinWords can anchor on).
+    qb.push(", COALESCE(CASE WHEN ");
     push_text_search_vector_expr(qb);
     qb.push(" @@ ");
     push_text_search_query_expr(qb, terms);
     qb.push(" THEN ts_headline('simple', payload::text, ");
     push_text_search_query_expr(qb, terms);
-    qb.push(", 'MaxFragments=2, MinWords=8, MaxWords=24') ELSE NULL END AS snippet");
+    qb.push(", 'MaxFragments=2, MinWords=8, MaxWords=24') ELSE NULL END, '') AS snippet");
 }
 
 fn push_text_search_vector_expr(qb: &mut QueryBuilder<'_, Postgres>) {
