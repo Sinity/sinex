@@ -325,6 +325,7 @@ impl SourceMaterialRepository<'_> {
         status: &str,
         blob_id: Option<Id<crate::Blob>>,
         metadata_update: JsonValue,
+        _total_bytes: Option<i64>,
     ) -> DbResult<()>
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -373,10 +374,10 @@ impl SourceMaterialRepository<'_> {
                     set_repeatable_read(tx).await?;
                     sqlx::query_as!(
                         SourceMaterialRecord,
-                        r#"
-                        INSERT INTO raw.source_material_registry (
-                            id,
-                            material_kind,
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
                             source_identifier,
                             status,
                             timing_info_type,
@@ -411,7 +412,8 @@ impl SourceMaterialRepository<'_> {
                             end_time as "end_time: Timestamp",
                             staged_by,
                             staged_on_host,
-                            optional_blob_id as "optional_blob_id: Uuid"
+                            optional_blob_id as "optional_blob_id: Uuid",
+                            NULL::bigint as "total_bytes?: i64"
                         "#,
                         id.to_uuid(),
                         material.material_kind,
@@ -486,7 +488,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             WHERE id = $1
             "#,
@@ -516,7 +519,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             WHERE optional_blob_id = $1
             "#,
@@ -543,7 +547,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             ORDER BY staged_at DESC
             LIMIT $1
@@ -578,7 +583,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             WHERE ($2::text IS NULL OR material_kind = $2)
             ORDER BY staged_at DESC
@@ -616,7 +622,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY staged_at DESC
@@ -667,7 +674,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: uuid::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                NULL::bigint as "total_bytes?: i64"
             FROM raw.source_material_registry
             WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
               AND staged_at < $1
@@ -717,7 +725,8 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id: Uuid"
+                optional_blob_id as "optional_blob_id: Uuid",
+                NULL::bigint as "total_bytes?: i64"
             "#,
             id.to_uuid(),
             metadata
@@ -822,7 +831,8 @@ impl SourceMaterialRepository<'_> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as optional_blob_id
+                optional_blob_id::uuid as optional_blob_id,
+                NULL::bigint as total_bytes
         ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
@@ -922,7 +932,8 @@ impl SourceMaterialRepository<'_> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as optional_blob_id
+                optional_blob_id::uuid as optional_blob_id,
+                NULL::bigint as total_bytes
         ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
@@ -1023,7 +1034,7 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        self.update_material_state(self.pool, id, status::FAILED, None, metadata_update)
+        self.update_material_state(self.pool, id, status::FAILED, None, metadata_update, None)
             .await
     }
 
@@ -1060,6 +1071,7 @@ impl SourceMaterialRepository<'_> {
             status::RECOVERED_PARTIAL,
             None,
             JsonValue::Object(update),
+            None,
         )
         .await
     }
@@ -1145,6 +1157,7 @@ impl SourceMaterialRepository<'_> {
             final_status,
             blob_id,
             metadata_update,
+            total_bytes,
         )
         .await
     }
