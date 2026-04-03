@@ -233,6 +233,19 @@ fn summarize_uuid_set(ids: &HashSet<Uuid>) -> String {
     }
 }
 
+fn stale_preview_missing_root_ids_error(
+    operation_id: Uuid,
+    expected_total_events: u64,
+) -> color_eyre::eyre::Report {
+    eyre!(
+        "Operation {} preview is stale: preview covered {} material-root events but \
+         root_event_ids is absent. ID-level staleness detection is not possible; \
+         refresh preview before execution",
+        operation_id,
+        expected_total_events,
+    )
+}
+
 fn replay_scope_drift_error(
     operation_id: Uuid,
     expected_total_events: u64,
@@ -1133,7 +1146,12 @@ impl ReplayExecutionEngine {
         let mut preview_root_ids = preview_summary.root_event_ids;
         preview_root_ids.sort_unstable();
         preview_root_ids.dedup();
-        if !preview_root_ids.is_empty() && preview_root_ids.len() as u64 != total_events {
+        if preview_root_ids.is_empty() {
+            // Stale preview: root_event_ids not available. Require a fresh preview
+            // to enable ID-level staleness detection.
+            return Err(stale_preview_missing_root_ids_error(operation_id, total_events));
+        }
+        if preview_root_ids.len() as u64 != total_events {
             return Err(eyre!(
                 "Operation {} preview summary is inconsistent: total_events={} but root_event_ids contains {} ids",
                 operation_id,
@@ -1851,9 +1869,15 @@ impl ReplayExecutionEngine {
         root_ids.sort_unstable();
         root_ids.dedup();
 
-        if (!preview_root_ids.is_empty() && root_ids.as_slice() != preview_root_ids)
-            || (preview_root_ids.is_empty() && root_ids.len() as u64 != expected_total_events)
-        {
+        if preview_root_ids.is_empty() {
+            // Stale preview: root_event_ids not available. Require a fresh preview
+            // to enable ID-level staleness detection.
+            return Err(stale_preview_missing_root_ids_error(
+                operation_id,
+                expected_total_events,
+            ));
+        }
+        if root_ids.as_slice() != preview_root_ids {
             return Err(replay_scope_drift_error(
                 operation_id,
                 expected_total_events,
