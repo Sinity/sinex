@@ -250,6 +250,10 @@ const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
 const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_gap";
 const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
+/// Events with ts_orig before this date are implausibly old: sinex didn't exist then.
+/// 2000-01-01 00:00:00 UTC as a Unix timestamp.
+const TS_ORIG_LOWER_BOUND: Timestamp =
+    Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
 /// before `JetStream` redelivers the event. Used by both the proactive ready-set
@@ -260,6 +264,10 @@ const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Chec
 
 fn is_suspicious_future_ts_orig(ts_orig: Timestamp, now: Timestamp) -> bool {
     ts_orig > now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW
+}
+
+fn is_implausibly_old_ts_orig(ts_orig: Timestamp) -> bool {
+    ts_orig < TS_ORIG_LOWER_BOUND
 }
 
 #[derive(Debug)]
@@ -337,6 +345,8 @@ struct ConsumerStats {
     events_failed: AtomicU64,
     events_deferred: AtomicU64,
     suspicious_future_ts_orig: AtomicU64,
+    suspicious_past_ts_orig: AtomicU64,
+    negative_anchor_byte: AtomicU64,
     validation_failures: AtomicU64,
     dlq_routed: AtomicU64,
     confirmation_failures: AtomicU64,
@@ -355,6 +365,8 @@ impl ConsumerStats {
             events_failed = self.events_failed.load(Ordering::Relaxed),
             events_deferred = self.events_deferred.load(Ordering::Relaxed),
             suspicious_future_ts_orig = self.suspicious_future_ts_orig.load(Ordering::Relaxed),
+            suspicious_past_ts_orig = self.suspicious_past_ts_orig.load(Ordering::Relaxed),
+            negative_anchor_byte = self.negative_anchor_byte.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
@@ -426,6 +438,30 @@ impl JetStreamConsumer {
         };
 
         let now = Timestamp::now();
+
+        if is_implausibly_old_ts_orig(ts_orig) {
+            self.stats
+                .suspicious_past_ts_orig
+                .fetch_add(1, Ordering::Relaxed);
+
+            warn!(
+                event_id = ?event.id,
+                source = %event.source,
+                event_type = %event.event_type,
+                ts_orig = %ts_orig,
+                lower_bound = %TS_ORIG_LOWER_BOUND,
+                "Event ts_orig predates 2000-01-01 — implausibly old for sinex"
+            );
+
+            if let Some(ref observer) = self.observer
+                && let Err(error) = observer
+                    .emit_counter("suspicious_past_ts_orig_total", 1, None)
+                    .await
+            {
+                Self::log_observer_error("ingestd.suspicious_past_ts_orig", &error);
+            }
+        }
+
         if !is_suspicious_future_ts_orig(ts_orig, now) {
             return;
         }
@@ -922,6 +958,30 @@ impl JetStreamConsumer {
         }
 
         self.record_suspicious_ts_orig(&event).await;
+
+        // Validate anchor_byte: negative values violate the DB CHECK constraint and would
+        // fail on insert anyway. Catch them here to produce a clear DLQ entry rather than
+        // a cryptic DB error. Only material-provenance events carry an anchor_byte.
+        if let Some(anchor_byte) = event.get_anchor_byte()
+            && anchor_byte < 0
+        {
+            self.stats
+                .negative_anchor_byte
+                .fetch_add(1, Ordering::Relaxed);
+            error!(
+                event_id = ?event.id,
+                source = %event.source,
+                event_type = %event.event_type,
+                anchor_byte,
+                "Event has negative anchor_byte — violates DB constraint; routing to DLQ"
+            );
+            self.route_validation_failure(
+                &msg,
+                format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
+            )
+            .await?;
+            return Ok(None);
+        }
 
         // Validate event using EventValidator; capture the matched schema_id for persistence.
         let validated_schema_id = match self.validate_event(&event).await {
@@ -2065,6 +2125,33 @@ mod tests {
             now + time::Duration::minutes(61),
             now
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn implausibly_old_ts_orig_threshold_is_year_2000() -> TestResult<()> {
+        // Just before the lower bound → implausibly old
+        let before_2000 =
+            Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
+        assert!(
+            is_implausibly_old_ts_orig(before_2000),
+            "1999-12-31 should be implausibly old"
+        );
+
+        // Exactly at the lower bound → NOT implausibly old
+        assert!(
+            !is_implausibly_old_ts_orig(TS_ORIG_LOWER_BOUND),
+            "2000-01-01 itself should not be flagged"
+        );
+
+        // Well after the lower bound → fine
+        let after_2000 =
+            Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
+        assert!(
+            !is_implausibly_old_ts_orig(after_2000),
+            "2000-01-02 should not be flagged"
+        );
+
         Ok(())
     }
 

@@ -15,6 +15,17 @@ impl Timestamp {
     /// The Unix epoch (1970-01-01 00:00:00 UTC).
     pub const UNIX_EPOCH: Self = Self(OffsetDateTime::UNIX_EPOCH);
 
+    /// Construct a `Timestamp` from a compile-time constant `OffsetDateTime`.
+    ///
+    /// Use with `time::macros::datetime!` to define `const` timestamps:
+    /// ```rust,ignore
+    /// const MY_BOUND: Timestamp = Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
+    /// ```
+    #[must_use]
+    pub const fn from_const(dt: OffsetDateTime) -> Self {
+        Self(dt)
+    }
+
     /// Returns the current time in UTC.
     #[must_use]
     pub fn now() -> Self {
