@@ -87,68 +87,33 @@ impl CleanupManager {
         .await;
 
         match clean_result {
-            Ok(Ok(())) => {
+            Ok(Ok(_)) => {
                 if let Some(conn) = lock_conn.as_mut() {
-                    match load_pool_meta(conn.as_mut(), &task.slot_name).await {
-                        Ok(Some(mut meta)) => {
-                            meta.dirty = false;
-                            meta.last_error = None;
-                            meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                            if let Err(error) =
-                                store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
-                            {
-                                slog!(
-                                    Level::Warn,
-                                    "cleanup_meta_persist_failed",
-                                    slot = task.slot_name,
-                                    error = error.to_string()
-                                );
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            slog!(
-                                Level::Warn,
-                                "cleanup_meta_load_failed",
-                                slot = task.slot_name,
-                                error = error.to_string()
-                            );
-                        }
-                    }
+                    persist_cleanup_meta(conn, &task.slot_name, false, None).await;
                 }
+                task.slot.record_clean_result(Ok(()), None);
+                task.slot.quarantined.store(false, Ordering::SeqCst);
             }
             Ok(Err(e)) => {
                 if let Some(conn) = lock_conn.as_mut() {
-                    match load_pool_meta(conn.as_mut(), &task.slot_name).await {
-                        Ok(Some(mut meta)) => {
-                            meta.dirty = true;
-                            meta.last_error = Some(e.to_string());
-                            meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                            if let Err(error) =
-                                store_pool_meta_checked(conn.as_mut(), &task.slot_name, &meta).await
-                            {
-                                slog!(
-                                    Level::Warn,
-                                    "cleanup_meta_persist_failed",
-                                    slot = task.slot_name,
-                                    error = error.to_string()
-                                );
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            slog!(
-                                Level::Warn,
-                                "cleanup_meta_load_failed",
-                                slot = task.slot_name,
-                                error = error.to_string()
-                            );
-                        }
-                    }
+                    persist_cleanup_meta(conn, &task.slot_name, true, Some(e.to_string())).await;
                 }
             }
             Err(_) => {
                 slog!(Level::Warn, "cleanup_timeout", slot = task.slot_name);
+                task.slot
+                    .record_clean_result(Err("cleanup timed out after 10s".to_string()), None);
+                task.slot.quarantined.store(true, Ordering::SeqCst);
+                task.slot.schema_verified.store(false, Ordering::SeqCst);
+                if let Some(conn) = lock_conn.as_mut() {
+                    persist_cleanup_meta(
+                        conn,
+                        &task.slot_name,
+                        true,
+                        Some("cleanup timed out after 10s".to_string()),
+                    )
+                    .await;
+                }
             }
         }
 
@@ -206,8 +171,40 @@ impl CleanupManager {
             slog!(Level::Warn, "pool_close_timeout", slot = task.slot_name);
         }
 
-        // Un-quarantine the slot so it can be picked up by the next test.
-        task.slot.quarantined.store(false, Ordering::SeqCst);
+        // Success clears quarantine in the branch above; failures stay quarantined so the
+        // slot cannot be reused until the owning cleanup logic repairs or recreates it.
+    }
+}
+
+async fn persist_cleanup_meta(
+    conn: &mut PoolConnection<Postgres>,
+    slot_name: &str,
+    dirty: bool,
+    last_error: Option<String>,
+) {
+    match load_pool_meta(conn.as_mut(), slot_name).await {
+        Ok(Some(mut meta)) => {
+            meta.dirty = dirty;
+            meta.last_error = last_error;
+            meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
+            if let Err(error) = store_pool_meta_checked(conn.as_mut(), slot_name, &meta).await {
+                slog!(
+                    Level::Warn,
+                    "cleanup_meta_persist_failed",
+                    slot = slot_name,
+                    error = error.to_string()
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            slog!(
+                Level::Warn,
+                "cleanup_meta_load_failed",
+                slot = slot_name,
+                error = error.to_string()
+            );
+        }
     }
 }
 

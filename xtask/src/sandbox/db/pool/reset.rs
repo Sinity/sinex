@@ -15,6 +15,11 @@ use super::provisioning::{
 };
 use super::slot::DatabaseSlot;
 
+pub(super) struct CleanDatabaseResult {
+    pub(super) pool: DbPool,
+    pub(super) recreated: bool,
+}
+
 // ── Clean database ──────────────────────────────────────────────────────────
 
 /// Clean a database for reuse
@@ -23,10 +28,11 @@ pub(super) async fn clean_database(
     pool: &DbPool,
     db_name: &str,
     db_url: &str,
-) -> TestResult<()> {
+) -> TestResult<CleanDatabaseResult> {
     let mut working_pool = pool.clone();
     let mut residuals: Option<Vec<(String, i64)>> = None;
     let mut schema_recreated = false;
+    let mut recreated = false;
 
     let clean_start = std::time::Instant::now();
     let mut phase_times: Vec<(&str, std::time::Duration)> = Vec::new();
@@ -70,6 +76,7 @@ pub(super) async fn clean_database(
                         .await?;
                 working_pool = fresh_pool;
                 schema_recreated = true;
+                recreated = true;
                 slot.schema_verified.store(false, Ordering::SeqCst);
                 continue;
             }
@@ -144,7 +151,10 @@ pub(super) async fn clean_database(
                     }
                 }
 
-                return Ok(());
+                return Ok(CleanDatabaseResult {
+                    pool: working_pool,
+                    recreated,
+                });
             }
             Err(e) => {
                 let retryable =
@@ -172,6 +182,7 @@ pub(super) async fn clean_database(
                             .connect(db_url)
                             .await?;
                     working_pool = fresh_pool;
+                    recreated = true;
                     continue;
                 }
 
@@ -217,7 +228,10 @@ pub(super) async fn clean_database(
                 seed_test_fixtures(&working_pool).await?;
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
-                return Ok(());
+                return Ok(CleanDatabaseResult {
+                    pool: working_pool,
+                    recreated,
+                });
             }
         }
     }

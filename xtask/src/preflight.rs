@@ -156,7 +156,19 @@ fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result
         })?;
     }
 
-    let tmp = path.with_extension("tmp");
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| eyre!("preflight state path is not valid UTF-8: {}", path.display()))?;
+    let unique_suffix = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tmp = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{file_name}.{unique_suffix}.{nanos}.tmp"));
     std::fs::write(&tmp, contents)
         .wrap_err_with(|| format!("failed to write temp state file {}", tmp.display()))?;
 
@@ -364,12 +376,14 @@ fn read_git_head_for_root(workspace_root: &Path) -> Result<String> {
 /// Compute a blake3 hash of declarative schema sources.
 ///
 /// Hashes file contents in `sinex-schema/src/schema/**` plus `apply.rs`,
-/// sorted by filename for deterministic ordering.
+/// `converge.rs`, and `schema_registry.rs`, sorted by filename for
+/// deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if no files were found.
 fn hash_schema_sources() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_dir = crate_dir.join("../crate/lib/sinex-schema/src/schema");
     let apply_file = crate_dir.join("../crate/lib/sinex-schema/src/apply.rs");
+    let converge_file = crate_dir.join("../crate/lib/sinex-schema/src/converge.rs");
     let registry_file = crate_dir.join("../crate/lib/sinex-schema/src/schema_registry.rs");
 
     let mut file_contents = collect_rust_sources_from_dir(&schema_dir, "schema")
@@ -377,6 +391,7 @@ fn hash_schema_sources() -> Result<String> {
 
     for (name, path) in [
         ("apply.rs", apply_file.as_path()),
+        ("converge.rs", converge_file.as_path()),
         ("schema_registry.rs", registry_file.as_path()),
     ] {
         file_contents.insert(

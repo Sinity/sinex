@@ -37,30 +37,29 @@ impl DatabaseSlot {
         residuals: Option<Vec<(String, i64)>>,
     ) {
         let now = OffsetDateTime::now_utc();
-        {
-            let mut time_guard = self.last_clean_time.lock();
-            *time_guard = Some(now);
-        }
+        let mut time_guard = self.last_clean_time.lock();
+        let mut result_guard = self.last_clean_result.lock();
+        let mut residual_guard = self.last_residuals.lock();
+        *time_guard = Some(now);
         match result {
             Ok(()) => {
-                let mut res_guard = self.last_clean_result.lock();
-                *res_guard = Some("ok".to_string());
-                let mut residual_guard = self.last_residuals.lock();
+                *result_guard = Some("ok".to_string());
                 *residual_guard = residuals;
             }
             Err(e) => {
-                let mut res_guard = self.last_clean_result.lock();
-                *res_guard = Some(format!("err: {e}"));
-                let mut residual_guard = self.last_residuals.lock();
+                *result_guard = Some(format!("err: {e}"));
                 *residual_guard = residuals;
             }
         }
     }
 
     pub(super) fn slot_health_snapshot(&self) -> SlotHealthSnapshot {
-        let time = *self.last_clean_time.lock();
-        let result = self.last_clean_result.lock().clone();
-        let residuals = self.last_residuals.lock().clone();
+        let time_guard = self.last_clean_time.lock();
+        let result_guard = self.last_clean_result.lock();
+        let residual_guard = self.last_residuals.lock();
+        let time = *time_guard;
+        let result = result_guard.clone();
+        let residuals = residual_guard.clone();
         (time, result, residuals)
     }
 }

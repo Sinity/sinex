@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
@@ -960,7 +961,43 @@ fn remove_state_file(path: &std::path::Path, reason: &str) -> Result<()> {
 
 fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    fs::write(path, json).with_context(|| format!("failed to write state: {}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create state dir: {}", parent.display()))?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| eyre!("coordinator state path is not valid UTF-8: {}", path.display()))?;
+    let unique_suffix = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{file_name}.{unique_suffix}.{nanos}.tmp"));
+
+    fs::write(&tmp_path, json)
+        .with_context(|| format!("failed to write temp state: {}", tmp_path.display()))?;
+
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        let cleanup_result = fs::remove_file(&tmp_path);
+        if let Err(cleanup_error) = cleanup_result
+            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %tmp_path.display(),
+                error = %cleanup_error,
+                "failed to clean up temp coordinator state file after rename failure"
+            );
+        }
+        return Err(error)
+            .with_context(|| format!("failed to atomically replace state: {}", path.display()));
+    }
+
     Ok(())
 }
 

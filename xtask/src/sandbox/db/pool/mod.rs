@@ -8,6 +8,7 @@ use sinex_primitives::SinexError;
 use sinex_primitives::temporal::Timestamp;
 
 use sqlx::Connection;
+use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -48,7 +49,8 @@ use provisioning::{
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
     ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    mark_pool_database_clean, reconcile_existing_pool_database, recreate_pool_database,
+    mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
+    recreate_pool_database,
     store_pool_meta, store_pool_meta_checked, url_with_db_name, wait_for_database_absence,
     wait_for_database_absence_admin,
 };
@@ -513,36 +515,82 @@ async fn prune_stale_lazy_slot_databases(
             continue;
         };
 
-        let lock_key = advisory_lock_key(slot_name);
-        let slot_lock_acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(lock_key)
-            .fetch_one(&mut admin_conn)
-            .await?;
-        if !slot_lock_acquired {
+        let slot_url = url_with_db_name(admin_url, slot_name)?;
+        let Some(slot_guard_conn) =
+            try_lock_slot_database_for_drop(&mut admin_conn, slot_name, &slot_url).await?
+        else {
             summary
                 .locked_stale_slots
                 .push((slot_name.clone(), stale_reason));
             continue;
-        }
+        };
 
         let drop_result = async {
             eprintln!("♻️  Dropping stale lazy pool database {slot_name} ({stale_reason})");
+            slot_guard_conn.close().await?;
             drop_database_if_exists_admin(&mut admin_conn, slot_name).await?;
             wait_for_database_absence_admin(&mut admin_conn, slot_name).await?;
             Ok::<(), color_eyre::Report>(())
         }
         .await;
 
-        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(lock_key)
-            .execute(&mut admin_conn)
-            .await;
+        if drop_result.is_err() {
+            let quoted = quote_ident(slot_name);
+            let _ = sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"))
+                .execute(&mut admin_conn)
+                .await;
+        }
 
         drop_result?;
         summary.pruned += 1;
     }
 
     Ok(summary)
+}
+
+async fn try_lock_slot_database_for_drop(
+    admin_conn: &mut PgConnection,
+    slot_name: &str,
+    slot_url: &str,
+) -> TestResult<Option<PgConnection>> {
+    let mut slot_conn = match PgConnection::connect(slot_url).await {
+        Ok(conn) => conn,
+        Err(error) => {
+            return Err(eyre!(
+                "failed to connect to slot database {slot_name} before pruning: {error}"
+            ));
+        }
+    };
+
+    let lock_key = advisory_lock_key(slot_name);
+    let slot_lock_acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(lock_key)
+        .fetch_one(&mut slot_conn)
+        .await?;
+    if !slot_lock_acquired {
+        slot_conn.close().await?;
+        return Ok(None);
+    }
+
+    let slot_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut slot_conn)
+        .await?;
+
+    let quoted = quote_ident(slot_name);
+    sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"))
+        .execute(&mut *admin_conn)
+        .await?;
+    sqlx::query(
+        "SELECT pg_terminate_backend(pid) \
+         FROM pg_stat_activity \
+         WHERE datname = $1 AND pid <> pg_backend_pid() AND pid <> $2",
+    )
+    .bind(slot_name)
+    .bind(slot_backend_pid)
+    .execute(&mut *admin_conn)
+    .await?;
+
+    Ok(Some(slot_conn))
 }
 
 // ── DatabasePool ────────────────────────────────────────────────────────────
@@ -1344,7 +1392,33 @@ impl DatabasePool {
     ) -> std::result::Result<TestDatabase, ()> {
         let clean_start = std::time::Instant::now();
         match reset::clean_database(slot, pool, &slot.name, &slot.url).await {
-            Ok(()) => {
+            Ok(clean_result) => {
+                let effective_pool = clean_result.pool;
+                let mut effective_lock_conn = lock_conn;
+
+                if clean_result.recreated {
+                    release_slot(slot, pool, &mut effective_lock_conn, lock_id).await;
+
+                    let Some(refreshed_lock_conn) =
+                        try_advisory_lock_slot(&effective_pool, slot).await
+                    else {
+                        slog!(
+                            Level::Warn,
+                            "slot_recreate_lock_refresh_failed",
+                            slot = slot.name
+                        );
+                        slot.quarantined.store(true, Ordering::SeqCst);
+                        return Err(());
+                    };
+
+                    slot.in_use.store(true, Ordering::SeqCst);
+                    {
+                        let mut pool_opt = slot.pool.lock();
+                        *pool_opt = Some(effective_pool.clone());
+                    }
+                    effective_lock_conn = refreshed_lock_conn;
+                }
+
                 let clean_time = clean_start.elapsed();
                 let acq_time = start_time.elapsed();
                 POOL_METRICS.record_acquisition(acq_time);
@@ -1359,10 +1433,10 @@ impl DatabasePool {
                 );
                 Ok(TestDatabase {
                     name: slot.name.clone(),
-                    pool: pool.clone(),
+                    pool: effective_pool,
                     slot: slot.clone(),
                     lock_id,
-                    lock_conn: Some(lock_conn),
+                    lock_conn: Some(effective_lock_conn),
                     acquired_at: Instant::now(),
                     acquisition_process_id: pid,
                 })
@@ -1505,6 +1579,7 @@ mod tests {
         let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_locked_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
@@ -1525,9 +1600,10 @@ mod tests {
         .await?;
 
         let lock_key = advisory_lock_key(&db_name);
+        let mut slot_conn = PgConnection::connect(&slot_url).await?;
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(lock_key)
-            .execute(&mut admin_conn)
+            .execute(&mut slot_conn)
             .await?;
 
         let summary = prune_stale_lazy_slot_databases(
@@ -1554,8 +1630,9 @@ mod tests {
 
         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
             .bind(lock_key)
-            .execute(&mut admin_conn)
+            .execute(&mut slot_conn)
             .await;
+        slot_conn.close().await?;
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
 
         Ok(())
