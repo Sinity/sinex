@@ -65,7 +65,7 @@ use std::{
 pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 
 fn send_token_watcher_ready(
-    ready_tx: &mut Option<std::sync::mpsc::SyncSender<color_eyre::eyre::Result<()>>>,
+    ready_tx: &mut Option<tokio::sync::oneshot::Sender<color_eyre::eyre::Result<()>>>,
     result: color_eyre::eyre::Result<()>,
     phase: &str,
 ) -> bool {
@@ -279,7 +279,7 @@ impl GatewayAuth {
         })
     }
 
-    fn start_file_watcher(
+    async fn start_file_watcher(
         self,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> color_eyre::eyre::Result<Self> {
@@ -309,7 +309,7 @@ impl GatewayAuth {
             }
 
             let (ready_tx, ready_rx) =
-                std::sync::mpsc::sync_channel::<color_eyre::eyre::Result<()>>(1);
+                tokio::sync::oneshot::channel::<color_eyre::eyre::Result<()>>();
 
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -381,18 +381,13 @@ impl GatewayAuth {
                 debug!("Token file watcher shutting down");
             });
 
-            match ready_rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => return Err(err),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            match tokio::time::timeout(Duration::from_secs(2), ready_rx).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(err))) => return Err(err),
+                Ok(Err(err)) => return Err(err.into()),
+                Err(_) => {
                     return Err(eyre!(
                         "Timed out waiting for token file watcher to initialize for {:?}",
-                        path
-                    ));
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(eyre!(
-                        "Token file watcher thread exited before initialization for {:?}",
                         path
                     ));
                 }
@@ -1336,7 +1331,9 @@ pub async fn spawn(
     // Create shutdown channels for background tasks
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-    let auth = GatewayAuth::from_config(config)?.start_file_watcher(shutdown_rx.clone())?;
+    let auth = GatewayAuth::from_config(config)?
+        .start_file_watcher(shutdown_rx.clone())
+        .await?;
     let limits =
         RpcServerLimits::from_config(config).apply_pool_limit(services.pool_max_connections());
 
@@ -2295,7 +2292,8 @@ mod tests {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let auth = GatewayAuth::from_config(&gateway_config_from_env())?
-            .start_file_watcher(shutdown_rx)?;
+            .start_file_watcher(shutdown_rx)
+            .await?;
 
         assert!(auth.verify(&bearer_headers("initial-token")).is_ok());
         assert!(matches!(
@@ -2347,7 +2345,7 @@ mod tests {
 
     #[sinex_test]
     async fn send_token_watcher_ready_reports_dropped_receiver() -> TestResult<()> {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (tx, rx) = tokio::sync::oneshot::channel();
         drop(rx);
         let mut ready_tx = Some(tx);
 
@@ -2362,7 +2360,7 @@ mod tests {
 
     #[sinex_test]
     async fn send_token_watcher_ready_delivers_result() -> TestResult<()> {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (tx, rx) = tokio::sync::oneshot::channel();
         let mut ready_tx = Some(tx);
 
         assert!(super::send_token_watcher_ready(
@@ -2371,7 +2369,7 @@ mod tests {
             "ready"
         ));
         assert!(ready_tx.is_none());
-        rx.recv_timeout(Duration::from_secs(1))??;
+        rx.await??;
         Ok(())
     }
 }
