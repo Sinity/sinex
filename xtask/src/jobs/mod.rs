@@ -197,7 +197,7 @@ impl JobManager {
         }
     }
 
-    fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) {
+    fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) -> Result<()> {
         let job_dir = self.jobs_dir.join(job.id.to_string());
         let (inv_status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir);
         let job_status = if exit_code.is_some() {
@@ -208,16 +208,27 @@ impl JobManager {
 
         let stdout_path = job_dir.join("stdout.log");
         let stderr_path = job_dir.join("stderr.log");
-        if let Err(e) = db.finish_background_job(
+        if let Some(invocation_id) = job.invocation_id {
+            db.finish_invocation(invocation_id, inv_status, exit_code, 0.0)
+                .with_context(|| {
+                    format!(
+                        "failed to finish stale invocation {} while reaping background job {}",
+                        invocation_id, job.id
+                    )
+                })?;
+        }
+
+        db.finish_background_job(
             job.id,
             job_status,
             exit_code,
             0.0,
             stdout_path.exists().then_some(stdout_path.as_path()),
             stderr_path.exists().then_some(stderr_path.as_path()),
-        ) {
-            eprintln!("Warning: failed to update job status for {}: {e}", job.id);
-        }
+        )
+        .with_context(|| format!("failed to finish stale background job {}", job.id))?;
+
+        Ok(())
     }
 
     /// Create a new job manager.
@@ -465,14 +476,14 @@ impl JobManager {
         // - Some(pid) but process no longer exists
         if matches!(bg.job_status, JobLifecycleStatus::Running) {
             let Some(pid) = bg.pid else {
-                self.finish_stale_running_job(&db, &bg);
+                self.finish_stale_running_job(&db, &bg)?;
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
             };
 
             let pid = nix::unistd::Pid::from_raw(pid as i32);
             if nix::sys::signal::kill(pid, None).is_err() {
-                self.finish_stale_running_job(&db, &bg);
+                self.finish_stale_running_job(&db, &bg)?;
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
             }
@@ -515,7 +526,7 @@ impl JobManager {
 
         for job in active {
             let Some(pid) = job.pid else {
-                self.finish_stale_running_job(&db, &job);
+                self.finish_stale_running_job(&db, &job)?;
                 reaped += 1;
                 continue;
             };
@@ -523,7 +534,7 @@ impl JobManager {
             let pid = nix::unistd::Pid::from_raw(pid as i32);
             // Signal 0 checks if process exists without sending a signal
             if nix::sys::signal::kill(pid, None).is_err() {
-                self.finish_stale_running_job(&db, &job);
+                self.finish_stale_running_job(&db, &job)?;
                 reaped += 1;
             }
         }
@@ -576,16 +587,13 @@ impl JobManager {
 
             // Update both the job handle and the invocation record.
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.finish_background_job(id, JobLifecycleStatus::Killed, None, 0.0, None, None)?;
             if let Some(inv_id) = job.invocation_id {
-                if let Err(error) =
-                    db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0)
-                {
-                    eprintln!(
-                        "Warning: failed to mark cancelled invocation {inv_id} in history DB: {error}"
-                    );
-                }
+                db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0)
+                    .with_context(|| {
+                        format!("failed to finish cancelled invocation {inv_id} in history DB")
+                    })?;
             }
+            db.finish_background_job(id, JobLifecycleStatus::Killed, None, 0.0, None, None)?;
 
             Ok(true)
         } else {
@@ -933,6 +941,89 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("failed to prune completed background jobs"));
         assert!(message.contains("failed to read jobs directory"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_reaps_stale_running_job_and_finishes_invocation() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        let stdout_path = jobs_dir.join("42").join("stdout.log");
+        let stderr_path = jobs_dir.join("42").join("stderr.log");
+        if let Some(parent) = stdout_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let (invocation_id, job_id) =
+            manager
+                .db
+                .lock()
+                .map_err(|_| eyre!("db lock poisoned"))?
+                .start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
+        fs::create_dir_all(jobs_dir.join(job_id.to_string()))?;
+        drop(fs::File::create(jobs_dir.join(job_id.to_string()).join("stdout.log"))?);
+        drop(fs::File::create(jobs_dir.join(job_id.to_string()).join("stderr.log"))?);
+
+        let job = manager
+            .get(job_id)?
+            .ok_or_else(|| eyre!("reaped job should still be queryable"))?;
+        assert!(matches!(job.job_status, JobLifecycleStatus::Orphaned));
+
+        let db = manager.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| eyre!("missing invocation after reaping stale job"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Failed);
+        assert!(invocation.invocation.finished_at.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cancel_finishes_linked_invocation() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        let child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .map_err(|error| eyre!("failed to spawn sleep process for cancellation test: {error}"))?;
+        let stdout_path = jobs_dir.join("stdout.log");
+        let stderr_path = jobs_dir.join("stderr.log");
+        let (invocation_id, job_id) =
+            manager
+                .db
+                .lock()
+                .map_err(|_| eyre!("db lock poisoned"))?
+                .start_background_job("check", &[], Some(child.id()), &stdout_path, &stderr_path)?;
+
+        assert!(manager.cancel(job_id)?);
+
+        let db = manager.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| eyre!("missing invocation after cancellation"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
+        assert!(invocation.invocation.finished_at.is_some());
+
+        let job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| eyre!("missing background job after cancellation"))?;
+        assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
         Ok(())
     }
 }
