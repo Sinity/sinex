@@ -128,7 +128,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 {
                     unchanged += 1;
                 } else {
-                    self.register_schema(candidate.schema.clone()).await?;
+                    self.converge_existing_schema(&candidate).await?;
                     updated += 1;
                 }
             } else {
@@ -143,6 +143,70 @@ impl<'a> SchemaManagementRepository<'a> {
             updated,
             unchanged,
         })
+    }
+
+    async fn converge_existing_schema(&self, candidate: &SchemaCandidate) -> DbResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema convergence transaction"))?;
+        set_repeatable_read(&mut tx).await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE sinex_schemas.event_payload_schemas
+            SET is_active = false, updated_at = NOW()
+            WHERE source = $1
+              AND event_type = $2
+              AND is_active = true
+              AND schema_version <> $3
+            "#,
+            candidate.schema.source.as_str(),
+            candidate.schema.event_type.as_str(),
+            candidate.schema.schema_version.as_str()
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "deactivate prior schemas during schema convergence"))?;
+
+        let updated_rows = sqlx::query!(
+            r#"
+            UPDATE sinex_schemas.event_payload_schemas
+            SET schema_content = $4,
+                content_hash = $5,
+                is_active = true,
+                updated_at = NOW()
+            WHERE source = $1
+              AND event_type = $2
+              AND schema_version = $3
+            "#,
+            candidate.schema.source.as_str(),
+            candidate.schema.event_type.as_str(),
+            candidate.schema.schema_version.as_str(),
+            &candidate.schema.schema_content,
+            candidate.content_hash.as_str(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "converge existing schema"))?
+        .rows_affected();
+
+        if updated_rows != 1 {
+            return Err(SinexError::database(format!(
+                "expected to converge exactly one schema row for {}/{}@{}, updated {}",
+                candidate.schema.source.as_str(),
+                candidate.schema.event_type.as_str(),
+                candidate.schema.schema_version.as_str(),
+                updated_rows
+            )));
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit schema convergence transaction"))?;
+
+        Ok(())
     }
 
     /// Register a new event payload schema

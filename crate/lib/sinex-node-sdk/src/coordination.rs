@@ -252,6 +252,7 @@ mod tests {
         NodeCoordination::forward_handoff_requests(
             futures::stream::empty::<async_nats::Message>(),
             "target-instance".to_string(),
+            "0.0.1".parse::<NodeVersion>().expect("valid version"),
             handoff_sender,
             handoff_drops.clone(),
             "coordination-test".to_string(),
@@ -411,6 +412,9 @@ mod tests {
             NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
         let service = coordination.instance.service_name.clone();
         let requester = coordination.instance.instance_id.clone();
+        let requester_version = coordination.instance.version.clone();
+        let target_version = "0.0.1".parse::<NodeVersion>().expect("valid version");
+        let ready_target_version = target_version.clone();
         let nats = coordination.nats_client.clone();
         let mut sub = coordination.subscribe_handoff_ready().await?;
 
@@ -442,9 +446,9 @@ mod tests {
 
             let matching = HandoffRequest {
                 requester_instance_id: requester,
-                requester_version: "1.0.0".parse().expect("valid version"),
+                requester_version,
                 target_instance_id: "older-leader".to_string(),
-                target_version: "0.0.1".parse().expect("valid version"),
+                target_version: ready_target_version,
                 requested_at: SystemTime::now(),
                 timeout_seconds: Seconds::from_secs(30),
             };
@@ -462,6 +466,7 @@ mod tests {
             .wait_for_handoff_ready_with_subscription(
                 &mut sub,
                 "older-leader",
+                &target_version,
                 Duration::from_secs(5),
             )
             .await?;
@@ -475,11 +480,13 @@ mod tests {
         let coordination =
             NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
         let mut sub = coordination.subscribe_handoff_ready().await?;
+        let target_version = "0.0.1".parse().expect("valid version");
 
         let err = coordination
             .wait_for_handoff_ready_with_subscription(
                 &mut sub,
                 "older-leader",
+                &target_version,
                 Duration::from_millis(50),
             )
             .await
@@ -867,6 +874,10 @@ fn instance_metadata_at(instance: &NodeInstance, last_heartbeat: Option<i64>) ->
     }
 }
 
+fn version_identity(version: &NodeVersion) -> &str {
+    version.full_version.as_str()
+}
+
 /// Leadership coordination for a node service
 pub struct NodeCoordination {
     instance: NodeInstance,
@@ -901,6 +912,7 @@ impl NodeCoordination {
     async fn forward_handoff_requests<S>(
         mut sub: S,
         target_instance_id: String,
+        target_version: NodeVersion,
         handoff_sender: mpsc::Sender<HandoffRequest>,
         handoff_drops: CoordinationPrimitive,
         service_name: String,
@@ -910,7 +922,10 @@ impl NodeCoordination {
         while let Some(message) = sub.next().await {
             match Self::decode_handoff_request(&message.payload, "handoff request") {
                 Ok(request) => {
-                    if request.target_instance_id != target_instance_id {
+                    if request.target_instance_id != target_instance_id
+                        || version_identity(&request.target_version)
+                            != version_identity(&target_version)
+                    {
                         continue;
                     }
 
@@ -1150,6 +1165,7 @@ impl NodeCoordination {
         let nats_clone = self.nats_client.clone();
         let service_name_clone = self.instance.service_name.clone();
         let instance_id_clone = self.instance.instance_id.clone();
+        let instance_version_clone = self.instance.version.clone();
         let handoff_drops_clone = self.handoff_drops.clone();
 
         // Monitor spawned task health.
@@ -1161,6 +1177,7 @@ impl NodeCoordination {
                     Self::forward_handoff_requests(
                         sub,
                         instance_id_clone,
+                        instance_version_clone,
                         handoff_sender,
                         handoff_drops_clone,
                         service_name_health,
@@ -1393,6 +1410,7 @@ impl NodeCoordination {
         &self,
         sub: &mut Subscriber,
         target_instance_id: &str,
+        target_version: &NodeVersion,
         timeout: Duration,
     ) -> Result<()> {
         info!(
@@ -1442,7 +1460,11 @@ impl NodeCoordination {
                         }
                     };
                     if ready.requester_instance_id == self.instance.instance_id
+                        && version_identity(&ready.requester_version)
+                            == version_identity(&self.instance.version)
                         && ready.target_instance_id == target_instance_id
+                        && version_identity(&ready.target_version)
+                            == version_identity(target_version)
                     {
                         info!(
                             event = "coordination.handoff_ready_received",
@@ -1459,6 +1481,8 @@ impl NodeCoordination {
                         target = %target_instance_id,
                         received_requester = %ready.requester_instance_id,
                         received_target = %ready.target_instance_id,
+                        received_requester_version = %ready.requester_version.full_version,
+                        received_target_version = %ready.target_version.full_version,
                         "Ignoring unrelated handoff_ready signal"
                     );
                 }
@@ -1499,11 +1523,17 @@ impl NodeCoordination {
     pub async fn wait_for_handoff_ready(
         &self,
         target_instance_id: &str,
+        target_version: &NodeVersion,
         timeout: Duration,
     ) -> Result<()> {
         let mut sub = self.subscribe_handoff_ready().await?;
-        self.wait_for_handoff_ready_with_subscription(&mut sub, target_instance_id, timeout)
-            .await
+        self.wait_for_handoff_ready_with_subscription(
+            &mut sub,
+            target_instance_id,
+            target_version,
+            timeout,
+        )
+        .await
     }
 
     /// List all instances of this service currently registered
@@ -1570,11 +1600,12 @@ impl NodeCoordination {
             );
 
             let mut handoff_ready = self.subscribe_handoff_ready().await?;
-            self.send_handoff_request(&leader_metadata.instance_id, leader_version)
+            self.send_handoff_request(&leader_metadata.instance_id, leader_version.clone())
                 .await?;
             self.wait_for_handoff_ready_with_subscription(
                 &mut handoff_ready,
                 &leader_metadata.instance_id,
+                &leader_version,
                 self.kv_client.handoff_timeout(),
             )
             .await?;

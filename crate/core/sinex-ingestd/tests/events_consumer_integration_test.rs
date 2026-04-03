@@ -387,6 +387,151 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 }
 
 #[sinex_test]
+async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_siblings(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = format!("split-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::builder().route_db_errors_to_dlq().build().0;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let good_event_id = Uuid::now_v7();
+    let bad_event_id = Uuid::now_v7();
+    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, good_event_id);
+    let mut confirmation_sub = setup
+        .nats_client
+        .subscribe(confirmation_subject.clone())
+        .await?;
+    setup.nats_client.flush().await?;
+
+    let env = ctx.env();
+    let subject_prefix = format!("split.{suffix}");
+    let good_subject = env.nats_subject_with_namespace(
+        Some(&setup.namespace),
+        &format!("events.raw.{subject_prefix}.good"),
+    );
+    let bad_subject = env.nats_subject_with_namespace(
+        Some(&setup.namespace),
+        &format!("events.raw.{subject_prefix}.bad"),
+    );
+
+    let good_event = json!({
+        "id": good_event_id.to_string(),
+        "source": format!("split.good.{suffix}"),
+        "event_type": "batch.split.good",
+        "payload": { "kind": "committable" },
+        "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let bad_event = json!({
+        "id": bad_event_id.to_string(),
+        "source": format!("split.bad.{suffix}"),
+        "event_type": "batch.split.bad",
+        "payload": { "kind": "poison" },
+        "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": -1,
+    });
+
+    // Publish both events back-to-back and flush once so the consumer can fetch them
+    // in the same pull batch before isolating the poisoned row.
+    setup
+        .nats_client
+        .publish(good_subject, serde_json::to_vec(&good_event)?.into())
+        .await?;
+    setup
+        .nats_client
+        .publish(bad_subject, serde_json::to_vec(&bad_event)?.into())
+        .await?;
+    setup.nats_client.flush().await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, good_event_id.into(), Timeouts::SHORT).await?;
+
+    if timeout(
+        Duration::from_secs(Timeouts::SHORT),
+        confirmation_sub.next(),
+    )
+    .await
+    .ok()
+    .flatten()
+    .is_none()
+    {
+        setup.handle.abort();
+        return Err(eyre!("no confirmation on {confirmation_subject}"));
+    }
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = setup.topology.dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages >= 1)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(good_event_id.into())
+            .await?
+            .is_some(),
+        "good sibling event should stay committed"
+    );
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(bad_event_id.into())
+            .await?
+            .is_none(),
+        "poisoned row should not be persisted"
+    );
+
+    let consumer_name = format!("split-dlq-inspect-{suffix}");
+    let dlq_message =
+        consume_one_stream_message(&setup.js, &setup.topology.dlq_stream, &consumer_name).await?;
+    let dlq_entry: serde_json::Value = serde_json::from_slice(&dlq_message.payload)?;
+    let rendered = dlq_entry
+        .get("error")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        rendered.contains("anchor_byte") || rendered.contains("provenance_anchor_byte"),
+        "expected poisoned-row DLQ reason to preserve the failed provenance constraint, got: {rendered}"
+    );
+    dlq_message
+        .ack()
+        .await
+        .map_err(|error| eyre!(error.to_string()))?;
+
+    assert!(
+        !setup.handle.is_finished(),
+        "consumer should continue after isolating the poison row"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("confirm-{}", Uuid::now_v7().to_string().to_lowercase());
@@ -478,9 +623,11 @@ async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_rede
         || {
             let deliveries = counters.deliveries.clone();
             async move {
-                Ok::<bool, SinexError>(deliveries.as_ref().is_some_and(|d| {
-                    d.load(Ordering::Relaxed) == 1
-                }))
+                Ok::<bool, SinexError>(
+                    deliveries
+                        .as_ref()
+                        .is_some_and(|d| d.load(Ordering::Relaxed) == 1),
+                )
             }
         },
         Timeouts::MEDIUM,
@@ -564,7 +711,10 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn jetstream_consumer_routes_missing_ts_orig_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("missing-ts-orig-{}", Uuid::now_v7().to_string().to_lowercase());
+    let suffix = format!(
+        "missing-ts-orig-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -618,7 +768,11 @@ async fn jetstream_consumer_routes_missing_ts_orig_to_dlq(ctx: TestContext) -> T
         "DLQ error should mention missing ts_orig, got: {entry:?}"
     );
     assert!(
-        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
         "events missing ts_orig must not persist"
     );
 

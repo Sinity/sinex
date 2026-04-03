@@ -123,8 +123,7 @@ impl JetStreamTopology {
         let dlq_stream = format!("{base_stream}_DLQ");
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
-        let confirmation_retry_prefix =
-            format!("{}.", namespaced("events.confirmation_retries"));
+        let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
 
         Self {
             events_stream: base_stream,
@@ -154,13 +153,18 @@ const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
 
+fn is_source_material_fk_constraint_name(value: &str) -> bool {
+    value == EVENTS_SOURCE_MATERIAL_ID_FKEY
+        || value
+            .strip_suffix(EVENTS_SOURCE_MATERIAL_ID_FKEY)
+            .is_some_and(|prefix| prefix.ends_with('_'))
+}
+
 fn is_foreign_key_violation(err: &SinexError) -> bool {
     err.context_map()
         .get("sqlstate")
         .is_some_and(|value| value == "23503")
-        || err
-            .to_string()
-            .contains("Foreign key constraint violation")
+        || err.to_string().contains("Foreign key constraint violation")
 }
 
 fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
@@ -170,7 +174,7 @@ fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
         || err
             .context_map()
             .get("constraint")
-            .is_some_and(|value| value == EVENTS_SOURCE_MATERIAL_ID_FKEY)
+            .is_some_and(|value| is_source_material_fk_constraint_name(value))
 }
 
 fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
@@ -220,12 +224,10 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
         return true;
     }
 
-    err.context_map()
-        .get("sqlstate")
-        .is_some_and(|value| {
-            value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
-                || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
-        })
+    err.context_map().get("sqlstate").is_some_and(|value| {
+        value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
+            || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
+    })
 }
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
@@ -245,6 +247,8 @@ const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
 const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
+const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_gap";
+const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
@@ -338,6 +342,7 @@ struct ConsumerStats {
     confirmation_failures: AtomicU64,
     confirmation_retries_enqueued: AtomicU64,
     confirmation_retry_failures: AtomicU64,
+    confirmation_durability_gaps: AtomicU64,
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
@@ -354,8 +359,11 @@ impl ConsumerStats {
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
-            confirmation_retries_enqueued = self.confirmation_retries_enqueued.load(Ordering::Relaxed),
+            confirmation_retries_enqueued =
+                self.confirmation_retries_enqueued.load(Ordering::Relaxed),
             confirmation_retry_failures = self.confirmation_retry_failures.load(Ordering::Relaxed),
+            confirmation_durability_gaps =
+                self.confirmation_durability_gaps.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
             "JetStream consumer stats"
@@ -366,6 +374,37 @@ impl ConsumerStats {
 impl JetStreamConsumer {
     fn log_observer_error(metric: &'static str, error: &sinex_node_sdk::SelfObservationError) {
         warn!(metric, error = %error, "Failed to emit ingestd telemetry");
+    }
+
+    fn is_fatal_batch_processing_error(err: &SinexError) -> bool {
+        err.context_map()
+            .get("error_class")
+            .is_some_and(|value| value == ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+    }
+
+    fn confirmation_durability_gap_error(
+        errors: Vec<(Uuid, SinexError)>,
+        acked_count: usize,
+    ) -> SinexError {
+        let Err(combined) =
+            Self::collapse_settlement_errors("post-persist confirmation durability", errors)
+        else {
+            unreachable!("confirmation durability gap requires at least one event");
+        };
+
+        combined
+            .with_context("error_class", ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+            .with_context("acked_event_count", acked_count.to_string())
+            .with_context("batch_atomicity", BATCH_ATOMICITY_SCOPE)
+            .with_context("raw_message_settlement", "left_unacked_for_redelivery")
+            .with_context(
+                "terminal_state",
+                "database commit landed but confirmation durability was not established",
+            )
+            .with_context(
+                "recovery",
+                "shut down the consumer and let JetStream redeliver unsettled raw messages once confirmation transport recovers",
+            )
     }
 
     async fn emit_observer_gauge(
@@ -675,7 +714,8 @@ impl JetStreamConsumer {
             self.topology.confirmation_retry_stream.clone(),
             self.topology.confirmation_retry_consumer.clone(),
         );
-        confirmation_retry_spec.filter_subject = Some(self.topology.confirmation_retry_subject.clone());
+        confirmation_retry_spec.filter_subject =
+            Some(self.topology.confirmation_retry_subject.clone());
         confirmation_retry_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         confirmation_retry_spec.ack_wait = self.ack_wait;
         confirmation_retry_spec.max_ack_pending = self.max_ack_pending;
@@ -755,6 +795,10 @@ impl JetStreamConsumer {
                 }
                 batch_result = &mut batch_future => {
                     if let Err(e) = batch_result {
+                        if Self::is_fatal_batch_processing_error(&e) {
+                            error!("Fatal batch processing error: {}", e);
+                            return Err(e);
+                        }
                         error!("Batch processing error: {}", e);
                     }
                     batch_future = Box::pin(self.process_batch(&consumer));
@@ -822,10 +866,8 @@ impl JetStreamConsumer {
                 "query_builder"
             };
             let val_stats = self.validator.read().await.stats();
-            let suspicious_future_ts_orig = self
-                .stats
-                .suspicious_future_ts_orig
-                .load(Ordering::Relaxed);
+            let suspicious_future_ts_orig =
+                self.stats.suspicious_future_ts_orig.load(Ordering::Relaxed);
             if let Err(error) = observer
                 .emit_ingestd_batch_stats(
                     batch_size,
@@ -978,6 +1020,15 @@ impl JetStreamConsumer {
         self.persist_and_confirm_prepared_batch(&batch).await
     }
 
+    /// Persist and settle a prepared batch.
+    ///
+    /// Atomicity is intentionally scoped to each successful persistence attempt,
+    /// not to the original JetStream pull batch. If a non-retryable row poisons a
+    /// mixed batch, ingestd bisects the batch to isolate the poison row. Any sibling
+    /// sub-batch that already persisted keeps its commit and raw-message ACKs, while
+    /// the isolated row is retried or routed to the DLQ on its own. Replay and
+    /// lineage therefore reason at event granularity, not at raw pull-batch
+    /// granularity.
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
     async fn persist_and_confirm_prepared_batch(
         &self,
@@ -1011,7 +1062,7 @@ impl JetStreamConsumer {
                     let confirmation_results = join_all(confirmation_futs).await;
 
                     let mut ack_messages = Vec::with_capacity(batch.len());
-                    let mut nack_prepared = Vec::new();
+                    let mut confirmation_durability_gaps = Vec::new();
                     for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
                         match result {
                             Ok(()) => {
@@ -1049,12 +1100,25 @@ impl JetStreamConsumer {
                                         error!(
                                             event_id = %prepared.parsed_id,
                                             error = %retry_err,
-                                            "Failed to queue durable confirmation retry; falling back to raw message redelivery"
+                                            "Failed to queue durable confirmation retry after persistence; leaving the raw message unsettled and failing the consumer"
                                         );
                                         self.stats
                                             .confirmation_retry_failures
                                             .fetch_add(1, Ordering::Relaxed);
-                                        nack_prepared.push(prepared);
+                                        confirmation_durability_gaps.push((
+                                            prepared.parsed_id,
+                                            SinexError::network(
+                                                "Persisted event could not publish a confirmation or durably enqueue its retry",
+                                            )
+                                            .with_context(
+                                                "confirmation_publish_error",
+                                                err.to_string(),
+                                            )
+                                            .with_context(
+                                                "confirmation_retry_enqueue_error",
+                                                retry_err.to_string(),
+                                            ),
+                                        ));
                                     }
                                 }
                             }
@@ -1070,64 +1134,28 @@ impl JetStreamConsumer {
                         }
                     }
 
-                    if !nack_prepared.is_empty() {
-                        let nak_futs: Vec<_> = nack_prepared
-                            .iter()
-                            .map(|prepared| {
-                                prepared
-                                    .message
-                                    .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
-                            })
-                            .collect();
-                        let nak_results = join_all(nak_futs).await;
-                        let mut settlement_errors = Vec::new();
-                        for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
-                            if let Err(err) = result {
-                                warn!(
-                                    event_id = %prepared.parsed_id,
-                                    error = %err,
-                                    "Failed to NAK after confirmation publish failure"
-                                );
-                                self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                                settlement_errors.push((
-                                    prepared.parsed_id,
-                                    Self::message_settlement_failure(
-                                        "failed to NAK after confirmation publish failure",
-                                        prepared.parsed_id,
-                                        err,
-                                    ),
-                                ));
-                            }
-                        }
-                        let processed_count = ack_messages.len() as u64;
-                        if processed_count > 0 {
-                            self.stats
-                                .events_processed
-                                .fetch_add(processed_count, Ordering::Relaxed);
-                            if let Some(ref handle) = self.heartbeat_handle {
-                                handle.increment_events_processed(processed_count);
-                            }
-                        }
-                        let failed_count = nack_prepared.len() as u64;
+                    let acked_count = ack_messages.len() as u64;
+                    if acked_count > 0 {
                         self.stats
-                            .events_failed
-                            .fetch_add(failed_count, Ordering::Relaxed);
+                            .events_processed
+                            .fetch_add(acked_count, Ordering::Relaxed);
                         if let Some(ref handle) = self.heartbeat_handle {
-                            handle.record_error("confirmation publish failure");
+                            handle.increment_events_processed(acked_count);
                         }
-                        Self::collapse_settlement_errors(
-                            "confirmation publish retry settlement",
-                            settlement_errors,
-                        )?;
-                        continue;
                     }
 
-                    let count = ack_messages.len() as u64;
-                    self.stats
-                        .events_processed
-                        .fetch_add(count, Ordering::Relaxed);
-                    if let Some(ref handle) = self.heartbeat_handle {
-                        handle.increment_events_processed(count);
+                    if !confirmation_durability_gaps.is_empty() {
+                        let gap_count = confirmation_durability_gaps.len() as u64;
+                        self.stats
+                            .confirmation_durability_gaps
+                            .fetch_add(gap_count, Ordering::Relaxed);
+                        if let Some(ref handle) = self.heartbeat_handle {
+                            handle.record_error("confirmation durability gap");
+                        }
+                        return Err(Self::confirmation_durability_gap_error(
+                            confirmation_durability_gaps,
+                            acked_count as usize,
+                        ));
                     }
                     info!("Processed and confirmed {} events", batch.len());
                 }
@@ -1135,7 +1163,8 @@ impl JetStreamConsumer {
                     // Check if this is a transient FK violation (source material not yet registered).
                     // Safety net: the ready set should prevent most FK violations, but races are
                     // possible (e.g. material registered between ready-set check and DB insert).
-                let is_fk_error = is_source_material_fk_violation_for_prepared_batch(&e, &batch);
+                    let is_fk_error =
+                        is_source_material_fk_violation_for_prepared_batch(&e, &batch);
                     if is_fk_error {
                         let mut settlement_errors = Vec::new();
                         debug!(
@@ -1164,7 +1193,10 @@ impl JetStreamConsumer {
                                 ));
                             }
                         }
-                        Self::collapse_settlement_errors("FK violation retry settlement", settlement_errors)?;
+                        Self::collapse_settlement_errors(
+                            "FK violation retry settlement",
+                            settlement_errors,
+                        )?;
                         // Don't count as failed - this is a transient condition
                         continue;
                     }
@@ -1175,9 +1207,10 @@ impl JetStreamConsumer {
                             warn!(
                                 batch_size = batch.len(),
                                 split_at,
+                                batch_atomicity = BATCH_ATOMICITY_SCOPE,
                                 sqlstate = ?e.context_map().get("sqlstate"),
                                 constraint = ?e.context_map().get("constraint"),
-                                "Splitting batch to isolate non-retryable persistence failure"
+                                "Splitting batch to isolate non-retryable persistence failure; already-persisted sibling sub-batches remain committed"
                             );
                             pending_batches.push(batch[split_at..].to_vec());
                             pending_batches.push(batch[..split_at].to_vec());
@@ -1206,7 +1239,8 @@ impl JetStreamConsumer {
                     error!("Failed to persist batch: {}", e);
                     let mut settlement_errors = Vec::new();
                     for prepared in &batch {
-                        match self.should_route_terminal_persistence_failure(&prepared.message, &e) {
+                        match self.should_route_terminal_persistence_failure(&prepared.message, &e)
+                        {
                             Ok(true) => {
                                 if let Err(err) = self
                                     .route_to_dlq_and_ack(
@@ -1295,7 +1329,10 @@ impl JetStreamConsumer {
                     if let Some(ref handle) = self.heartbeat_handle {
                         handle.record_error("batch persistence failure");
                     }
-                    Self::collapse_settlement_errors("persistence failure settlement", settlement_errors)?;
+                    Self::collapse_settlement_errors(
+                        "persistence failure settlement",
+                        settlement_errors,
+                    )?;
                 }
             }
         }
@@ -1319,10 +1356,7 @@ impl JetStreamConsumer {
     ///
     /// Returns the matched schema UUID on success (`None` when validation is disabled/no schema
     /// registered), so the caller can stamp `payload_schema_id` on the event before persistence.
-    async fn validate_event(
-        &self,
-        event: &Event<JsonValue>,
-    ) -> IngestdResult<Option<Uuid>> {
+    async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<Option<Uuid>> {
         // Domain type formats (EventSource, EventType) are validated at deserialization
         // time — if we hold them here, they're already valid.
 
@@ -1493,11 +1527,7 @@ impl JetStreamConsumer {
             .info()
             .map(|info| info.delivered)
             .map_err(|error| error.to_string());
-        Self::should_route_persistence_failure(
-            self.route_db_errors_to_dlq,
-            delivery_attempt,
-            err,
-        )
+        Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt, err)
     }
 
     fn should_route_persistence_failure(
@@ -1515,12 +1545,10 @@ impl JetStreamConsumer {
 
         match delivery_attempt {
             Ok(delivered) => Ok(delivered >= MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
-            Err(error) => Err(
-                SinexError::processing(
-                    "Failed to inspect JetStream delivery metadata for persistence failure",
-                )
-                .with_context("delivery_metadata_error", error),
-            ),
+            Err(error) => Err(SinexError::processing(
+                "Failed to inspect JetStream delivery metadata for persistence failure",
+            )
+            .with_context("delivery_metadata_error", error)),
         }
     }
 
@@ -1664,7 +1692,10 @@ impl JetStreamConsumer {
 
     async fn enqueue_confirmation_retry(&self, event_id: &Uuid) -> IngestdResult<()> {
         let event_id_str = event_id.to_string();
-        let subject = format!("{}{}", self.topology.confirmation_retry_prefix, event_id_str);
+        let subject = format!(
+            "{}{}",
+            self.topology.confirmation_retry_prefix, event_id_str
+        );
         let payload = serde_json::to_vec(&ConfirmationRetryRequest {
             event_id: event_id_str.clone(),
         })?;
@@ -1753,8 +1784,9 @@ impl JetStreamConsumer {
                     if let Some(ref handle) = self.heartbeat_handle {
                         handle.record_error("confirmation retry failure");
                     }
-                    if let Err(nak_err) =
-                        message.ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY))).await
+                    if let Err(nak_err) = message
+                        .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
+                        .await
                     {
                         return Err(SinexError::network(format!(
                             "Failed to NAK confirmation retry message: {nak_err}"
@@ -2015,7 +2047,8 @@ mod tests {
         let err = JetStreamConsumer::require_inserted_ids(None, 2)
             .expect_err("missing inserted_ids must surface as an invalid repository contract");
         assert!(
-            err.to_string().contains("Event repository omitted inserted_ids"),
+            err.to_string()
+                .contains("Event repository omitted inserted_ids"),
             "unexpected error: {err}"
         );
         Ok(())
@@ -2091,6 +2124,33 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn source_material_fk_constraint_name_accepts_exact_name() -> TestResult<()> {
+        assert!(is_source_material_fk_constraint_name(
+            EVENTS_SOURCE_MATERIAL_ID_FKEY
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_fk_constraint_name_accepts_timescale_chunk_prefix() -> TestResult<()> {
+        assert!(is_source_material_fk_constraint_name(
+            "1_4_events_source_material_id_fkey"
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_fk_constraint_name_rejects_other_constraints() -> TestResult<()> {
+        assert!(!is_source_material_fk_constraint_name(
+            "events_payload_schema_id_fkey"
+        ));
+        assert!(!is_source_material_fk_constraint_name(
+            "events_source_material_id_fkey_extra"
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn persistence_failure_routing_short_circuits_when_dlq_is_forced() -> TestResult<()> {
         assert!(JetStreamConsumer::should_route_persistence_failure(
             true,
@@ -2118,7 +2178,8 @@ mod tests {
 
     #[sinex_test]
     async fn persistence_failure_routing_never_dlqs_retryable_db_errors() -> TestResult<()> {
-        let retryable = SinexError::database("serialization failure").with_context("sqlstate", "40001");
+        let retryable =
+            SinexError::database("serialization failure").with_context("sqlstate", "40001");
         assert!(!JetStreamConsumer::should_route_persistence_failure(
             false,
             Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
@@ -2148,6 +2209,56 @@ mod tests {
                 .map(String::as_str),
             Some("metadata missing")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn confirmation_durability_gap_errors_are_marked_fatal() -> TestResult<()> {
+        let event_id = Uuid::now_v7();
+        let error = JetStreamConsumer::confirmation_durability_gap_error(
+            vec![(
+                event_id,
+                SinexError::network("confirmation transport exhausted")
+                    .with_context("confirmation_publish_error", "publish failed")
+                    .with_context("confirmation_retry_enqueue_error", "enqueue failed"),
+            )],
+            2,
+        );
+
+        assert!(JetStreamConsumer::is_fatal_batch_processing_error(&error));
+        assert_eq!(
+            error.context_map().get("error_class").map(String::as_str),
+            Some(ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("acked_event_count")
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("batch_atomicity")
+                .map(String::as_str),
+            Some(BATCH_ATOMICITY_SCOPE)
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("raw_message_settlement")
+                .map(String::as_str),
+            Some("left_unacked_for_redelivery")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ordinary_errors_are_not_marked_as_fatal_confirmation_gaps() -> TestResult<()> {
+        assert!(!JetStreamConsumer::is_fatal_batch_processing_error(
+            &SinexError::network("ordinary nack failure")
+        ));
         Ok(())
     }
 }

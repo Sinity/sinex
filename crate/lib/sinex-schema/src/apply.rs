@@ -39,6 +39,23 @@ const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "ix_tl_material_offsets",
     "ix_tl_ts_and_source_type",
 ];
+const TELEMETRY_VIEW_RELATIONS: &[&str] = &[
+    "current_health",
+    "current_window_focus",
+    "command_frequency_hourly",
+    "file_activity_summary",
+    "current_system_state",
+    "recent_activity_summary",
+];
+const TELEMETRY_MATERIALIZED_VIEW_RELATIONS: &[&str] = &["current_device_state"];
+const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
+    "assembly_stats_1h",
+    "gateway_stats_1h",
+    "ingestd_batch_stats_1h",
+    "metric_counters_1h",
+    "node_stats_1h",
+    "stream_stats_1h",
+];
 
 #[derive(Debug)]
 pub enum ApplyError {
@@ -146,6 +163,52 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         }
     }
 
+    for relation in TELEMETRY_VIEW_RELATIONS {
+        match relation_kind(pool, &format!("sinex_telemetry.{relation}")).await? {
+            Some('v') => {}
+            Some(kind) => {
+                drifts.push(format!(
+                    "stale sinex_telemetry.{relation} relation kind {kind}; expected a view"
+                ));
+            }
+            None => {
+                drifts.push(format!("missing sinex_telemetry.{relation} view"));
+            }
+        }
+    }
+
+    for relation in TELEMETRY_MATERIALIZED_VIEW_RELATIONS {
+        match relation_kind(pool, &format!("sinex_telemetry.{relation}")).await? {
+            Some('m') => {}
+            Some(kind) => {
+                drifts.push(format!(
+                    "stale sinex_telemetry.{relation} relation kind {kind}; expected a materialized view"
+                ));
+            }
+            None => {
+                drifts.push(format!(
+                    "missing sinex_telemetry.{relation} materialized view"
+                ));
+            }
+        }
+    }
+
+    for relation in TELEMETRY_CONTINUOUS_AGGREGATES {
+        match relation_kind(pool, &format!("sinex_telemetry.{relation}")).await? {
+            Some(_) if !continuous_aggregate_exists(pool, "sinex_telemetry", relation).await? => {
+                drifts.push(format!(
+                    "missing sinex_telemetry.{relation} continuous aggregate registration"
+                ));
+            }
+            Some(_) => {}
+            None => {
+                drifts.push(format!(
+                    "missing sinex_telemetry.{relation} continuous aggregate relation"
+                ));
+            }
+        }
+    }
+
     if relation_exists(pool, "core.operations_log").await?
         && !operations_log_operation_type_constraint_is_current(pool).await?
     {
@@ -214,9 +277,12 @@ async fn operations_log_operation_type_constraint_is_current(
     .await?;
 
     Ok(definition.is_some_and(|def| {
-        def.contains("operation_type ~")
-            && def.contains("^[a-z][a-z0-9_.-]*$")
+        operations_log_operation_type_constraint_definition_is_current(&def)
     }))
+}
+
+fn operations_log_operation_type_constraint_definition_is_current(definition: &str) -> bool {
+    definition.contains("operation_type ~") && definition.contains("^[a-z][a-z0-9_.-]*$")
 }
 
 async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<(), ApplyError> {
@@ -260,13 +326,17 @@ async fn source_material_registry_status_constraint_is_current(
     .await?;
 
     Ok(definition.is_some_and(|def| {
-        def.contains("status IN")
-            && def.contains("'sensing'")
-            && def.contains("'completed'")
-            && def.contains("'cancelled'")
-            && def.contains("'recovered_partial'")
-            && def.contains("'failed'")
+        source_material_registry_status_constraint_definition_is_current(&def)
     }))
+}
+
+fn source_material_registry_status_constraint_definition_is_current(definition: &str) -> bool {
+    (definition.contains("status IN") || definition.contains("status = ANY"))
+        && definition.contains("'sensing'")
+        && definition.contains("'completed'")
+        && definition.contains("'cancelled'")
+        && definition.contains("'recovered_partial'")
+        && definition.contains("'failed'")
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
@@ -497,6 +567,46 @@ pub(crate) async fn relation_exists(pool: &PgPool, qualified_name: &str) -> Resu
         .bind(qualified_name)
         .fetch_one(pool)
         .await?;
+    Ok(exists)
+}
+
+async fn relation_kind(pool: &PgPool, qualified_name: &str) -> Result<Option<char>, ApplyError> {
+    let relation_kind = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT c.relkind::text
+        FROM pg_class c
+        WHERE c.oid = to_regclass($1)
+        "#,
+    )
+    .bind(qualified_name)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(relation_kind
+        .flatten()
+        .and_then(|kind| kind.chars().next()))
+}
+
+async fn continuous_aggregate_exists(
+    pool: &PgPool,
+    schema: &str,
+    relation: &str,
+) -> Result<bool, ApplyError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM timescaledb_information.continuous_aggregates
+            WHERE view_schema = $1
+              AND view_name = $2
+        )
+        "#,
+    )
+    .bind(schema)
+    .bind(relation)
+    .fetch_one(pool)
+    .await?;
+
     Ok(exists)
 }
 

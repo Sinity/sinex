@@ -142,3 +142,54 @@ async fn test_health_thresholds_from_env_rejects_invalid_override() -> TestResul
     assert!(error.to_string().contains("bogus"));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_health_thresholds_from_env_rejects_out_of_range_rates() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_HEALTH_ERROR_RATE_DEGRADED", "1.10");
+
+    let error =
+        HealthThresholds::from_env().expect_err("out-of-range threshold override must surface");
+
+    assert!(
+        error
+            .to_string()
+            .contains("health degraded threshold must be between 0.0 and 1.0"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_health_thresholds_from_env_rejects_inverted_thresholds() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_HEALTH_ERROR_RATE_DEGRADED", "0.60");
+    env.set("SINEX_HEALTH_ERROR_RATE_FAILED", "0.40");
+
+    let error = HealthThresholds::from_env()
+        .expect_err("degraded threshold above failed threshold must surface");
+
+    assert!(
+        error
+            .to_string()
+            .contains("health degraded threshold must not exceed the failed threshold"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_health_thresholds_from_env_rejects_zero_window() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_HEALTH_WINDOW_SECONDS", "0");
+
+    let error = HealthThresholds::from_env().expect_err("zero window must surface");
+
+    assert!(
+        error
+            .to_string()
+            .contains("health window must be greater than zero"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}

@@ -15,6 +15,11 @@ use super::provisioning::{
 };
 use super::slot::DatabaseSlot;
 
+pub(super) struct CleanDatabaseResult {
+    pub(super) pool: DbPool,
+    pub(super) recreated: bool,
+}
+
 // ── Clean database ──────────────────────────────────────────────────────────
 
 /// Clean a database for reuse
@@ -23,10 +28,11 @@ pub(super) async fn clean_database(
     pool: &DbPool,
     db_name: &str,
     db_url: &str,
-) -> TestResult<()> {
+) -> TestResult<CleanDatabaseResult> {
     let mut working_pool = pool.clone();
     let mut residuals: Option<Vec<(String, i64)>> = None;
     let mut schema_recreated = false;
+    let mut recreated = false;
 
     let clean_start = std::time::Instant::now();
     let mut phase_times: Vec<(&str, std::time::Duration)> = Vec::new();
@@ -70,6 +76,7 @@ pub(super) async fn clean_database(
                         .await?;
                 working_pool = fresh_pool;
                 schema_recreated = true;
+                recreated = true;
                 slot.schema_verified.store(false, Ordering::SeqCst);
                 continue;
             }
@@ -144,7 +151,10 @@ pub(super) async fn clean_database(
                     }
                 }
 
-                return Ok(());
+                return Ok(CleanDatabaseResult {
+                    pool: working_pool,
+                    recreated,
+                });
             }
             Err(e) => {
                 let retryable =
@@ -172,6 +182,7 @@ pub(super) async fn clean_database(
                             .connect(db_url)
                             .await?;
                     working_pool = fresh_pool;
+                    recreated = true;
                     continue;
                 }
 
@@ -217,7 +228,10 @@ pub(super) async fn clean_database(
                 seed_test_fixtures(&working_pool).await?;
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
-                return Ok(());
+                return Ok(CleanDatabaseResult {
+                    pool: working_pool,
+                    recreated,
+                });
             }
         }
     }
@@ -485,14 +499,22 @@ pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
 
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
 pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
+    let config = CleanupConfig::default();
+    let cleanup_tables: Vec<String> = config
+        .tables_to_clean()
+        .map(|table| table.table_name.to_string())
+        .collect();
+
+    force_event_material_cleanup_with_tables(pool, cleanup_tables).await
+}
+
+async fn force_event_material_cleanup_with_tables(
+    pool: &DbPool,
+    cleanup_tables: Vec<String>,
+) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
     let config = CleanupConfig::default();
     let pool_for_chunks = pool.clone();
-    let cleanup_tables: Vec<String> = config
-        .ordered_tables()
-        .into_iter()
-        .map(|t| t.table_name.to_string())
-        .collect();
 
     crate::sandbox::db::common::with_cleanup_session(&mut conn, &config, |conn| {
         let fut: BoxFuture<'_, crate::sandbox::prelude::TestResult<()>> = Box::pin(async move {
@@ -504,24 +526,31 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
                 attempts += 1;
 
                 // Truncate high-churn tables with CASCADE to avoid FK deadlocks.
-                let _ = sqlx::query("TRUNCATE TABLE core.events CASCADE")
-                    .execute(conn.as_mut())
-                    .await;
-                let _ = sqlx::query("TRUNCATE TABLE raw.source_material_registry CASCADE")
-                    .execute(conn.as_mut())
-                    .await;
+                execute_force_cleanup_statement(
+                    conn,
+                    "TRUNCATE TABLE core.events CASCADE",
+                    "forced cleanup truncate failed for core.events",
+                )
+                .await?;
+                execute_force_cleanup_statement(
+                    conn,
+                    "TRUNCATE TABLE raw.source_material_registry CASCADE",
+                    "forced cleanup truncate failed for raw.source_material_registry",
+                )
+                .await?;
 
                 // Delete from remaining tables (config-driven) after cascades to catch ancillary rows.
                 for table in &cleanup_tables {
-                    let _ = sqlx::query(&format!("DELETE FROM {table}"))
-                        .execute(conn.as_mut())
-                        .await;
+                    execute_force_cleanup_statement(
+                        conn,
+                        &format!("DELETE FROM {table}"),
+                        &format!("forced cleanup delete failed for {table}"),
+                    )
+                    .await?;
                 }
 
                 // Hypertable cleanup via drop_chunks for events.
-                let _ = sqlx::query(
-                    "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
-                )
+                sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
                 .execute(&pool_for_chunks)
                 .await
                 .map_err(|error| eyre!("forced cleanup drop_chunks failed: {error}"))?;
@@ -534,12 +563,18 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
 
             if last_events != 0 || last_materials > 1 {
                 // Final aggressive delete before giving up.
-                let _ = sqlx::query("DELETE FROM core.events")
-                    .execute(conn.as_mut())
-                    .await;
-                let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-                    .execute(conn.as_mut())
-                    .await;
+                execute_force_cleanup_statement(
+                    conn,
+                    "DELETE FROM core.events",
+                    "forced cleanup final delete failed for core.events",
+                )
+                .await?;
+                execute_force_cleanup_statement(
+                    conn,
+                    "DELETE FROM raw.source_material_registry",
+                    "forced cleanup final delete failed for raw.source_material_registry",
+                )
+                .await?;
 
                 (last_events, last_materials) = inspect_force_cleanup_counts(&pool_for_chunks).await?;
             }
@@ -560,9 +595,24 @@ pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()
     Ok(())
 }
 
+async fn execute_force_cleanup_statement(
+    conn: &mut PgConnection,
+    statement: &str,
+    context: &str,
+) -> TestResult<()> {
+    sqlx::query(statement)
+        .execute(conn.as_mut())
+        .await
+        .map_err(|error| eyre!("{context}: {error}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{force_event_material_cleanup, log_remaining_rows, seed_test_fixtures};
+    use super::{
+        force_event_material_cleanup, force_event_material_cleanup_with_tables, log_remaining_rows,
+        seed_test_fixtures,
+    };
     use crate::sandbox::sinex_test;
     use sinex_primitives::Uuid;
 
@@ -615,6 +665,25 @@ mod tests {
             <= 1);
 
         seed_test_fixtures(ctx.pool()).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn force_event_material_cleanup_surfaces_delete_failures(
+        ctx: crate::sandbox::Sandbox,
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let err = force_event_material_cleanup_with_tables(
+            ctx.pool(),
+            vec!["missing_schema.missing_table".to_string()],
+        )
+        .await
+        .expect_err("invalid cleanup table should fail honestly");
+
+        assert!(
+            err.to_string()
+                .contains("forced cleanup delete failed for missing_schema.missing_table"),
+            "unexpected error: {err:#}"
+        );
         Ok(())
     }
 }

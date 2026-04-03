@@ -894,7 +894,6 @@ mod tests {
         let acquisition = Arc::new(AcquisitionManager::with_defaults(
             nats_client,
             "desktop",
-            "/desktop",
         ));
         let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(
             sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,

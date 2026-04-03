@@ -58,11 +58,64 @@ impl AdvisoryLock {
         ResourceGuard::new(lock, cleanup)
     }
 
+    async fn connection_holds_any_advisory_lock(
+        connection: &mut PoolConnection<Postgres>,
+    ) -> CoreResult<bool> {
+        let sql = r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_locks
+                WHERE pid = pg_backend_pid()
+                  AND locktype = 'advisory'
+            )
+        "#;
+
+        sqlx::query_scalar::<_, bool>(sql)
+            .fetch_one(&mut **connection)
+            .await
+            .map_err(SinexError::from)
+    }
+
+    async fn any_session_holds_lock(
+        connection: &mut PoolConnection<Postgres>,
+        lock_id: i64,
+    ) -> CoreResult<bool> {
+        let sql = r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_locks
+                WHERE locktype = 'advisory'
+                  AND classid = (($1::bigint >> 32) & 4294967295::bigint)::oid
+                  AND objid = ($1::bigint & 4294967295::bigint)::oid
+            )
+        "#;
+
+        sqlx::query_scalar::<_, bool>(sql)
+            .bind(lock_id)
+            .fetch_one(&mut **connection)
+            .await
+            .map_err(SinexError::from)
+    }
+
     /// Try to acquire an advisory lock immediately (non-blocking).
     #[instrument(skip(pool), fields(key = key))]
     pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
         let lock_id = hash_key_to_i64(key);
         let mut connection = pool.acquire().await.map_err(SinexError::from)?;
+
+        if Self::connection_holds_any_advisory_lock(&mut connection).await? {
+            if let Err(close_error) = connection.close().await {
+                tracing::warn!(
+                    lock_id,
+                    error = %close_error,
+                    "Failed to close polluted pooled connection after advisory lock reuse was detected"
+                );
+            }
+
+            return Err(SinexError::invalid_state(format!(
+                "Connection already holds an advisory lock; refusing to reuse polluted session for key {key}"
+            )));
+        }
 
         let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
             .fetch_one(&mut *connection)
@@ -88,6 +141,12 @@ impl AdvisoryLock {
 
         let timeout_future = tokio::time::timeout(timeout, async {
             loop {
+                if Self::connection_holds_any_advisory_lock(&mut connection).await? {
+                    return Err(SinexError::invalid_state(format!(
+                        "Connection already holds an advisory lock; refusing to reuse polluted session for key {key}"
+                    )));
+                }
+
                 let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
                     .fetch_one(&mut *connection)
                     .await?
@@ -104,7 +163,16 @@ impl AdvisoryLock {
 
         match timeout_future {
             Ok(Ok(())) => Ok(Self::guard_from_connection(lock_id, connection)),
-            Ok(Err(error)) => Err(error),
+            Ok(Err(error)) => {
+                if let Err(close_error) = connection.close().await {
+                    tracing::warn!(
+                        lock_id,
+                        error = %close_error,
+                        "Failed to close polluted pooled connection after advisory lock acquisition error"
+                    );
+                }
+                Err(error)
+            }
             Err(_) => Err(SinexError::timeout(format!(
                 "Advisory lock timeout for key: {key}"
             ))),
@@ -117,28 +185,21 @@ impl AdvisoryLock {
         let lock_id = hash_key_to_i64(key);
         let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
-            .fetch_one(&mut *connection)
-            .await?
-            .unwrap_or(false);
-
-        if acquired {
-            if let Err(error) =
-                unlock_or_close_connection(&mut connection, lock_id, "is_locked check").await
-            {
-                if let Err(close_error) = connection.close().await {
-                    tracing::warn!(
-                        lock_id,
-                        error = %close_error,
-                        "Failed to close pooled connection after advisory lock probe failure"
-                    );
-                }
-                return Err(error);
+        if Self::connection_holds_any_advisory_lock(&mut connection).await? {
+            if let Err(close_error) = connection.close().await {
+                tracing::warn!(
+                    lock_id,
+                    error = %close_error,
+                    "Failed to close polluted pooled connection after advisory lock probe detected an advisory lock"
+                );
             }
-            Ok(false)
-        } else {
-            Ok(true)
+
+            return Err(SinexError::invalid_state(format!(
+                "Connection already holds an advisory lock; refusing to probe from polluted session for key {key}"
+            )));
         }
+
+        Self::any_session_holds_lock(&mut connection, lock_id).await
     }
 }
 

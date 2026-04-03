@@ -167,14 +167,16 @@ impl EventEmitter {
 
         // Validate before emitting (if validator present)
         if let Some(validator) = &self.validator {
-            validator
+            let schema_id = validator
                 .validate(
                     event.source.as_ref(),
                     event.event_type.as_ref(),
                     &event.payload,
                 )
-                .await
-                .map_err(|e| SinexError::validation(e.to_string()))?;
+                .await?;
+            if event.payload_schema_id.is_none() {
+                event.payload_schema_id = Some(schema_id);
+            }
         }
 
         let event_type = event.event_type.clone();
@@ -191,6 +193,127 @@ impl EventEmitter {
             .send(event)
             .await
             .map_err(|_| SinexError::processing("Event channel closed".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventEmitter;
+    use sinex_primitives::events::{Event, Provenance};
+    use sinex_primitives::{
+        EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
+    };
+    use xtask::sandbox::sinex_test;
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn emit_stamps_payload_schema_id_from_validator() -> TestResult<()> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let validator = std::sync::Arc::new(crate::schema_validator::NodeSchemaValidator::new());
+        let schema_id = Uuid::now_v7();
+        validator.register_test_schema(
+            schema_id,
+            "runtime-test-source",
+            "runtime.test",
+            serde_json::json!({
+                "type": "object",
+                "required": ["ok"],
+                "properties": {
+                    "ok": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }),
+        )?;
+
+        let emitter = EventEmitter::with_validator(sender, false, validator);
+        let event = Event {
+            id: Some(Id::new()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        emitter.emit(event).await?;
+        let emitted = receiver
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+        assert_eq!(emitted.payload_schema_id, Some(schema_id));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn emit_preserves_existing_payload_schema_id() -> TestResult<()> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let validator = std::sync::Arc::new(crate::schema_validator::NodeSchemaValidator::new());
+        let cached_schema_id = Uuid::now_v7();
+        validator.register_test_schema(
+            cached_schema_id,
+            "runtime-test-source",
+            "runtime.test",
+            serde_json::json!({
+                "type": "object",
+                "required": ["ok"],
+                "properties": {
+                    "ok": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }),
+        )?;
+
+        let emitter = EventEmitter::with_validator(sender, false, validator);
+        let explicit_schema_id = Uuid::now_v7();
+        let event = Event {
+            id: Some(Id::new()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: Some(explicit_schema_id),
+            provenance: Provenance::Material {
+                id: Id::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        emitter.emit(event).await?;
+        let emitted = receiver
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+        assert_eq!(emitted.payload_schema_id, Some(explicit_schema_id));
+        Ok(())
     }
 }
 

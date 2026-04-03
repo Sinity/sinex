@@ -17,17 +17,18 @@
 //! 5. **Queue** — Running job has different scope → queue after it.
 //! 6. **Start** — No running job → start new.
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use nix::fcntl::{FlockArg, flock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
-use crate::history::InvocationStatus;
+use crate::history::{InvocationStatus, JobLifecycleStatus};
 use crate::output::OutputFormat;
 
 /// Result of a coordination request.
@@ -73,6 +74,8 @@ pub struct QueuedWork {
     pub args: Vec<String>,
     pub is_foreground: bool,
     pub output_format: OutputFormat,
+    pub tree_fingerprint: String,
+    pub scope_key: String,
 }
 
 /// Scoped job coordinator.
@@ -188,7 +191,15 @@ impl JobCoordinator {
                 // sentinel values but hasn't called update_state yet, ~100ms gap).
                 // Queue behind it to avoid double-spawn. Worst case: the reservation
                 // was abandoned — the queue item runs after the 8h timeout cleans up.
-                self.queue_behind(&state, args, is_foreground, output_format, &state_path)?;
+                self.queue_behind(
+                    &state,
+                    args,
+                    is_foreground,
+                    output_format,
+                    &tree_fingerprint,
+                    &scope_key,
+                    &state_path,
+                )?;
                 CoordinationResult::Queued {
                     current_job_id: state.job_id,
                 }
@@ -290,24 +301,17 @@ impl JobCoordinator {
             Some(mut state) if !state.queue.is_empty() => {
                 // Pop first queued item (FIFO)
                 let next = state.queue.remove(0);
-
-                if state.queue.is_empty() {
-                    // No more items — delete state file
-                    remove_state_file(
-                        &state_path,
-                        "remove coordinator state after draining the final queued job",
-                    )?;
-                } else {
-                    // More items waiting — preserve state with sentinel values.
-                    // Caller updates via update_state() after spawning.
-                    state.job_id = -1;
-                    state.pid = 0;
-                    state.is_foreground = next.is_foreground;
-                    state.args.clone_from(&next.args);
-                    state.started_at =
-                        sinex_primitives::temporal::Timestamp::now().format_rfc3339();
-                    write_state(&state_path, &state)?;
-                }
+                // Preserve a sentinel reservation for the promoted work even when it is the
+                // final queued item. `update_state()` needs a state file to replace with the
+                // real job id/pid after the spawn succeeds.
+                state.job_id = -1;
+                state.pid = 0;
+                state.is_foreground = next.is_foreground;
+                state.tree_fingerprint.clone_from(&next.tree_fingerprint);
+                state.scope_key.clone_from(&next.scope_key);
+                state.args.clone_from(&next.args);
+                state.started_at = sinex_primitives::temporal::Timestamp::now().format_rfc3339();
+                write_state(&state_path, &state)?;
 
                 Ok(Some(next))
             }
@@ -350,7 +354,15 @@ impl JobCoordinator {
             // Same scope, different tree → SUPERSEDE (if bg), QUEUE (if fg)
             if state.is_foreground {
                 // Don't cancel interactive foreground jobs — queue instead
-                self.queue_behind(state, args, is_foreground, output_format, state_path)?;
+                self.queue_behind(
+                    state,
+                    args,
+                    is_foreground,
+                    output_format,
+                    tree_fingerprint,
+                    scope_key,
+                    state_path,
+                )?;
                 Ok(CoordinationResult::Queued {
                     current_job_id: state.job_id,
                 })
@@ -358,7 +370,7 @@ impl JobCoordinator {
                 // Cancel stale bg job and start fresh
                 let old_job_id = state.job_id;
                 cancel_process(state.pid);
-                mark_cancelled(old_job_id);
+                mark_cancelled(old_job_id)?;
                 remove_state_file(
                     state_path,
                     "remove superseded coordinator state before starting replacement job",
@@ -383,7 +395,15 @@ impl JobCoordinator {
             }
         } else {
             // Different scope → QUEUE (don't cancel valid work)
-            self.queue_behind(state, args, is_foreground, output_format, state_path)?;
+            self.queue_behind(
+                state,
+                args,
+                is_foreground,
+                output_format,
+                tree_fingerprint,
+                scope_key,
+                state_path,
+            )?;
             Ok(CoordinationResult::Queued {
                 current_job_id: state.job_id,
             })
@@ -483,6 +503,8 @@ impl JobCoordinator {
         args: &[String],
         is_foreground: bool,
         output_format: OutputFormat,
+        tree_fingerprint: &str,
+        scope_key: &str,
         state_path: &std::path::Path,
     ) -> Result<()> {
         // Append to FIFO queue (supports multiple concurrent requesters)
@@ -491,6 +513,8 @@ impl JobCoordinator {
             args: args.to_vec(),
             is_foreground,
             output_format,
+            tree_fingerprint: tree_fingerprint.to_string(),
+            scope_key: scope_key.to_string(),
         });
         write_state(state_path, &updated)?;
         Ok(())
@@ -522,6 +546,34 @@ impl JobCoordinator {
         }
 
         Ok(())
+    }
+
+    /// Remove a still-pending sentinel reservation if phase-two spawn recording failed.
+    pub fn clear_pending_state(&self, command: &str) -> Result<bool> {
+        let lock_path = self.locks_dir.join(format!("{command}.lock"));
+        let state_path = self.locks_dir.join(format!("{command}.state.json"));
+
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
+
+        let Some(state) = read_state(&state_path)? else {
+            return Ok(false);
+        };
+
+        if state.pid == 0 && state.job_id == -1 {
+            remove_state_file(
+                &state_path,
+                "remove pending coordinator state after failed spawn recording",
+            )?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 }
 
@@ -861,19 +913,25 @@ fn cancel_process(pid: u32) {
     }
 }
 
-/// Mark an invocation as cancelled in the history DB (best-effort).
-fn mark_cancelled(job_id: i64) {
+/// Mark a superseded background job and its durable invocation as cancelled.
+fn mark_cancelled(job_id: i64) -> Result<()> {
     let cfg = config();
-    match crate::history::HistoryDb::open(&cfg.history_db_path()) {
-        Ok(db) => {
-            if let Err(e) = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0) {
-                tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "failed to mark invocation cancelled");
-            }
-        }
-        Err(e) => {
-            tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "could not open history DB to mark invocation cancelled");
-        }
+    let db = crate::history::HistoryDb::open(&cfg.history_db_path())
+        .with_context(|| format!("failed to open history DB while cancelling superseded job {job_id}"))?;
+    let job = db
+        .get_background_job_by_id(job_id)?
+        .ok_or_else(|| eyre!("background job {job_id} missing while recording superseded cancellation"))?;
+    if let Some(invocation_id) = job.invocation_id {
+        db.finish_invocation(invocation_id, InvocationStatus::Cancelled, None, 0.0)
+            .with_context(|| {
+                format!(
+                    "failed to finish invocation {invocation_id} while cancelling superseded job {job_id}"
+                )
+            })?;
     }
+    db.finish_background_job(job_id, JobLifecycleStatus::Killed, None, 0.0, None, None)
+        .with_context(|| format!("failed to finish superseded background job {job_id}"))?;
+    Ok(())
 }
 
 fn read_state(path: &std::path::Path) -> Result<Option<CoordinationState>> {
@@ -887,15 +945,8 @@ fn read_state(path: &std::path::Path) -> Result<Option<CoordinationState>> {
     };
     match serde_json::from_str::<CoordinationState>(&content) {
         Ok(state) => Ok(Some(state)),
-        Err(e) => {
-            tracing::warn!(
-                target: "xtask::coordinator",
-                path = %path.display(),
-                error = %e,
-                "corrupt coordinator state — treating as empty"
-            );
-            Ok(None)
-        }
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to parse coordinator state: {}", path.display())),
     }
 }
 
@@ -910,7 +961,43 @@ fn remove_state_file(path: &std::path::Path, reason: &str) -> Result<()> {
 
 fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    fs::write(path, json).with_context(|| format!("failed to write state: {}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create state dir: {}", parent.display()))?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| eyre!("coordinator state path is not valid UTF-8: {}", path.display()))?;
+    let unique_suffix = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{file_name}.{unique_suffix}.{nanos}.tmp"));
+
+    fs::write(&tmp_path, json)
+        .with_context(|| format!("failed to write temp state: {}", tmp_path.display()))?;
+
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        let cleanup_result = fs::remove_file(&tmp_path);
+        if let Err(cleanup_error) = cleanup_result
+            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %tmp_path.display(),
+                error = %cleanup_error,
+                "failed to clean up temp coordinator state file after rename failure"
+            );
+        }
+        return Err(error)
+            .with_context(|| format!("failed to atomically replace state: {}", path.display()));
+    }
+
     Ok(())
 }
 
@@ -926,9 +1013,9 @@ pub fn coordinate_and_spawn(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    if JobCoordinator::should_coordinate(command, args)
-        && let Ok(coordinator) = JobCoordinator::new()
-    {
+    let coordinator = if JobCoordinator::should_coordinate(command, args) {
+        let coordinator = JobCoordinator::new()
+            .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
         match coordinator.request_with_format(command, args, false, ctx.writer().format()) {
             Ok(
                 result @ (CoordinationResult::Attached { .. }
@@ -941,13 +1028,43 @@ pub fn coordinate_and_spawn(
                 // Fall through to spawn — coordinator reserved the slot
             }
             Err(e) => {
-                tracing::warn!(target: "xtask::coordinator", error = %e, "coordinator request failed, spawning directly");
+                return Err(e).with_context(|| {
+                    format!("failed to coordinate background `{command}` invocation")
+                });
             }
         }
-    }
+        Some(coordinator)
+    } else {
+        None
+    };
 
-    let bg_result = ctx.spawn_background(command, args)?;
-    update_coordinator_state(command, &bg_result);
+    let bg_result = match ctx.spawn_background(command, args) {
+        Ok(bg_result) => bg_result,
+        Err(error) => {
+            if let Some(coordinator) = coordinator.as_ref() {
+                match coordinator.clear_pending_state(command) {
+                    Ok(cleared) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "failed to spawn background `{command}` invocation after reserving coordinator state; cleared_pending_state={cleared}"
+                            )
+                        });
+                    }
+                    Err(clear_error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "failed to spawn background `{command}` invocation after reserving coordinator state; also failed to clear pending coordinator state: {clear_error}"
+                            )
+                        });
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
+    update_coordinator_state(command, &bg_result).with_context(|| {
+        format!("failed to record background `{command}` invocation in coordinator state")
+    })?;
     Ok(bg_result)
 }
 
@@ -957,61 +1074,58 @@ pub fn coordinate_and_spawn(
 /// 1. `coordinator.request()` reserves a slot with sentinel values
 /// 2. `spawn_background()` creates the actual process
 /// 3. This function updates the slot with real values
-pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
+pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Result<()> {
+    let clear_pending = |coordinator: Option<&JobCoordinator>, reason: &str| -> Result<bool> {
+        match coordinator {
+            Some(coordinator) => coordinator.clear_pending_state(command),
+            None => JobCoordinator::new()
+                .with_context(|| {
+                    format!(
+                        "failed to initialize coordinator while clearing pending spawn state for `{command}`"
+                    )
+                })?
+                .clear_pending_state(command),
+        }
+        .with_context(|| format!("{reason} for `{command}`"))
+    };
+
     let Some(data) = &bg_result.data else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            "background spawn returned no data; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no data")?;
+        bail!(
+            "background spawn returned no data for `{command}`; cleared_pending_state={cleared}"
         );
-        return;
     };
 
     let Some(job_id) = data["job_id"].as_i64() else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            data = %data,
-            "background spawn returned no job_id; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no job_id")?;
+        bail!(
+            "background spawn returned no job_id for `{command}`; cleared_pending_state={cleared}; data={data}"
         );
-        return;
     };
 
     let Some(pid) = data["pid"].as_u64() else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            data = %data,
-            "background spawn returned no pid; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no pid")?;
+        bail!(
+            "background spawn returned no pid for `{command}`; cleared_pending_state={cleared}; data={data}"
         );
-        return;
     };
 
-    let coordinator = match JobCoordinator::new() {
-        Ok(coordinator) => coordinator,
-        Err(error) => {
-            tracing::warn!(
-                target: "xtask::coordinator",
-                command,
-                job_id,
-                pid,
-                error = %error,
-                "failed to initialize coordinator while recording spawned job"
-            );
-            return;
-        }
-    };
+    let coordinator = JobCoordinator::new()
+        .with_context(|| format!("failed to initialize coordinator while recording `{command}`"))?;
 
     if let Err(error) = coordinator.update_state(command, job_id, pid as u32) {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            job_id,
-            pid,
-            error = %error,
-            "failed to persist coordinator state for spawned job"
-        );
+        let cleared = clear_pending(
+            Some(&coordinator),
+            "failed to clear pending coordinator state after spawn recording failure",
+        )?;
+        return Err(error).with_context(|| {
+            format!(
+                "failed to persist coordinator state for spawned `{command}` job {job_id} (pid {pid}); cleared_pending_state={cleared}"
+            )
+        });
     }
+
+    Ok(())
 }
 
 /// Convert a coordination result to a command result for the --bg path.
@@ -1477,11 +1591,15 @@ mod tests {
                     args: vec!["-p".into(), "sinex-gateway".into()],
                     is_foreground: false,
                     output_format: OutputFormat::Human,
+                    tree_fingerprint: "queued-fp-1".into(),
+                    scope_key: "queued-scope-1".into(),
                 },
                 QueuedWork {
                     args: vec!["-p".into(), "sinex-primitives".into()],
                     is_foreground: true,
                     output_format: OutputFormat::Json,
+                    tree_fingerprint: "queued-fp-2".into(),
+                    scope_key: "queued-scope-2".into(),
                 },
             ],
         };
@@ -1494,6 +1612,8 @@ mod tests {
         assert!(deserialized.queue[1].is_foreground);
         assert_eq!(deserialized.queue[0].output_format.as_cli_str(), "human");
         assert_eq!(deserialized.queue[1].output_format.as_cli_str(), "json");
+        assert_eq!(deserialized.queue[0].tree_fingerprint, "queued-fp-1");
+        assert_eq!(deserialized.queue[1].scope_key, "queued-scope-2");
         Ok(())
     }
 
@@ -1540,16 +1660,22 @@ mod tests {
             args: vec!["first".into()],
             is_foreground: false,
             output_format: OutputFormat::Human,
+            tree_fingerprint: "fp-first".into(),
+            scope_key: "scope-first".into(),
         });
         s.queue.push(QueuedWork {
             args: vec!["second".into()],
             is_foreground: false,
             output_format: OutputFormat::Json,
+            tree_fingerprint: "fp-second".into(),
+            scope_key: "scope-second".into(),
         });
         s.queue.push(QueuedWork {
             args: vec!["third".into()],
             is_foreground: true,
             output_format: OutputFormat::Compact,
+            tree_fingerprint: "fp-third".into(),
+            scope_key: "scope-third".into(),
         });
         write_state(&state_path, &s)?;
 
@@ -1564,8 +1690,125 @@ mod tests {
         let mut s = s;
         let popped = s.queue.remove(0);
         assert_eq!(popped.args, vec!["first"]);
+        assert_eq!(popped.tree_fingerprint, "fp-first");
         assert_eq!(s.queue.len(), 2);
         assert_eq!(s.queue[0].args, vec!["second"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_handle_completion_promotes_next_queued_scope_and_fingerprint() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 41,
+                pid: 4242,
+                is_foreground: false,
+                tree_fingerprint: "running-fp".into(),
+                scope_key: "running-scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec!["--lint".into()],
+                queue: vec![
+                    QueuedWork {
+                        args: vec!["-p".into(), "sinex-gateway".into()],
+                        is_foreground: false,
+                        output_format: OutputFormat::Json,
+                        tree_fingerprint: "queued-fp".into(),
+                        scope_key: "queued-scope".into(),
+                    },
+                    QueuedWork {
+                        args: vec!["-p".into(), "xtask".into()],
+                        is_foreground: false,
+                        output_format: OutputFormat::Human,
+                        tree_fingerprint: "queued-fp-2".into(),
+                        scope_key: "queued-scope-2".into(),
+                    },
+                ],
+            },
+        )?;
+
+        let next = coordinator
+            .handle_completion("check")?
+            .expect("queued work should be promoted");
+        assert_eq!(next.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(next.tree_fingerprint, "queued-fp");
+        assert_eq!(next.scope_key, "queued-scope");
+
+        let promoted = coordinator
+            .state("check")?
+            .expect("remaining queued state should still exist");
+        assert_eq!(promoted.job_id, -1);
+        assert_eq!(promoted.pid, 0);
+        assert_eq!(promoted.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(promoted.tree_fingerprint, "queued-fp");
+        assert_eq!(promoted.scope_key, "queued-scope");
+        assert_eq!(promoted.queue.len(), 1);
+        assert_eq!(promoted.queue[0].scope_key, "queued-scope-2");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_handle_completion_preserves_state_for_final_queued_job() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 52,
+                pid: 5252,
+                is_foreground: false,
+                tree_fingerprint: "running-fp".into(),
+                scope_key: "running-scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec!["--lint".into()],
+                queue: vec![QueuedWork {
+                    args: vec!["-p".into(), "sinex-primitives".into()],
+                    is_foreground: false,
+                    output_format: OutputFormat::Json,
+                    tree_fingerprint: "queued-fp-final".into(),
+                    scope_key: "queued-scope-final".into(),
+                }],
+            },
+        )?;
+
+        let next = coordinator
+            .handle_completion("check")?
+            .expect("final queued work should be promoted");
+        assert_eq!(next.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(next.tree_fingerprint, "queued-fp-final");
+        assert_eq!(next.scope_key, "queued-scope-final");
+
+        let pending = coordinator
+            .state("check")?
+            .expect("promoted final queued work should still hold sentinel state");
+        assert_eq!(pending.job_id, -1);
+        assert_eq!(pending.pid, 0);
+        assert_eq!(pending.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(pending.tree_fingerprint, "queued-fp-final");
+        assert_eq!(pending.scope_key, "queued-scope-final");
+        assert!(pending.queue.is_empty());
+
+        coordinator.update_state("check", 77, 7777)?;
+
+        let running = coordinator
+            .state("check")?
+            .expect("update_state should replace sentinel for final queued work");
+        assert_eq!(running.job_id, 77);
+        assert_eq!(running.pid, 7777);
+        assert_eq!(running.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(running.tree_fingerprint, "queued-fp-final");
+        assert_eq!(running.scope_key, "queued-scope-final");
+        assert!(running.queue.is_empty());
+
         Ok(())
     }
 
@@ -1696,6 +1939,8 @@ mod tests {
                 args: vec!["bar".into()],
                 is_foreground: false,
                 output_format: OutputFormat::Human,
+                tree_fingerprint: "queued-fp".into(),
+                scope_key: "queued-scope".into(),
             }],
         };
 
@@ -1707,6 +1952,8 @@ mod tests {
         assert!(loaded.is_foreground);
         assert_eq!(loaded.queue.len(), 1);
         assert_eq!(loaded.queue[0].args, vec!["bar"]);
+        assert_eq!(loaded.queue[0].tree_fingerprint, "queued-fp");
+        assert_eq!(loaded.queue[0].scope_key, "queued-scope");
         Ok(())
     }
 
@@ -1718,12 +1965,142 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_clear_pending_state_removes_sentinel_reservation() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: -1,
+                pid: 0,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        assert!(coordinator.clear_pending_state("check")?);
+        assert!(!state_path.exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_clear_pending_state_keeps_live_state() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 41,
+                pid: 4242,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        assert!(!coordinator.clear_pending_state("check")?);
+        assert!(state_path.exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_update_coordinator_state_clears_pending_reservation_when_pid_missing(
+    ) -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: -1,
+                pid: 0,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        let bg_result = CommandResult::success().with_data(serde_json::json!({
+            "job_id": 41,
+        }));
+        let error = update_coordinator_state("check", &bg_result)
+            .expect_err("missing pid must surface as a spawn recording failure");
+        let message = format!("{error:#}");
+        assert!(message.contains("background spawn returned no pid"));
+        assert!(message.contains("cleared_pending_state=true"));
+
+        assert!(coordinator.state("check")?.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_mark_cancelled_finishes_background_job_and_invocation() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let _history_guard = env_set_path("XTASK_HISTORY_DB", &db_path);
+        let db = crate::history::HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("stdout.log");
+        let stderr_path = dir.path().join("stderr.log");
+        let (invocation_id, job_id) =
+            db.start_background_job("check", &[], Some(42_424), &stdout_path, &stderr_path)?;
+        drop(db);
+
+        mark_cancelled(job_id)?;
+
+        let db = crate::history::HistoryDb::open(&db_path)?;
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing invocation after supersede cancellation"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
+        assert!(invocation.invocation.finished_at.is_some());
+
+        let job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing background job after supersede cancellation"))?;
+        assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_mark_cancelled_surfaces_missing_background_job() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let _history_guard = env_set_path("XTASK_HISTORY_DB", &db_path);
+        let _db = crate::history::HistoryDb::open(&db_path)?;
+
+        let error = mark_cancelled(999).expect_err("missing background job must be surfaced");
+        let message = format!("{error:#}");
+        assert!(message.contains("background job 999 missing"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_read_state_corrupt_json() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("state.json");
         fs::write(&path, "not json at all {{{")?;
-        let result = read_state(&path)?;
-        assert!(result.is_none());
+        let error = read_state(&path).expect_err("corrupt coordinator state must surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to parse coordinator state"));
+        assert!(message.contains(path.display().to_string().as_str()));
         Ok(())
     }
 

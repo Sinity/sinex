@@ -354,3 +354,61 @@ async fn sync_discovered_schemas_reactivates_inactive_matching_row(
     assert!(active.is_active);
     Ok(())
 }
+
+#[sinex_test]
+async fn sync_discovered_schemas_converges_same_version_content_drift(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let repo = ctx.pool.schemas();
+    let original = NewEventSchema {
+        source: EventSource::from_static("sync-drift-source"),
+        event_type: EventType::from_static("sync.drift.event"),
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({
+            "type": "object",
+            "properties": { "legacy": { "type": "string" } },
+            "required": ["legacy"]
+        }),
+    };
+
+    let registered = repo.register_schema(original).await?;
+
+    let discovered = NewEventSchema {
+        source: EventSource::from_static("sync-drift-source"),
+        event_type: EventType::from_static("sync.drift.event"),
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({
+            "type": "object",
+            "properties": {
+                "modern": { "type": "string" },
+                "count": { "type": "integer" }
+            },
+            "required": ["modern"]
+        }),
+    };
+    let discovered_hash = discovered.calculate_content_hash()?;
+
+    let sync_result = repo
+        .sync_discovered_schemas([(
+            (
+                discovered.source.to_string(),
+                discovered.event_type.to_string(),
+                discovered.schema_version.clone(),
+            ),
+            discovered.schema_content.clone(),
+        )])
+        .await?;
+
+    assert_eq!(sync_result.created, 0);
+    assert_eq!(sync_result.updated, 1);
+    assert_eq!(sync_result.unchanged, 0);
+
+    let active = repo
+        .get_active_schema(discovered.source.as_str(), discovered.event_type.as_str())
+        .await?;
+    assert_eq!(active.id, registered.id);
+    assert_eq!(active.content_hash, discovered_hash);
+    assert_eq!(active.schema_content, discovered.schema_content);
+    assert!(active.is_active);
+    Ok(())
+}

@@ -4,8 +4,8 @@ use sinex_node_sdk::WatcherHandle;
 use sinex_primitives::SinexError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::time::{Duration, sleep};
 use tokio::sync::Notify;
+use tokio::time::{Duration, sleep};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -22,7 +22,10 @@ async fn test_watcher_state_transitions() -> Result<(), Box<dyn std::error::Erro
 
     let was_active = handle.is_active();
     assert!(was_active);
-    handle.shutdown().await?;
+    handle
+        .shutdown()
+        .await
+        .expect_err("forced watcher aborts must fail shutdown honestly");
     assert!(!tracker.read().active);
     Ok(())
 }
@@ -37,7 +40,10 @@ async fn test_watcher_running_constructor() -> Result<(), Box<dyn std::error::Er
     let health = handle.health();
     assert!(health.active);
     let tracker = handle.health_tracker();
-    handle.shutdown().await?;
+    handle
+        .shutdown()
+        .await
+        .expect_err("forced watcher aborts must fail shutdown honestly");
     assert!(!tracker.read().active);
     Ok(())
 }
@@ -62,7 +68,7 @@ async fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[sinex_test]
-async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watcher_shutdown_surfaces_forced_abort() -> Result<(), Box<dyn std::error::Error>> {
     let flag = Arc::new(AtomicBool::new(false));
     let flag_clone = Arc::clone(&flag);
 
@@ -75,9 +81,16 @@ async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::E
     handle.start(task, None)?;
     let tracker = handle.health_tracker();
 
-    handle.shutdown().await?;
+    let error = handle
+        .shutdown()
+        .await
+        .expect_err("forced watcher aborts must fail shutdown honestly");
     sleep(Duration::from_millis(100)).await;
 
+    let message = format!("{error:#}");
+    assert!(message.contains("exceeded shutdown grace period"));
+    assert!(message.contains("watcher task"));
+    assert!(message.contains("test"));
     assert!(!flag.load(Ordering::SeqCst));
     assert!(!tracker.read().active);
     Ok(())
@@ -148,8 +161,15 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
     assert!(handle.is_active());
     let tracker = handle.health_tracker();
 
-    handle.shutdown().await?;
+    let error = handle
+        .shutdown()
+        .await
+        .expect_err("forced watcher aborts must preserve both shutdown failures");
     sleep(Duration::from_millis(100)).await;
+    let message = format!("{error:#}");
+    assert!(message.contains("watcher task"));
+    assert!(message.contains("watcher forwarder"));
+    assert!(message.contains("additional_shutdown_error_1"));
     assert!(!main_flag.load(Ordering::SeqCst));
     assert!(!forwarder_flag.load(Ordering::SeqCst));
     assert!(!tracker.read().active);
@@ -157,8 +177,8 @@ async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[sinex_test]
-async fn test_watcher_is_inactive_when_forwarder_finishes(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watcher_is_inactive_when_forwarder_finishes() -> Result<(), Box<dyn std::error::Error>>
+{
     let main_task = tokio::spawn(async {
         sleep(Duration::from_secs(10)).await;
     });
@@ -173,13 +193,15 @@ async fn test_watcher_is_inactive_when_forwarder_finishes(
         "completed forwarders must make the watcher inactive so supervisors can restart it"
     );
 
-    handle.shutdown().await?;
+    handle
+        .shutdown()
+        .await
+        .expect_err("remaining watcher tasks must report forced shutdown");
     Ok(())
 }
 
 #[sinex_test]
-async fn test_watcher_shutdown_rejects_panicked_task(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watcher_shutdown_rejects_panicked_task() -> Result<(), Box<dyn std::error::Error>> {
     let task = tokio::spawn(async {
         panic!("watcher panic");
     });
@@ -200,8 +222,8 @@ async fn test_watcher_shutdown_rejects_panicked_task(
 }
 
 #[sinex_test]
-async fn test_watcher_shutdown_rejects_panicked_forwarder(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watcher_shutdown_rejects_panicked_forwarder() -> Result<(), Box<dyn std::error::Error>>
+{
     let task = tokio::spawn(async {});
     let forwarder = tokio::spawn(async {
         panic!("forwarder panic");
@@ -221,5 +243,30 @@ async fn test_watcher_shutdown_rejects_panicked_forwarder(
     assert!(message.contains("Watcher task failed during shutdown"));
     assert!(message.contains("watcher forwarder"));
     assert!(message.contains("test"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_watcher_drop_records_ungraceful_abort() -> Result<(), Box<dyn std::error::Error>> {
+    let task = tokio::spawn(async {
+        sleep(Duration::from_secs(10)).await;
+    });
+
+    let mut handle = WatcherHandle::<()>::initialized("drop-test");
+    handle.start(task, None)?;
+    let tracker = handle.health_tracker();
+
+    drop(handle);
+    sleep(Duration::from_millis(25)).await;
+
+    let health = tracker.read().clone();
+    assert!(!health.active);
+    assert!(
+        health
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("dropped without explicit shutdown")),
+        "drop should record the forced-abort condition: {health:?}"
+    );
     Ok(())
 }

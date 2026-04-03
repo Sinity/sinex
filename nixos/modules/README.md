@@ -57,8 +57,8 @@ values derived from `stateRoot` and the global `logLevel`.
 ```
 
 `core.gateway` is enabled by default, so the quick-start config needs a real
-gateway admin token file (direct path or the agenix-backed default) before the
-generated unit will start.
+gateway admin token file before the generated unit will start. The agenix
+fallback resolves to `/run/agenix/sinex-gateway-admin-token`.
 
 ### Database
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
@@ -97,9 +97,11 @@ disabled (e.g. staging migrations).
   `null` (inherit) or a concrete value.
 - When `users.target` is set, the module now derives sane workstation defaults
   for terminal history sources and, when the target UID is known at evaluation
-  time, the desktop runtime directory. Terminal and desktop units also run a
-  root `ExecStartPre` bridge that grants the `sinex` service account the ACLs
-  it needs for shell-history files and live Wayland/Hyprland sockets.
+  time, the desktop runtime directory. The sinnix bridge can make that access
+  explicit with `BindReadOnlyPaths` for the target home and `/run/user/$UID`,
+  while the terminal and desktop units still run a root `ExecStartPre` bridge
+  that grants the `sinex` service account the ACLs it needs for shell-history
+  files and live Wayland/Hyprland sockets.
 - When the module is enabled, workstation-facing collectors (`filesystem`,
   `terminal`, `desktop`, `system`) default to singleton startup
   (`instances = 1`) so the first live host enable does not double-run capture
@@ -127,6 +129,7 @@ disabled (e.g. staging migrations).
 
 ### Secret Conventions
 - gateway admin token falls back to agenix secret `sinex-gateway-admin-token`
+  at `/run/agenix/sinex-gateway-admin-token`
 - local NATS server TLS falls back to `sinex-nats-server-cert`, `sinex-nats-server-key`, and `sinex-nats-client-ca`
 - shared NATS client TLS/auth falls back to `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, and `sinex-nats-token`
 - compatibility aliases are also accepted for the shared NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`

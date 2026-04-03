@@ -260,6 +260,53 @@ async fn lifecycle_id_queries_order_same_timestamp_rows_by_id(ctx: TestContext) 
 }
 
 #[sinex_test]
+async fn delete_by_source_archives_events(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("delete-by-source-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let source = EventSource::new("test.repo.delete.by_source")?;
+
+    let event = DynamicPayload::new(
+        source.as_str(),
+        "test.repo.delete.by_source",
+        json!({ "deleted": true }),
+    )
+    .from_material(material_id)
+    .build()?;
+
+    let inserted = ctx.pool.events().insert(event).await?;
+    let inserted_id = inserted.id.expect("inserted event must have an id");
+
+    let deleted = ctx.pool.events().delete_by_source(&source).await?;
+    assert_eq!(deleted, 1, "delete_by_source should delete the matching event");
+
+    let live_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
+    )
+    .bind(inserted_id.to_uuid())
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(live_count.0, 0, "deleted event should not remain in core.events");
+
+    let archived_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+    )
+    .bind(inserted_id.to_uuid())
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(archived_count.0, 1, "deleted event should be archived by the trigger");
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn stream_batch_insert_rejects_self_referential_synthesis_rows(ctx: TestContext) -> TestResult<()> {
     let _ = ctx;
     let event_id = Uuid::now_v7();

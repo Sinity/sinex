@@ -33,8 +33,8 @@ use std::{
 };
 use tokio::{
     sync::Mutex,
-    sync::oneshot,
     sync::RwLock,
+    sync::oneshot,
     task::{JoinHandle, JoinSet},
     time::{Duration, interval},
 };
@@ -57,10 +57,7 @@ async fn shutdown_signal(
     }
 }
 
-fn trigger_shutdown(
-    shutdown_flag: &Arc<AtomicBool>,
-    shutdown_notify: &Arc<tokio::sync::Notify>,
-) {
+fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio::sync::Notify>) {
     if !shutdown_flag.swap(true, Ordering::AcqRel) {
         shutdown_notify.notify_waiters();
     }
@@ -90,22 +87,18 @@ async fn await_ready_signal(
             info!(component, "Startup component reached ready state");
             Ok(())
         }
-        Ok(Err(_)) => Err(
-            SinexError::service(format!(
-                "{component} setup failed before signaling ready"
-            ))
-            .with_operation("service.await_ready_signal")
-            .with_context("component", component)
-            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
-        ),
-        Err(_) => Err(
-            SinexError::service(format!(
-                "{component} did not signal ready within {ready_timeout:?}"
-            ))
-            .with_operation("service.await_ready_signal")
-            .with_context("component", component)
-            .with_context("timeout_secs", ready_timeout.as_secs().to_string()),
-        ),
+        Ok(Err(_)) => Err(SinexError::service(format!(
+            "{component} setup failed before signaling ready"
+        ))
+        .with_operation("service.await_ready_signal")
+        .with_context("component", component)
+        .with_context("timeout_secs", ready_timeout.as_secs().to_string())),
+        Err(_) => Err(SinexError::service(format!(
+            "{component} did not signal ready within {ready_timeout:?}"
+        ))
+        .with_operation("service.await_ready_signal")
+        .with_context("component", component)
+        .with_context("timeout_secs", ready_timeout.as_secs().to_string())),
     }
 }
 
@@ -116,19 +109,22 @@ fn attach_startup_cleanup_error(
     startup_error.with_context("shutdown_cleanup_error", cleanup_error.to_string())
 }
 
-fn attach_background_shutdown_error(
-    error: SinexError,
-    cleanup_error: &SinexError,
-) -> SinexError {
+fn attach_background_shutdown_error(error: SinexError, cleanup_error: &SinexError) -> SinexError {
     error.with_context("background_shutdown_error", cleanup_error.to_string())
 }
 
 /// Shared helper for task shutdown errors across critical, material, and background tasks.
-pub(crate) fn task_shutdown_error(category: &str, name: &str, error: impl std::fmt::Display) -> SinexError {
-    SinexError::service(format!("{category} task join failed during shutdown: {name}"))
-        .with_context("task", name.to_string())
-        .with_context("category", category.to_string())
-        .with_source(error.to_string())
+pub(crate) fn task_shutdown_error(
+    category: &str,
+    name: &str,
+    error: impl std::fmt::Display,
+) -> SinexError {
+    SinexError::service(format!(
+        "{category} task join failed during shutdown: {name}"
+    ))
+    .with_context("task", name.to_string())
+    .with_context("category", category.to_string())
+    .with_source(error.to_string())
 }
 
 fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
@@ -178,7 +174,10 @@ pub struct IngestService {
     heartbeat_counter_handle: Option<sinex_node_sdk::heartbeat::HeartbeatCounterHandle>,
 }
 
-type CriticalTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
+type CriticalTaskOutcome = (
+    &'static str,
+    Result<IngestdResult<()>, tokio::task::JoinError>,
+);
 
 impl Clone for IngestService {
     fn clone(&self) -> Self {
@@ -473,7 +472,9 @@ impl IngestService {
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-ingestd");
 
         // Monitor critical tasks - exit on first failure or shutdown signal
-        let monitor_result = self.monitor_runtime(js_handle.take(), ma_handle.take()).await;
+        let monitor_result = self
+            .monitor_runtime(js_handle.take(), ma_handle.take())
+            .await;
         systemd_notify::stop_watchdog(watchdog_handle, "sinex-ingestd").await;
         systemd_notify::notify_stopping("sinex-ingestd");
 
@@ -562,7 +563,8 @@ impl IngestService {
             }
         };
 
-        let cleanup_error = Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
+        let cleanup_error =
+            Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
         match (result, cleanup_error) {
             (Ok(()), Some(error)) => Err(error),
             (Err(error), _) => Err(error),
@@ -588,10 +590,7 @@ impl IngestService {
             return None;
         }
 
-        info!(
-            "Waiting for {} critical tasks to finish...",
-            tasks.len()
-        );
+        info!("Waiting for {} critical tasks to finish...", tasks.len());
 
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
@@ -986,11 +985,17 @@ impl IngestService {
     ) -> Option<SinexError> {
         match result {
             Ok(()) => {
-                debug!(task_index = index, "Background task finished before forced shutdown");
+                debug!(
+                    task_index = index,
+                    "Background task finished before forced shutdown"
+                );
                 None
             }
             Err(error) if error.is_cancelled() => {
-                debug!(task_index = index, "Background task cancelled during forced shutdown");
+                debug!(
+                    task_index = index,
+                    "Background task cancelled during forced shutdown"
+                );
                 None
             }
             Err(error) => {
@@ -1208,14 +1213,12 @@ impl IngestService {
             .iter()
             .find(|(schema_id, _entry)| !resolved_ids.contains(schema_id))
         {
-            return Err(
-                SinexError::invalid_state(
-                    "schema broadcast references schema missing from repository",
-                )
-                .with_context("schema_name", &entry.name)
-                .with_context("schema_version", &entry.version)
-                .with_context("schema_id", missing_schema_id.to_string()),
-            );
+            return Err(SinexError::invalid_state(
+                "schema broadcast references schema missing from repository",
+            )
+            .with_context("schema_name", &entry.name)
+            .with_context("schema_version", &entry.version)
+            .with_context("schema_id", missing_schema_id.to_string()));
         }
 
         // Store each schema in KV
@@ -1246,6 +1249,7 @@ impl IngestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
     use xtask::sandbox::sinex_test;
 
@@ -1291,7 +1295,11 @@ mod tests {
             .expect_err("hung background tasks must fail shutdown honestly");
 
         assert!(cancelled.load(Ordering::SeqCst));
-        assert!(error.to_string().contains("timed out waiting for 1 background tasks"));
+        assert!(
+            error
+                .to_string()
+                .contains("timed out waiting for 1 background tasks")
+        );
         Ok(())
     }
 
@@ -1324,7 +1332,11 @@ mod tests {
         });
         let error = IngestService::log_aborted_task_shutdown_result(2, handle.await)
             .expect("panicked background task must stay visible");
-        assert!(error.to_string().contains("background task failed during shutdown"));
+        assert!(
+            error
+                .to_string()
+                .contains("background task failed during shutdown")
+        );
         Ok(())
     }
 
@@ -1340,7 +1352,11 @@ mod tests {
             .await
             .expect_err("panicked background task must fail shutdown");
 
-        assert!(error.to_string().contains("background task failed during shutdown"));
+        assert!(
+            error
+                .to_string()
+                .contains("background task failed during shutdown")
+        );
         Ok(())
     }
 
@@ -1356,7 +1372,11 @@ mod tests {
             .await
             .expect_err("shutdown must fail when background tasks panic");
 
-        assert!(error.to_string().contains("background task failed during shutdown"));
+        assert!(
+            error
+                .to_string()
+                .contains("background task failed during shutdown")
+        );
         Ok(())
     }
 
@@ -1463,8 +1483,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn handle_material_assembler_result_preserves_errors_during_shutdown(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn handle_material_assembler_result_preserves_errors_during_shutdown()
+    -> xtask::sandbox::TestResult<()> {
         let shutdown_flag = Arc::new(AtomicBool::new(true));
 
         let error = IngestService::handle_material_assembler_result(
@@ -1478,8 +1498,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn handle_material_assembler_result_allows_clean_shutdown(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn handle_material_assembler_result_allows_clean_shutdown()
+    -> xtask::sandbox::TestResult<()> {
         let shutdown_flag = Arc::new(AtomicBool::new(true));
 
         IngestService::handle_material_assembler_result(Ok(()), &shutdown_flag)?;
@@ -1487,8 +1507,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure()
+    -> xtask::sandbox::TestResult<()> {
         let service = test_service();
         let sibling_finished = Arc::new(AtomicBool::new(false));
 
@@ -1516,8 +1536,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn finish_startup_failure_preserves_cleanup_error_context(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn finish_startup_failure_preserves_cleanup_error_context()
+    -> xtask::sandbox::TestResult<()> {
         let service = test_service();
         let sibling_finished = Arc::new(AtomicBool::new(false));
 
@@ -1555,8 +1575,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn finish_startup_failure_preserves_background_task_error_context(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn finish_startup_failure_preserves_background_task_error_context()
+    -> xtask::sandbox::TestResult<()> {
         let service = test_service();
         service.task_handles.lock().await.push(tokio::spawn(async {
             panic!("startup cleanup background panic");
@@ -1573,6 +1593,51 @@ mod tests {
             .get("background_shutdown_error")
             .expect("background cleanup failure should stay attached");
         assert!(cleanup_context.contains("background task failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn material_ready_set_maintenance_purges_idle_entries() -> xtask::sandbox::TestResult<()>
+    {
+        let mut service = test_service();
+        let ready_set =
+            MaterialReadySet::with_policy_for_tests(Duration::from_millis(10), u64::MAX);
+        let material_id = Uuid::now_v7();
+        ready_set.mark_ready(material_id);
+
+        tokio::time::sleep(Duration::from_millis(15)).await;
+
+        let handle = service
+            .start_material_ready_set_maintenance_task(ready_set.clone())
+            .await;
+        service.task_handles.lock().await.push(handle);
+
+        WaitHelpers::wait_for_condition(
+            || {
+                let ready_set = ready_set.clone();
+                async move { Ok::<bool, SinexError>(ready_set.is_empty()) }
+            },
+            Timeouts::SHORT,
+        )
+        .await?;
+
+        service.shutdown().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn material_ready_set_maintenance_stops_promptly_on_shutdown()
+    -> xtask::sandbox::TestResult<()> {
+        let mut service = test_service();
+        let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_secs(60), u64::MAX);
+        let handle = service
+            .start_material_ready_set_maintenance_task(ready_set)
+            .await;
+        service.task_handles.lock().await.push(handle);
+
+        tokio::time::timeout(Duration::from_millis(200), service.shutdown())
+            .await
+            .expect("maintenance task should observe shutdown without waiting for its interval")?;
         Ok(())
     }
 
@@ -1620,8 +1685,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn log_node_manifest_write_failure_accepts_processing_errors(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn log_node_manifest_write_failure_accepts_processing_errors()
+    -> xtask::sandbox::TestResult<()> {
         let node_name = NodeName::new("sinex-ingestd");
         let error = SinexError::processing("node manifest update exploded");
         log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);

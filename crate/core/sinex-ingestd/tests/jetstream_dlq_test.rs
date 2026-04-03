@@ -6,9 +6,14 @@ mod support;
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Uuid, error::SinexError};
+use sinex_primitives::{
+    Uuid,
+    domain::{EventSource, EventType, NodeName, NodeType},
+    error::SinexError,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -497,6 +502,160 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         !setup.handle.is_finished(),
         "consumer should keep running after FK violation NAK"
     );
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material_exists(
+) -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = format!("fk-enriched-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::none();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    let source_name = format!("fk.enriched.{suffix}");
+    let event_type_name = "fk.enriched";
+    let schema = ctx
+        .pool
+        .schemas()
+        .register_schema(NewEventSchema {
+            source: EventSource::new(source_name.clone())?,
+            event_type: EventType::from_static(event_type_name),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({
+                "type": "object",
+                "properties": {
+                    "data": { "type": "string" }
+                },
+                "required": ["data"],
+                "additionalProperties": false
+            }),
+        })
+        .await?;
+
+    let manifest = ctx
+        .pool
+        .state()
+        .register_node(
+            &NodeName::new(format!("fk-enriched-node-{suffix}")),
+            NodeType::Ingestor,
+            "1.0.0",
+            Some("FK retry regression test node"),
+        )
+        .await?;
+    let node_run = ctx
+        .pool
+        .state()
+        .start_node_run(
+            manifest.id,
+            "fk-enriched-test-service",
+            &format!("instance-{suffix}"),
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    let missing_material_id = Uuid::now_v7();
+    let event_id = Uuid::now_v7();
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source_name,
+        "event_type": event_type_name,
+        "payload": { "data": "fk-enriched-violation" },
+        "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": missing_material_id.to_string(),
+        "anchor_byte": 0,
+        "payload_schema_id": schema.id.to_string(),
+        "node_run_id": node_run.id.to_string(),
+    });
+
+    publish_custom_event(
+        &setup.nats_client,
+        &setup.namespace,
+        &format!("fk.enriched.{suffix}"),
+        event_type_name,
+        &event,
+    )
+    .await?;
+    setup.nats_client.flush().await?;
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let mut dlq_stream = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    let dlq_info = dlq_stream
+        .info()
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    let dlq_error = if dlq_info.state.messages > 0 {
+        let message = tokio::time::timeout(Duration::from_secs(1), dlq_sub.next())
+            .await
+            .ok()
+            .flatten();
+        message
+            .and_then(|msg| serde_json::from_slice::<serde_json::Value>(&msg.payload).ok())
+            .and_then(|entry| entry["error"].as_str().map(str::to_string))
+    } else {
+        None
+    };
+    assert_eq!(
+        dlq_info.state.messages, 0,
+        "enriched source-material FK violation should retry, not DLQ (dlq_error={dlq_error:?})"
+    );
+    assert!(
+        !setup.handle.is_finished(),
+        "consumer should keep running while retrying enriched source-material FK violations"
+    );
+
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type, staged_at)
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET source_identifier = EXCLUDED.source_identifier,
+            material_kind = EXCLUDED.material_kind,
+            status = EXCLUDED.status,
+            timing_info_type = EXCLUDED.timing_info_type,
+            staged_at = EXCLUDED.staged_at
+        "#,
+        missing_material_id,
+        format!("fk-enriched-material-{suffix}"),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move { Ok::<bool, SinexError>(pool.events().get_by_id(event_id.into()).await?.is_some()) }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .ok_or_else(|| SinexError::not_found("persisted event after material registration"))?;
+    assert_eq!(persisted.payload_schema_id, Some(*schema.id.as_uuid()));
+    assert_eq!(persisted.node_run_id, Some(node_run.id));
 
     setup.handle.abort();
     let _ = setup.handle.await;

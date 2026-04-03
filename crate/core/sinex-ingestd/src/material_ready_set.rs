@@ -16,6 +16,11 @@
 //! - `is_ready()`: ~100ns for hot entries
 //! - `mark_ready()`: ~100ns + `Notify::notify_waiters()` (no heap allocation)
 //! - Memory: bounded by TTL-based eviction rather than monotonic growth
+//!
+//! In the ingestd service path, boundedness comes from two layers:
+//! opportunistic eviction on `mark_ready()`/`is_ready()` and a background
+//! maintenance task that calls `purge_stale()` even when the process goes idle
+//! after a burst.
 
 use dashmap::DashMap;
 use sinex_db::DbPoolExt;
@@ -70,6 +75,11 @@ impl MaterialReadySet {
             retention,
             sweep_interval: sweep_interval.max(1),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_policy_for_tests(retention: Duration, sweep_interval: u64) -> Self {
+        Self::with_policy(retention, sweep_interval)
     }
 
     /// Mark a material as registered and ready for FK references.

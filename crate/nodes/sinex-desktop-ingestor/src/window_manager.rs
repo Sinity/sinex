@@ -472,6 +472,73 @@ impl WindowManagerWatcher {
         value.map_or(Ok(0), |id| parse_hyprland_numeric_id(id, context))
     }
 
+    fn ensure_workspace_entry<'a>(
+        &'a mut self,
+        workspace_id: &str,
+        workspace_name: Option<&str>,
+        monitor: Option<&str>,
+    ) -> &'a mut WorkspaceInfo {
+        let now = SystemTime::now();
+        let entry = self
+            .workspaces
+            .entry(workspace_id.to_string())
+            .or_insert_with(|| WorkspaceInfo {
+                id: workspace_id.to_string(),
+                name: workspace_name
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(workspace_id)
+                    .to_string(),
+                monitor: monitor
+                    .filter(|monitor| !monitor.is_empty())
+                    .unwrap_or_default()
+                    .to_string(),
+                active: false,
+                window_count: 0,
+                last_switched: now,
+            });
+
+        if let Some(name) = workspace_name.filter(|name| !name.is_empty()) {
+            entry.name = name.to_string();
+        }
+        if let Some(monitor) = monitor.filter(|monitor| !monitor.is_empty()) {
+            entry.monitor = monitor.to_string();
+        }
+        entry.last_switched = now;
+        entry
+    }
+
+    fn clear_active_workspaces(&mut self) {
+        for workspace in self.workspaces.values_mut() {
+            workspace.active = false;
+        }
+    }
+
+    fn mark_workspace_active(
+        &mut self,
+        workspace_id: &str,
+        workspace_name: Option<&str>,
+        monitor: Option<&str>,
+    ) {
+        self.clear_active_workspaces();
+        let entry = self.ensure_workspace_entry(workspace_id, workspace_name, monitor);
+        entry.active = true;
+    }
+
+    fn adjust_workspace_window_count(
+        &mut self,
+        workspace_id: &str,
+        workspace_name: Option<&str>,
+        monitor: Option<&str>,
+        delta: i32,
+    ) {
+        let entry = self.ensure_workspace_entry(workspace_id, workspace_name, monitor);
+        if delta > 0 {
+            entry.window_count = entry.window_count.saturating_add(delta as u32);
+        } else if delta < 0 {
+            entry.window_count = entry.window_count.saturating_sub(delta.unsigned_abs());
+        }
+    }
+
     fn serialize_snapshot_entry<T: serde::Serialize>(
         &self,
         value: &T,
@@ -837,11 +904,18 @@ impl WindowManagerWatcher {
                     address: window_address,
                     class: window_class,
                     title: window_title,
-                    workspace_id,
+                    workspace_id: workspace_id.clone(),
                     last_seen: SystemTime::now(),
                     floating: false,
                     fullscreen: false,
                 },
+            );
+            let current_monitor = self.current_monitor.clone();
+            self.adjust_workspace_window_count(
+                &workspace_id,
+                None,
+                current_monitor.as_deref(),
+                1,
             );
         }
 
@@ -901,11 +975,20 @@ impl WindowManagerWatcher {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window closed payload: {e}"
                 ))
-            })?;
+        })?;
         self.emit_material_event(material_id, payload_bytes, event)
             .await?;
 
         // Remove from tracking
+        if let Some(window_info) = window_info {
+            let current_monitor = self.current_monitor.clone();
+            self.adjust_workspace_window_count(
+                &window_info.workspace_id,
+                None,
+                current_monitor.as_deref(),
+                -1,
+            );
+        }
         self.windows.remove(&window_address);
 
         Ok(())
@@ -959,9 +1042,32 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
+            let mut previous_workspace_id = None;
+            let mut new_workspace_id = None;
             if let Some(window) = self.windows.get_mut(address) {
+                previous_workspace_id = Some(window.workspace_id.clone());
                 window.workspace_id = workspace.trim().to_string();
                 window.last_seen = SystemTime::now();
+                new_workspace_id = Some(window.workspace_id.clone());
+            }
+
+            if let (Some(previous_workspace_id), Some(new_workspace_id)) =
+                (previous_workspace_id, new_workspace_id)
+                && previous_workspace_id != new_workspace_id
+            {
+                let current_monitor = self.current_monitor.clone();
+                self.adjust_workspace_window_count(
+                    &previous_workspace_id,
+                    None,
+                    current_monitor.as_deref(),
+                    -1,
+                );
+                self.adjust_workspace_window_count(
+                    &new_workspace_id,
+                    None,
+                    current_monitor.as_deref(),
+                    1,
+                );
             }
 
         }
@@ -1028,10 +1134,12 @@ impl WindowManagerWatcher {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize workspace switched payload: {e}"
                 ))
-            })?;
+        })?;
         self.emit_material_event(material_id, payload_bytes, event)
             .await?;
 
+        let current_monitor = self.current_monitor.clone();
+        self.mark_workspace_active(workspace_id_raw, workspace_name, current_monitor.as_deref());
         self.current_workspace = Some(workspace_id_raw.to_string());
 
         Ok(())
@@ -1095,8 +1203,14 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
+            let workspace_id_str = workspace_id.to_string();
+            self.mark_workspace_active(
+                &workspace_id_str,
+                None,
+                Some(monitor.trim()),
+            );
             self.current_monitor = Some(monitor_id.to_string());
-            self.current_workspace = Some(workspace_id.to_string());
+            self.current_workspace = Some(workspace_id_str);
         }
 
         Ok(())
@@ -1464,6 +1578,36 @@ mod tests {
     async fn parse_hyprland_numeric_id_accepts_numeric_suffixes() -> TestResult<()> {
         assert_eq!(parse_hyprland_numeric_id("DP-1", "monitor_id")?, 1);
         assert_eq!(parse_hyprland_numeric_id("3", "workspace_id")?, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn workspace_helpers_track_counts_and_active_workspace() -> TestResult<()> {
+        let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
+
+        watcher.adjust_workspace_window_count("1", Some("main"), Some("monitor-a"), 2);
+        watcher.adjust_workspace_window_count("2", Some("code"), None, 1);
+        watcher.mark_workspace_active("2", Some("code"), Some("monitor-b"));
+
+        let main = watcher
+            .workspaces
+            .get("1")
+            .expect("workspace 1 should be tracked");
+        assert_eq!(main.id, "1");
+        assert_eq!(main.name, "main");
+        assert_eq!(main.monitor, "monitor-a");
+        assert_eq!(main.window_count, 2);
+        assert!(!main.active);
+
+        let code = watcher
+            .workspaces
+            .get("2")
+            .expect("workspace 2 should be tracked");
+        assert_eq!(code.id, "2");
+        assert_eq!(code.name, "code");
+        assert_eq!(code.monitor, "monitor-b");
+        assert_eq!(code.window_count, 1);
+        assert!(code.active);
         Ok(())
     }
 

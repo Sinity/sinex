@@ -138,6 +138,11 @@ impl CheckpointState {
         file.sync_all().await?;
         tokio::fs::rename(&temp_path, path).await?;
 
+        if let Some(parent) = path.parent() {
+            let dir = tokio::fs::File::open(parent).await?;
+            dir.sync_all().await?;
+        }
+
         info!(
             path = %path.display(),
             processed_count = self.processed_count,

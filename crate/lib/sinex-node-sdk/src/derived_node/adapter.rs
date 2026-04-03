@@ -12,7 +12,7 @@ use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_da
 use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
-    Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
+    Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::shutdown::ShutdownConfig;
@@ -114,7 +114,7 @@ where
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
-    event_sender: Option<EventSender>,
+    event_emitter: Option<EventEmitter>,
     shutdown_tx: Option<watch::Sender<bool>>,
     host: String,
     events_since_checkpoint: u64,
@@ -140,7 +140,7 @@ where
             shutdown_config: ShutdownConfig::default(),
             runtime: None,
             checkpoint_manager: None,
-            event_sender: None,
+            event_emitter: None,
             shutdown_tx: None,
             host: gethostname::gethostname().to_string_lossy().to_string(),
             events_since_checkpoint: 0,
@@ -340,7 +340,7 @@ where
             return Ok(0);
         }
 
-        let sender = self.event_sender.as_ref().ok_or_else(|| {
+        let emitter = self.event_emitter.as_ref().ok_or_else(|| {
             SinexError::lifecycle("derived-node output channel is not initialized")
                 .with_context("node", self.node.name())
                 .with_context("context", context)
@@ -354,14 +354,14 @@ where
             let event_source = event.source.as_ref().to_string();
             let event_type = event.event_type.as_ref().to_string();
 
-            sender.send(event).await.map_err(|_| {
+            emitter.emit(event).await.map_err(|error| {
                 SinexError::lifecycle("failed to emit derived-node output event")
                     .with_context("node", self.node.name())
                     .with_context("context", context)
                     .with_context("event_id", event_id)
                     .with_context("source", event_source)
                     .with_context("event_type", event_type)
-                    .with_context("reason", "event channel closed")
+                    .with_source(error)
             })?;
         }
 
@@ -1508,10 +1508,15 @@ where
                     Ok(outputs) => {
                         let output_events =
                             self.build_output_events(outputs, Some(ctx.trigger_event_id), &ctx)?;
-                        if let Some(ref sender) = self.event_sender {
+                        if let Some(ref emitter) = self.event_emitter {
                             for output_event in output_events {
-                                sender.send(output_event).await.map_err(|_| {
-                                    SinexError::lifecycle("Event channel closed during replay")
+                                emitter.emit(output_event).await.map_err(|error| {
+                                    SinexError::lifecycle(
+                                        "failed to emit derived-node replay output event",
+                                    )
+                                    .with_context("node", self.node.name())
+                                    .with_context("trigger_event_id", trigger_event_id.to_string())
+                                    .with_source(error)
                                 })?;
                                 events_emitted += 1;
                             }
@@ -1722,7 +1727,7 @@ where
         self.config = config;
 
         self.checkpoint_manager = Some(runtime.checkpoint_manager().clone());
-        self.event_sender = Some(runtime.event_sender().clone());
+        self.event_emitter = Some(runtime.event_emitter().clone());
         self.host = runtime.service_info().host().to_string();
 
         #[cfg(feature = "messaging")]
@@ -1997,6 +2002,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use sinex_db::DbPoolExt;
+    use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
@@ -2451,6 +2457,69 @@ mod tests {
         ))
     }
 
+    #[cfg(feature = "messaging")]
+    async fn make_runtime_state_with_validator(
+        ctx: &TestContext,
+        node_name: &str,
+        node_run_id: Option<Uuid>,
+    ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>, Uuid)> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            node_name.to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
+        let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
+        let schema_id = Uuid::now_v7();
+        validator.register_test_schema(
+            schema_id,
+            node_name,
+            "test.output",
+            json!({
+                "type": "object",
+                "properties": {
+                    "ok": { "type": "boolean" }
+                },
+                "required": ["ok"]
+            }),
+        )?;
+        let emitter = EventEmitter::with_validator(event_sender, false, validator);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = NodeHandles::new_edge(
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
+        Ok((
+            NodeRuntimeState::new(
+                ServiceInfo::new(
+                    node_name.to_string(),
+                    node_name.to_string(),
+                    HostName::from_static("test-host"),
+                    work_dir_path,
+                    false,
+                    format!("instance-{}", Uuid::now_v7().simple()),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    node_run_id,
+                ),
+                handles,
+                HashMap::new(),
+                work_dir_utf8,
+            ),
+            event_receiver,
+            schema_id,
+        ))
+    }
+
     #[sinex_test]
     async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
         let (tx, rx) = watch::channel(false);
@@ -2790,6 +2859,98 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn emitted_derived_outputs_stamp_payload_schema_id_from_runtime_validator(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (runtime, mut event_receiver, schema_id) = make_runtime_state_with_validator(
+            &ctx,
+            "derived-adapter-emitting-test",
+            Some(Uuid::now_v7()),
+        )
+        .await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let outputs = adapter.process_one(make_input_event("emit")?).await?;
+        let emitted = adapter
+            .emit_output_events(outputs, "test-emission")
+            .await
+            .expect("derived output emission should succeed");
+        assert_eq!(emitted, 1);
+
+        let event = event_receiver
+            .recv()
+            .await
+            .expect("emitted event should reach the runtime sender");
+        assert_eq!(event.payload_schema_id, Some(schema_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> {
+        struct PrivacyInvalidationNode;
+
+        impl TransducerNode for PrivacyInvalidationNode {
+            type State = TestDerivedState;
+            type Input = JsonValue;
+            type Output = JsonValue;
+
+            fn name(&self) -> &'static str {
+                "derived-adapter-invalidation-privacy-test"
+            }
+
+            fn input_event_type(&self) -> &'static str {
+                "test.input"
+            }
+
+            fn output_event_type(&self) -> &'static str {
+                "test.output"
+            }
+
+            fn output_privacy_context(&self) -> ProcessingContext {
+                ProcessingContext::Command
+            }
+
+            async fn process(
+                &mut self,
+                _state: &mut Self::State,
+                _input: Self::Input,
+                _context: &DerivedTriggerContext,
+            ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>
+            {
+                Ok(None)
+            }
+        }
+
+        let adapter = DerivedNodeAdapter::new(TransducerWrapper(PrivacyInvalidationNode));
+        let output = DerivedOutput::reconciled(
+            json!({ "value": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij" }),
+            Timestamp::now(),
+            vec![Uuid::now_v7()],
+            "scope-a".to_string(),
+        );
+        let context = DerivedTriggerContext {
+            trigger_event_id: Id::new(),
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.invalidation")?,
+            ts_orig: None,
+            ts_coided: Timestamp::now(),
+            processing_mode: ProcessingMode::Replay,
+            trigger_kind: TriggerKind::ScopeInvalidation,
+            created_by_operation_id: None,
+        };
+
+        let event = adapter.build_output_event(output, None, &context)?;
+
+        assert_eq!(event.payload["value"].as_str(), Some("<GITHUB_TOKEN>"));
+        Ok(())
+    }
+
     #[sinex_test]
     async fn current_checkpoint_tracks_last_processed_input_event() -> TestResult<()> {
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
@@ -3007,7 +3168,7 @@ mod tests {
             make_runtime_state_with_db(&ctx, "derived-history-resume-test", None).await?;
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
         adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-        adapter.event_sender = Some(runtime.event_sender());
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
         adapter.host = runtime.service_info().host().to_string();
         adapter.runtime = Some(runtime);
 
@@ -3074,7 +3235,7 @@ mod tests {
 
         let mut adapter = DerivedNodeAdapter::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
         adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-        adapter.event_sender = Some(runtime.event_sender());
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
         adapter.host = runtime.service_info().host().to_string();
         adapter.runtime = Some(runtime);
 
@@ -3154,7 +3315,15 @@ mod tests {
         .from_material(material_id)
         .build()?;
         input.scope_key = Some(scope_key.to_string());
-        ctx.pool().events().insert_batch(vec![input]).await?;
+        let input_id = ctx
+            .pool()
+            .events()
+            .insert_batch(vec![input])
+            .await?
+            .into_iter()
+            .next()
+            .and_then(|event| event.id)
+            .expect("inserted invalidation input should have an id");
 
         let (runtime, _event_receiver) =
             make_runtime_state_with_db(&ctx, "adapter-regression-stateful-invalidation", None)
@@ -3168,12 +3337,12 @@ mod tests {
             },
         );
         adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-        adapter.event_sender = Some(runtime.event_sender());
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
         adapter.host = runtime.service_info().host().to_string();
         adapter.runtime = Some(runtime);
 
         let invalidation = DerivedScopeInvalidation::replaced(
-            Vec::new(),
+            vec![*input_id.as_uuid()],
             EventSource::from_static("measurements"),
             EventType::from_static("measurement.taken"),
         )
@@ -3200,9 +3369,7 @@ mod tests {
 
     #[cfg(feature = "db")]
     #[sinex_test]
-    async fn historical_replay_fails_when_dlq_routing_fails(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> TestResult<()> {
         use sinex_db::DbPoolExt;
 
         let ctx = ctx.with_nats().dedicated().await?;
@@ -3217,7 +3384,7 @@ mod tests {
             make_runtime_state_with_db(&ctx, "derived-adapter-dlq-retry-test", None).await?;
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(DlqRetryDerivedNode));
         adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-        adapter.event_sender = Some(runtime.event_sender());
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
         adapter.host = runtime.service_info().host().to_string();
         adapter.runtime = Some(runtime);
 

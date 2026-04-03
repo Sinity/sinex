@@ -414,7 +414,6 @@ impl FilesystemNode {
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 FileCreatedPayload::SOURCE.as_static_str(),
-                path.clone(),
             )?);
             let stage_with_acquisition = stage_context
                 .clone()
@@ -1716,11 +1715,7 @@ mod tests {
 
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-        let acquisition = Arc::new(AcquisitionManager::with_defaults(
-            nats_client,
-            "filesystem",
-            "/tmp",
-        ));
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "filesystem"));
 
         let (event_tx, mut event_rx) =
             mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
