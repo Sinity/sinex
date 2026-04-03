@@ -624,11 +624,11 @@ fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
 }
 
 fn push_numeric_payload_path_expr(qb: &mut QueryBuilder<'_, Postgres>, path: &str) {
-    qb.push(" AND jsonb_typeof(payload->");
+    qb.push(" AND CASE WHEN jsonb_typeof(payload->");
     qb.push_bind(path.to_string());
-    qb.push(") = 'number' AND (payload->>");
+    qb.push(") = 'number' THEN (payload->>");
     qb.push_bind(path.to_string());
-    qb.push(")::numeric");
+    qb.push(")::numeric ELSE NULL END");
 }
 
 fn push_json_numeric(qb: &mut QueryBuilder<'_, Postgres>, val: &JsonValue) {
