@@ -163,19 +163,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
 
 /// Test schema access - verify core tables exist and are queryable
 async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeResult<Value> {
-    // Check that core.events table exists
-    let events_table_exists = sqlx::query_scalar::<_, bool>(
-        r"
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables
-            WHERE table_schema = 'core'
-            AND table_name = 'events'
-        )
-        ",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(SinexError::from)?;
+    let events_table_exists = relation_exists(pool, "core", "events").await?;
 
     if !events_table_exists {
         return Err(SinexError::processing(
@@ -188,6 +176,12 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
         .execute(pool)
         .await
         .is_ok();
+    if !select_works {
+        return Err(SinexError::processing(
+            "core.events exists but is not queryable from the effective runtime database"
+                .to_string(),
+        ));
+    }
 
     // Check that we can run a COUNT query
     let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
@@ -195,43 +189,78 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
         .await
         .map_err(SinexError::from)?;
 
-    // Check core.source_materials table exists
-    let source_materials_exists = sqlx::query_scalar::<_, bool>(
-        r"
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables
-            WHERE table_schema = 'core'
-            AND table_name = 'source_materials'
-        )
-        ",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(SinexError::from)?;
+    let source_material_registry_exists =
+        relation_exists(pool, "raw", "source_material_registry").await?;
+    if !source_material_registry_exists {
+        return Err(SinexError::processing(
+            "raw.source_material_registry does not exist; source-material provenance storage is unavailable"
+                .to_string(),
+        ));
+    }
 
-    // Check core.blobs table exists
-    let blobs_exists = sqlx::query_scalar::<_, bool>(
-        r"
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables
-            WHERE table_schema = 'core'
-            AND table_name = 'blobs'
-        )
-        ",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(SinexError::from)?;
+    let source_material_registry_select_works =
+        sqlx::query("SELECT 1 FROM raw.source_material_registry LIMIT 0")
+            .execute(pool)
+            .await
+            .is_ok();
+    if !source_material_registry_select_works {
+        return Err(SinexError::processing(
+            "raw.source_material_registry exists but is not queryable from the effective runtime database"
+                .to_string(),
+        ));
+    }
+
+    let blobs_exists = relation_exists(pool, "core", "blobs").await?;
+    if !blobs_exists {
+        return Err(SinexError::processing(
+            "core.blobs table does not exist; blob metadata storage is unavailable".to_string(),
+        ));
+    }
+
+    let blobs_select_works = sqlx::query("SELECT 1 FROM core.blobs LIMIT 0")
+        .execute(pool)
+        .await
+        .is_ok();
+    if !blobs_select_works {
+        return Err(SinexError::processing(
+            "core.blobs exists but is not queryable from the effective runtime database"
+                .to_string(),
+        ));
+    }
 
     Ok(json!({
         "events_table_exists": events_table_exists,
         "select_works": select_works,
         "count_query_works": true,
         "current_event_count": count_result,
-        "source_materials_exists": source_materials_exists,
+        "source_material_registry_exists": source_material_registry_exists,
+        "source_material_registry_select_works": source_material_registry_select_works,
         "blobs_exists": blobs_exists,
-        "all_checks_passed": events_table_exists && select_works && source_materials_exists && blobs_exists
+        "blobs_select_works": blobs_select_works,
+        "all_checks_passed": events_table_exists
+            && select_works
+            && source_material_registry_exists
+            && source_material_registry_select_works
+            && blobs_exists
+            && blobs_select_works
     }))
+}
+
+async fn relation_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bool> {
+    sqlx::query_scalar::<_, bool>(
+        r"
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_schema = $1
+            AND table_name = $2
+        )
+        ",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_one(pool)
+    .await
+    .map_err(SinexError::from)
 }
 
 /// Test transaction support using SELECT queries only
@@ -565,4 +594,34 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
     });
 
     Ok((status, result, messages))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_schema_access;
+    use serde_json::Value;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn test_schema_access_uses_source_material_registry_contract(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let mut messages = Vec::new();
+        let details = test_schema_access(ctx.pool(), &mut messages).await?;
+
+        assert_eq!(
+            details.get("source_material_registry_exists"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            details.get("source_material_registry_select_works"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(details.get("source_materials_exists"), None);
+        assert_eq!(details.get("blobs_exists"), Some(&Value::Bool(true)));
+        assert_eq!(details.get("blobs_select_works"), Some(&Value::Bool(true)));
+        assert_eq!(details.get("all_checks_passed"), Some(&Value::Bool(true)));
+
+        Ok(())
+    }
 }
