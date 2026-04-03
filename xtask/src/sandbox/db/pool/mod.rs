@@ -48,8 +48,9 @@ use provisioning::{
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
     ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    mark_pool_database_clean, recreate_pool_database, store_pool_meta, store_pool_meta_checked,
-    url_with_db_name, wait_for_database_absence, wait_for_database_absence_admin,
+    mark_pool_database_clean, reconcile_existing_pool_database, recreate_pool_database,
+    store_pool_meta, store_pool_meta_checked, url_with_db_name, wait_for_database_absence,
+    wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -758,6 +759,7 @@ impl DatabasePool {
 
             for i in 0..config.size {
                 let admin_pool = admin_pool.clone();
+                let admin_url = config.admin_url.clone();
                 let base_url = config.base_url.clone();
                 let template_name = template.name.clone();
                 let template_ext_versions = template_ext_versions.clone();
@@ -869,6 +871,13 @@ impl DatabasePool {
                                     eprintln!(
                                         "  Database {name} was recreated by another task; reusing"
                                     );
+                                    reconcile_existing_pool_database(
+                                        &admin_url,
+                                        &name,
+                                        &db_url,
+                                        &template_ext_versions,
+                                    )
+                                    .await?;
                                 }
                             }
                         } else {
@@ -905,8 +914,13 @@ impl DatabasePool {
                                 eprintln!(
                                     "  Database {name} already exists after creation race; reusing"
                                 );
-                                // Ensure permissions are granted even when database was created concurrently
-                                grant_pool_database_permissions_checked(&name).await?;
+                                reconcile_existing_pool_database(
+                                    &admin_url,
+                                    &name,
+                                    &db_url,
+                                    &template_ext_versions,
+                                )
+                                .await?;
                             }
                         }
                     }
