@@ -1890,13 +1890,13 @@ where
 
         self.signal_shutdown();
 
-        if let Err(e) = self
-            .node
+        self.node
             .on_shutdown_derived(&self.persisted_state.state)
             .await
-        {
-            warn!(node = %self.node.name(), error = %e, "Shutdown hook failed");
-        }
+            .map_err(|e| {
+                error!(node = %self.node.name(), error = %e, "Shutdown hook failed");
+                e
+            })?;
 
         let mut file_save_success = true;
         if let Err(e) = self.save_state_to_file().await {

@@ -128,6 +128,12 @@ impl NatsPublisher {
         error: &str,
         node_name: &str,
     ) -> NodeResult<()> {
+        // Acquire the publish semaphore to prevent DLQ storms from flooding NATS
+        // while the regular publish path is being rate-limited.
+        let _permit = self.publish_semaphore.acquire().await.map_err(|e| {
+            sinex_primitives::SinexError::processing("DLQ publish semaphore closed")
+                .with_source(e)
+        })?;
         let prov = destructure_provenance(event.provenance());
 
         let (event_id, original_event_bytes) = build_publish_payload(

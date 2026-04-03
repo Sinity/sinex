@@ -940,8 +940,15 @@ impl MaterialAssembler {
             }
 
             let elapsed = now - state.last_slice_received;
-            if elapsed.whole_seconds() > self.slice_arrival_timeout.as_secs() as i64
-                && (state.pending_end.is_none() || !state.buffered_slices.is_empty())
+            let timed_out = elapsed.whole_seconds() > self.slice_arrival_timeout.as_secs() as i64;
+            // A material is stale if it timed out AND any of:
+            // - end message never arrived (pending_end is None)
+            // - there are buffered out-of-order slices still waiting
+            // - we're in PendingBegin (end arrived but begin never did — would leak forever)
+            if timed_out
+                && (state.pending_end.is_none()
+                    || !state.buffered_slices.is_empty()
+                    || state.phase == AssemblyPhase::PendingBegin)
             {
                 stale.push((material_id, elapsed.whole_seconds()));
             }

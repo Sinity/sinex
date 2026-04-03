@@ -1058,7 +1058,7 @@ impl ReplayExecutionEngine {
                     mark_error = %mark_err,
                     execution_error = %err,
                     "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
-                     Run: sinexctl replay recover --operation {operation_id}"
+                     Run: sinexctl replay cancel {operation_id} --reason 'stuck after mark_failed failure'"
                 );
             }
         }

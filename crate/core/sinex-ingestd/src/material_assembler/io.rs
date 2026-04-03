@@ -528,15 +528,28 @@ fn checkpoint_snapshot(state: &AssemblerState) -> PersistedState {
 async fn rebuild_hasher(temp_path: &PathBuf) -> IngestdResult<Hasher> {
     let mut hasher = Hasher::new();
     if temp_path.exists() {
-        let contents = fs::read(&temp_path).await.map_err(|e| {
+        let mut file = fs::File::open(&temp_path).await.map_err(|e| {
             SinexError::io(format!(
-                "Failed to read temp file {}: {}",
+                "Failed to open temp file for hasher rebuild {}: {}",
                 temp_path.display(),
                 e
             ))
         })?;
-        if !contents.is_empty() {
-            hasher.update(&contents);
+        // Stream in 64 KiB chunks instead of reading the entire file into memory.
+        // A 512 MiB material would otherwise allocate a single 512 MiB buffer.
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buf).await.map_err(|e| {
+                SinexError::io(format!(
+                    "Failed to read temp file during hasher rebuild {}: {}",
+                    temp_path.display(),
+                    e
+                ))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
         }
     }
     Ok(hasher)
@@ -928,7 +941,7 @@ pub(super) async fn handle_slice(
                 }
 
                 let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
-                state.buffered_bytes += data.len() as i64;
+                state.buffered_bytes = state.buffered_bytes.saturating_add(data.len() as i64);
                 state.buffered_slices.insert(offset, buffer_path.clone());
 
                 // Log buffering event
