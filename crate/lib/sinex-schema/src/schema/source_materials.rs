@@ -41,6 +41,7 @@ pub enum SourceMaterialRegistry {
     StagedBy,
     StagedOnHost,
     OptionalBlobId,
+    TotalBytes,
 }
 
 impl TableDef for SourceMaterialRegistry {
@@ -70,6 +71,9 @@ pub struct SourceMaterialRecord {
     pub staged_by: Option<String>,
     pub staged_on_host: Option<String>,
     pub optional_blob_id: Option<Uuid>,
+    /// Total size of the source material in bytes, set during finalization.
+    /// NULL until finalization completes. Used for anchor_byte plausibility checks.
+    pub total_bytes: Option<i64>,
 }
 
 impl SourceMaterialRegistry {
@@ -126,6 +130,11 @@ impl SourceMaterialRegistry {
             .col(ColumnDef::new(SourceMaterialRegistry::StagedBy).text())
             .col(ColumnDef::new(SourceMaterialRegistry::StagedOnHost).text())
             .col(ColumnDef::new(SourceMaterialRegistry::OptionalBlobId).custom(Alias::new("UUID")))
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::TotalBytes)
+                    .big_integer()
+                    .check(Expr::cust("total_bytes IS NULL OR total_bytes >= 0")),
+            )
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), SourceMaterialRegistry::OptionalBlobId)

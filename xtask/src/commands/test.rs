@@ -165,9 +165,9 @@ pub enum TestSubcommand {
     /// Run mutation testing (requires cargo-mutants)
     Mutants(MutantsArgs),
 
-    /// Run NixOS VM tests
+    /// Run exported NixOS VM flake checks
     ///
-    /// `xtask test vm --category smoke` is the fast NixOS compatibility gate (~5-10min).
+    /// `xtask test vm --category smoke` is the fast exported NixOS compatibility gate (~5-10min).
     Vm(VmArgs),
 }
 

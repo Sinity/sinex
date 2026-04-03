@@ -79,7 +79,7 @@ impl TransducerNode for MyTransducer {
 
 ```rust
 use sinex_node_sdk::{WindowedNode, DerivedNodeAdapter, DerivedOutput, NodeLogicError};
-use sinex_node_sdk::automaton_node::DerivedTriggerContext;  // TODO: extract from deprecated module
+use sinex_node_sdk::derived_node::DerivedTriggerContext;
 
 struct SessionDetector;
 

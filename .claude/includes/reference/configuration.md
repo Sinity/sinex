@@ -42,10 +42,10 @@ sinexctl report yesterday                        # Yesterday's summary
 
 # Import
 sinexctl import atuin                            # Import Atuin shell history (bypasses pipeline)
-# sinexctl import activitywatch                  # DOES NOT EXIST — no AW import path
+# ActivityWatch historical capture has no sinexctl import yet; it remains a node/runtime gap.
 
 # Operations
-sinexctl gateway ingest --source test --type test.ping --payload '{}'  # BROKEN: provenance-less → DLQ
+sinexctl gateway ingest --source test --event-type test.ping --payload '{}'  # provenance-valid smoke event through gateway -> ingestd
 sinexctl status                                  # System health overview
 sinexctl node list                               # Active nodes
 ```

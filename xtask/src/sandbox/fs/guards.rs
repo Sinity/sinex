@@ -1,8 +1,9 @@
-//! RAII guards for `PostgreSQL` session state.
+//! RAII guards for test-environment state.
 //!
-//! These guards follow the same pattern as `OperationIdGuard`: explicit restore
-//! via consuming `restore()` method. Drop is not implemented because guards are
-//! consumed by `restore()` calls.
+//! Contains guards for both environment-variable isolation (`EnvGuard`) and
+//! PostgreSQL session-level settings (`ReplicationRoleGuard`, `RowSecurityGuard`,
+//! `TriggersGuard`).  The PostgreSQL guards use explicit `restore()` methods;
+//! `EnvGuard` uses `Drop` for automatic cleanup.
 
 use crate::sandbox::prelude::*;
 use sqlx::pool::PoolConnection;
@@ -18,6 +19,14 @@ static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| M
 /// process-wide mutex and tracks the previous values for any keys it touches.
 /// Once dropped, every recorded variable is restored to its original state,
 /// ensuring deterministic behavior even under `cargo test -- --test-threads=N`.
+///
+/// # Construction
+///
+/// - `EnvGuard::new()` — acquire mutex, record originals lazily as you call `set`/`clear`.
+/// - `EnvGuard::with_keys(&[...])` — acquire mutex and pre-snapshot a list of keys upfront;
+///   useful when you need the guard to restore vars you may never explicitly mutate.
+/// - `EnvGuard::set_single(key, value)` — acquire mutex, set one key, return a self-restoring
+///   guard; useful for single-variable `let _guard = EnvGuard::set_single(k, v)` patterns.
 pub struct EnvGuard {
     lock: Option<MutexGuard<'static, ()>>,
     original: Vec<(String, Option<String>)>,
@@ -33,6 +42,31 @@ impl EnvGuard {
             lock: Some(lock),
             original: Vec::new(),
         }
+    }
+
+    /// Acquire the global environment mutex and pre-snapshot the current value of
+    /// each key in `keys`.  Subsequent `set`/`clear`/`remove` calls on those keys
+    /// will not double-record them (the first captured value is preserved).
+    pub fn with_keys(keys: &[&str]) -> Self {
+        let lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = keys
+            .iter()
+            .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+            .collect();
+        Self {
+            lock: Some(lock),
+            original,
+        }
+    }
+
+    /// Acquire the global environment mutex, set `key` to `value`, and return a
+    /// guard that will restore the previous value on drop.
+    pub fn set_single(key: &str, value: impl AsRef<OsStr>) -> Self {
+        let mut guard = Self::new();
+        guard.set(key, value);
+        guard
     }
 
     fn remember_original(&mut self, key: &str) {
@@ -53,6 +87,12 @@ impl EnvGuard {
     pub fn clear(&mut self, key: &str) {
         self.remember_original(key);
         unsafe { std::env::remove_var(key) };
+    }
+
+    /// Alias for [`Self::clear`]; removes an environment variable for the duration
+    /// of the guard.
+    pub fn remove(&mut self, key: &str) {
+        self.clear(key);
     }
 
     /// Convenience helper for optional values (None => clear, Some => set).

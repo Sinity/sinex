@@ -8,23 +8,11 @@ use sinex_primitives::Seconds;
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
-use tracing::warn;
-
 // Default configuration values for systemd journal monitoring
 const DEFAULT_JOURNAL_BATCH_SIZE: usize = 1000;
 
 fn optional_utf8_env(var: &'static str) -> Option<String> {
-    match std::env::var(var) {
-        Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                "Environment variable is not valid UTF-8; ignoring value for journal cursor defaults"
-            );
-            None
-        }
-    }
+    sinex_primitives::env::var_optional(var, "journal cursor defaults")
 }
 
 fn default_journal_cursor_path() -> String {

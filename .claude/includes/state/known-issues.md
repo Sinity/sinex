@@ -1,45 +1,49 @@
-## Known Issues & Design Tensions
+## Current Issue Summary
 
-### Confirmed Bugs (Critical)
+Canonical current-work backlog lives in:
 
-| Issue | Location | Notes |
-|-------|----------|-------|
-| `block_on()` in async runtime | `blob_manager.rs:503` | `futures::executor::block_on()` in sync method — will panic or deadlock from tokio context |
-| Gateway ingest produces provenance-less events | `handlers/ingest.rs:50-58` | `events.ingest` RPC lacks provenance → always fails XOR CHECK → DLQ. **Smoke test is broken.** |
-| `blocking_write()` on tokio RwLock from OS thread | `rpc_server.rs:279` | In file-watcher callback on std::thread::spawn |
-| MaterialReadySet unbounded memory | `material_ready_set.rs` | No eviction logic |
+- `.claude/scratch/040-maximalist-remaining-plan.md`
 
-### Confirmed Bugs (High)
+Canonical deferred deployment and horizon backlog lives in:
 
-| Issue | Location | Notes |
-|-------|----------|-------|
-| Replay cascade restore silently discarded | `replay_control.rs:1561` | `let _ = restore_cascade(...)` — data loss on restore failure |
-| Events persisted but invisible on confirmation failure | `jetstream_consumer.rs:779-806` | DB commit succeeds but NAKs entire batch on any confirmation failure |
-| DLQ bypass when no transport | `derived_node/adapter.rs:322-324` | Events dropped if runtime is None |
-| Advisory lock on pooled connection | `state_machine.rs:1003` | Lock/unlock may hit different sessions |
+- `.claude/scratch/041-advanced-horizon-plan.md`
 
-### Confirmed Bugs (Medium)
+This include keeps only the compressed memory surface for AGENTS consumers.
+
+### Open Issues Still Worth Remembering
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Privacy engine unused by automata | `derived_node/adapter.rs` | Zero privacy imports. Derived events inherit ingestor leaks |
-| `hard_delete_by_source` bypasses audit trigger | `persistence.rs:1647` | DELETE without operation_id |
-| Provenance corruption via default UUID | `adapter.rs:262` | `event.id` None → zero UUID as source_event_id |
+| Browser/webhistory historical capture is still missing | source capture surface | Still a real product/runtime gap, but the implementation plan now lives in `040`. |
 
-### Confirmed Bugs (Low)
-
-| Issue | Location | Notes |
-|-------|----------|-------|
-| `core.node_runs` table never populated | Schema | Zero INSERT calls |
-| TimeSeries COALESCE misleading | `composable_query.rs:306` | ts_orig NOT NULL, COALESCE never fires; real issue is ingestd fills now() |
-
-### Recently Fixed (verified 2026-03-23)
+### Recently Fixed (verified 2026-04-03)
 
 | Issue | Fix |
 |-------|-----|
+| Payload-to-material correspondence was weak | `total_bytes` column on `raw.source_material_registry` + ingestd `anchor_byte >= 0` validation |
+| Text-search pagination cursor drift | `TRUNC(ts_rank_cd, 6)` in projection + matching Rust cursor truncation |
+| Nested TextSearch lost snippet/relevance semantics | COALESCE fallback + documented limitation for combined terms |
+| Numeric PathOp aborted on non-numeric strings | CASE WHEN jsonb_typeof guard on numeric cast |
+| CountBy/SourceStats ties non-deterministic | Deterministic tiebreaker ORDER BY on all aggregate queries |
+| Checkpoint save failure was warn-only | Consecutive failure counter → hard error after 3 in DerivedNodeAdapter + StreamNode |
+| Pull-batch atomicity contract undocumented | Explicit module-level contract documentation in jetstream_consumer.rs |
+| DB/session/lock residuals | Advisory lock already hardened; no remaining issues found |
+| Trust boundary: ts_orig + anchor_byte unvalidated | ingestd validates future ts_orig (warn) + negative anchor_byte (DLQ route) |
+| Duplicated EnvGuard/ScopedEnvGuard in tests | Shared EnvGuard with `with_keys()`, `set_single()` + test file dedup |
+| Duplicated env-parse patterns in nodes | 5 nodes → `sinex_primitives::env` shared helpers |
 | Replay state machine lacks FOR UPDATE | All transitions now use `SELECT ... FOR UPDATE` |
 | DashMap stale assembly entries | Cleanup task + remove on finalize |
 | std::sync::Mutex no poison recovery | `unwrap_or_else(poisoned.into_inner())` |
+| Gateway ingest smoke path was broken | `events.ingest` now registers source material and emits provenance-valid envelopes |
+| Token watcher startup blocked the runtime | `rpc_server.rs` now uses async readiness handoff; the old `blocking_write()` callback path is gone |
+| `blob_manager.rs` contained sync `block_on()` in runtime-sensitive code | Re-checked and retired; no sync `block_on()` path remains there |
+| `MaterialReadySet` had no bounded-maintenance proof | Maintenance/eviction behavior is now covered by ingestd tests |
+| Replay restore silently dropped compensating invalidation | `replay_control.rs` now republishes the compensating invalidation path |
+| Derived-node DLQ fallback could fail open without transport | `derived_node/adapter.rs` now fails honest when DLQ transport is unavailable |
+| `hard_delete_by_source` audit-trigger bypass was only a suspicion | Delete-by-source archiving is now regression-locked through the audit trigger |
+| `core.node_runs` looked like dead schema | runtime state now inserts and updates real `node_runs` rows |
+| Automata privacy propagation had no proof | privacy filtering is now regression-locked on the invalidation output path |
+| History DB schema-version read failures could take down `xtask jobs list --json` | `HistoryDb::open()` now recreates unreadable junk-schema history DBs instead of failing the jobs surface |
 
 ### Design Tensions (Both Sides Are Correct)
 
@@ -59,7 +63,6 @@
 |-----------|---------------|-------------------|
 | NatsPublisher 100-permit semaphore is per-publisher (`nats_publisher.rs:21`) | Starvation risk depends on publisher sharing | Per-publisher work already done |
 | COPY batch: one bad row kills entire batch | Up to 1000 events retried via NAK | HistoricalImporter has bisect-retry but ingestd doesn't use it |
-| Checkpoint save failure is silent (warn log only) | Crash -> re-process from stale position -> duplicates | DLQ should catch, but no e2e test (BLK-4) |
 | Advisory lock on pooled connections | Lock acquired on conn A, released when pool recycles A | Use dedicated non-pooled connection |
 | CAs invisible after historical import | 3-hour lookback misses imported data | Must manually `CALL refresh_continuous_aggregate()` |
 | Git-annex process spawn per blob | 100 events/sec = 100 processes/sec for small blobs | No mitigation |

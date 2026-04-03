@@ -13,7 +13,7 @@ use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::{JsonValue, Uuid, env as shared_env};
 use std::collections::BTreeSet;
 use tracing::warn;
 
@@ -22,37 +22,20 @@ const DEFAULT_GAP_THRESHOLD_SECS: i64 = 300;
 
 /// Session gap threshold, configurable via `SINEX_SESSION_GAP_SECS`.
 fn gap_threshold() -> Duration {
-    let secs = match std::env::var("SINEX_SESSION_GAP_SECS") {
-        Ok(raw) => match raw.parse::<i64>() {
-            Ok(secs) if secs > 0 => secs,
-            Ok(secs) => {
+    let secs = shared_env::parse_optional::<i64>("SINEX_SESSION_GAP_SECS", "session gap threshold")
+        .filter(|&secs| {
+            if secs > 0 {
+                true
+            } else {
                 warn!(
                     env = "SINEX_SESSION_GAP_SECS",
-                    value = %raw,
                     parsed = secs,
                     "Session gap override must be positive; using default"
                 );
-                DEFAULT_GAP_THRESHOLD_SECS
+                false
             }
-            Err(error) => {
-                warn!(
-                    env = "SINEX_SESSION_GAP_SECS",
-                    value = %raw,
-                    %error,
-                    "Invalid session gap override; using default"
-                );
-                DEFAULT_GAP_THRESHOLD_SECS
-            }
-        },
-        Err(std::env::VarError::NotPresent) => DEFAULT_GAP_THRESHOLD_SECS,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                env = "SINEX_SESSION_GAP_SECS",
-                "Session gap override is not valid UTF-8; using default"
-            );
-            DEFAULT_GAP_THRESHOLD_SECS
-        }
-    };
+        })
+        .unwrap_or(DEFAULT_GAP_THRESHOLD_SECS);
     Duration::seconds(secs)
 }
 
