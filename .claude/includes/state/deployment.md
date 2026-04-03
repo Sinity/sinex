@@ -15,13 +15,13 @@
 | Schema apply | READY | `sinex-schema-apply.service` exists in both NixOS paths |
 | sinexctl | READY | query, trace, telemetry, context, report, import subcommands |
 
-### What's Blocked (NixOS Config, Not Rust)
+### What's Blocked (Host Proof, Not Core Rust)
 
 | Component | Blocker | Fix |
 |-----------|---------|-----|
-| Desktop ingestor | Hyprland socket at `/run/user/1000/hypr/` — 700 sinity:users, sinex (uid=991) blocked | `BindReadOnlyPaths` or ACL via tmpfiles.d |
-| Terminal ingestor | No `.bash_history`/`.zsh_history` (user uses Atuin). Atuin DB at 600 sinity:users | `BindReadOnlyPaths` for Atuin DB |
-| Gateway admin token | Needs agenix secret verification | Check sinnix secrets config |
+| Desktop ingestor | `sinnix` now wires target-runtime bind mounts, but the dark host has not yet proven live Hyprland socket access end to end | First enabled-host proof on `sinnix-prime` |
+| Terminal ingestor | `sinnix` now wires target-home bind mounts for Atuin/history access, but the dark host has not yet proven the service can read them | First enabled-host proof on `sinnix-prime` |
+| Gateway admin token | agenix fallback path is wired, but the dark host has not yet proven `/run/agenix/sinex-gateway-admin-token` materialization | First enabled-host proof on `sinnix-prime` |
 
 ### Activation Sequence (Critical Path)
 
@@ -47,8 +47,8 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 |----------|---------------|-----|
 | `/realm/project/*` | YES | World-readable (755) |
 | systemd journal | YES | journald API access |
-| Hyprland socket (`/run/user/1000/hypr/`) | **NO** | 700 sinity:users |
-| Atuin DB (`~/.local/share/atuin/history.db`) | **NO** | 600 sinity:users |
+| Hyprland socket (`/run/user/1000/hypr/`) | **CONFIGURED, UNPROVEN** | `sinnix` bridge now binds target runtime paths; host proof still pending |
+| Atuin DB (`~/.local/share/atuin/history.db`) | **CONFIGURED, UNPROVEN** | `sinnix` bridge now binds target-home history paths; host proof still pending |
 | `/home/sinity` | **NO** | ProtectHome=true on most services |
 
 ### Evolution Phases

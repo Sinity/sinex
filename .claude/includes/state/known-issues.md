@@ -61,7 +61,6 @@
 |-----------|---------------|-------------------|
 | NatsPublisher 100-permit semaphore is per-publisher (`nats_publisher.rs:21`) | Starvation risk depends on publisher sharing | Per-publisher work already done |
 | COPY batch: one bad row kills entire batch | Up to 1000 events retried via NAK | HistoricalImporter has bisect-retry but ingestd doesn't use it |
-| Checkpoint save failure is silent (warn log only) | Crash -> re-process from stale position -> duplicates | DLQ should catch, but no e2e test (BLK-4) |
 | Advisory lock on pooled connections | Lock acquired on conn A, released when pool recycles A | Use dedicated non-pooled connection |
 | CAs invisible after historical import | 3-hour lookback misses imported data | Must manually `CALL refresh_continuous_aggregate()` |
 | Git-annex process spawn per blob | 100 events/sec = 100 processes/sec for small blobs | No mitigation |
