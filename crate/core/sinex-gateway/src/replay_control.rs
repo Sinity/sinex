@@ -2236,19 +2236,26 @@ impl ReplayExecutionEngine {
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
                         )));
                     }
+                }
+                // Publish compensating scope invalidations when either:
+                // - we restored the cascade (so automata reconcile against restored events)
+                // - events were emitted before failure (so automata reconcile the mixed state)
+                if failure.restore_archived_cascade || failure.emitted_count > 0 {
                     if let Err(invalidation_error) = self
                         .publish_scope_invalidations(&scope_metadata, operation_id)
                         .await
                     {
                         return Err(failure.error.wrap_err(format!(
-                            "Replay scan failed before emitting replacement events, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
+                            "Replay scan failed and compensating scope invalidation also failed: {invalidation_error}"
                         )));
                     }
                 }
                 Err(failure.error).wrap_err(if failure.restore_archived_cascade {
                     "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
+                } else if failure.emitted_count > 0 {
+                    "Replay scan failed after partial event emission; published compensating scope invalidations for automata reconciliation"
                 } else {
-                    "Replay scan failed after the dispatch left coordinator certainty; archived cascade was left untouched to avoid reintroducing stale rows beside late or partial replacements"
+                    "Replay scan failed before emitting any replacement events; archived cascade left untouched"
                 })
             }
         }
