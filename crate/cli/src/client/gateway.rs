@@ -598,33 +598,28 @@ impl GatewayClient {
 
     /// Submit a replay plan for execution
     pub async fn replay_submit(&self, operation_id: &str) -> Result<ReplayOperation> {
-        // Execution requires a stored preview summary first.
-        self.replay_preview(operation_id).await?;
+        match self.replay_status(operation_id).await?.state {
+            ReplayState::Planning => {
+                self.replay_preview(operation_id).await?;
+                self.replay_approve(operation_id).await?;
+            }
+            ReplayState::Previewed => {
+                self.replay_approve(operation_id).await?;
+            }
+            ReplayState::Approved => {}
+            ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => {
+                return Err(color_eyre::eyre::eyre!(
+                    "Replay operation {operation_id} is already in progress"
+                ));
+            }
+            ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => {
+                return Err(color_eyre::eyre::eyre!(
+                    "Replay operation {operation_id} is already in terminal state"
+                ));
+            }
+        }
 
-        // First approve
-        let approve_req = ReplayApproveRequest {
-            operation_id: operation_id.to_string(),
-        };
-        self.call_rpc(
-            methods::REPLAY_APPROVE_OPERATION,
-            serde_json::to_value(&approve_req)?,
-        )
-        .await?;
-
-        // Then execute
-        let exec_req = ReplayExecuteRequest {
-            operation_id: operation_id.to_string(),
-            dry_run: false,
-        };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_EXECUTE_OPERATION,
-                serde_json::to_value(&exec_req)?,
-            )
-            .await?;
-
-        let response: ReplayExecuteResponse = serde_json::from_value(result)?;
-        Ok(response.operation)
+        self.replay_execute(operation_id).await
     }
 
     /// Get replay operation status
@@ -699,14 +694,6 @@ impl GatewayClient {
             .await?;
         let response: ReplayApproveResponse = serde_json::from_value(result)?;
         Ok(response.operation)
-    }
-
-    /// Refresh preview data without approving or executing the replay.
-    pub async fn replay_dry_run(
-        &self,
-        operation_id: &str,
-    ) -> Result<(ReplayOperation, serde_json::Value)> {
-        self.replay_preview(operation_id).await
     }
 
     /// Execute an approved replay operation.

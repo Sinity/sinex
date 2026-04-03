@@ -947,6 +947,13 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
             seen_methods_clone.lock().expect("record methods").push(method.clone());
 
             let response = match method.as_str() {
+                "replay.operation_status" => json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "operation": replay_operation_json("Planning", None)
+                    },
+                    "id": 1
+                }),
                 "replay.approve_operation" => json!({
                     "jsonrpc": "2.0",
                     "result": {
@@ -957,7 +964,7 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
                 "replay.preview_operation" => json!({
                     "jsonrpc": "2.0",
                     "result": {
-                        "operation": replay_operation_json("Approved", Some(json!({
+                        "operation": replay_operation_json("Previewed", Some(json!({
                             "total_events": 1,
                             "time_window": {
                                 "start": "2026-04-01T00:00:00Z",
@@ -1010,8 +1017,9 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
     assert_eq!(
         seen_methods.lock().expect("read methods").as_slice(),
         &[
-            "replay.approve_operation".to_string(),
+            "replay.operation_status".to_string(),
             "replay.preview_operation".to_string(),
+            "replay.approve_operation".to_string(),
             "replay.execute_operation".to_string()
         ]
     );

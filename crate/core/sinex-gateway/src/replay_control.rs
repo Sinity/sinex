@@ -2212,9 +2212,17 @@ impl ReplayExecutionEngine {
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
                         )));
                     }
+                    if let Err(invalidation_error) = self
+                        .publish_scope_invalidations(&scope_metadata, operation_id)
+                        .await
+                    {
+                        return Err(failure.error.wrap_err(format!(
+                            "Replay scan failed before emitting replacement events, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
+                        )));
+                    }
                 }
                 Err(failure.error).wrap_err(if failure.restore_archived_cascade {
-                    "Replay scan failed before emitting replacement events"
+                    "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
                 } else {
                     "Replay scan failed after the dispatch left coordinator certainty; archived cascade was left untouched to avoid reintroducing stale rows beside late or partial replacements"
                 })

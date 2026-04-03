@@ -97,10 +97,6 @@ pub enum ReplayCommands {
         /// Operation ID
         operation_id: String,
 
-        /// Dry-run: refresh the preview without approving or executing any changes
-        #[arg(long)]
-        dry_run: bool,
-
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
@@ -295,37 +291,10 @@ impl ReplayCommands {
 
             Self::Execute {
                 operation_id,
-                dry_run,
                 format,
             } => {
-                if *dry_run {
-                    let (operation, preview) = client.replay_dry_run(operation_id).await?;
-                    match format {
-                        OutputFormat::Json => println!(
-                            "{}",
-                            format_json(&serde_json::json!({
-                                "operation": operation,
-                                "preview": preview,
-                                "dry_run": true,
-                            }))?
-                        ),
-                        OutputFormat::Yaml => println!(
-                            "{}",
-                            format_yaml(&serde_json::json!({
-                                "operation": operation,
-                                "preview": preview,
-                                "dry_run": true,
-                            }))?
-                        ),
-                        _ => {
-                            println!("{}", format_replay_preview_table(&operation, &preview));
-                        }
-                    }
-                } else {
-                    let operation = client.replay_execute(operation_id).await?;
-                    CommandOutput::single(operation, format_replay_execute_table)
-                        .display(format)?;
-                }
+                let operation = client.replay_execute(operation_id).await?;
+                CommandOutput::single(operation, format_replay_execute_table).display(format)?;
             }
 
             Self::Submit {
