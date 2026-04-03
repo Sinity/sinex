@@ -910,6 +910,27 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn load_valid_local_state_or_empty(&self, warnings: &mut Vec<String>) -> HistoryState {
+        match self.load_state().await {
+            Ok(Some(state)) => match self.validate_state(state) {
+                Ok(state) => state,
+                Err(error) => {
+                    warnings.push(self.strict_warning(format!(
+                        "preserved local watcher state is unusable after failure: {error}"
+                    )));
+                    self.empty_state()
+                }
+            },
+            Ok(None) => self.empty_state(),
+            Err(error) => {
+                warnings.push(self.strict_warning(format!(
+                    "failed to preserve local watcher state after failure: {error}"
+                )));
+                self.empty_state()
+            }
+        }
+    }
+
     async fn history_file_size(&self) -> NodeResult<u64> {
         fs::metadata(&self.path).await.map(|metadata| metadata.len()).map_err(|error| {
             SinexError::io("failed to stat terminal history source")
@@ -2759,26 +2780,9 @@ impl TerminalNode {
             &context.source_mode,
         ) {
             Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
-            Ok(IncomingHistoryCheckpointState::MissingSource) => Ok(context.empty_state()),
-            Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
-                match context.load_state().await {
-                    Ok(Some(state)) => match context.validate_state(state) {
-                        Ok(state) => Ok(state),
-                        Err(error) => {
-                            warnings.push(context.strict_warning(format!(
-                                "preserved local watcher state is unusable after failure: {error}"
-                            )));
-                            Ok(context.empty_state())
-                        }
-                    },
-                    Ok(None) => Ok(context.empty_state()),
-                    Err(error) => {
-                        warnings.push(context.strict_warning(format!(
-                            "failed to preserve local watcher state after failure: {error}"
-                        )));
-                        Ok(context.empty_state())
-                    }
-                }
+            Ok(IncomingHistoryCheckpointState::MissingSource)
+            | Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
+                Ok(context.load_valid_local_state_or_empty(warnings).await)
             }
             Err(error) => {
                 warnings.push(context.strict_warning(format!(
@@ -3013,7 +3017,7 @@ impl IngestorNode for TerminalNode {
                     Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
                     Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
                     Ok(IncomingHistoryCheckpointState::MissingSource) => {
-                        Some(watch_ctx.empty_state())
+                        Some(watch_ctx.load_valid_local_state_or_empty(&mut warnings).await)
                     }
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
@@ -5334,6 +5338,94 @@ mod tests {
             let mut state = state;
             node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
                 .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let final_state =
+            TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
+        assert_eq!(final_state.sqlite_row_id, Some(7));
+        assert_eq!(final_state.recent_hashes, VecDeque::from([13, 17]));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_preserves_local_state_when_checkpoint_omits_source(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-missing-source")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let checkpoint_key = format!("atuin:{history_path}");
+        let state_path = node
+            .build_history_contexts(tokio::sync::watch::channel(false).1)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should expose a state path"))?;
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec_pretty(&HistoryState {
+                sqlite_row_id: Some(7),
+                recent_hashes: VecDeque::from([13, 17]),
+                ..HistoryState::default()
+            })?,
+        )
+        .await?;
+
+        let incoming = TerminalNode::checkpoint_from_states(HashMap::from([(
+            "atuin:/tmp/other.db".to_string(),
+            HistoryState {
+                sqlite_row_id: Some(42),
+                ..HistoryState::default()
+            },
+        )]))?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, incoming, shutdown_rx).await
         });
 
         tokio::task::yield_now().await;
