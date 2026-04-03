@@ -1,5 +1,5 @@
 use futures::{StreamExt, future::try_join_all};
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::{DbPoolExt, material_status};
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
@@ -322,6 +322,8 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                         return Ok::<bool, SinexError>(false);
                     };
                     Ok::<bool, SinexError>(
+                        material.status == material_status::CANCELLED
+                            &&
                         material
                             .metadata
                             .get("cancelled")
@@ -333,6 +335,21 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
             DEFAULT_WAIT_SECS,
         )
         .await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("cancelled material should exist");
+    assert_eq!(material.status.as_str(), material_status::CANCELLED);
+    assert_eq!(
+        material
+            .metadata
+            .get("cancelled")
+            .and_then(sinex_primitives::JsonValue::as_bool),
+        Some(true)
+    );
 
     ingest_handle.stop().await?;
     Ok(())

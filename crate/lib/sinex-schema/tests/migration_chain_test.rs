@@ -5,6 +5,43 @@ use std::time::Duration;
 
 use xtask::sandbox::prelude::*;
 
+async fn drop_telemetry_relation(
+    pool: &sqlx::PgPool,
+    relation_name: &str,
+) -> Result<(), sqlx::Error> {
+    let relation_kind = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT c.relkind::text
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'sinex_telemetry'
+          AND c.relname = $1
+        "#,
+    )
+    .bind(relation_name)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+
+    match relation_kind.as_deref() {
+        Some("m") => {
+            sqlx::query(&format!(
+                "DROP MATERIALIZED VIEW sinex_telemetry.{relation_name}"
+            ))
+            .execute(pool)
+            .await?;
+        }
+        Some("v") => {
+            sqlx::query(&format!("DROP VIEW sinex_telemetry.{relation_name}"))
+                .execute(pool)
+                .await?;
+        }
+        Some(_) | None => {}
+    }
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
@@ -23,12 +60,8 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
 
-    sqlx::query("DROP VIEW IF EXISTS sinex_telemetry.recent_activity_summary")
-        .execute(pool)
-        .await?;
-    sqlx::query("DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.command_frequency_hourly")
-        .execute(pool)
-        .await?;
+    drop_telemetry_relation(pool, "recent_activity_summary").await?;
+    drop_telemetry_relation(pool, "command_frequency_hourly").await?;
     sqlx::query(
         r#"
         CREATE MATERIALIZED VIEW sinex_telemetry.command_frequency_hourly AS
@@ -376,6 +409,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
                 "bucket",
                 "max_active_assemblies",
                 "total_completed",
+                "total_cancelled",
                 "total_failed",
                 "total_timed_out",
                 "avg_duration_ms",

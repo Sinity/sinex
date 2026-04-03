@@ -6,7 +6,7 @@
 use serde::Serialize;
 use sinex_db::{
     models::blob::Blob,
-    repositories::{DbPoolExt, TemporalLedgerEntry},
+    repositories::{DbPoolExt, TemporalLedgerEntry, material_status},
 };
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
@@ -44,6 +44,20 @@ fn rollback_finalization_failure(
         .with_context("stage", stage)
         .with_context("original_error", original_error.to_string())
         .with_operation("persist_finalized_material")
+}
+
+fn final_material_status(metadata: &JsonValue) -> &'static str {
+    metadata
+        .as_object()
+        .and_then(|map| map.get("cancelled"))
+        .and_then(JsonValue::as_bool)
+        .map_or(material_status::COMPLETED, |cancelled| {
+            if cancelled {
+                material_status::CANCELLED
+            } else {
+                material_status::COMPLETED
+            }
+        })
 }
 
 /// DLQ payload for material failures
@@ -191,6 +205,7 @@ impl MaterialAssembler {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         state: &FinalizationState,
+        final_status: &str,
         blob_id: Id<Blob>,
         total_size_bytes: i64,
         metadata: JsonValue,
@@ -215,9 +230,10 @@ impl MaterialAssembler {
             .and_then(|value| value.as_str())
             .map(std::string::ToString::to_string);
 
-        repo.finalize_in_flight_with_executor(
+        repo.finalize_in_flight_as(
             &mut **tx,
             Id::from_uuid(state.material_id),
+            final_status,
             Some(blob_id),
             encoding_hint.as_deref(),
             content_preview_hint.clone(),
@@ -286,6 +302,7 @@ impl MaterialAssembler {
         &self,
         final_state: &FinalizationState,
         annex_key: &AnnexKey,
+        final_status: &str,
     ) -> IngestdResult<bool> {
         let material = self
             .pool
@@ -301,7 +318,7 @@ impl MaterialAssembler {
             return Ok(false);
         };
 
-        if material.status != sinex_db::repositories::source_materials::status::COMPLETED {
+        if material.status != final_status {
             return Ok(false);
         }
 
@@ -326,8 +343,12 @@ impl MaterialAssembler {
         &self,
         final_state: &FinalizationState,
         annex_key: &AnnexKey,
+        final_status: &str,
     ) -> FinalizationCommitOutcome {
-        match self.finalization_commit_landed(final_state, annex_key).await {
+        match self
+            .finalization_commit_landed(final_state, annex_key, final_status)
+            .await
+        {
             Ok(true) => FinalizationCommitOutcome::Landed,
             Ok(false) => FinalizationCommitOutcome::NotLanded,
             Err(error) => FinalizationCommitOutcome::Unknown(error),
@@ -385,8 +406,12 @@ impl MaterialAssembler {
         annex_key: &AnnexKey,
         end: &MaterialEndMessage,
         finalize_metadata: JsonValue,
+        final_status: &str,
     ) -> IngestdResult<()> {
-        match self.finalization_commit_outcome(final_state, annex_key).await {
+        match self
+            .finalization_commit_outcome(final_state, annex_key, final_status)
+            .await
+        {
             FinalizationCommitOutcome::Landed => {
                 info!(
                     material_id = %final_state.material_id,
@@ -448,6 +473,7 @@ impl MaterialAssembler {
             .finalize_material_record_with_executor(
                 &mut tx,
                 final_state,
+                final_status,
                 blob_id,
                 end.total_size_bytes,
                 finalize_metadata,
@@ -485,7 +511,10 @@ impl MaterialAssembler {
                 )
                 .with_source(error);
 
-                match self.finalization_commit_outcome(final_state, annex_key).await {
+                match self
+                    .finalization_commit_outcome(final_state, annex_key, final_status)
+                    .await
+                {
                     FinalizationCommitOutcome::Landed => {
                         warn!(
                             material_id = %final_state.material_id,
@@ -972,6 +1001,7 @@ impl MaterialAssembler {
                 return Err(error);
             }
         };
+        let final_status = final_material_status(&finalize_metadata);
 
         let annex_key = match self.import_into_annex(&final_state).await {
             Ok(result) => result,
@@ -988,7 +1018,13 @@ impl MaterialAssembler {
         };
 
         if let Err(e) = self
-            .persist_finalized_material(&final_state, &annex_key, &end, finalize_metadata)
+            .persist_finalized_material(
+                &final_state,
+                &annex_key,
+                &end,
+                finalize_metadata,
+                final_status,
+            )
             .await
         {
             self.route_material_error(
@@ -1014,25 +1050,47 @@ impl MaterialAssembler {
         let assembly_duration = Timestamp::now() - final_state.started_at;
         let duration_ms = assembly_duration.whole_milliseconds().max(0) as u64;
 
-        self.stats_inc_completed(duration_ms as f64 / 1000.0, end.total_size_bytes as u64); // Track successful assembly
+        if final_status == material_status::CANCELLED {
+            self.stats_inc_cancelled(duration_ms as f64 / 1000.0, end.total_size_bytes as u64);
 
-        tracing::info!(
-            target: "sinex_metrics",
-            metric = "assembly_completed",
-            duration_ms = duration_ms,
-            material_id = %material_id,
-            slice_count = slice_count,
-            size_bytes = end.total_size_bytes,
-        );
+            tracing::info!(
+                target: "sinex_metrics",
+                metric = "assembly_cancelled",
+                duration_ms = duration_ms,
+                material_id = %material_id,
+                slice_count = slice_count,
+                size_bytes = end.total_size_bytes,
+            );
 
-        info!(
-            material_id = %material_id,
-            annex_key = %annex_key.key,
-            size_bytes = end.total_size_bytes,
-            slices = slice_count,
-            duration_ms = duration_ms,
-            "Material assembly complete and persisted to git-annex"
-        );
+            info!(
+                material_id = %material_id,
+                annex_key = %annex_key.key,
+                size_bytes = end.total_size_bytes,
+                slices = slice_count,
+                duration_ms = duration_ms,
+                "Material assembly cancelled and persisted to git-annex"
+            );
+        } else {
+            self.stats_inc_completed(duration_ms as f64 / 1000.0, end.total_size_bytes as u64);
+
+            tracing::info!(
+                target: "sinex_metrics",
+                metric = "assembly_completed",
+                duration_ms = duration_ms,
+                material_id = %material_id,
+                slice_count = slice_count,
+                size_bytes = end.total_size_bytes,
+            );
+
+            info!(
+                material_id = %material_id,
+                annex_key = %annex_key.key,
+                size_bytes = end.total_size_bytes,
+                slices = slice_count,
+                duration_ms = duration_ms,
+                "Material assembly complete and persisted to git-annex"
+            );
+        }
 
         Ok(())
     }
@@ -1414,9 +1472,82 @@ mod tests {
 
         assert!(
             assembler
-                .finalization_commit_landed(&final_state, &annex_key)
+                .finalization_commit_landed(&final_state, &annex_key, status::COMPLETED)
                 .await?,
             "completed material with matching blob metadata should reconcile as committed"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_commit_landed_detects_cancelled_material_with_blob(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let annex_key = AnnexKey {
+            key: "SHA256E-s4--hash".to_string(),
+            backend: "SHA256E".to_string(),
+            size: 4,
+            hash: "hash".to_string(),
+        };
+
+        let blob = ctx
+            .pool
+            .blobs()
+            .insert(
+                Blob::builder()
+                    .annex_backend(annex_key.backend.clone())
+                    .content_hash(annex_key.hash.clone())
+                    .original_filename("material.bin".to_string())
+                    .size_bytes(annex_key.size as i64)
+                    .checksum_blake3("hash".to_string())
+                    .metadata(json!({ "material_id": material_id }))
+                    .build(),
+            )
+            .await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://commit-cancelled"),
+                json!({ "cancelled": true }),
+                Timestamp::now(),
+            )
+            .await?;
+        ctx.pool
+            .source_materials()
+            .finalize_in_flight_as(
+                &ctx.pool,
+                Id::from_uuid(material_id),
+                status::CANCELLED,
+                Some(blob.id),
+                None,
+                None,
+                Some(annex_key.size as i64),
+            )
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("material.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({ "cancelled": true }),
+            material_kind: "test".to_string(),
+            source_identifier: "test://commit-cancelled".to_string(),
+            started_at: Timestamp::now(),
+        };
+
+        assert!(
+            assembler
+                .finalization_commit_landed(&final_state, &annex_key, status::CANCELLED)
+                .await?,
+            "cancelled material with matching blob metadata should reconcile as committed"
         );
         Ok(())
     }
@@ -1460,7 +1591,7 @@ mod tests {
 
         assert!(
             !assembler
-                .finalization_commit_landed(&final_state, &annex_key)
+                .finalization_commit_landed(&final_state, &annex_key, status::COMPLETED)
                 .await?,
             "non-terminal material state should not reconcile as a landed commit"
         );
@@ -1560,6 +1691,7 @@ mod tests {
                 &annex_key,
                 &end,
                 json!({}),
+                status::COMPLETED,
             )
             .await?;
 

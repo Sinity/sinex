@@ -78,6 +78,7 @@ fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
 struct AssemblyStats {
     started: AtomicU64,
     completed: AtomicU64,
+    cancelled: AtomicU64,
     failed: AtomicU64,
     timed_out: AtomicU64,
     disk_backpressure: AtomicU64,
@@ -90,6 +91,10 @@ impl AssemblyStats {
 
     fn inc_completed(&self) {
         self.completed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_cancelled(&self) {
+        self.cancelled.fetch_add(1, Ordering::Relaxed);
     }
 
     fn inc_failed(&self) {
@@ -108,6 +113,7 @@ impl AssemblyStats {
         AssemblyStatsSnapshot {
             started: self.started.load(Ordering::Relaxed),
             completed: self.completed.load(Ordering::Relaxed),
+            cancelled: self.cancelled.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
             timed_out: self.timed_out.load(Ordering::Relaxed),
             disk_backpressure: self.disk_backpressure.load(Ordering::Relaxed),
@@ -119,6 +125,7 @@ impl AssemblyStats {
 struct AssemblyStatsSnapshot {
     started: u64,
     completed: u64,
+    cancelled: u64,
     failed: u64,
     timed_out: u64,
     disk_backpressure: u64,
@@ -352,6 +359,57 @@ impl MaterialAssembler {
                 async move {
                     observer
                         .emit_counter("sinex_assembly_completed_total", 1, None)
+                        .await
+                },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_bytes_total",
+                async move { observer.emit_counter("sinex_assembly_bytes_total", bytes, None).await },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_duration_seconds",
+                async move {
+                    observer
+                        .emit_histogram(
+                            "sinex_assembly_duration_seconds",
+                            1,
+                            duration_secs,
+                            duration_secs,
+                            duration_secs,
+                            None,
+                            None,
+                        )
+                        .await
+                },
+            );
+        }
+    }
+
+    /// Increment the "cancelled" stats counter when assembly is ended intentionally.
+    pub(super) fn stats_inc_cancelled(&self, duration_secs: f64, bytes: u64) {
+        self.stats.inc_cancelled();
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_cancelled",
+            total_cancelled = self.stats.cancelled.load(Ordering::Relaxed),
+            active_assemblies = self.assembler_state.len() as u64,
+        );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_cancelled_total",
+                async move {
+                    observer
+                        .emit_counter("sinex_assembly_cancelled_total", 1, None)
                         .await
                 },
             );
@@ -830,6 +888,7 @@ impl MaterialAssembler {
                 active_assemblies = active,
                 total_started = stats.started,
                 total_completed = stats.completed,
+                total_cancelled = stats.cancelled,
                 total_failed = stats.failed,
                 total_timed_out = stats.timed_out,
                 total_disk_backpressure = stats.disk_backpressure,
@@ -843,6 +902,7 @@ impl MaterialAssembler {
                         active,
                         stats.started,
                         stats.completed,
+                        stats.cancelled,
                         stats.failed,
                         stats.timed_out,
                         None, // avg_duration_ms - would need tracking
