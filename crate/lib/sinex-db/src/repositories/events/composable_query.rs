@@ -256,7 +256,7 @@ impl EventRepository<'_> {
             qb.push(" IS NOT NULL");
         }
 
-        qb.push(" GROUP BY 1 ORDER BY count DESC LIMIT ");
+        qb.push(" GROUP BY 1 ORDER BY count DESC, key ASC LIMIT ");
         qb.push_bind(limit);
 
         let rows: Vec<GroupedCountRow> = qb
@@ -302,7 +302,7 @@ impl EventRepository<'_> {
 
         match order {
             TimeSeriesOrder::TimeAsc => qb.push(" ORDER BY bucket ASC"),
-            TimeSeriesOrder::CountDesc => qb.push(" ORDER BY count DESC"),
+            TimeSeriesOrder::CountDesc => qb.push(" ORDER BY count DESC, bucket ASC"),
         };
 
         qb.push(" LIMIT ");
@@ -345,7 +345,7 @@ impl EventRepository<'_> {
             FROM core.events WHERE TRUE",
         );
         push_filters(&mut qb, &query);
-        qb.push(" GROUP BY source ORDER BY event_count DESC LIMIT ");
+        qb.push(" GROUP BY source ORDER BY event_count DESC, source ASC LIMIT ");
         qb.push_bind(limit);
 
         let rows: Vec<SourceStatsRow> = qb
