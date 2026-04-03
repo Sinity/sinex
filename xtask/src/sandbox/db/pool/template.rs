@@ -22,6 +22,7 @@ use super::provisioning::{
     is_duplicate_database_error, load_template_meta, quote_ident, store_template_meta,
     url_with_db_name,
 };
+use super::reset;
 
 // ── Statics ─────────────────────────────────────────────────────────────────
 
@@ -164,7 +165,14 @@ pub fn schema_fingerprint() -> TestResult<String> {
 mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
-    use super::{schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in};
+    use super::{
+        check_template_reuse, connect_admin_with_retry, create_template_db,
+        run_template_schema_apply, schema_fingerprint, schema_fingerprint_sources,
+        schema_fingerprint_sources_in, store_template_meta,
+    };
+    use crate::sandbox::db::pool::{PoolConfig, acquire_pool_test_guard};
+    use crate::sandbox::db::pool::config::replace_db_name;
+    use crate::sandbox::db::pool::meta::TemplateMeta;
     use std::fs;
     use xtask::sandbox::sinex_test;
 
@@ -201,6 +209,69 @@ mod tests {
     async fn schema_fingerprint_is_computable_for_workspace_sources() -> TestResult<()> {
         let fingerprint = schema_fingerprint()?;
         assert!(!fingerprint.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn template_reuse_rejects_actual_schema_drift(_ctx: TestContext) -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let template_name = format!("sinex_test_template_drift_{}", std::process::id());
+        let desired_fingerprint = Some(schema_fingerprint()?);
+
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        sqlx::query(&drop_query).execute(&mut admin_conn).await?;
+
+        create_template_db(&mut admin_conn, &template_name).await?;
+        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
+        let template_pool_max = config.slot_max_connections.max(1).saturating_mul(2).max(4);
+        let extensions =
+            run_template_schema_apply(&template_name, &template_admin_url, template_pool_max)
+                .await?;
+        store_template_meta(
+            &mut admin_conn,
+            &template_name,
+            &TemplateMeta {
+                fingerprint: desired_fingerprint
+                    .clone()
+                    .expect("desired fingerprint must be present"),
+                extensions,
+            },
+        )
+        .await?;
+
+        let template_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&template_admin_url)
+            .await?;
+        sqlx::query(
+            r#"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+                ADD CONSTRAINT source_material_registry_status_check
+                CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
+            "#,
+        )
+        .execute(&template_pool)
+        .await?;
+        template_pool.close().await;
+
+        let reusable = check_template_reuse(
+            &mut admin_conn,
+            &config.admin_url,
+            &template_name,
+            &desired_fingerprint,
+            true,
+        )
+        .await?;
+        assert!(
+            reusable.is_none(),
+            "template with actual schema drift must be recreated instead of reused"
+        );
+
+        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         Ok(())
     }
 }
@@ -254,8 +325,14 @@ pub(super) async fn ensure_template_database(
         // Take shared lock and check for reusable template
         take_shared_advisory_lock(&mut admin_conn, lock_key).await?;
 
-        if let Some(extensions) =
-            check_template_reuse(&mut admin_conn, template_name, &desired_fingerprint, true).await?
+        if let Some(extensions) = check_template_reuse(
+            &mut admin_conn,
+            admin_url,
+            template_name,
+            &desired_fingerprint,
+            false,
+        )
+        .await?
         {
             harden_template_database(&mut admin_conn, template_name).await?;
             cache_template_name(template_name);
@@ -291,9 +368,14 @@ pub(super) async fn ensure_template_database(
         }
 
         // Under exclusive lock: re-check before destructive work (another process may have rebuilt)
-        if let Some(extensions) =
-            check_template_reuse(&mut admin_conn, template_name, &desired_fingerprint, false)
-                .await?
+        if let Some(extensions) = check_template_reuse(
+            &mut admin_conn,
+            admin_url,
+            template_name,
+            &desired_fingerprint,
+            true,
+        )
+        .await?
         {
             downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
             harden_template_database(&mut admin_conn, template_name).await?;
@@ -359,6 +441,7 @@ async fn downgrade_to_shared_lock(admin_conn: &mut PgConnection, lock_key: i64) 
 /// When `check_drift` is true, also verifies extension versions haven't changed.
 async fn check_template_reuse(
     admin_conn: &mut PgConnection,
+    admin_url: &str,
     template_name: &str,
     desired_fingerprint: &Option<String>,
     check_drift: bool,
@@ -424,6 +507,13 @@ async fn check_template_reuse(
 
     // Check extension version drift (e.g. TimescaleDB upgrade changes shared object paths)
     if check_drift {
+        let schema_drift =
+            probe_template_schema_drift(admin_conn, admin_url, template_name).await?;
+        if let Some(reason) = schema_drift {
+            eprintln!("♻️  Template schema drift detected ({reason}); recreating template");
+            return Ok(None);
+        }
+
         let defaults = default_extension_versions(admin_conn).await?;
         for (ext, template_ver) in &extensions {
             if let Some(default_ver) = defaults.get(ext)
@@ -438,6 +528,40 @@ async fn check_template_reuse(
     }
 
     Ok(Some(extensions))
+}
+
+async fn probe_template_schema_drift(
+    admin_conn: &mut PgConnection,
+    admin_url: &str,
+    template_name: &str,
+) -> TestResult<Option<String>> {
+    let quoted = quote_ident(template_name);
+    sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"))
+        .execute(&mut *admin_conn)
+        .await?;
+
+    let template_admin_url = replace_db_name(admin_url, template_name);
+    let template_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&template_admin_url)
+        .await?;
+    let drift_result = reset::schema_mismatch_reason(&template_pool).await;
+    template_pool.close().await;
+
+    let _ = sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"))
+        .execute(&mut *admin_conn)
+        .await;
+    let _ = sqlx::query(
+        "SELECT pg_terminate_backend(pid) \
+         FROM pg_stat_activity \
+         WHERE datname = $1 AND pid <> pg_backend_pid()",
+    )
+    .bind(template_name)
+    .execute(&mut *admin_conn)
+    .await;
+
+    drift_result
 }
 
 /// Rebuild the template database from scratch: drop, create, apply schema, seed, optimize.
