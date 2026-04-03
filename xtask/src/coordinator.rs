@@ -976,7 +976,7 @@ pub fn coordinate_and_spawn(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    if JobCoordinator::should_coordinate(command, args) {
+    let coordinator = if JobCoordinator::should_coordinate(command, args) {
         let coordinator = JobCoordinator::new()
             .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
         match coordinator.request_with_format(command, args, false, ctx.writer().format()) {
@@ -996,9 +996,35 @@ pub fn coordinate_and_spawn(
                 });
             }
         }
-    }
+        Some(coordinator)
+    } else {
+        None
+    };
 
-    let bg_result = ctx.spawn_background(command, args)?;
+    let bg_result = match ctx.spawn_background(command, args) {
+        Ok(bg_result) => bg_result,
+        Err(error) => {
+            if let Some(coordinator) = coordinator.as_ref() {
+                match coordinator.clear_pending_state(command) {
+                    Ok(cleared) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "failed to spawn background `{command}` invocation after reserving coordinator state; cleared_pending_state={cleared}"
+                            )
+                        });
+                    }
+                    Err(clear_error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "failed to spawn background `{command}` invocation after reserving coordinator state; also failed to clear pending coordinator state: {clear_error}"
+                            )
+                        });
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
     update_coordinator_state(command, &bg_result).with_context(|| {
         format!("failed to record background `{command}` invocation in coordinator state")
     })?;

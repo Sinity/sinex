@@ -394,19 +394,25 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
     let release_result = template_guard.release().await;
     match provision_result {
         Ok(()) => {
-            release_result?;
+            release_result.wrap_err_with(|| {
+                format!("failed to release template guard after provisioning {db_name}")
+            })?;
             Ok(())
         }
-        Err(e) => {
+        Err(provision_error) => {
             // Deterministic recovery: if convergence of an existing slot fails for any reason,
             // release template guard and recreate the slot from the canonical template once.
-            release_result?;
+            release_result.wrap_err_with(|| {
+                format!(
+                    "slot provisioning failed for {db_name}: {provision_error}"
+                )
+            })?;
             eprintln!("  Slot provisioning failed for {db_name}; recreating slot from template");
             recreate_pool_database(db_name, slot_url)
                 .await
                 .map_err(|recreate_err| {
                     eyre!(format!(
-                        "slot provisioning failed for {db_name}: {e}; recreate failed: {recreate_err}"
+                        "slot provisioning failed for {db_name}: {provision_error}; recreate failed: {recreate_err}"
                     ))
                 })
         }
@@ -475,12 +481,18 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
     let release_result = template_guard.release().await;
     match recreate_result {
         Ok(()) => {
-            release_result?;
+            release_result.wrap_err_with(|| {
+                format!("failed to release template guard after recreating {db_name}")
+            })?;
             Ok(())
         }
-        Err(e) => {
-            let _ = release_result;
-            Err(e)
+        Err(recreate_error) => {
+            release_result.wrap_err_with(|| {
+                format!(
+                    "failed to release template guard after recreating {db_name}: {recreate_error}"
+                )
+            })?;
+            Err(recreate_error)
         }
     }
 }
