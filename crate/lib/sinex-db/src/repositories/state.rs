@@ -19,7 +19,6 @@ use sqlx::{FromRow, PgPool};
 use std::ops::Bound;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::warn;
 use uuid::Uuid;
 
 /// Database record for `operations_log` table
@@ -63,41 +62,32 @@ const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 const MANAGED_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
 
-fn node_heartbeat_stale_after() -> Duration {
+fn node_heartbeat_stale_after() -> DbResult<Duration> {
     match std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS") {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(value) if value > 0 => Duration::from_secs(value),
-            Ok(_) => {
-                warn!(
-                    variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
-                    value = %raw,
-                    default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
-                    "Node heartbeat stale timeout override must be greater than zero; using default"
-                );
-                Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        Ok(raw) => {
+            let value = raw.parse::<u64>().map_err(|error| {
+                SinexError::configuration(
+                    "SINEX_NODE_HEARTBEAT_STALE_SECS must be a positive integer",
+                )
+                .with_std_error(&error)
+                .with_context("value", raw.clone())
+            })?;
+
+            if value == 0 {
+                return Err(SinexError::configuration(
+                    "SINEX_NODE_HEARTBEAT_STALE_SECS must be greater than zero",
+                )
+                .with_context("value", raw));
             }
-            Err(error) => {
-                warn!(
-                    variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
-                    value = %raw,
-                    %error,
-                    default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
-                    "Invalid node heartbeat stale timeout override; using default"
-                );
-                Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
-            }
-        },
-        Err(std::env::VarError::NotPresent) => {
-            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+
+            Ok(Duration::from_secs(value))
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = "SINEX_NODE_HEARTBEAT_STALE_SECS",
-                default_secs = DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
-                "Node heartbeat stale timeout override is not valid UTF-8; using default"
-            );
-            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
-        }
+        Err(std::env::VarError::NotPresent) => Ok(Duration::from_secs(
+            DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
+        )),
+        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(
+            "SINEX_NODE_HEARTBEAT_STALE_SECS must be valid UTF-8",
+        )),
     }
 }
 
@@ -1294,6 +1284,8 @@ impl StateRepository<'_> {
 
     /// Run basic system health checks
     pub async fn run_system_health_checks(&self) -> DbResult<SystemHealthReport> {
+        let stale_after = node_heartbeat_stale_after()?;
+
         // Check database connectivity
         let (db_connected, db_connect_error) = match sqlx::query!("SELECT 1 as one")
             .fetch_one(self.pool)
@@ -1316,8 +1308,7 @@ impl StateRepository<'_> {
             probe_health_bool(self.table_exists("core", "events").await);
 
         // Get node health
-        let (node_health, node_health_error) =
-            probe_health(self.get_node_health(node_heartbeat_stale_after()).await);
+        let (node_health, node_health_error) = probe_health(self.get_node_health(stale_after).await);
 
         Ok(SystemHealthReport {
             db_connected,
@@ -1425,12 +1416,8 @@ pub struct SystemHealthReport {
 #[cfg(test)]
 mod tests {
     // Inline because this covers local env/default and report helper semantics.
-    use super::{
-        DEFAULT_NODE_HEARTBEAT_STALE_SECS, node_heartbeat_stale_after, probe_health,
-        probe_health_bool,
-    };
+    use super::{node_heartbeat_stale_after, probe_health, probe_health_bool};
     use sinex_primitives::error::SinexError;
-    use std::time::Duration;
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
@@ -1438,9 +1425,11 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "bogus");
 
-        assert_eq!(
-            node_heartbeat_stale_after(),
-            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        let error = node_heartbeat_stale_after().expect_err("invalid override should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_NODE_HEARTBEAT_STALE_SECS must be a positive integer")
         );
         Ok(())
     }
@@ -1450,9 +1439,11 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "0");
 
-        assert_eq!(
-            node_heartbeat_stale_after(),
-            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs())
+        let error = node_heartbeat_stale_after().expect_err("zero override should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_NODE_HEARTBEAT_STALE_SECS must be greater than zero")
         );
         Ok(())
     }
