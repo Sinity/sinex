@@ -297,7 +297,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let temp_path = handle.temp_path().to_path_buf();
 
     manager.append_slice(&mut handle, b"partial data").await?;
-    manager.cancel(handle, "user_cancelled").await?;
+    manager.cancel(&mut handle, "user_cancelled").await?;
 
     ctx.timing()
         .wait_for_condition(

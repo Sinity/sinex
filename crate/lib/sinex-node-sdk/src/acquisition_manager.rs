@@ -532,9 +532,9 @@ impl AcquisitionManager {
     }
 
     /// Cancel a material capture and finalize with cancellation metadata.
-    pub async fn cancel(&self, mut handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
+    pub async fn cancel(&self, handle: &mut SourceMaterialHandle, reason: &str) -> NodeResult<()> {
         self.finalize_with_metadata(
-            &mut handle,
+            handle,
             reason,
             json!({
                 "cancelled": true,

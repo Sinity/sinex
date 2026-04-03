@@ -747,7 +747,7 @@ async fn reconcile_shared(
     let mut summary = StageReconciliationSummary::default();
 
     for material_id in stale_ids {
-        let _ = {
+        let info = {
             let mut registry_guard = registry.lock().await;
             registry_guard.remove(&material_id)
         };
@@ -756,18 +756,22 @@ async fn reconcile_shared(
             handles_guard.remove(&material_id)
         };
 
-        if let Some(handle) = handle {
-            match manager.cancel(handle, ORPHAN_CLEANUP_REASON).await {
+        if let Some(mut handle) = handle {
+            match manager.cancel(&mut handle, ORPHAN_CLEANUP_REASON).await {
                 Ok(()) => {
                     summary.cancelled += 1;
                     info!(%material_id, "Cancelled stale Stage-as-You-Go material");
                 }
                 Err(err) => {
+                    if let Some(info) = info {
+                        registry.lock().await.insert(material_id, info);
+                    }
+                    handles.lock().await.insert(material_id, handle);
                     summary.errors += 1;
                     warn!(
                         error = %err,
                         %material_id,
-                        "Failed to cancel stale Stage-as-You-Go material"
+                        "Failed to cancel stale Stage-as-You-Go material; preserving state for retry"
                     );
                 }
             }
