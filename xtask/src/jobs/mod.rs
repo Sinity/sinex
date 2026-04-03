@@ -413,13 +413,30 @@ impl JobManager {
             }
 
             // Send SIGTERM to the entire process group (child is its own group leader)
-            let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
+            match send_job_signal(nix_pid, nix::sys::signal::Signal::SIGTERM) {
+                Ok(SignalDelivery::Delivered) => {}
+                Ok(SignalDelivery::Missing) => return,
+                Err(error) => {
+                    eprintln!(
+                        "Warning: failed to send SIGTERM to timed-out background job {job_id} (pid {pid}): {error}"
+                    );
+                    return;
+                }
+            }
 
             // Grace period, then SIGKILL if still alive — but first verify the PID still belongs
             // to a cargo/xtask process to guard against PID reuse (R4 fix).
             std::thread::sleep(Duration::from_secs(2));
             if nix::sys::signal::kill(nix_pid, None).is_ok() && pid_is_expected_process(pid) {
-                let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                match send_job_signal(nix_pid, nix::sys::signal::Signal::SIGKILL) {
+                    Ok(SignalDelivery::Delivered | SignalDelivery::Missing) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "Warning: failed to send SIGKILL to timed-out background job {job_id} (pid {pid}): {error}"
+                        );
+                        return;
+                    }
+                }
             }
 
             // Write exit_code=124 (standard timeout exit code) for the job reader
@@ -580,13 +597,25 @@ impl JobManager {
         if matches!(job.job_status, JobLifecycleStatus::Running) {
             if let Some(job_pid) = job.pid {
                 let pid = nix::unistd::Pid::from_raw(job_pid as i32);
-                send_job_signal(pid, nix::sys::signal::Signal::SIGTERM);
+                match send_job_signal(pid, nix::sys::signal::Signal::SIGTERM)? {
+                    SignalDelivery::Delivered => {}
+                    SignalDelivery::Missing => {
+                        self.reap_zombies()?;
+                        return Ok(false);
+                    }
+                }
 
                 // Grace period then SIGKILL if still alive (X10 fix)
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     if job_process_is_alive(pid) {
-                        send_job_signal(pid, nix::sys::signal::Signal::SIGKILL);
+                        if let Err(error) = send_job_signal(pid, nix::sys::signal::Signal::SIGKILL)
+                        {
+                            eprintln!(
+                                "Warning: failed to send SIGKILL to cancelled background job pid {}: {error}",
+                                pid.as_raw()
+                            );
+                        }
                     }
                 });
             }
@@ -697,17 +726,34 @@ fn job_process_is_alive(pid: nix::unistd::Pid) -> bool {
     )
 }
 
-fn send_job_signal(pid: nix::unistd::Pid, signal: nix::sys::signal::Signal) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SignalDelivery {
+    Delivered,
+    Missing,
+}
+
+fn send_job_signal(
+    pid: nix::unistd::Pid,
+    signal: nix::sys::signal::Signal,
+) -> Result<SignalDelivery> {
     match nix::sys::signal::killpg(pid, signal) {
-        Ok(()) => {}
+        Ok(()) => Ok(SignalDelivery::Delivered),
         Err(nix::errno::Errno::ESRCH)
         | Err(nix::errno::Errno::EPERM)
-        | Err(nix::errno::Errno::EINVAL) => {
-            let _ = nix::sys::signal::kill(pid, signal);
-        }
-        Err(_) => {
-            let _ = nix::sys::signal::kill(pid, signal);
-        }
+        | Err(nix::errno::Errno::EINVAL) => match nix::sys::signal::kill(pid, signal) {
+            Ok(()) => Ok(SignalDelivery::Delivered),
+            Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
+            Err(error) => Err(eyre!(
+                "failed to send {signal:?} to job pid {pid}: {error}"
+            )),
+        },
+        Err(error) => match nix::sys::signal::kill(pid, signal) {
+            Ok(()) => Ok(SignalDelivery::Delivered),
+            Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
+            Err(fallback_error) => Err(eyre!(
+                "failed to send {signal:?} to job pid {pid}: process-group error {error}; process error {fallback_error}"
+            )),
+        },
     }
 }
 
@@ -1074,6 +1120,56 @@ mod tests {
             .get_background_job_by_id(job_id)?
             .ok_or_else(|| eyre!("missing background job after cancellation"))?;
         assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_send_job_signal_reports_missing_process() -> TestResult<()> {
+        let missing_pid = nix::unistd::Pid::from_raw(999_999_999);
+        let outcome = send_job_signal(missing_pid, nix::sys::signal::Signal::SIGTERM)?;
+        assert_eq!(outcome, SignalDelivery::Missing);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cancel_does_not_claim_missing_process_was_killed() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        let stdout_path = jobs_dir.join("stdout.log");
+        let stderr_path = jobs_dir.join("stderr.log");
+        let fake_pid = 999_999_999_u32;
+        let (invocation_id, job_id) = manager
+            .db
+            .lock()
+            .map_err(|_| eyre!("db lock poisoned"))?
+            .start_background_job("check", &[], Some(fake_pid), &stdout_path, &stderr_path)?;
+
+        assert!(
+            !manager.cancel(job_id)?,
+            "cancel should refuse to claim success when the tracked process is already gone"
+        );
+
+        let db = manager.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| eyre!("missing invocation after stale cancel attempt"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Failed);
+
+        let job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| eyre!("missing background job after stale cancel attempt"))?;
+        assert!(
+            matches!(job.job_status, JobLifecycleStatus::Orphaned),
+            "missing-process cancel should reap the stale job instead of marking it killed"
+        );
         Ok(())
     }
 
