@@ -944,15 +944,8 @@ fn read_state(path: &std::path::Path) -> Result<Option<CoordinationState>> {
     };
     match serde_json::from_str::<CoordinationState>(&content) {
         Ok(state) => Ok(Some(state)),
-        Err(e) => {
-            tracing::warn!(
-                target: "xtask::coordinator",
-                path = %path.display(),
-                error = %e,
-                "corrupt coordinator state — treating as empty"
-            );
-            Ok(None)
-        }
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to parse coordinator state: {}", path.display())),
     }
 }
 
@@ -983,9 +976,9 @@ pub fn coordinate_and_spawn(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    if JobCoordinator::should_coordinate(command, args)
-        && let Ok(coordinator) = JobCoordinator::new()
-    {
+    if JobCoordinator::should_coordinate(command, args) {
+        let coordinator = JobCoordinator::new()
+            .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
         match coordinator.request_with_format(command, args, false, ctx.writer().format()) {
             Ok(
                 result @ (CoordinationResult::Attached { .. }
@@ -998,13 +991,17 @@ pub fn coordinate_and_spawn(
                 // Fall through to spawn — coordinator reserved the slot
             }
             Err(e) => {
-                tracing::warn!(target: "xtask::coordinator", error = %e, "coordinator request failed, spawning directly");
+                return Err(e).with_context(|| {
+                    format!("failed to coordinate background `{command}` invocation")
+                });
             }
         }
     }
 
     let bg_result = ctx.spawn_background(command, args)?;
-    update_coordinator_state(command, &bg_result);
+    update_coordinator_state(command, &bg_result).with_context(|| {
+        format!("failed to record background `{command}` invocation in coordinator state")
+    })?;
     Ok(bg_result)
 }
 
@@ -1014,106 +1011,58 @@ pub fn coordinate_and_spawn(
 /// 1. `coordinator.request()` reserves a slot with sentinel values
 /// 2. `spawn_background()` creates the actual process
 /// 3. This function updates the slot with real values
-pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
-    let clear_pending = |coordinator: Option<&JobCoordinator>, reason: &str| {
-        let clear_result = match coordinator {
+pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Result<()> {
+    let clear_pending = |coordinator: Option<&JobCoordinator>, reason: &str| -> Result<bool> {
+        match coordinator {
             Some(coordinator) => coordinator.clear_pending_state(command),
-            None => match JobCoordinator::new() {
-                Ok(coordinator) => coordinator.clear_pending_state(command),
-                Err(error) => {
-                    tracing::warn!(
-                        target: "xtask::coordinator",
-                        command,
-                        reason,
-                        error = %error,
-                        "failed to initialize coordinator while clearing pending spawn state"
-                    );
-                    return;
-                }
-            },
-        };
-
-        match clear_result {
-            Ok(cleared) => {
-                tracing::warn!(
-                    target: "xtask::coordinator",
-                    command,
-                    reason,
-                    cleared_pending_state = cleared,
-                    "cleared pending coordinator state after failed spawn recording"
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "xtask::coordinator",
-                    command,
-                    reason,
-                    error = %error,
-                    "failed to clear pending coordinator state after failed spawn recording"
-                );
-            }
+            None => JobCoordinator::new()
+                .with_context(|| {
+                    format!(
+                        "failed to initialize coordinator while clearing pending spawn state for `{command}`"
+                    )
+                })?
+                .clear_pending_state(command),
         }
+        .with_context(|| format!("{reason} for `{command}`"))
     };
 
     let Some(data) = &bg_result.data else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            "background spawn returned no data; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no data")?;
+        bail!(
+            "background spawn returned no data for `{command}`; cleared_pending_state={cleared}"
         );
-        clear_pending(None, "background spawn returned no data");
-        return;
     };
 
     let Some(job_id) = data["job_id"].as_i64() else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            data = %data,
-            "background spawn returned no job_id; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no job_id")?;
+        bail!(
+            "background spawn returned no job_id for `{command}`; cleared_pending_state={cleared}; data={data}"
         );
-        clear_pending(None, "background spawn returned no job_id");
-        return;
     };
 
     let Some(pid) = data["pid"].as_u64() else {
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            data = %data,
-            "background spawn returned no pid; coordinator state was not updated"
+        let cleared = clear_pending(None, "background spawn returned no pid")?;
+        bail!(
+            "background spawn returned no pid for `{command}`; cleared_pending_state={cleared}; data={data}"
         );
-        clear_pending(None, "background spawn returned no pid");
-        return;
     };
 
-    let coordinator = match JobCoordinator::new() {
-        Ok(coordinator) => coordinator,
-        Err(error) => {
-            tracing::warn!(
-                target: "xtask::coordinator",
-                command,
-                job_id,
-                pid,
-                error = %error,
-                "failed to initialize coordinator while recording spawned job"
-            );
-            clear_pending(None, "failed to initialize coordinator while recording spawned job");
-            return;
-        }
-    };
+    let coordinator = JobCoordinator::new()
+        .with_context(|| format!("failed to initialize coordinator while recording `{command}`"))?;
 
     if let Err(error) = coordinator.update_state(command, job_id, pid as u32) {
-        clear_pending(Some(&coordinator), "failed to persist coordinator state for spawned job");
-        tracing::warn!(
-            target: "xtask::coordinator",
-            command,
-            job_id,
-            pid,
-            error = %error,
-            "failed to persist coordinator state for spawned job"
-        );
+        let cleared = clear_pending(
+            Some(&coordinator),
+            "failed to clear pending coordinator state after spawn recording failure",
+        )?;
+        return Err(error).with_context(|| {
+            format!(
+                "failed to persist coordinator state for spawned `{command}` job {job_id} (pid {pid}); cleared_pending_state={cleared}"
+            )
+        });
     }
+
+    Ok(())
 }
 
 /// Convert a coordination result to a command result for the --bg path.
@@ -2029,7 +1978,11 @@ mod tests {
         let bg_result = CommandResult::success().with_data(serde_json::json!({
             "job_id": 41,
         }));
-        update_coordinator_state("check", &bg_result);
+        let error = update_coordinator_state("check", &bg_result)
+            .expect_err("missing pid must surface as a spawn recording failure");
+        let message = format!("{error:#}");
+        assert!(message.contains("background spawn returned no pid"));
+        assert!(message.contains("cleared_pending_state=true"));
 
         assert!(coordinator.state("check")?.is_none());
         Ok(())
@@ -2081,8 +2034,10 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("state.json");
         fs::write(&path, "not json at all {{{")?;
-        let result = read_state(&path)?;
-        assert!(result.is_none());
+        let error = read_state(&path).expect_err("corrupt coordinator state must surface");
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to parse coordinator state"));
+        assert!(message.contains(path.display().to_string().as_str()));
         Ok(())
     }
 
