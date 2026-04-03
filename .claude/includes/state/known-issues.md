@@ -14,15 +14,23 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Payload-to-material correspondence is still weak | event pipeline | Still the most important unresolved provenance-integrity gap. |
 | Browser/webhistory historical capture is still missing | source capture surface | Still a real product/runtime gap, but the implementation plan now lives in `040`. |
-| Checkpoint save failure is still warn-only | node-sdk checkpoint persistence | Still a trust gap during crash/restart scenarios. |
-| Full original pull-batch atomicity is not the consumer contract | `jetstream_consumer.rs` | The remaining task is to either keep defending this model or change it intentionally. |
 
 ### Recently Fixed (verified 2026-04-03)
 
 | Issue | Fix |
 |-------|-----|
+| Payload-to-material correspondence was weak | `total_bytes` column on `raw.source_material_registry` + ingestd `anchor_byte >= 0` validation |
+| Text-search pagination cursor drift | `TRUNC(ts_rank_cd, 6)` in projection + matching Rust cursor truncation |
+| Nested TextSearch lost snippet/relevance semantics | COALESCE fallback + documented limitation for combined terms |
+| Numeric PathOp aborted on non-numeric strings | CASE WHEN jsonb_typeof guard on numeric cast |
+| CountBy/SourceStats ties non-deterministic | Deterministic tiebreaker ORDER BY on all aggregate queries |
+| Checkpoint save failure was warn-only | Consecutive failure counter → hard error after 3 in DerivedNodeAdapter + StreamNode |
+| Pull-batch atomicity contract undocumented | Explicit module-level contract documentation in jetstream_consumer.rs |
+| DB/session/lock residuals | Advisory lock already hardened; no remaining issues found |
+| Trust boundary: ts_orig + anchor_byte unvalidated | ingestd validates future ts_orig (warn) + negative anchor_byte (DLQ route) |
+| Duplicated EnvGuard/ScopedEnvGuard in tests | Shared EnvGuard with `with_keys()`, `set_single()` + test file dedup |
+| Duplicated env-parse patterns in nodes | 5 nodes → `sinex_primitives::env` shared helpers |
 | Replay state machine lacks FOR UPDATE | All transitions now use `SELECT ... FOR UPDATE` |
 | DashMap stale assembly entries | Cleanup task + remove on finalize |
 | std::sync::Mutex no poison recovery | `unwrap_or_else(poisoned.into_inner())` |
