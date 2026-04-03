@@ -17,7 +17,7 @@
 //! 5. **Queue** — Running job has different scope → queue after it.
 //! 6. **Start** — No running job → start new.
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use nix::fcntl::{FlockArg, flock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
-use crate::history::InvocationStatus;
+use crate::history::{InvocationStatus, JobLifecycleStatus};
 use crate::output::OutputFormat;
 
 /// Result of a coordination request.
@@ -358,7 +358,7 @@ impl JobCoordinator {
                 // Cancel stale bg job and start fresh
                 let old_job_id = state.job_id;
                 cancel_process(state.pid);
-                mark_cancelled(old_job_id);
+                mark_cancelled(old_job_id)?;
                 remove_state_file(
                     state_path,
                     "remove superseded coordinator state before starting replacement job",
@@ -861,19 +861,25 @@ fn cancel_process(pid: u32) {
     }
 }
 
-/// Mark an invocation as cancelled in the history DB (best-effort).
-fn mark_cancelled(job_id: i64) {
+/// Mark a superseded background job and its durable invocation as cancelled.
+fn mark_cancelled(job_id: i64) -> Result<()> {
     let cfg = config();
-    match crate::history::HistoryDb::open(&cfg.history_db_path()) {
-        Ok(db) => {
-            if let Err(e) = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0) {
-                tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "failed to mark invocation cancelled");
-            }
-        }
-        Err(e) => {
-            tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "could not open history DB to mark invocation cancelled");
-        }
+    let db = crate::history::HistoryDb::open(&cfg.history_db_path())
+        .with_context(|| format!("failed to open history DB while cancelling superseded job {job_id}"))?;
+    let job = db
+        .get_background_job_by_id(job_id)?
+        .ok_or_else(|| eyre!("background job {job_id} missing while recording superseded cancellation"))?;
+    if let Some(invocation_id) = job.invocation_id {
+        db.finish_invocation(invocation_id, InvocationStatus::Cancelled, None, 0.0)
+            .with_context(|| {
+                format!(
+                    "failed to finish invocation {invocation_id} while cancelling superseded job {job_id}"
+                )
+            })?;
     }
+    db.finish_background_job(job_id, JobLifecycleStatus::Killed, None, 0.0, None, None)
+        .with_context(|| format!("failed to finish superseded background job {job_id}"))?;
+    Ok(())
 }
 
 fn read_state(path: &std::path::Path) -> Result<Option<CoordinationState>> {
@@ -1714,6 +1720,47 @@ mod tests {
     async fn test_read_state_missing_file() -> TestResult<()> {
         let result = read_state(std::path::Path::new("/nonexistent/path/state.json"))?;
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_mark_cancelled_finishes_background_job_and_invocation() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let _history_guard = env_set_path("XTASK_HISTORY_DB", &db_path);
+        let db = crate::history::HistoryDb::open(&db_path)?;
+        let stdout_path = dir.path().join("stdout.log");
+        let stderr_path = dir.path().join("stderr.log");
+        let (invocation_id, job_id) =
+            db.start_background_job("check", &[], Some(42_424), &stdout_path, &stderr_path)?;
+        drop(db);
+
+        mark_cancelled(job_id)?;
+
+        let db = crate::history::HistoryDb::open(&db_path)?;
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing invocation after supersede cancellation"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
+        assert!(invocation.invocation.finished_at.is_some());
+
+        let job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing background job after supersede cancellation"))?;
+        assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_mark_cancelled_surfaces_missing_background_job() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let _history_guard = env_set_path("XTASK_HISTORY_DB", &db_path);
+        let _db = crate::history::HistoryDb::open(&db_path)?;
+
+        let error = mark_cancelled(999).expect_err("missing background job must be surfaced");
+        let message = format!("{error:#}");
+        assert!(message.contains("background job 999 missing"));
         Ok(())
     }
 
