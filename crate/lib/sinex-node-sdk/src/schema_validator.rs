@@ -172,14 +172,14 @@ impl NodeSchemaValidator {
     ///
     /// ## Returns
     ///
-    /// - `Ok(())`: Payload is valid
+    /// - `Ok(schema_id)`: Payload is valid and matched this schema
     /// - `Err(Validation)`: Payload fails schema validation or schema not available in edge mode
     pub async fn validate(
         &self,
         source: &str,
         event_type: &str,
         payload: &JsonValue,
-    ) -> NodeResult<()> {
+    ) -> NodeResult<Uuid> {
         // Try cache first
         let schema_id_opt = {
             let lookup = self.lookup.read();
@@ -225,7 +225,7 @@ impl NodeSchemaValidator {
             )));
         }
 
-        Ok(())
+        Ok(schema_id)
     }
 
     /// Fetch schema from database and add to cache (full mode only)
@@ -356,5 +356,37 @@ async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Ar
 impl Default for NodeSchemaValidator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl NodeSchemaValidator {
+    pub(crate) fn register_test_schema(
+        &self,
+        schema_id: Uuid,
+        source: &str,
+        event_type: &str,
+        schema_json: JsonValue,
+    ) -> NodeResult<()> {
+        let validator = jsonschema::validator_for(&schema_json).map_err(|error| {
+            crate::SinexError::validation(format!(
+                "Failed to compile test schema for {source}.{event_type}: {error}"
+            ))
+        })?;
+
+        self.schemas.write().insert(
+            schema_id,
+            CompiledSchema {
+                schema_id,
+                source: source.to_string(),
+                event_type: event_type.to_string(),
+                version: "test".to_string(),
+                validator: Arc::new(validator),
+            },
+        );
+        self.lookup
+            .write()
+            .insert((source.to_string(), event_type.to_string()), schema_id);
+        Ok(())
     }
 }
