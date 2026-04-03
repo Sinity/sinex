@@ -6,8 +6,8 @@ use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::units::Seconds;
 use sqlx::pool::PoolConnection;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{PgPool, Postgres};
+use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
+use sqlx::{Connection, PgPool, Postgres};
 use std::env;
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -199,6 +199,10 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         .validate()
         .map_err(|e| SinexError::validation("pool config validation failed").with_std_error(&e))?;
 
+    if config.validate_against_postgres_max {
+        validate_pool_size_against_postgres_max(database_url, config.max_connections).await?;
+    }
+
     let statement_timeout_secs = config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
@@ -211,15 +215,18 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         ))
         .after_connect(move |conn, _meta| {
             Box::pin(async move {
-                let timeout_value = if statement_timeout_secs == 0 {
-                    "0".to_string()
-                } else {
-                    format!("{statement_timeout_secs}s")
-                };
-                sqlx::query(&format!("SET statement_timeout = '{timeout_value}'"))
-                    .execute(&mut *conn)
-                    .await?;
+                configure_session_timeout(conn, statement_timeout_secs).await?;
                 Ok(())
+            })
+        })
+        .before_acquire(move |conn, _meta| {
+            Box::pin(async move {
+                if let Err(error) = configure_session_timeout(conn, statement_timeout_secs).await {
+                    warn!(error = %error, "Database pooled connection failed session preflight");
+                    return Ok(false);
+                }
+
+                Ok(true)
             })
         })
         .connect(database_url)
@@ -245,6 +252,50 @@ pub fn get_database_url() -> Result<String> {
         .map_err(|_| SinexError::configuration("DATABASE_URL environment variable is required"))?;
 
     resolve_effective_database_url(&base_url)
+}
+
+async fn validate_pool_size_against_postgres_max(
+    database_url: &str,
+    configured_max_connections: u32,
+) -> Result<()> {
+    let mut connection = PgConnection::connect(database_url)
+        .await
+        .map_err(SinexError::from)?;
+
+    let postgres_max_connections = sqlx::query_scalar::<_, String>("SHOW max_connections")
+        .fetch_one(&mut connection)
+        .await
+        .map_err(SinexError::from)?;
+    let postgres_max_connections = postgres_max_connections.parse::<u32>().map_err(|error| {
+        SinexError::configuration("failed to parse PostgreSQL max_connections")
+            .with_std_error(&error)
+            .with_context("value", postgres_max_connections.clone())
+    })?;
+
+    if configured_max_connections > postgres_max_connections {
+        return Err(SinexError::configuration(format!(
+            "configured pool max_connections ({configured_max_connections}) exceeds PostgreSQL max_connections ({postgres_max_connections})"
+        )));
+    }
+
+    Ok(())
+}
+
+async fn configure_session_timeout(
+    conn: &mut PgConnection,
+    statement_timeout_secs: u64,
+) -> sqlx::Result<()> {
+    let timeout_value = if statement_timeout_secs == 0 {
+        "0".to_string()
+    } else {
+        format!("{statement_timeout_secs}s")
+    };
+
+    sqlx::query("SELECT pg_catalog.set_config('statement_timeout', $1, false)")
+        .bind(timeout_value)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 pub async fn create_pool_strict() -> Result<DbPool> {
