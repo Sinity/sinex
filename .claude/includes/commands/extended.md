@@ -23,7 +23,7 @@ sinexctl trace <event-id>               # Provenance chain
 sinexctl trace <event-id> -f dot        # Graphviz output
 
 # Operations
-sinexctl gateway ingest --source test --event-type test.ping  # BROKEN: produces provenance-less events → DLQ
+sinexctl gateway ingest --source test --event-type test.ping --payload '{}'  # gateway -> NATS -> ingestd smoke event
 sinexctl import atuin                    # Import Atuin history
 sinexctl import atuin --resume           # Resume interrupted import
 sinexctl watch                           # Live SSE event stream

@@ -4,42 +4,44 @@
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| `block_on()` in async runtime | `blob_manager.rs:503` | `futures::executor::block_on()` in sync method — will panic or deadlock from tokio context |
-| Gateway ingest produces provenance-less events | `handlers/ingest.rs:50-58` | `events.ingest` RPC lacks provenance → always fails XOR CHECK → DLQ. **Smoke test is broken.** |
-| `blocking_write()` on tokio RwLock from OS thread | `rpc_server.rs:279` | In file-watcher callback on std::thread::spawn |
-| MaterialReadySet unbounded memory | `material_ready_set.rs` | No eviction logic |
+| Payload-to-material correspondence is not strongly enforced end to end | event pipeline | An event can still claim a source material + anchor without byte-level proof that the emitted payload truly corresponds to those bytes. |
 
 ### Confirmed Bugs (High)
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Replay cascade restore silently discarded | `replay_control.rs:1561` | `let _ = restore_cascade(...)` — data loss on restore failure |
-| Events persisted but invisible on confirmation failure | `jetstream_consumer.rs:779-806` | DB commit succeeds but NAKs entire batch on any confirmation failure |
-| DLQ bypass when no transport | `derived_node/adapter.rs:322-324` | Events dropped if runtime is None |
-| Advisory lock on pooled connection | `state_machine.rs:1003` | Lock/unlock may hit different sessions |
+| Browser/webhistory historical capture path is still missing | source capture surface | Chrome/qutebrowser historical import remains a real product/runtime gap; target-vision assumptions here are still unproven. |
 
 ### Confirmed Bugs (Medium)
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Privacy engine unused by automata | `derived_node/adapter.rs` | Zero privacy imports. Derived events inherit ingestor leaks |
-| `hard_delete_by_source` bypasses audit trigger | `persistence.rs:1647` | DELETE without operation_id |
-| Provenance corruption via default UUID | `adapter.rs:262` | `event.id` None → zero UUID as source_event_id |
+| Checkpoint save failure is still warn-only | node-sdk checkpoint persistence | A crash after a failed checkpoint write can still replay stale work and rely on downstream dedupe/DLQ rather than durable progress. |
+| Full original pull-batch atomicity is still not the consumer contract | `jetstream_consumer.rs` | The current model is explicit per-successful-attempt durability, not whole-pull all-or-nothing settlement. |
 
 ### Confirmed Bugs (Low)
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| `core.node_runs` table never populated | Schema | Zero INSERT calls |
 | TimeSeries COALESCE misleading | `composable_query.rs:306` | ts_orig NOT NULL, COALESCE never fires; real issue is ingestd fills now() |
 
-### Recently Fixed (verified 2026-03-23)
+### Recently Fixed (verified 2026-04-03)
 
 | Issue | Fix |
 |-------|-----|
 | Replay state machine lacks FOR UPDATE | All transitions now use `SELECT ... FOR UPDATE` |
 | DashMap stale assembly entries | Cleanup task + remove on finalize |
 | std::sync::Mutex no poison recovery | `unwrap_or_else(poisoned.into_inner())` |
+| Gateway ingest smoke path was broken | `events.ingest` now registers source material and emits provenance-valid envelopes |
+| Token watcher startup blocked the runtime | `rpc_server.rs` now uses async readiness handoff; the old `blocking_write()` callback path is gone |
+| `blob_manager.rs` contained sync `block_on()` in runtime-sensitive code | Re-checked and retired; no sync `block_on()` path remains there |
+| `MaterialReadySet` had no bounded-maintenance proof | Maintenance/eviction behavior is now covered by ingestd tests |
+| Replay restore silently dropped compensating invalidation | `replay_control.rs` now republishes the compensating invalidation path |
+| Derived-node DLQ fallback could fail open without transport | `derived_node/adapter.rs` now fails honest when DLQ transport is unavailable |
+| `hard_delete_by_source` audit-trigger bypass was only a suspicion | Delete-by-source archiving is now regression-locked through the audit trigger |
+| `core.node_runs` looked like dead schema | runtime state now inserts and updates real `node_runs` rows |
+| Automata privacy propagation had no proof | privacy filtering is now regression-locked on the invalidation output path |
+| History DB schema-version read failures could take down `xtask jobs list --json` | `HistoryDb::open()` now recreates unreadable junk-schema history DBs instead of failing the jobs surface |
 
 ### Design Tensions (Both Sides Are Correct)
 
