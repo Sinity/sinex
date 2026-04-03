@@ -131,18 +131,25 @@ fn remember_recent_event_id(state: &mut SubscriptionState, event_id: Id<Event<Js
 }
 
 impl SubscriptionSlot {
-    fn new(filter: SubscriptionFilter) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
+    fn new(
+        filter: SubscriptionFilter,
+        resume_from: Option<Id<Event<JsonValue>>>,
+    ) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
         let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
+        let mut state = SubscriptionState {
+            next_seq: 1,
+            gap_start: None,
+            gap_count: 0,
+            recent_delivered_event_ids: VecDeque::with_capacity(RECENT_DELIVERED_EVENT_IDS),
+            recent_delivered_event_id_set: HashSet::with_capacity(RECENT_DELIVERED_EVENT_IDS),
+        };
+        if let Some(event_id) = resume_from {
+            remember_recent_event_id(&mut state, event_id);
+        }
         let slot = Arc::new(Self {
             filter,
             tx,
-            state: Mutex::new(SubscriptionState {
-                next_seq: 1,
-                gap_start: None,
-                gap_count: 0,
-                recent_delivered_event_ids: VecDeque::with_capacity(RECENT_DELIVERED_EVENT_IDS),
-                recent_delivered_event_id_set: HashSet::with_capacity(RECENT_DELIVERED_EVENT_IDS),
-            }),
+            state: Mutex::new(state),
         });
         (slot, rx)
     }
@@ -227,7 +234,11 @@ impl SubscriptionBus {
     }
 
     /// Register a new subscription. Returns `(sub_id, receiver)`.
-    pub fn register(&self, filter: SubscriptionFilter) -> Option<(u64, mpsc::Receiver<SseMessage>)> {
+    pub fn register(
+        &self,
+        filter: SubscriptionFilter,
+        resume_from: Option<Id<Event<JsonValue>>>,
+    ) -> Option<(u64, mpsc::Receiver<SseMessage>)> {
         if self
             .active_subscriptions
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -239,7 +250,7 @@ impl SubscriptionBus {
         }
 
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        let (slot, rx) = SubscriptionSlot::new(filter);
+        let (slot, rx) = SubscriptionSlot::new(filter, resume_from);
         self.subscriptions.insert(id, slot);
         debug!(sub_id = id, "SSE subscription registered");
         Some((id, rx))
@@ -666,7 +677,7 @@ mod tests {
     async fn flush_batch_preserves_missing_confirmations_for_retry(ctx: TestContext) -> TestResult<()> {
         let bus = SubscriptionBus::new();
         let (_, mut rx) = bus
-            .register(SubscriptionFilter::default())
+            .register(SubscriptionFilter::default(), None)
             .expect("test subscription should register");
 
         let event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
@@ -697,7 +708,7 @@ mod tests {
 
     #[sinex_test]
     async fn deliver_suppresses_recently_redelivered_events() -> TestResult<()> {
-        let (slot, mut rx) = SubscriptionSlot::new(SubscriptionFilter::default());
+        let (slot, mut rx) = SubscriptionSlot::new(SubscriptionFilter::default(), None);
         let mut event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
             .from_material(Id::from_uuid(Uuid::now_v7()))
             .build()?;
@@ -725,10 +736,38 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn register_seeds_recent_event_id_for_reconnect_deduplication() -> TestResult<()> {
+        let event_id = Id::from_uuid(Uuid::now_v7());
+        let mut event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
+            .from_material(Id::from_uuid(Uuid::now_v7()))
+            .build()?;
+        event.id = Some(event_id);
+        let event = Arc::new(event);
+
+        let bus = SubscriptionBus::new();
+        let (_, mut rx) = bus
+            .register(SubscriptionFilter::default(), Some(event_id))
+            .expect("test subscription should register");
+        let slot = bus
+            .subscriptions
+            .iter()
+            .next()
+            .map(|entry| Arc::clone(entry.value()))
+            .expect("subscription slot should exist");
+
+        assert!(matches!(slot.deliver(&event), DeliveryOutcome::Delivered));
+        assert!(
+            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            "the last delivered event id should not be replayed immediately on reconnect"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn flush_batch_dedupes_duplicate_confirmation_ids(ctx: TestContext) -> TestResult<()> {
         let bus = SubscriptionBus::new();
         let (_, mut rx) = bus
-            .register(SubscriptionFilter::default())
+            .register(SubscriptionFilter::default(), None)
             .expect("test subscription should register");
 
         let event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))

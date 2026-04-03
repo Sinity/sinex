@@ -97,7 +97,7 @@ pub enum ReplayCommands {
         /// Operation ID
         operation_id: String,
 
-        /// Dry-run: compute cascade impact without persisting changes
+        /// Dry-run: refresh the preview without approving or executing any changes
         #[arg(long)]
         dry_run: bool,
 
@@ -196,7 +196,7 @@ pub enum ReplayCommands {
         #[arg(long = "event-type", value_name = "TYPE")]
         event_types: Vec<String>,
 
-        /// Dry-run: compute cascade impact without persisting changes
+        /// Dry-run: stop after preview without approving or executing any changes
         #[arg(long)]
         dry_run: bool,
 
@@ -298,8 +298,34 @@ impl ReplayCommands {
                 dry_run,
                 format,
             } => {
-                let operation = client.replay_execute(operation_id, *dry_run).await?;
-                CommandOutput::single(operation, format_replay_execute_table).display(format)?;
+                if *dry_run {
+                    let (operation, preview) = client.replay_dry_run(operation_id).await?;
+                    match format {
+                        OutputFormat::Json => println!(
+                            "{}",
+                            format_json(&serde_json::json!({
+                                "operation": operation,
+                                "preview": preview,
+                                "dry_run": true,
+                            }))?
+                        ),
+                        OutputFormat::Yaml => println!(
+                            "{}",
+                            format_yaml(&serde_json::json!({
+                                "operation": operation,
+                                "preview": preview,
+                                "dry_run": true,
+                            }))?
+                        ),
+                        _ => {
+                            println!("{}", format_replay_preview_table(&operation, &preview));
+                        }
+                    }
+                } else {
+                    let operation = client.replay_execute(operation_id).await?;
+                    CommandOutput::single(operation, format_replay_execute_table)
+                        .display(format)?;
+                }
             }
 
             Self::Submit {
@@ -500,18 +526,35 @@ async fn execute_run(
         return Ok(());
     }
 
+    if dry_run {
+        eprintln!("Dry-run complete. Preview captured; no approval or execution was performed.");
+        match format {
+            OutputFormat::Json => println!(
+                "{}",
+                format_json(&serde_json::json!({
+                    "operation": operation,
+                    "preview": preview,
+                    "dry_run": true,
+                }))?
+            ),
+            OutputFormat::Yaml => println!(
+                "{}",
+                format_yaml(&serde_json::json!({
+                    "operation": operation,
+                    "preview": preview,
+                    "dry_run": true,
+                }))?
+            ),
+            _ => println!("{}", format_replay_preview_table(&operation, &preview)),
+        }
+        return Ok(());
+    }
+
     eprintln!("Approving...");
     client.replay_approve(&op_id).await?;
 
-    eprintln!(
-        "{}...",
-        if dry_run {
-            "Dry-run (no changes persisted)"
-        } else {
-            "Executing replay"
-        }
-    );
-    let operation = client.replay_execute(&op_id, dry_run).await?;
+    eprintln!("Executing replay...");
+    let operation = client.replay_execute(&op_id).await?;
 
     execute_watch(client, &op_id, 2, format).await?;
 

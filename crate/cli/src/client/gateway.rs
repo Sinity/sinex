@@ -598,6 +598,9 @@ impl GatewayClient {
 
     /// Submit a replay plan for execution
     pub async fn replay_submit(&self, operation_id: &str) -> Result<ReplayOperation> {
+        // Execution requires a stored preview summary first.
+        self.replay_preview(operation_id).await?;
+
         // First approve
         let approve_req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
@@ -607,9 +610,6 @@ impl GatewayClient {
             serde_json::to_value(&approve_req)?,
         )
         .await?;
-
-        // Execution requires a stored preview summary first.
-        self.replay_preview(operation_id).await?;
 
         // Then execute
         let exec_req = ReplayExecuteRequest {
@@ -701,16 +701,19 @@ impl GatewayClient {
         Ok(response.operation)
     }
 
-    /// Execute an approved replay operation.
-    /// When `dry_run` is true, computes cascade impact without persisting changes.
-    pub async fn replay_execute(
+    /// Refresh preview data without approving or executing the replay.
+    pub async fn replay_dry_run(
         &self,
         operation_id: &str,
-        dry_run: bool,
-    ) -> Result<ReplayOperation> {
+    ) -> Result<(ReplayOperation, serde_json::Value)> {
+        self.replay_preview(operation_id).await
+    }
+
+    /// Execute an approved replay operation.
+    pub async fn replay_execute(&self, operation_id: &str) -> Result<ReplayOperation> {
         let req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            dry_run,
+            dry_run: false,
         };
         let result = self
             .call_rpc(
