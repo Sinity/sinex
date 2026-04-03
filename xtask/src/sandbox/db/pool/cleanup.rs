@@ -80,14 +80,52 @@ impl CleanupManager {
     async fn process_cleanup_task(task: CleanupTask) {
         // Clean while holding the advisory lock so other processes never observe a dirty slot.
         let mut lock_conn = task.lock_conn;
+        let cleanup_pool = if task.pool.is_closed() {
+            slog!(Level::Warn, "cleanup_pool_closed", slot = task.slot_name);
+            match super::slot_pool_options(
+                super::config::SLOT_MAX_CONNECTIONS,
+                Duration::from_secs(5),
+            )
+            .connect(&task.slot_url)
+            .await
+            {
+                Ok(pool) => pool,
+                Err(error) => {
+                    let err = format!(
+                        "cleanup failed because slot pool was already closed and reconnect failed: {error}"
+                    );
+                    task.slot.record_clean_result(Err(err.clone()), None);
+                    task.slot.quarantined.store(true, Ordering::SeqCst);
+                    task.slot.schema_verified.store(false, Ordering::SeqCst);
+                    if let Some(conn) = lock_conn.as_mut() {
+                        persist_cleanup_meta(conn, &task.slot_name, true, Some(err)).await;
+                    }
+                    return;
+                }
+            }
+        } else {
+            task.pool.clone()
+        };
         let clean_result = tokio::time::timeout(
             Duration::from_secs(10),
-            super::reset::clean_database(&task.slot, &task.pool, &task.slot_name, &task.slot_url),
+            super::reset::clean_database(
+                &task.slot,
+                &cleanup_pool,
+                &task.slot_name,
+                &task.slot_url,
+            ),
         )
         .await;
 
         match clean_result {
-            Ok(Ok(_)) => {
+            Ok(Ok(clean_result)) => {
+                if clean_result.recreated {
+                    let mut pool_guard = task.slot.pool.lock();
+                    *pool_guard = Some(clean_result.pool);
+                } else if task.pool.is_closed() {
+                    let mut pool_guard = task.slot.pool.lock();
+                    *pool_guard = Some(cleanup_pool);
+                }
                 if let Some(conn) = lock_conn.as_mut() {
                     persist_cleanup_meta(conn, &task.slot_name, false, None).await;
                 }
@@ -250,5 +288,86 @@ impl Drop for TestDatabase {
 
         // Mark as not in use (for intra-process coordination)
         self.slot.in_use.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::db::pool::acquire_pool_test_guard;
+    use crate::sandbox::db::pool::config::PoolConfig;
+    use crate::sandbox::db::pool::provisioning::{
+        advisory_lock_key, connect_admin_with_retry, drop_database_if_exists_admin,
+        recreate_pool_database, url_with_db_name, wait_for_database_absence_admin,
+    };
+    use crate::sandbox::sinex_test;
+    use parking_lot::Mutex;
+    use sqlx::postgres::PgPoolOptions;
+    use std::sync::atomic::AtomicBool;
+
+    fn make_slot(name: String, url: String) -> Arc<DatabaseSlot> {
+        Arc::new(DatabaseSlot {
+            name,
+            url,
+            pool: Mutex::new(None),
+            in_use: AtomicBool::new(false),
+            quarantined: AtomicBool::new(true),
+            schema_verified: AtomicBool::new(false),
+            last_released: Mutex::new(None),
+            last_clean_time: Mutex::new(None),
+            last_clean_result: Mutex::new(None),
+            last_residuals: Mutex::new(None),
+        })
+    }
+
+    #[sinex_test]
+    async fn process_cleanup_task_restores_recreated_pool() -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_cleanup_recreated_pool_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let closed_pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&slot_url)
+            .await?;
+        closed_pool.close().await;
+
+        let slot = make_slot(db_name.clone(), slot_url.clone());
+        let task = CleanupTask {
+            lock_id: advisory_lock_key(&db_name),
+            pool: closed_pool,
+            slot_name: db_name.clone(),
+            slot_url: slot_url.clone(),
+            slot: slot.clone(),
+            lock_conn: None,
+        };
+
+        CleanupManager::process_cleanup_task(task).await;
+
+        assert!(
+            !slot.quarantined.load(Ordering::SeqCst),
+            "successful cleanup should clear quarantine"
+        );
+
+        let restored_pool = slot
+            .pool
+            .lock()
+            .take()
+            .expect("cleanup should restore a usable pool after recreation");
+        assert!(
+            !restored_pool.is_closed(),
+            "restored slot pool must stay open"
+        );
+        restored_pool.close().await;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        Ok(())
     }
 }
