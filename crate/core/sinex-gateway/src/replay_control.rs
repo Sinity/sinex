@@ -2065,7 +2065,7 @@ impl ReplayExecutionEngine {
                                     target_node_name
                                 ),
                                 emitted_count: events_emitted,
-                                restore_archived_cascade: false,
+                                restore_archived_cascade: events_emitted == 0,
                             });
                         };
 
