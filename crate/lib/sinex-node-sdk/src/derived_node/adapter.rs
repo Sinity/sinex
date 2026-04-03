@@ -1910,10 +1910,13 @@ where
             nats_save_success = false;
         }
 
-        if !file_save_success && !nats_save_success {
-            return Err(SinexError::checkpoint(
-                "Failed to save state to both file and NATS KV on shutdown".to_string(),
-            ));
+        if !nats_save_success {
+            return Err(SinexError::checkpoint(format!(
+                "Node {} failed to save final checkpoint to NATS KV during shutdown \
+                 (file save {})",
+                self.node.name(),
+                if file_save_success { "succeeded" } else { "also failed" }
+            )));
         }
 
         Ok(())
