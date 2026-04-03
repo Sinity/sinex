@@ -205,7 +205,7 @@ mod tests {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
         let acquisition = Arc::new(
-            AcquisitionManager::with_defaults(ctx.nats_client(), "stage-retry-test", "/stage")
+            AcquisitionManager::with_defaults(ctx.nats_client(), "stage-retry-test")
                 .with_work_dir(work_dir.path()),
         );
         let (tx, _rx) = mpsc::channel(1);

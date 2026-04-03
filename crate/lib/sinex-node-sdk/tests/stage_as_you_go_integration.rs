@@ -115,7 +115,6 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
             nats_client.clone(),
             sinex_node_sdk::RotationPolicy::default(),
             "integration-log".to_string(),
-            "/tmp/integration.log".to_string(),
             Some(namespace.clone()),
         )),
         event_tx,
@@ -237,7 +236,6 @@ async fn stage_as_you_go_reconciliation_cancels_stale_materials(ctx: TestContext
     let acquisition = Arc::new(AcquisitionManager::with_defaults(
         nats_client.clone(),
         "reconciliation-log",
-        "/tmp/reconciliation.log",
     ));
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
@@ -278,7 +276,6 @@ async fn stage_as_you_go_reconciliation_ignores_unrepresentable_stale_ttl(
     let acquisition = Arc::new(AcquisitionManager::with_defaults(
         nats_client.clone(),
         "reconciliation-max-ttl-log",
-        "/tmp/reconciliation-max-ttl.log",
     ));
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
@@ -312,7 +309,6 @@ async fn stage_as_you_go_stream_failure_retains_reconcilable_state(
     let acquisition = Arc::new(AcquisitionManager::with_defaults(
         nats_client.clone(),
         "stream-failure-log",
-        "/tmp/stream-failure.log",
     ));
 
     let (event_tx, _event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
@@ -357,7 +353,6 @@ async fn stage_as_you_go_reconciliation_preserves_state_when_cancel_fails(
     let acquisition = Arc::new(AcquisitionManager::with_defaults(
         nats_client,
         "cancel-failure-log",
-        "/tmp/cancel-failure.log",
     ));
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);

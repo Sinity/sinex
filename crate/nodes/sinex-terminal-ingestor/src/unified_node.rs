@@ -2634,7 +2634,6 @@ impl TerminalNode {
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "terminal-history",
-                source.path.to_string(),
             )?);
 
             let state_path = state_dir.as_ref().map(|dir| {
@@ -3669,7 +3668,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/home/test/.bash_history",
         )?);
 
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
@@ -4021,7 +4019,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/home/test/.local/share/atuin/history.db",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
@@ -4110,7 +4107,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/tmp/history",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
@@ -4259,7 +4255,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/home/test/.local/share/atuin/history.db",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
@@ -4347,7 +4342,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/home/test/.local/share/fish/fish_history.db",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
@@ -4401,7 +4395,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/home/test/.local/share/atuin/history.db",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
@@ -6178,7 +6171,6 @@ mod tests {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "terminal-history",
-            "/tmp/test-history",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));

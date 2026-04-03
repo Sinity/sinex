@@ -723,7 +723,6 @@ impl IngestorNode for DesktopNode {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "desktop",
-            "desktop-watcher",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(runtime)
             .with_acquisition_manager(Arc::clone(&acquisition))

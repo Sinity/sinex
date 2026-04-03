@@ -961,7 +961,6 @@ impl IngestorNode for SystemNode {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "system",
-            "system-watcher",
         )?);
 
         let node_material_real = RealWatcherMaterialContext::new(

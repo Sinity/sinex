@@ -392,7 +392,6 @@ impl IngestorNode for DocumentNode {
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "document",
-            "document-ingestor",
         )?);
         let stage_context = StageAsYouGoContext::from_runtime(runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
