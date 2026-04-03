@@ -274,6 +274,71 @@ mod tests {
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         Ok(())
     }
+
+    #[sinex_test]
+    async fn template_reuse_rejects_actual_schema_drift_on_shared_fast_path(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let template_name = format!("sinex_test_template_shared_drift_{}", std::process::id());
+        let desired_fingerprint = Some(schema_fingerprint()?);
+
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        sqlx::query(&drop_query).execute(&mut admin_conn).await?;
+
+        create_template_db(&mut admin_conn, &template_name).await?;
+        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
+        let template_pool_max = config.slot_max_connections.max(1).saturating_mul(2).max(4);
+        let extensions =
+            run_template_schema_apply(&template_name, &template_admin_url, template_pool_max)
+                .await?;
+        store_template_meta(
+            &mut admin_conn,
+            &template_name,
+            &TemplateMeta {
+                fingerprint: desired_fingerprint
+                    .clone()
+                    .expect("desired fingerprint must be present"),
+                extensions,
+            },
+        )
+        .await?;
+
+        let template_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&template_admin_url)
+            .await?;
+        sqlx::query(
+            r#"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+                ADD CONSTRAINT source_material_registry_status_check
+                CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
+            "#,
+        )
+        .execute(&template_pool)
+        .await?;
+        template_pool.close().await;
+
+        let reusable = check_template_reuse(
+            &mut admin_conn,
+            &config.admin_url,
+            &template_name,
+            &desired_fingerprint,
+            false,
+        )
+        .await?;
+        assert!(
+            reusable.is_none(),
+            "shared fast-path reuse must reject actual schema drift instead of trusting metadata"
+        );
+
+        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        sqlx::query(&drop_query).execute(&mut admin_conn).await?;
+        Ok(())
+    }
 }
 
 // ── Template lifecycle ──────────────────────────────────────────────────────
@@ -283,6 +348,11 @@ pub(super) async fn harden_template_database(
     template_name: &str,
 ) -> TestResult<()> {
     let quoted = quote_ident(template_name);
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await?;
     // Ensure no new sessions can connect to the template DB; lingering connections make
     // CREATE DATABASE ... TEMPLATE ... fail.
     let _ = sqlx::query(&format!(
@@ -299,6 +369,10 @@ pub(super) async fn harden_template_database(
     .bind(template_name)
     .execute(&mut *admin_conn)
     .await;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await;
 
     Ok(())
 }
@@ -438,7 +512,7 @@ async fn downgrade_to_shared_lock(admin_conn: &mut PgConnection, lock_key: i64) 
 }
 
 /// Check if an existing template can be reused. Returns `Some(extensions)` if reusable.
-/// When `check_drift` is true, also verifies extension versions haven't changed.
+/// Actual schema drift is always verified; `check_drift` additionally verifies extension defaults.
 async fn check_template_reuse(
     admin_conn: &mut PgConnection,
     admin_url: &str,
@@ -505,15 +579,14 @@ async fn check_template_reuse(
         }
     };
 
+    let schema_drift = probe_template_schema_drift(admin_conn, admin_url, template_name).await?;
+    if let Some(reason) = schema_drift {
+        eprintln!("♻️  Template schema drift detected ({reason}); recreating template");
+        return Ok(None);
+    }
+
     // Check extension version drift (e.g. TimescaleDB upgrade changes shared object paths)
     if check_drift {
-        let schema_drift =
-            probe_template_schema_drift(admin_conn, admin_url, template_name).await?;
-        if let Some(reason) = schema_drift {
-            eprintln!("♻️  Template schema drift detected ({reason}); recreating template");
-            return Ok(None);
-        }
-
         let defaults = default_extension_versions(admin_conn).await?;
         for (ext, template_ver) in &extensions {
             if let Some(default_ver) = defaults.get(ext)
@@ -536,6 +609,15 @@ async fn probe_template_schema_drift(
     template_name: &str,
 ) -> TestResult<Option<String>> {
     let quoted = quote_ident(template_name);
+    // Serialize probe/cloning against the template. The shared fast path can be entered by
+    // multiple nextest processes at once, and toggling `ALLOW_CONNECTIONS` concurrently on the
+    // same pg_database row can fail with `tuple concurrently updated`.
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await?;
+
     sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"))
         .execute(&mut *admin_conn)
         .await?;
@@ -560,6 +642,10 @@ async fn probe_template_schema_drift(
     .bind(template_name)
     .execute(&mut *admin_conn)
     .await;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await;
 
     drift_result
 }
