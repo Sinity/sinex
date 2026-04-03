@@ -523,6 +523,34 @@ impl JobCoordinator {
 
         Ok(())
     }
+
+    /// Remove a still-pending sentinel reservation if phase-two spawn recording failed.
+    pub fn clear_pending_state(&self, command: &str) -> Result<bool> {
+        let lock_path = self.locks_dir.join(format!("{command}.lock"));
+        let state_path = self.locks_dir.join(format!("{command}.state.json"));
+
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
+
+        let Some(state) = read_state(&state_path)? else {
+            return Ok(false);
+        };
+
+        if state.pid == 0 && state.job_id == -1 {
+            remove_state_file(
+                &state_path,
+                "remove pending coordinator state after failed spawn recording",
+            )?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 // --- Utility functions ---
@@ -964,12 +992,53 @@ pub fn coordinate_and_spawn(
 /// 2. `spawn_background()` creates the actual process
 /// 3. This function updates the slot with real values
 pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
+    let clear_pending = |coordinator: Option<&JobCoordinator>, reason: &str| {
+        let clear_result = match coordinator {
+            Some(coordinator) => coordinator.clear_pending_state(command),
+            None => match JobCoordinator::new() {
+                Ok(coordinator) => coordinator.clear_pending_state(command),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "xtask::coordinator",
+                        command,
+                        reason,
+                        error = %error,
+                        "failed to initialize coordinator while clearing pending spawn state"
+                    );
+                    return;
+                }
+            },
+        };
+
+        match clear_result {
+            Ok(cleared) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    command,
+                    reason,
+                    cleared_pending_state = cleared,
+                    "cleared pending coordinator state after failed spawn recording"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "xtask::coordinator",
+                    command,
+                    reason,
+                    error = %error,
+                    "failed to clear pending coordinator state after failed spawn recording"
+                );
+            }
+        }
+    };
+
     let Some(data) = &bg_result.data else {
         tracing::warn!(
             target: "xtask::coordinator",
             command,
             "background spawn returned no data; coordinator state was not updated"
         );
+        clear_pending(None, "background spawn returned no data");
         return;
     };
 
@@ -980,6 +1049,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
             data = %data,
             "background spawn returned no job_id; coordinator state was not updated"
         );
+        clear_pending(None, "background spawn returned no job_id");
         return;
     };
 
@@ -990,6 +1060,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
             data = %data,
             "background spawn returned no pid; coordinator state was not updated"
         );
+        clear_pending(None, "background spawn returned no pid");
         return;
     };
 
@@ -1004,11 +1075,13 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
                 error = %error,
                 "failed to initialize coordinator while recording spawned job"
             );
+            clear_pending(None, "failed to initialize coordinator while recording spawned job");
             return;
         }
     };
 
     if let Err(error) = coordinator.update_state(command, job_id, pid as u32) {
+        clear_pending(Some(&coordinator), "failed to persist coordinator state for spawned job");
         tracing::warn!(
             target: "xtask::coordinator",
             command,
@@ -1720,6 +1793,89 @@ mod tests {
     async fn test_read_state_missing_file() -> TestResult<()> {
         let result = read_state(std::path::Path::new("/nonexistent/path/state.json"))?;
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_clear_pending_state_removes_sentinel_reservation() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: -1,
+                pid: 0,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        assert!(coordinator.clear_pending_state("check")?);
+        assert!(!state_path.exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_clear_pending_state_keeps_live_state() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 41,
+                pid: 4242,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        assert!(!coordinator.clear_pending_state("check")?);
+        assert!(state_path.exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_update_coordinator_state_clears_pending_reservation_when_pid_missing(
+    ) -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: -1,
+                pid: 0,
+                is_foreground: false,
+                tree_fingerprint: "old".into(),
+                scope_key: "scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec![],
+                queue: Vec::new(),
+            },
+        )?;
+
+        let bg_result = CommandResult::success().with_data(serde_json::json!({
+            "job_id": 41,
+        }));
+        update_coordinator_state("check", &bg_result);
+
+        assert!(coordinator.state("check")?.is_none());
         Ok(())
     }
 
