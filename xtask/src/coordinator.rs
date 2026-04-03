@@ -300,26 +300,17 @@ impl JobCoordinator {
             Some(mut state) if !state.queue.is_empty() => {
                 // Pop first queued item (FIFO)
                 let next = state.queue.remove(0);
-
-                if state.queue.is_empty() {
-                    // No more items — delete state file
-                    remove_state_file(
-                        &state_path,
-                        "remove coordinator state after draining the final queued job",
-                    )?;
-                } else {
-                    // More items waiting — preserve state with sentinel values.
-                    // Caller updates via update_state() after spawning.
-                    state.job_id = -1;
-                    state.pid = 0;
-                    state.is_foreground = next.is_foreground;
-                    state.tree_fingerprint.clone_from(&next.tree_fingerprint);
-                    state.scope_key.clone_from(&next.scope_key);
-                    state.args.clone_from(&next.args);
-                    state.started_at =
-                        sinex_primitives::temporal::Timestamp::now().format_rfc3339();
-                    write_state(&state_path, &state)?;
-                }
+                // Preserve a sentinel reservation for the promoted work even when it is the
+                // final queued item. `update_state()` needs a state file to replace with the
+                // real job id/pid after the spawn succeeds.
+                state.job_id = -1;
+                state.pid = 0;
+                state.is_foreground = next.is_foreground;
+                state.tree_fingerprint.clone_from(&next.tree_fingerprint);
+                state.scope_key.clone_from(&next.scope_key);
+                state.args.clone_from(&next.args);
+                state.started_at = sinex_primitives::temporal::Timestamp::now().format_rfc3339();
+                write_state(&state_path, &state)?;
 
                 Ok(Some(next))
             }
@@ -1746,6 +1737,65 @@ mod tests {
         assert_eq!(promoted.scope_key, "queued-scope");
         assert_eq!(promoted.queue.len(), 1);
         assert_eq!(promoted.queue[0].scope_key, "queued-scope-2");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_handle_completion_preserves_state_for_final_queued_job() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 52,
+                pid: 5252,
+                is_foreground: false,
+                tree_fingerprint: "running-fp".into(),
+                scope_key: "running-scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec!["--lint".into()],
+                queue: vec![QueuedWork {
+                    args: vec!["-p".into(), "sinex-primitives".into()],
+                    is_foreground: false,
+                    output_format: OutputFormat::Json,
+                    tree_fingerprint: "queued-fp-final".into(),
+                    scope_key: "queued-scope-final".into(),
+                }],
+            },
+        )?;
+
+        let next = coordinator
+            .handle_completion("check")?
+            .expect("final queued work should be promoted");
+        assert_eq!(next.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(next.tree_fingerprint, "queued-fp-final");
+        assert_eq!(next.scope_key, "queued-scope-final");
+
+        let pending = coordinator
+            .state("check")?
+            .expect("promoted final queued work should still hold sentinel state");
+        assert_eq!(pending.job_id, -1);
+        assert_eq!(pending.pid, 0);
+        assert_eq!(pending.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(pending.tree_fingerprint, "queued-fp-final");
+        assert_eq!(pending.scope_key, "queued-scope-final");
+        assert!(pending.queue.is_empty());
+
+        coordinator.update_state("check", 77, 7777)?;
+
+        let running = coordinator
+            .state("check")?
+            .expect("update_state should replace sentinel for final queued work");
+        assert_eq!(running.job_id, 77);
+        assert_eq!(running.pid, 7777);
+        assert_eq!(running.args, vec!["-p", "sinex-primitives"]);
+        assert_eq!(running.tree_fingerprint, "queued-fp-final");
+        assert_eq!(running.scope_key, "queued-scope-final");
+        assert!(running.queue.is_empty());
 
         Ok(())
     }
