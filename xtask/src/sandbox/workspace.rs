@@ -228,8 +228,7 @@ impl EphemeralWorkspace {
     fn create_member_crate(&self, crate_name: &str) -> Result<()> {
         let crate_dir = self.workspace_dir.path().join(crate_name);
         let src_dir = crate_dir.join("src");
-        fs::create_dir_all(&src_dir)
-            .with_context(|| format!("create {crate_name}/src/"))?;
+        fs::create_dir_all(&src_dir).with_context(|| format!("create {crate_name}/src/"))?;
 
         let cargo_toml = format!(
             "[package]\n\

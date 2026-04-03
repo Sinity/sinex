@@ -83,18 +83,12 @@ fn parse_sinex_test_attrs_tokens(
     if let Ok(parsed) = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens.clone()) {
         for meta in parsed {
             match meta {
-                Meta::NameValue(MetaNameValue {
-                    path,
-                    value,
-                    ..
-                }) if path.is_ident("timeout") => {
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("timeout") => {
                     let lit = match &value {
                         Expr::Lit(ExprLit { lit, .. }) => lit,
                         _ => {
-                            let error = Error::new(
-                                value.span(),
-                                "`timeout` must be an integer literal",
-                            );
+                            let error =
+                                Error::new(value.span(), "`timeout` must be an integer literal");
                             return Err(error);
                         }
                     };
@@ -105,18 +99,12 @@ fn parse_sinex_test_attrs_tokens(
                         Err(error) => return Err(error),
                     }
                 }
-                Meta::NameValue(MetaNameValue {
-                    path,
-                    value,
-                    ..
-                }) if path.is_ident("trace") => {
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("trace") => {
                     let lit = match &value {
                         Expr::Lit(ExprLit { lit, .. }) => lit,
                         _ => {
-                            let error = Error::new(
-                                value.span(),
-                                "`trace` must be a boolean literal",
-                            );
+                            let error =
+                                Error::new(value.span(), "`trace` must be a boolean literal");
                             return Err(error);
                         }
                     };
@@ -127,18 +115,12 @@ fn parse_sinex_test_attrs_tokens(
                         Err(error) => return Err(error),
                     }
                 }
-                Meta::NameValue(MetaNameValue {
-                    path,
-                    value,
-                    ..
-                }) if path.is_ident("serial") => {
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("serial") => {
                     let lit = match &value {
                         Expr::Lit(ExprLit { lit, .. }) => lit,
                         _ => {
-                            let error = Error::new(
-                                value.span(),
-                                "`serial` must be a boolean literal",
-                            );
+                            let error =
+                                Error::new(value.span(), "`serial` must be a boolean literal");
                             return Err(error);
                         }
                     };
@@ -180,7 +162,8 @@ fn parse_sinex_test_attrs_tokens(
     // Also try simple name=value parsing
     if let Ok(Meta::NameValue(nv)) = syn::parse2::<Meta>(attr_tokens) {
         if nv.path.is_ident("timeout") {
-            match lit_from_expr(&nv.value, "timeout").and_then(|lit| parse_u64_lit(lit, "timeout")) {
+            match lit_from_expr(&nv.value, "timeout").and_then(|lit| parse_u64_lit(lit, "timeout"))
+            {
                 Ok(timeout) => {
                     config.timeout = Some(timeout);
                 }

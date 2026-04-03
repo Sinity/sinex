@@ -510,9 +510,11 @@ test result: FAILED
 
         let summary_error =
             parse_junit_summary(f.path()).expect_err("malformed XML summary must fail honestly");
-        assert!(summary_error
-            .to_string()
-            .contains("JUnit XML summary parse error"));
+        assert!(
+            summary_error
+                .to_string()
+                .contains("JUnit XML summary parse error")
+        );
         Ok(())
     }
 

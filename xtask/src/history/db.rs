@@ -77,17 +77,16 @@ fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
 }
 
 fn is_recoverable_history_schema_version_error(error: &color_eyre::Report) -> bool {
-    error.chain().any(|cause| {
-        match cause.downcast_ref::<rusqlite::Error>() {
+    error
+        .chain()
+        .any(|cause| match cause.downcast_ref::<rusqlite::Error>() {
             Some(rusqlite::Error::SqliteFailure(inner, _)) => matches!(
                 inner.code,
-                rusqlite::ffi::ErrorCode::DatabaseCorrupt
-                    | rusqlite::ffi::ErrorCode::NotADatabase
+                rusqlite::ffi::ErrorCode::DatabaseCorrupt | rusqlite::ffi::ErrorCode::NotADatabase
             ),
             Some(rusqlite::Error::FromSqlConversionFailure(..)) => true,
             _ => false,
-        }
-    })
+        })
 }
 
 fn with_sqlite_lock_retry<T, F>(action: &str, mut operation: F) -> Result<T>
@@ -250,10 +249,7 @@ fn format_invocation_timestamp(
         .map_err(|error| invalid_invocation_field(column_index, field_name, error))
 }
 
-fn format_history_timestamp(
-    timestamp: OffsetDateTime,
-    context: &'static str,
-) -> Result<String> {
+fn format_history_timestamp(timestamp: OffsetDateTime, context: &'static str) -> Result<String> {
     timestamp
         .format(&time::format_description::well_known::Rfc3339)
         .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
@@ -325,7 +321,10 @@ impl HistoryDb {
                 "⚠️  History database at {} is empty (0 bytes), recreating",
                 path.display()
             );
-            remove_history_artifact(path, "failed to remove empty history database before recreation")?;
+            remove_history_artifact(
+                path,
+                "failed to remove empty history database before recreation",
+            )?;
         }
 
         let conn = Connection::open(path).with_context(|| {
@@ -351,7 +350,10 @@ impl HistoryDb {
                 "⚠️  History database at {} failed integrity check, recreating",
                 path.display()
             );
-            remove_history_artifact(path, "failed to remove corrupt history database before recreation")?;
+            remove_history_artifact(
+                path,
+                "failed to remove corrupt history database before recreation",
+            )?;
             // Remove WAL and SHM files too
             let wal_path = path.with_extension("db-wal");
             let shm_path = path.with_extension("db-shm");
@@ -492,7 +494,8 @@ impl HistoryDb {
         };
 
         use std::os::fd::AsRawFd;
-        let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        let lock_result =
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if lock_result != 0 {
             return Ok(StaleCleanupOutcome::SkippedLockHeld);
         }
@@ -1197,8 +1200,10 @@ impl HistoryDb {
         // First collect PIDs of stale background jobs before updating them
         let stale_pids = self.stale_background_invocation_pids()?;
 
-        let cleaned = self.conn.execute(
-            r"
+        let cleaned = self
+            .conn
+            .execute(
+                r"
             UPDATE invocations
             SET status = 'cancelled',
                 finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
@@ -1206,11 +1211,10 @@ impl HistoryDb {
             WHERE status = 'running'
               AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
             ",
-            [],
-        )
-        .context("failed to mark stale invocations as cancelled")?;
-        if cleaned > 0
-        {
+                [],
+            )
+            .context("failed to mark stale invocations as cancelled")?;
+        if cleaned > 0 {
             eprintln!(
                 "ℹ️  Cleaned up {cleaned} stale 'running' invocation(s) older than 10 minutes"
             );
@@ -1247,12 +1251,12 @@ impl HistoryDb {
         // Also mark orphaned background_jobs rows (separate table, Phase 3).
         self.conn
             .execute(
-            r"UPDATE background_jobs
+                r"UPDATE background_jobs
               SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               WHERE job_status = 'running'
                 AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
-            [],
-        )
+                [],
+            )
             .context("failed to mark stale background jobs as orphaned")?;
         Ok(())
     }
@@ -2689,39 +2693,44 @@ impl HistoryDb {
             }
         };
 
-        let run_id = self.conn.query_row(
-            r"INSERT INTO exercise_runs
+        let run_id = self
+            .conn
+            .query_row(
+                r"INSERT INTO exercise_runs
                 (invocation_id, tier, total, passed, failed, skipped, duration_secs, report_json)
               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
               RETURNING id",
-            rusqlite::params![
-                invocation_id,
-                tier,
-                report.total as i64,
-                report.passed as i64,
-                report.failed as i64,
-                report.skipped as i64,
-                report.duration_secs,
-                Some(report_json),
-            ],
-            |row| row.get::<_, i64>(0),
-        ).context("failed to insert exercise_run row")?;
+                rusqlite::params![
+                    invocation_id,
+                    tier,
+                    report.total as i64,
+                    report.passed as i64,
+                    report.failed as i64,
+                    report.skipped as i64,
+                    report.duration_secs,
+                    Some(report_json),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .context("failed to insert exercise_run row")?;
 
         for entry in &report.results {
-            self.conn.execute(
-                r"INSERT INTO exercise_results
+            self.conn
+                .execute(
+                    r"INSERT INTO exercise_results
                     (run_id, exercise_id, exercise_tier, passed, duration_secs, error, step_count)
                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![
-                    run_id,
-                    entry.id,
-                    entry.tier,
-                    entry.passed as i64,
-                    entry.duration_secs,
-                    entry.error,
-                    entry.steps.len() as i64,
-                ],
-            ).context("failed to insert exercise_result row")?;
+                    rusqlite::params![
+                        run_id,
+                        entry.id,
+                        entry.tier,
+                        entry.passed as i64,
+                        entry.duration_secs,
+                        entry.error,
+                        entry.steps.len() as i64,
+                    ],
+                )
+                .context("failed to insert exercise_result row")?;
         }
 
         Ok(())
@@ -2738,22 +2747,23 @@ impl HistoryDb {
               ORDER BY er.recorded_at DESC
               LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit as i64], |row| {
-            Ok(ExerciseRunRow {
-                run_id: row.get(0)?,
-                invocation_id: row.get(1)?,
-                tier: row.get(2)?,
-                total: row.get(3)?,
-                passed: row.get(4)?,
-                failed: row.get(5)?,
-                skipped: row.get(6)?,
-                duration_secs: row.get(7)?,
-                recorded_at: row.get(8)?,
-                invocation_status: row.get(9)?,
-                git_commit: row.get(10)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map([limit as i64], |row| {
+                Ok(ExerciseRunRow {
+                    run_id: row.get(0)?,
+                    invocation_id: row.get(1)?,
+                    tier: row.get(2)?,
+                    total: row.get(3)?,
+                    passed: row.get(4)?,
+                    failed: row.get(5)?,
+                    skipped: row.get(6)?,
+                    duration_secs: row.get(7)?,
+                    recorded_at: row.get(8)?,
+                    invocation_status: row.get(9)?,
+                    git_commit: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -2763,17 +2773,18 @@ impl HistoryDb {
             r"SELECT exercise_id, exercise_tier, passed, duration_secs, error, step_count
               FROM exercise_results WHERE run_id = ?1 ORDER BY id",
         )?;
-        let rows = stmt.query_map([run_id], |row| {
-            Ok(ExerciseResultRow {
-                exercise_id: row.get(0)?,
-                exercise_tier: row.get(1)?,
-                passed: row.get::<_, i64>(2)? != 0,
-                duration_secs: row.get(3)?,
-                error: row.get(4)?,
-                step_count: row.get(5)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map([run_id], |row| {
+                Ok(ExerciseResultRow {
+                    exercise_id: row.get(0)?,
+                    exercise_tier: row.get(1)?,
+                    passed: row.get::<_, i64>(2)? != 0,
+                    duration_secs: row.get(3)?,
+                    error: row.get(4)?,
+                    step_count: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -3871,8 +3882,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_capture_working_directory_surfaces_errors() -> TestResult<()> {
-        let captured =
-            capture_working_directory(Err(std::io::Error::other("cwd lookup exploded")));
+        let captured = capture_working_directory(Err(std::io::Error::other("cwd lookup exploded")));
         assert!(captured.contains("<unavailable:"));
         assert!(captured.contains("cwd lookup exploded"));
         Ok(())
@@ -3914,7 +3924,9 @@ mod tests {
     #[sinex_test]
     async fn test_history_db_open_surfaces_empty_db_cleanup_failures() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-history-open-empty-cleanup-failure.db");
+        let db_path = dir
+            .path()
+            .join("test-history-open-empty-cleanup-failure.db");
         std::fs::write(&db_path, [])?;
 
         let original_mode = std::fs::metadata(dir.path())?.permissions().mode();
@@ -3939,8 +3951,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures()
-    -> TestResult<()> {
+    async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history-open-stale-pids.db");
         let db = HistoryDb::open(&db_path)?;
@@ -3999,8 +4010,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_history_db_open_surfaces_stale_invocation_update_failures()
-    -> TestResult<()> {
+    async fn test_history_db_open_surfaces_stale_invocation_update_failures() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history-open-stale-update.db");
         let db = HistoryDb::open(&db_path)?;
@@ -4084,11 +4094,12 @@ mod tests {
         lock_conn.execute_batch("BEGIN EXCLUSIVE TRANSACTION;")?;
 
         let reopened = HistoryDb::open(&db_path)?;
-        let status: String = reopened.conn.query_row(
-            "SELECT status FROM invocations LIMIT 1",
-            [],
-            |row| row.get(0),
-        )?;
+        let status: String =
+            reopened
+                .conn
+                .query_row("SELECT status FROM invocations LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
         assert_eq!(
             status, "running",
             "locked cleanup should be skipped instead of failing open"
@@ -4101,9 +4112,7 @@ mod tests {
     #[sinex_test]
     async fn test_history_db_open_skips_cleanup_when_cleanup_lock_is_held() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir
-            .path()
-            .join("test-history-open-cleanup-lock-held.db");
+        let db_path = dir.path().join("test-history-open-cleanup-lock-held.db");
         let db = HistoryDb::open(&db_path)?;
         db.conn.execute(
             r"
@@ -4133,11 +4142,12 @@ mod tests {
         assert_eq!(lock_result, 0, "cleanup lock should be acquired for test");
 
         let reopened = HistoryDb::open(&db_path)?;
-        let status: String = reopened.conn.query_row(
-            "SELECT status FROM invocations LIMIT 1",
-            [],
-            |row| row.get(0),
-        )?;
+        let status: String =
+            reopened
+                .conn
+                .query_row("SELECT status FROM invocations LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
         assert_eq!(
             status, "running",
             "cleanup lock should make stale cleanup skip instead of mutating rows"
@@ -4226,7 +4236,11 @@ mod tests {
         .expect_err("non-lock errors should fail immediately");
 
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
-        assert!(error.to_string().contains("failed to record invocation progress"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to record invocation progress")
+        );
         Ok(())
     }
 
@@ -4244,7 +4258,13 @@ mod tests {
                 (?1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'running', ?2, ?3, ?4, 1, NULL),
                 (?5, '2000-01-01T00:00:00Z', 'success', ?2, ?3, ?4, 0, '2000-01-01T00:05:00Z')
             ",
-            params!["check", "localhost", "/tmp", std::process::id() as i64, "test"],
+            params![
+                "check",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64,
+                "test"
+            ],
         )?;
 
         assert!(
@@ -4424,7 +4444,9 @@ mod tests {
     #[sinex_test]
     async fn test_get_working_sessions_surfaces_invalid_started_at() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-working-sessions-invalid-started-at.db");
+        let db_path = dir
+            .path()
+            .join("test-working-sessions-invalid-started-at.db");
         let db = HistoryDb::open(&db_path)?;
 
         let id = db.start_invocation("check", None, None, None)?;
@@ -4444,7 +4466,9 @@ mod tests {
     #[sinex_test]
     async fn test_get_working_sessions_surfaces_invalid_finished_at() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-working-sessions-invalid-finished-at.db");
+        let db_path = dir
+            .path()
+            .join("test-working-sessions-invalid-finished-at.db");
         let db = HistoryDb::open(&db_path)?;
 
         let id = db.start_invocation("check", None, None, None)?;
@@ -4604,8 +4628,13 @@ mod tests {
         let stdout_path = dir.path().join("job-missing-pid-stdout.log");
         let stderr_path = dir.path().join("job-missing-pid-stderr.log");
 
-        let (_inv_id, job_id) =
-            db.start_background_job("test", &["-p".to_string()], None, &stdout_path, &stderr_path)?;
+        let (_inv_id, job_id) = db.start_background_job(
+            "test",
+            &["-p".to_string()],
+            None,
+            &stdout_path,
+            &stderr_path,
+        )?;
 
         let job = db
             .get_background_job_by_id(job_id)?
@@ -4621,14 +4650,13 @@ mod tests {
         let db = HistoryDb::open(&db_path)?;
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
-        let (_inv_id, job_id) =
-            db.start_background_job(
-                "test",
-                &["-p".to_string()],
-                Some(88888),
-                &stdout_path,
-                &stderr_path,
-            )?;
+        let (_inv_id, job_id) = db.start_background_job(
+            "test",
+            &["-p".to_string()],
+            Some(88888),
+            &stdout_path,
+            &stderr_path,
+        )?;
         db.conn.execute(
             "UPDATE background_jobs SET args_json = ?1 WHERE id = ?2",
             params!["{not valid json", job_id],
@@ -4648,14 +4676,13 @@ mod tests {
         let db = HistoryDb::open(&db_path)?;
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
-        let (_inv_id, job_id) =
-            db.start_background_job(
-                "test",
-                &["-p".to_string()],
-                Some(88888),
-                &stdout_path,
-                &stderr_path,
-            )?;
+        let (_inv_id, job_id) = db.start_background_job(
+            "test",
+            &["-p".to_string()],
+            Some(88888),
+            &stdout_path,
+            &stderr_path,
+        )?;
         db.conn.execute(
             "UPDATE background_jobs SET started_at = ?1 WHERE id = ?2",
             params!["definitely-not-rfc3339", job_id],
@@ -4675,14 +4702,13 @@ mod tests {
         let db = HistoryDb::open(&db_path)?;
         let stdout_path = dir.path().join("job_stdout.log");
         let stderr_path = dir.path().join("job_stderr.log");
-        let (_inv_id, job_id) =
-            db.start_background_job(
-                "test",
-                &["-p".to_string()],
-                Some(88888),
-                &stdout_path,
-                &stderr_path,
-            )?;
+        let (_inv_id, job_id) = db.start_background_job(
+            "test",
+            &["-p".to_string()],
+            Some(88888),
+            &stdout_path,
+            &stderr_path,
+        )?;
         db.conn.execute(
             "UPDATE background_jobs SET job_status = ?1 WHERE id = ?2",
             params!["mystery", job_id],
@@ -5124,8 +5150,13 @@ mod tests {
         let original_stdout = dir.path().join("original_stdout.log");
         let original_stderr = dir.path().join("original_stderr.log");
 
-        let (_inv_id, job_id) =
-            db.start_background_job("build", &[], Some(33333), &original_stdout, &original_stderr)?;
+        let (_inv_id, job_id) = db.start_background_job(
+            "build",
+            &[],
+            Some(33333),
+            &original_stdout,
+            &original_stderr,
+        )?;
 
         // Update pid
         db.update_job_pid(job_id, 44444)?;
@@ -5152,7 +5183,9 @@ mod tests {
     #[sinex_test]
     async fn test_record_exercise_run_rejects_non_finite_duration() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-record-exercise-run-invalid-report.db");
+        let db_path = dir
+            .path()
+            .join("test-record-exercise-run-invalid-report.db");
         let db = HistoryDb::open(&db_path)?;
         let invocation_id = db.start_invocation("exercise", None, None, None)?;
 
@@ -5226,7 +5259,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_parse_sandbox_meta_rejects_invalid_duration() -> TestResult<()> {
-        let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_7 duration_ms=oops pid=12345";
+        let output =
+            "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_7 duration_ms=oops pid=12345";
         let error = parse_sandbox_meta(output).unwrap_err();
         assert!(format!("{error:#}").contains("invalid sandbox metadata field duration_ms=oops"));
         Ok(())

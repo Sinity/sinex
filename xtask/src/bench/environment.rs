@@ -351,7 +351,11 @@ fn git_sha(short: bool) -> Result<String, String> {
         .output()
         .map_err(|error| format!("failed to run git rev-parse: {error}"))?;
     if !output.status.success() {
-        return Err(format_command_failure("git", &["rev-parse", "HEAD"], &output));
+        return Err(format_command_failure(
+            "git",
+            &["rev-parse", "HEAD"],
+            &output,
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -368,7 +372,9 @@ fn git_dirty() -> Result<bool, String> {
     match status.code() {
         Some(0) => Ok(false),
         Some(1) => Ok(true),
-        Some(code) => Err(format!("git diff --quiet exited with unexpected status {code}")),
+        Some(code) => Err(format!(
+            "git diff --quiet exited with unexpected status {code}"
+        )),
         None => Err("git diff --quiet terminated by signal".to_string()),
     }
 }

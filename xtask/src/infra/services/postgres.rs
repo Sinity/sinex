@@ -38,8 +38,9 @@ fn remove_service_file(path: &Path, label: &str) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .wrap_err_with(|| format!("failed to remove {label} {}", path.display())),
+        Err(error) => {
+            Err(error).wrap_err_with(|| format!("failed to remove {label} {}", path.display()))
+        }
     }
 }
 
@@ -50,7 +51,11 @@ fn read_postmaster_pid(path: &Path) -> Result<Option<i32>> {
 
     let content = fs::read_to_string(path)
         .wrap_err_with(|| format!("failed to read postmaster pid file {}", path.display()))?;
-    let Some(first_line) = content.lines().next().map(str::trim).filter(|line| !line.is_empty())
+    let Some(first_line) = content
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
     else {
         bail!("postmaster pid file {} is empty", path.display());
     };
@@ -165,7 +170,9 @@ impl PostgresManager {
                 self.force_cleanup(verbose)?;
             }
             PostmasterPidState::Stale(pid) => {
-                eprintln!("⚠️  Stale PostgreSQL pid file detected for dead PID {pid}. Recovering...");
+                eprintln!(
+                    "⚠️  Stale PostgreSQL pid file detected for dead PID {pid}. Recovering..."
+                );
                 self.force_cleanup(verbose)?;
             }
         }
@@ -470,7 +477,7 @@ impl PostgresManager {
         let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
         let logs_dir = utf8_path(&self.config.logs_dir, "postgres logs dir")?;
         Ok(format!(
-"{MANAGED_CONFIG_BEGIN}
+            "{MANAGED_CONFIG_BEGIN}
 unix_socket_directories = '{}'
 listen_addresses = ''
 port = {}
@@ -579,7 +586,10 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let manager = test_manager(&temp);
         fs::create_dir_all(&manager.config.data_dir)?;
-        fs::write(manager.config.data_dir.join("postmaster.pid"), "not-a-pid\n")?;
+        fs::write(
+            manager.config.data_dir.join("postmaster.pid"),
+            "not-a-pid\n",
+        )?;
 
         let error = manager.postmaster_pid_state().unwrap_err();
         assert!(format!("{error:#}").contains("failed to parse postmaster pid"));
@@ -593,7 +603,12 @@ mod tests {
         fs::create_dir_all(&manager.config.data_dir)?;
         fs::create_dir_all(&manager.config.run_dir)?;
         fs::write(manager.config.data_dir.join("postmaster.pid"), "999999\n")?;
-        fs::create_dir(manager.config.run_dir.join(format!(".s.PGSQL.{}", manager.config.port)))?;
+        fs::create_dir(
+            manager
+                .config
+                .run_dir
+                .join(format!(".s.PGSQL.{}", manager.config.port)),
+        )?;
 
         let error = manager.force_cleanup(false).unwrap_err();
         assert!(format!("{error:#}").contains("failed to remove postgres socket"));
@@ -648,16 +663,33 @@ mod tests {
             }
         })?;
 
-        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"timescaledb\" CASCADE"));
-        assert!(statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" CASCADE"));
-        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"vector\" CASCADE"));
-        assert!(!statements.iter().any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE"));
+        assert!(
+            statements
+                .iter()
+                .any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"timescaledb\" CASCADE")
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" CASCADE")
+        );
+        assert!(
+            !statements
+                .iter()
+                .any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"vector\" CASCADE")
+        );
+        assert!(
+            !statements
+                .iter()
+                .any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE")
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn pg_isready_probe_reports_spawn_failures() -> TestResult<()> {
-        let error = pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
+        let error =
+            pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("failed to run pg_isready"));
         assert!(message.contains("pg_isready exploded"));

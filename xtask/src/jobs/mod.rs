@@ -44,7 +44,9 @@ pub struct Job {
 
 impl Job {
     fn require_spawned_pid(pid: Option<u32>, command: &str, args: &[String]) -> Result<u32> {
-        pid.ok_or_else(|| eyre!("spawned background job for {command} {args:?} did not expose a PID"))
+        pid.ok_or_else(|| {
+            eyre!("spawned background job for {command} {args:?} did not expose a PID")
+        })
     }
 
     fn read_archived_stream(&self, stream_name: &str) -> Result<String> {
@@ -58,7 +60,10 @@ impl Job {
             )
         })?;
         let (stdout, stderr) = db.get_job_logs(self.id).with_context(|| {
-            format!("failed to load archived {stream_name} from history DB for job {}", self.id)
+            format!(
+                "failed to load archived {stream_name} from history DB for job {}",
+                self.id
+            )
         })?;
         let archived = match stream_name {
             "stdout" => stdout,
@@ -180,7 +185,9 @@ pub struct JobManager {
 }
 
 impl JobManager {
-    fn terminal_status_from_exit_code_file(job_dir: &Path) -> Result<(InvocationStatus, Option<i32>)> {
+    fn terminal_status_from_exit_code_file(
+        job_dir: &Path,
+    ) -> Result<(InvocationStatus, Option<i32>)> {
         let exit_code_path = job_dir.join("exit_code");
         match fs::read_to_string(&exit_code_path) {
             Ok(content) => {
@@ -672,8 +679,9 @@ impl JobManager {
         };
 
         // Clean orphan directories (no DB lock held)
-        let entries = fs::read_dir(&self.jobs_dir)
-            .with_context(|| format!("failed to read jobs directory {}", self.jobs_dir.display()))?;
+        let entries = fs::read_dir(&self.jobs_dir).with_context(|| {
+            format!("failed to read jobs directory {}", self.jobs_dir.display())
+        })?;
         for entry in entries {
             let entry = entry.with_context(|| {
                 format!(
@@ -743,9 +751,7 @@ fn send_job_signal(
         | Err(nix::errno::Errno::EINVAL) => match nix::sys::signal::kill(pid, signal) {
             Ok(()) => Ok(SignalDelivery::Delivered),
             Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
-            Err(error) => Err(eyre!(
-                "failed to send {signal:?} to job pid {pid}: {error}"
-            )),
+            Err(error) => Err(eyre!("failed to send {signal:?} to job pid {pid}: {error}")),
         },
         Err(error) => match nix::sys::signal::kill(pid, signal) {
             Ok(()) => Ok(SignalDelivery::Delivered),
@@ -828,9 +834,11 @@ mod tests {
         fs::write(dir.path().join("exit_code"), "not-a-number\n")?;
         let error = JobManager::terminal_status_from_exit_code_file(dir.path())
             .expect_err("malformed stale exit code should surface");
-        assert!(error
-            .to_string()
-            .contains("failed to parse stale background job exit code"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to parse stale background job exit code")
+        );
         Ok(())
     }
 
@@ -1045,15 +1053,18 @@ mod tests {
             fs::create_dir_all(parent)?;
         }
 
-        let (invocation_id, job_id) =
-            manager
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?
-                .start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
+        let (invocation_id, job_id) = manager
+            .db
+            .lock()
+            .map_err(|_| eyre!("db lock poisoned"))?
+            .start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
         fs::create_dir_all(jobs_dir.join(job_id.to_string()))?;
-        drop(fs::File::create(jobs_dir.join(job_id.to_string()).join("stdout.log"))?);
-        drop(fs::File::create(jobs_dir.join(job_id.to_string()).join("stderr.log"))?);
+        drop(fs::File::create(
+            jobs_dir.join(job_id.to_string()).join("stdout.log"),
+        )?);
+        drop(fs::File::create(
+            jobs_dir.join(job_id.to_string()).join("stderr.log"),
+        )?);
 
         let job = manager
             .get(job_id)?
@@ -1084,15 +1095,16 @@ mod tests {
         let mut child = std::process::Command::new("sleep")
             .arg("60")
             .spawn()
-            .map_err(|error| eyre!("failed to spawn sleep process for cancellation test: {error}"))?;
+            .map_err(|error| {
+                eyre!("failed to spawn sleep process for cancellation test: {error}")
+            })?;
         let stdout_path = jobs_dir.join("stdout.log");
         let stderr_path = jobs_dir.join("stderr.log");
-        let (invocation_id, job_id) =
-            manager
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?
-                .start_background_job("check", &[], Some(child.id()), &stdout_path, &stderr_path)?;
+        let (invocation_id, job_id) = manager
+            .db
+            .lock()
+            .map_err(|_| eyre!("db lock poisoned"))?
+            .start_background_job("check", &[], Some(child.id()), &stdout_path, &stderr_path)?;
 
         assert!(manager.cancel(job_id)?);
 
@@ -1191,12 +1203,11 @@ mod tests {
             fs::create_dir_all(parent)?;
         }
 
-        let (_invocation_id, job_id) =
-            manager
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?
-                .start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
+        let (_invocation_id, job_id) = manager
+            .db
+            .lock()
+            .map_err(|_| eyre!("db lock poisoned"))?
+            .start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
         let job_dir = jobs_dir.join(job_id.to_string());
         fs::create_dir_all(&job_dir)?;
         fs::write(job_dir.join("exit_code"), "bogus\n")?;

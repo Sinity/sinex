@@ -56,9 +56,7 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
 /// Asserts the health-report envelope and per-component field presence.
 #[sinex_test]
 async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .args(["doctor", "--json"])
-        .output()?;
+    let output = Command::new("xtask").args(["doctor", "--json"]).output()?;
 
     assert!(output.status.success(), "doctor --json should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -79,7 +77,10 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     // postgres + nats: { available: bool, message: string|null }
     for component in ["postgres", "nats"] {
         let c = &data[component];
-        assert!(c["available"].is_boolean(), "{component}.available must be bool");
+        assert!(
+            c["available"].is_boolean(),
+            "{component}.available must be bool"
+        );
         assert!(
             c["message"].is_string() || c["message"].is_null(),
             "{component}.message must be string or null"
@@ -89,8 +90,14 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     // tls: detailed cert-presence object
     let tls = &data["tls"];
     assert!(tls["ca_exists"].is_boolean(), "tls.ca_exists must be bool");
-    assert!(tls["server_cert_exists"].is_boolean(), "tls.server_cert_exists must be bool");
-    assert!(tls["server_expired"].is_boolean(), "tls.server_expired must be bool");
+    assert!(
+        tls["server_cert_exists"].is_boolean(),
+        "tls.server_cert_exists must be bool"
+    );
+    assert!(
+        tls["server_expired"].is_boolean(),
+        "tls.server_expired must be bool"
+    );
 
     // tools: array of { name, available, ... }
     let tools = data["tools"]
@@ -98,12 +105,18 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
         .ok_or_else(|| color_eyre::eyre::eyre!("data.tools must be array"))?;
     for tool in tools {
         assert!(tool["name"].is_string(), "tool.name must be string");
-        assert!(tool["available"].is_boolean(), "tool.available must be bool");
+        assert!(
+            tool["available"].is_boolean(),
+            "tool.available must be bool"
+        );
     }
 
     // environment: object with known keys
     let env = &data["environment"];
-    assert!(env["hostname"].is_string(), "environment.hostname must be string");
+    assert!(
+        env["hostname"].is_string(),
+        "environment.hostname must be string"
+    );
 
     Ok(())
 }
@@ -164,7 +177,10 @@ async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
         .ok_or_else(|| color_eyre::eyre::eyre!("data.packages must be an array"))?;
 
     // Must have at least the workspace crates
-    assert!(!packages.is_empty(), "workspace must have at least one package");
+    assert!(
+        !packages.is_empty(),
+        "workspace must have at least one package"
+    );
 
     for pkg in packages {
         assert!(pkg["name"].is_string(), "pkg.name must be string");

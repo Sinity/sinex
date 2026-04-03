@@ -163,7 +163,11 @@ pub(crate) fn parse_one_shot_i64_env(var_name: &str, purpose: &str) -> Option<i6
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => {
-            tracing::warn!(env_var = var_name, purpose, "ignoring non-unicode one-shot environment value");
+            tracing::warn!(
+                env_var = var_name,
+                purpose,
+                "ignoring non-unicode one-shot environment value"
+            );
             None
         }
     };
@@ -387,8 +391,8 @@ pub async fn run_cli() -> Result<()> {
         Ok(m) => m,
         Err(e) => {
             // If --json appears anywhere in raw args, emit a structured error.
-            let want_json = std::env::args()
-                .any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
+            let want_json =
+                std::env::args().any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
             if want_json {
                 let json = serde_json::json!({
                     "command": "xtask",
@@ -476,12 +480,14 @@ pub async fn run_cli() -> Result<()> {
         if let Some(bg_id) = claimed_bg_invocation {
             match history_db.as_ref() {
                 Ok(db) => {
-                    if let Err(error) =
-                        db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
-                    {
-                        eprintln!(
-                            "⚠️  Failed to claim background invocation {bg_id}: {error}"
-                        );
+                    if let Err(error) = db.claim_background_invocation(
+                        bg_id,
+                        command_name,
+                        subcommand,
+                        profile,
+                        None,
+                    ) {
+                        eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
                     }
                 }
                 Err(error) => {
@@ -622,32 +628,35 @@ pub async fn run_cli() -> Result<()> {
     {
         let cfg = config();
         match jobs::JobManager::new(cfg.jobs_dir()) {
-            Ok(manager) => match manager.spawn_xtask(command_name, &queued.args, queued.output_format)
-            {
-                Ok(job) => {
-                    // Update coordinator state with real job_id + pid.
-                    // Critical for FIFO queue: handle_completion may have
-                    // left remaining items in the state file with sentinel values.
-                    if let Some(pid) = job.pid {
-                        if let Err(error) = coord.update_state(command_name, job.id, pid) {
+            Ok(manager) => {
+                match manager.spawn_xtask(command_name, &queued.args, queued.output_format) {
+                    Ok(job) => {
+                        // Update coordinator state with real job_id + pid.
+                        // Critical for FIFO queue: handle_completion may have
+                        // left remaining items in the state file with sentinel values.
+                        if let Some(pid) = job.pid {
+                            if let Err(error) = coord.update_state(command_name, job.id, pid) {
+                                eprintln!(
+                                    "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                    job.id
+                                );
+                            }
+                        } else {
                             eprintln!(
-                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
                                 job.id
                             );
                         }
-                    } else {
-                        eprintln!(
-                            "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
-                            job.id
-                        );
+                    }
+                    Err(error) => {
+                        eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
                     }
                 }
-                Err(error) => {
-                    eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
-                }
-            },
+            }
             Err(error) => {
-                eprintln!("Warning: failed to open jobs directory for queued {command_name} work: {error}");
+                eprintln!(
+                    "Warning: failed to open jobs directory for queued {command_name} work: {error}"
+                );
             }
         }
     }
@@ -958,7 +967,10 @@ mod tests {
     async fn parse_one_shot_i64_env_rejects_invalid_values_and_clears_env() -> TestResult<()> {
         let _guard = env_set("SINEX_TEST_CLAIM", Some("abc".into()));
 
-        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert_eq!(
+            parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
+            None
+        );
         assert!(
             std::env::var_os("SINEX_TEST_CLAIM").is_none(),
             "invalid one-shot env var must still be removed"
@@ -974,7 +986,10 @@ mod tests {
 
         let _guard = env_set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
 
-        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert_eq!(
+            parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
+            None
+        );
         assert!(
             std::env::var_os("SINEX_TEST_CLAIM").is_none(),
             "non-unicode one-shot env var must still be removed"

@@ -86,8 +86,10 @@ impl RuntimeMetrics {
     }
 
     pub fn fresh_consumer_lag_pending(&self) -> Option<f64> {
-        self.consumer_lag_pending
-            .filter(|_| self.consumer_lag_age_secs.is_some_and(|age| age <= TELEMETRY_STALE_SECS))
+        self.consumer_lag_pending.filter(|_| {
+            self.consumer_lag_age_secs
+                .is_some_and(|age| age <= TELEMETRY_STALE_SECS)
+        })
     }
 
     pub fn consumer_lag_is_stale(&self) -> bool {
@@ -125,7 +127,9 @@ impl RuntimeMetrics {
     pub fn warnings(&self) -> Vec<String> {
         let mut warnings = Vec::new();
         if let Some(error) = &self.query_error {
-            warnings.push(format!("Runtime health: failed to query runtime metrics ({error})"));
+            warnings.push(format!(
+                "Runtime health: failed to query runtime metrics ({error})"
+            ));
         }
         match self.ingestd_status {
             IngestdStatus::Healthy => {}
@@ -382,7 +386,10 @@ mod tests {
             query_error: None,
         };
 
-        assert_eq!(metrics.summary_fragment(), "ingestd:down lag:stale batch:stale");
+        assert_eq!(
+            metrics.summary_fragment(),
+            "ingestd:down lag:stale batch:stale"
+        );
         Ok(())
     }
 
@@ -477,16 +484,12 @@ mod tests {
         );
 
         let warnings = metrics.warnings();
-        assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.contains("consumer lag telemetry is stale (sample age unavailable)"))
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.contains("batch latency telemetry is stale (sample age unavailable)"))
-        );
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("consumer lag telemetry is stale (sample age unavailable)")
+        }));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("batch latency telemetry is stale (sample age unavailable)")
+        }));
         Ok(())
     }
 

@@ -143,7 +143,8 @@ pub fn build_nextest_filter(packages: &[String]) -> String {
 
 /// Get list of changed files from git.
 fn changed_files() -> Result<Vec<String>> {
-    let repo_root = std::env::current_dir().context("failed to determine current working directory")?;
+    let repo_root =
+        std::env::current_dir().context("failed to determine current working directory")?;
     changed_files_in(&repo_root)
 }
 
@@ -310,7 +311,8 @@ fn transitive_dependents(
 /// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
 ///   `xtask test --vm --category smoke`
 pub fn nixos_modules_dirty() -> Result<bool> {
-    let repo_root = std::env::current_dir().context("failed to determine current working directory")?;
+    let repo_root =
+        std::env::current_dir().context("failed to determine current working directory")?;
     nixos_modules_dirty_in(&repo_root)
 }
 
@@ -574,7 +576,9 @@ mod tests {
 
         let error = WorkspaceMetadata::parse_metadata(&metadata)
             .expect_err("missing dependency name should surface");
-        assert!(format!("{error:#}").contains("package[xtask] dependency[0] is missing a string name"));
+        assert!(
+            format!("{error:#}").contains("package[xtask] dependency[0] is missing a string name")
+        );
         Ok(())
     }
 
@@ -596,7 +600,10 @@ mod tests {
         });
 
         let parsed = WorkspaceMetadata::parse_metadata(&metadata)?;
-        assert_eq!(parsed.packages, vec!["xtask".to_string(), "sinex-primitives".to_string()]);
+        assert_eq!(
+            parsed.packages,
+            vec!["xtask".to_string(), "sinex-primitives".to_string()]
+        );
         assert_eq!(
             parsed.reverse_deps.get("sinex-primitives"),
             Some(&HashSet::from(["xtask".to_string()]))
@@ -643,7 +650,10 @@ mod tests {
         run_git(&["commit", "-qm", "init"], repo.path())?;
 
         std::fs::create_dir_all(repo.path().join(".config"))?;
-        std::fs::write(repo.path().join(".config/nextest.toml"), "[profile.default]\n")?;
+        std::fs::write(
+            repo.path().join(".config/nextest.toml"),
+            "[profile.default]\n",
+        )?;
         std::fs::write(repo.path().join("flake.nix"), "{ }\n")?;
 
         let changed = changed_files_in(repo.path())?;

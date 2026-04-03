@@ -628,10 +628,7 @@ fn git_output(cwd: &Path, args: &[&str], description: &str) -> Result<std::proce
         .with_context(|| format!("failed to run git {description}"))?;
 
     if !output.status.success() {
-        bail!(
-            "git {description} failed: {}",
-            summarize_git_error(&output)
-        );
+        bail!("git {description} failed: {}", summarize_git_error(&output));
     }
 
     Ok(output)
@@ -916,11 +913,12 @@ fn cancel_process(pid: u32) {
 /// Mark a superseded background job and its durable invocation as cancelled.
 fn mark_cancelled(job_id: i64) -> Result<()> {
     let cfg = config();
-    let db = crate::history::HistoryDb::open(&cfg.history_db_path())
-        .with_context(|| format!("failed to open history DB while cancelling superseded job {job_id}"))?;
-    let job = db
-        .get_background_job_by_id(job_id)?
-        .ok_or_else(|| eyre!("background job {job_id} missing while recording superseded cancellation"))?;
+    let db = crate::history::HistoryDb::open(&cfg.history_db_path()).with_context(|| {
+        format!("failed to open history DB while cancelling superseded job {job_id}")
+    })?;
+    let job = db.get_background_job_by_id(job_id)?.ok_or_else(|| {
+        eyre!("background job {job_id} missing while recording superseded cancellation")
+    })?;
     if let Some(invocation_id) = job.invocation_id {
         db.finish_invocation(invocation_id, InvocationStatus::Cancelled, None, 0.0)
             .with_context(|| {
@@ -954,8 +952,7 @@ fn remove_state_file(path: &std::path::Path, reason: &str) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .with_context(|| format!("{reason}: {}", path.display())),
+        Err(error) => Err(error).with_context(|| format!("{reason}: {}", path.display())),
     }
 }
 
@@ -969,7 +966,12 @@ fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> 
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| eyre!("coordinator state path is not valid UTF-8: {}", path.display()))?;
+        .ok_or_else(|| {
+            eyre!(
+                "coordinator state path is not valid UTF-8: {}",
+                path.display()
+            )
+        })?;
     let unique_suffix = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1091,9 +1093,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
 
     let Some(data) = &bg_result.data else {
         let cleared = clear_pending(None, "background spawn returned no data")?;
-        bail!(
-            "background spawn returned no data for `{command}`; cleared_pending_state={cleared}"
-        );
+        bail!("background spawn returned no data for `{command}`; cleared_pending_state={cleared}");
     };
 
     let Some(job_id) = data["job_id"].as_i64() else {
@@ -1135,7 +1135,13 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             job_id,
             status,
             duration_secs,
-        } => coordination_fresh_result(*job_id, status, *duration_secs, ctx, fresh_packages_probe(*job_id)),
+        } => coordination_fresh_result(
+            *job_id,
+            status,
+            *duration_secs,
+            ctx,
+            fresh_packages_probe(*job_id),
+        ),
         CoordinationResult::Attached { job_id } => {
             tracing::info!(
                 target: "xtask::coordinator",
@@ -1471,7 +1477,9 @@ mod tests {
         let coordinator = JobCoordinator::new()?;
 
         assert!(
-            coordinator.check_fresh("check", "tree-fingerprint", "scope-key").is_none(),
+            coordinator
+                .check_fresh("check", "tree-fingerprint", "scope-key")
+                .is_none(),
             "unopenable history DB should disable freshness checks instead of panicking"
         );
         Ok(())
@@ -1540,7 +1548,10 @@ mod tests {
         std::fs::write(dir.path().join("xtask/src/lib.rs"), "fn main() {}\n")?;
         run_git(&["add", "xtask/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
-        std::fs::write(dir.path().join("xtask/src/lib.rs"), "fn main() { println!(\"dirty\"); }\n")?;
+        std::fs::write(
+            dir.path().join("xtask/src/lib.rs"),
+            "fn main() { println!(\"dirty\"); }\n",
+        )?;
 
         let args = vec!["-p".into(), "xtask".into()];
         let fingerprint = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
@@ -2017,8 +2028,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_update_coordinator_state_clears_pending_reservation_when_pid_missing(
-    ) -> TestResult<()> {
+    async fn test_update_coordinator_state_clears_pending_reservation_when_pid_missing()
+    -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
         let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
         let coordinator = JobCoordinator::new()?;
@@ -2066,15 +2077,15 @@ mod tests {
         mark_cancelled(job_id)?;
 
         let db = crate::history::HistoryDb::open(&db_path)?;
-        let invocation = db
-            .get_invocation_full(invocation_id)?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing invocation after supersede cancellation"))?;
+        let invocation = db.get_invocation_full(invocation_id)?.ok_or_else(|| {
+            color_eyre::eyre::eyre!("missing invocation after supersede cancellation")
+        })?;
         assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
         assert!(invocation.invocation.finished_at.is_some());
 
-        let job = db
-            .get_background_job_by_id(job_id)?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing background job after supersede cancellation"))?;
+        let job = db.get_background_job_by_id(job_id)?.ok_or_else(|| {
+            color_eyre::eyre::eyre!("missing background job after supersede cancellation")
+        })?;
         assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
         Ok(())
     }
@@ -2203,13 +2214,17 @@ mod tests {
         assert_eq!(data["job_id"], 42);
         assert_eq!(data["cached_status"], "success");
         assert_eq!(data["cached_duration_secs"], 3.5);
-        assert_eq!(data["compiled_packages"], serde_json::json!(["sinex-db", "xtask"]));
+        assert_eq!(
+            data["compiled_packages"],
+            serde_json::json!(["sinex-db", "xtask"])
+        );
         assert_eq!(data["compiled_packages_issue"], serde_json::Value::Null);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_coordination_fresh_result_surfaces_compiled_package_probe_errors() -> TestResult<()> {
+    async fn test_coordination_fresh_result_surfaces_compiled_package_probe_errors()
+    -> TestResult<()> {
         let ctx = json_ctx();
         let result = coordination_fresh_result(
             42,

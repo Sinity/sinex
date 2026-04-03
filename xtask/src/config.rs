@@ -188,9 +188,12 @@ pub(crate) fn load_user_preferences_from(
 
     let path = config_dir.join("xtask/preferences.toml");
     match std::fs::read_to_string(&path) {
-        Ok(contents) => toml::from_str(&contents)
-            .with_context(|| format!("failed to parse {}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(UserPreferences::default()),
+        Ok(contents) => {
+            toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(UserPreferences::default())
+        }
         Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
     }
 }

@@ -50,7 +50,6 @@ pub use chaos::ChaosInjector;
 pub use coordination::PipelineNamespace;
 pub use events::EventPublisher;
 pub use fs::EnvGuard;
-pub use workspace::EphemeralWorkspace;
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
@@ -62,6 +61,7 @@ pub use prelude::SinexError;
 pub use prelude::TestContext;
 pub use snapshot::TestSnapshot;
 pub use stack::{TEST_RPC_TOKEN, TestCoreStack};
+pub use workspace::EphemeralWorkspace;
 
 /// Configures proptest runner with sandbox defaults
 #[must_use]

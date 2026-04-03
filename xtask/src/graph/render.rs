@@ -286,18 +286,21 @@ impl Renderer for JsonRenderer {
                 .graph
                 .graph()
                 .query_forward(vec![pkg_id])
-                .with_context(|| format!("Failed to query forward dependencies for '{}'", pkg.name()))?;
+                .with_context(|| {
+                    format!("Failed to query forward dependencies for '{}'", pkg.name())
+                })?;
             let resolved = query.resolve();
             // Get all packages this one depends on
             for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
                 if pkg_id == dep_id {
                     continue;
                 }
-                let dep_metadata = self
-                    .graph
-                    .graph()
-                    .metadata(dep_id)
-                    .with_context(|| format!("Failed to resolve dependency metadata while rendering '{}'", pkg.name()))?;
+                let dep_metadata = self.graph.graph().metadata(dep_id).with_context(|| {
+                    format!(
+                        "Failed to resolve dependency metadata while rendering '{}'",
+                        pkg.name()
+                    )
+                })?;
                 edges.push(EdgeJson {
                     source: pkg.name().to_string(),
                     target: dep_metadata.name().to_string(),

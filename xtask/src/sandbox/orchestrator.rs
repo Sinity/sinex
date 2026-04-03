@@ -483,10 +483,7 @@ pub async fn start_test_ingestd_with_config(
         }
     }
 
-    Ok(TestIngestdHandle {
-        child,
-        stream_name,
-    })
+    Ok(TestIngestdHandle { child, stream_name })
 }
 
 #[cfg(test)]
@@ -538,7 +535,15 @@ mod tests {
             .expect_err("directory manifest should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to read workspace candidate manifest"));
-        assert!(message.contains(workspace_root.join("Cargo.toml").display().to_string().as_str()));
+        assert!(
+            message.contains(
+                workspace_root
+                    .join("Cargo.toml")
+                    .display()
+                    .to_string()
+                    .as_str()
+            )
+        );
         Ok(())
     }
 
