@@ -465,14 +465,20 @@ async fn release_slot(
     slot.in_use.store(false, Ordering::Release);
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LazySlotPruneSummary {
+    pruned: usize,
+    locked_stale_slots: Vec<(String, String)>,
+}
+
 async fn prune_stale_lazy_slot_databases(
     admin_url: &str,
     slot_names: &[String],
     expected_fingerprint: &Option<String>,
     expected_extensions: &HashMap<String, String>,
-) -> TestResult<usize> {
+) -> TestResult<LazySlotPruneSummary> {
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-    let mut pruned = 0usize;
+    let mut summary = LazySlotPruneSummary::default();
 
     for slot_name in slot_names {
         if !provisioning::database_exists_admin(&mut admin_conn, slot_name).await? {
@@ -512,9 +518,9 @@ async fn prune_stale_lazy_slot_databases(
             .fetch_one(&mut admin_conn)
             .await?;
         if !slot_lock_acquired {
-            eprintln!(
-                "ℹ️  Leaving stale lazy pool database {slot_name} in place ({stale_reason}); slot lock is currently held"
-            );
+            summary
+                .locked_stale_slots
+                .push((slot_name.clone(), stale_reason));
             continue;
         }
 
@@ -532,10 +538,10 @@ async fn prune_stale_lazy_slot_databases(
             .await;
 
         drop_result?;
-        pruned += 1;
+        summary.pruned += 1;
     }
 
-    Ok(pruned)
+    Ok(summary)
 }
 
 // ── DatabasePool ────────────────────────────────────────────────────────────
@@ -613,15 +619,43 @@ impl DatabasePool {
             let expected_fingerprint = Some(schema_fingerprint()?);
             let slot_names: Vec<String> =
                 (0..config.size).map(|i| format!("sinex_test_pool_{i}")).collect();
-            let pruned = prune_stale_lazy_slot_databases(
+            let prune_summary = prune_stale_lazy_slot_databases(
                 &config.admin_url,
                 &slot_names,
                 &expected_fingerprint,
                 &expected_extensions,
             )
             .await?;
-            if pruned > 0 {
-                eprintln!("♻️  Pruned {pruned} stale lazy pool database(s) before acquisition");
+            if prune_summary.pruned > 0 {
+                eprintln!(
+                    "♻️  Pruned {} stale lazy pool database(s) before acquisition",
+                    prune_summary.pruned
+                );
+            }
+            if !prune_summary.locked_stale_slots.is_empty() {
+                let preview_limit = 3usize;
+                let preview = prune_summary
+                    .locked_stale_slots
+                    .iter()
+                    .take(preview_limit)
+                    .map(|(slot_name, stale_reason)| format!("{slot_name} ({stale_reason})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let remaining = prune_summary
+                    .locked_stale_slots
+                    .len()
+                    .saturating_sub(preview_limit);
+                if remaining == 0 {
+                    eprintln!(
+                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}",
+                        prune_summary.locked_stale_slots.len()
+                    );
+                } else {
+                    eprintln!(
+                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}, +{remaining} more",
+                        prune_summary.locked_stale_slots.len()
+                    );
+                }
             }
 
             let mut slots = Vec::with_capacity(config.size);
@@ -1432,14 +1466,18 @@ mod tests {
         )
         .await?;
 
-        let pruned = prune_stale_lazy_slot_databases(
+        let summary = prune_stale_lazy_slot_databases(
             &config.admin_url,
             std::slice::from_ref(&db_name),
             &Some(schema_fingerprint()?),
             &HashMap::new(),
         )
         .await?;
-        assert_eq!(pruned, 1, "stale idle slot should be pruned");
+        assert_eq!(summary.pruned, 1, "stale idle slot should be pruned");
+        assert!(
+            summary.locked_stale_slots.is_empty(),
+            "unlocked slot should not be reported as deferred"
+        );
         assert!(
             !provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
             "stale idle slot database should be removed"
@@ -1478,14 +1516,23 @@ mod tests {
             .execute(&mut admin_conn)
             .await?;
 
-        let pruned = prune_stale_lazy_slot_databases(
+        let summary = prune_stale_lazy_slot_databases(
             &config.admin_url,
             std::slice::from_ref(&db_name),
             &Some(schema_fingerprint()?),
             &HashMap::new(),
         )
         .await?;
-        assert_eq!(pruned, 0, "locked slot should not be pruned");
+        assert_eq!(summary.pruned, 0, "locked slot should not be pruned");
+        assert_eq!(
+            summary.locked_stale_slots,
+            vec![(
+                db_name.clone(),
+                "pool metadata mismatch (fingerprint=Some(\"stale-fingerprint\"), extensions={})"
+                    .to_string()
+            )],
+            "locked stale slot should be surfaced once through the deferred summary"
+        );
         assert!(
             provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
             "locked slot database should remain present"
@@ -1538,14 +1585,18 @@ mod tests {
         );
         slot_pool.close().await;
 
-        let pruned = prune_stale_lazy_slot_databases(
+        let summary = prune_stale_lazy_slot_databases(
             &config.admin_url,
             std::slice::from_ref(&db_name),
             &meta.fingerprint,
             &meta.extensions,
         )
         .await?;
-        assert_eq!(pruned, 1, "schema-drifted lazy slot should be pruned");
+        assert_eq!(summary.pruned, 1, "schema-drifted lazy slot should be pruned");
+        assert!(
+            summary.locked_stale_slots.is_empty(),
+            "pruned drifted slot should not be reported as deferred"
+        );
         assert!(
             !provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
             "schema-drifted lazy slot database should be removed"
