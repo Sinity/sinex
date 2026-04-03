@@ -156,6 +156,37 @@ fn derive_hyprland_command_socket(event_socket: &str) -> String {
         .unwrap_or_else(|| event_socket.replacen(".socket2.sock", ".socket.sock", 1))
 }
 
+fn parse_hyprland_numeric_id(raw: &str, context: &str) -> NodeResult<i32> {
+    if let Ok(id) = raw.parse() {
+        return Ok(id);
+    }
+
+    let mut suffix_start = raw.len();
+    for (index, byte) in raw.bytes().enumerate().rev() {
+        if byte.is_ascii_digit() {
+            suffix_start = index;
+        } else {
+            break;
+        }
+    }
+
+    if suffix_start < raw.len() {
+        return raw[suffix_start..].parse().map_err(|error| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to parse {context} '{raw}' as integer: {error}"
+            ))
+            .with_context("id_context", context)
+            .with_context("id_value", raw.to_string())
+        });
+    }
+
+    Err(sinex_node_sdk::SinexError::processing(format!(
+        "Failed to parse {context} '{raw}' as integer"
+    ))
+    .with_context("id_context", context)
+    .with_context("id_value", raw.to_string()))
+}
+
 fn select_hyprland_base_path(
     runtime_dir: &Path,
     explicit_signature: Option<String>,
@@ -437,18 +468,8 @@ impl WindowManagerWatcher {
         })
     }
 
-    fn parse_id(&self, id_str: &str, context: &str) -> NodeResult<i32> {
-        id_str.parse().map_err(|error| {
-            sinex_node_sdk::SinexError::processing(format!(
-                "Failed to parse {context} '{id_str}' as integer: {error}"
-            ))
-            .with_context("id_context", context)
-            .with_context("id_value", id_str.to_string())
-        })
-    }
-
     fn parse_optional_id_or_zero(&self, value: Option<&str>, context: &str) -> NodeResult<i32> {
-        value.map_or(Ok(0), |id| self.parse_id(id, context))
+        value.map_or(Ok(0), |id| parse_hyprland_numeric_id(id, context))
     }
 
     fn serialize_snapshot_entry<T: serde::Serialize>(
@@ -507,8 +528,8 @@ impl WindowManagerWatcher {
         // Parse event format: "EVENT>>DATA"
         if let Some((event_type, event_data)) = line.split_once(">>") {
             match event_type {
-                "focusedwindow" => {
-                    self.handle_window_focused(event_data).await?;
+                "activewindow" | "activewindowv2" => {
+                    self.handle_window_focused(event_type, event_data).await?;
                 }
                 "openwindow" => {
                     self.handle_window_opened(event_data).await?;
@@ -519,11 +540,11 @@ impl WindowManagerWatcher {
                 "movewindow" => {
                     self.handle_window_moved(event_data).await?;
                 }
-                "workspace" => {
-                    self.handle_workspace_changed(event_data).await?;
+                "workspace" | "workspacev2" => {
+                    self.handle_workspace_changed(event_type, event_data).await?;
                 }
-                "focusedmon" => {
-                    self.handle_monitor_focused(event_data).await?;
+                "focusedmon" | "focusedmonv2" => {
+                    self.handle_monitor_focused(event_type, event_data).await?;
                 }
                 _ => {
                     debug!("Unhandled Hyprland event: {}", event_type);
@@ -572,8 +593,10 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window focused event
-    async fn handle_window_focused(&mut self, data: &str) -> NodeResult<()> {
-        // Format: "class,title"
+    async fn handle_window_focused(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
+        // Format:
+        // - activewindow>>WINDOWCLASS,WINDOWTITLE
+        // - activewindowv2>>WINDOWADDRESS
         if let Some((class, raw_title)) = data.split_once(',') {
             let privacy_engine = privacy::engine().map_err(|error| {
                 sinex_node_sdk::SinexError::configuration(
@@ -605,7 +628,7 @@ impl WindowManagerWatcher {
             let workspace_id = self
                 .current_workspace
                 .as_deref()
-                .map_or(Ok(0), |id| self.parse_id(id, "workspace_id"))?;
+                .map_or(Ok(0), |id| parse_hyprland_numeric_id(id, "workspace_id"))?;
             let metadata = serde_json::json!({
                 "window_class": class,
                 "window_title": title,
@@ -614,9 +637,9 @@ impl WindowManagerWatcher {
                 "workspace_id": workspace_id,
             });
             let material_id = self
-                .register_material("focusedwindow", metadata.clone())
+                .register_material(event_type, metadata.clone())
                 .await?;
-            let material_payload = self.build_material_payload("focusedwindow", data, metadata);
+            let material_payload = self.build_material_payload(event_type, data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
@@ -660,6 +683,73 @@ impl WindowManagerWatcher {
             }
 
             self.current_focused_window = Some(window_address);
+            self.current_workspace = Some(workspace_id.to_string());
+        } else {
+            let window_address = data.trim();
+            let window_info = self.windows.get(window_address).cloned().ok_or_else(|| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "activewindowv2 reported unknown window address: {window_address}"
+                ))
+                .with_context("window_address", window_address.to_string())
+            })?;
+            let window_class = window_info.class.clone();
+            let window_title = window_info.title.clone();
+            let workspace_id_raw = window_info.workspace_id.clone();
+            let workspace_id = parse_hyprland_numeric_id(&workspace_id_raw, "workspace_id")?;
+            let metadata = serde_json::json!({
+                "window_class": window_class,
+                "window_title": window_title,
+                "window_id": window_address,
+                "previous_window_id": self.current_focused_window,
+                "workspace_id": workspace_id,
+            });
+            let material_id = self
+                .register_material(event_type, metadata.clone())
+                .await?;
+            let material_payload = self.build_material_payload(event_type, data, metadata);
+            let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Failed to serialize window material payload: {e}"
+                ))
+            })?;
+            let payload = HyprlandWindowFocusedPayload {
+                window_id: window_address.to_string(),
+                window_class,
+                window_title,
+                workspace_id,
+                previous_window_id: self.current_focused_window.clone(),
+            };
+            let event = payload
+                .from_material(material_id)
+                .with_offset_start(0)
+                .map_err(|e| {
+                    sinex_node_sdk::SinexError::processing(format!(
+                        "Failed to set offset_start: {e}"
+                    ))
+                })?
+                .with_offset_end(payload_bytes.len() as i64)
+                .map_err(|e| {
+                    sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
+                })?
+                .build()
+                .map_err(|e| {
+                    sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
+                })?
+                .to_json_event()
+                .map_err(|e| {
+                    sinex_node_sdk::SinexError::processing(format!(
+                        "Failed to serialize window focused payload: {e}"
+                    ))
+                })?;
+            self.emit_material_event(material_id, payload_bytes, event)
+                .await?;
+
+            if let Some(window) = self.windows.get_mut(window_address) {
+                window.last_seen = SystemTime::now();
+            }
+
+            self.current_focused_window = Some(window_address.to_string());
+            self.current_workspace = Some(workspace_id.to_string());
         }
 
         Ok(())
@@ -685,7 +775,7 @@ impl WindowManagerWatcher {
                 .text
                 .into_owned(); // Title might contain commas
 
-            let workspace_id_parsed = self.parse_id(&workspace_id, "workspace_id")?;
+            let workspace_id_parsed = parse_hyprland_numeric_id(&workspace_id, "workspace_id")?;
             let metadata = serde_json::json!({
                 "window_id": window_address,
                 "window_class": window_class,
@@ -825,7 +915,7 @@ impl WindowManagerWatcher {
     async fn handle_window_moved(&mut self, data: &str) -> NodeResult<()> {
         // Format: "address,workspace"
         if let Some((address, workspace)) = data.split_once(',') {
-            let new_workspace_id = self.parse_id(workspace, "workspace_id")?;
+            let new_workspace_id = parse_hyprland_numeric_id(workspace.trim(), "workspace_id")?;
             let metadata = serde_json::json!({
                 "window_address": address,
                 "new_workspace_id": new_workspace_id,
@@ -869,35 +959,45 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
-            // Update window workspace and last_seen timestamp
             if let Some(window) = self.windows.get_mut(address) {
-                window.workspace_id = workspace.to_string();
+                window.workspace_id = workspace.trim().to_string();
                 window.last_seen = SystemTime::now();
             }
+
         }
 
         Ok(())
     }
 
     /// Handle workspace changed event
-    async fn handle_workspace_changed(&mut self, data: &str) -> NodeResult<()> {
-        let workspace_id = data.trim().to_string();
+    async fn handle_workspace_changed(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
+        let (workspace_id_raw, workspace_name) = data
+            .split_once(',')
+            .map(|(workspace_id, workspace_name)| {
+                (workspace_id.trim(), Some(workspace_name.trim()))
+            })
+            .unwrap_or_else(|| (data.trim(), None));
+        if workspace_id_raw.is_empty() {
+            return Ok(());
+        }
+
         let from_workspace_id = self.parse_optional_id_or_zero(
             self.current_workspace.as_deref(),
             "current_workspace_id",
         )?;
-        let to_workspace_id = self.parse_id(&workspace_id, "workspace_id")?;
+        let to_workspace_id = parse_hyprland_numeric_id(workspace_id_raw, "workspace_id")?;
         let monitor_id =
             self.parse_optional_id_or_zero(self.current_monitor.as_deref(), "monitor_id")?;
 
         let metadata = serde_json::json!({
             "from_workspace_id": from_workspace_id,
             "to_workspace_id": to_workspace_id,
+            "workspace_name": workspace_name,
         });
         let material_id = self
-            .register_material("workspace", metadata.clone())
+            .register_material(event_type, metadata.clone())
             .await?;
-        let material_payload = self.build_material_payload("workspace", data, metadata);
+        let material_payload = self.build_material_payload(event_type, data, metadata);
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
             sinex_node_sdk::SinexError::processing(format!(
                 "Failed to serialize window material payload: {e}"
@@ -932,21 +1032,23 @@ impl WindowManagerWatcher {
         self.emit_material_event(material_id, payload_bytes, event)
             .await?;
 
-        self.current_workspace = Some(workspace_id);
+        self.current_workspace = Some(workspace_id_raw.to_string());
 
         Ok(())
     }
 
     /// Handle monitor focused event
-    async fn handle_monitor_focused(&mut self, data: &str) -> NodeResult<()> {
-        // Format: "monitor,workspace"
+    async fn handle_monitor_focused(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
+        // Format:
+        // - focusedmon>>MONNAME,WORKSPACENAME
+        // - focusedmonv2>>MONNAME,WORKSPACEID
         if let Some((monitor, workspace)) = data.split_once(',') {
-            let monitor_id = self.parse_id(monitor, "monitor_id")?;
-            let workspace_id = self.parse_id(workspace, "workspace_id")?;
+            let monitor_id = parse_hyprland_numeric_id(monitor.trim(), "monitor_id")?;
+            let workspace_id = parse_hyprland_numeric_id(workspace.trim(), "workspace_id")?;
             let previous_monitor = self
                 .current_monitor
                 .as_ref()
-                .map(|value| self.parse_id(value, "monitor_id"))
+                .map(|value| parse_hyprland_numeric_id(value, "monitor_id"))
                 .transpose()?;
             let metadata = serde_json::json!({
                 "monitor_id": monitor_id,
@@ -954,9 +1056,9 @@ impl WindowManagerWatcher {
                 "previous_monitor": self.current_monitor,
             });
             let material_id = self
-                .register_material("focusedmon", metadata.clone())
+                .register_material(event_type, metadata.clone())
                 .await?;
-            let material_payload = self.build_material_payload("focusedmon", data, metadata);
+            let material_payload = self.build_material_payload(event_type, data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
@@ -993,7 +1095,8 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
-            self.current_monitor = Some(monitor.to_string());
+            self.current_monitor = Some(monitor_id.to_string());
+            self.current_workspace = Some(workspace_id.to_string());
         }
 
         Ok(())
@@ -1357,6 +1460,13 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn parse_hyprland_numeric_id_accepts_numeric_suffixes() -> TestResult<()> {
+        assert_eq!(parse_hyprland_numeric_id("DP-1", "monitor_id")?, 1);
+        assert_eq!(parse_hyprland_numeric_id("3", "workspace_id")?, 3);
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[sinex_serial_test]
     async fn resolve_hyprland_socket_paths_rejects_non_utf8_event_socket_override()
@@ -1401,7 +1511,7 @@ mod tests {
         let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
 
         let error = watcher
-            .handle_workspace_changed("not-a-number")
+            .handle_workspace_changed("workspace", "not-a-number")
             .await
             .expect_err("invalid workspace ids must not be coerced to zero");
 
@@ -1414,7 +1524,7 @@ mod tests {
         let mut watcher = WindowManagerWatcher::stub(WindowManagerType::Hyprland);
 
         let error = watcher
-            .handle_monitor_focused("left,2")
+            .handle_monitor_focused("focusedmon", "left,2")
             .await
             .expect_err("invalid monitor ids must not be coerced to zero");
 

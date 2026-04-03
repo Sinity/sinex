@@ -94,7 +94,7 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
-            activitywatch_db_path: default_activitywatch_db_path_from(dirs::data_local_dir()),
+            activitywatch_db_path: default_activitywatch_db_path_from(dirs::data_dir()),
         }
     }
 }
@@ -1134,6 +1134,21 @@ mod tests {
         assert_eq!(
             path,
             Utf8PathBuf::from("/tmp/data/activitywatch/aw-server-rust/sqlite.db")
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn desktop_default_activitywatch_db_path_prefers_xdg_data_home()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("XDG_DATA_HOME", "/tmp/xdg-data");
+
+        let config = DesktopConfig::default();
+
+        assert_eq!(
+            config.activitywatch_db_path,
+            Some(Utf8PathBuf::from("/tmp/xdg-data/activitywatch/aw-server-rust/sqlite.db"))
         );
         Ok(())
     }

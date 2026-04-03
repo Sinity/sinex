@@ -253,12 +253,16 @@ pub struct DbusConfig {
     /// Interfaces to monitor (empty = all)
     pub include_interfaces: Vec<String>,
     /// Interfaces to exclude
+    ///
+    /// Keep `org.freedesktop.DBus.Properties` visible: property-changed
+    /// notifications feed media and state extraction.
     pub exclude_interfaces: Vec<String>,
     /// Specialized event extraction
     pub extract_notifications: bool,
     pub extract_media: bool,
     pub extract_power: bool,
     pub extract_hardware: bool,
+    /// Session-bus classification is not a dedicated extraction surface yet.
     pub extract_session: bool,
     pub extract_bluetooth: bool,
     pub extract_network: bool,
@@ -284,7 +288,7 @@ impl Default for DbusConfig {
             extract_media: true,
             extract_power: true,
             extract_hardware: true,
-            extract_session: true,
+            extract_session: false,
             extract_bluetooth: true,
             extract_network: true,
             extract_mounts: true,

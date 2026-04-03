@@ -82,7 +82,7 @@ async fn test_dbus_config_defaults() -> TestResult<()> {
     assert!(config.extract_media);
     assert!(config.extract_power);
     assert!(config.extract_hardware);
-    assert!(config.extract_session);
+    assert!(!config.extract_session);
     assert!(config.extract_bluetooth);
     assert!(config.extract_network);
     assert!(config.extract_mounts);
