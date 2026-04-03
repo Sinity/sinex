@@ -121,6 +121,9 @@ where
     last_checkpoint_time: Instant,
     last_revision: u64,
     pending_hot_reload_cleanup: Option<PathBuf>,
+    /// Consecutive checkpoint save failures. Reset to 0 on any successful save.
+    /// When this reaches 3, processing is halted to prevent silent progress loss.
+    consecutive_checkpoint_failures: u32,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
@@ -147,6 +150,7 @@ where
             last_checkpoint_time: Instant::now(),
             last_revision: 0,
             pending_hot_reload_cleanup: None,
+            consecutive_checkpoint_failures: 0,
             #[cfg(feature = "messaging")]
             health_reporter: None,
             #[cfg(feature = "messaging")]
@@ -731,10 +735,27 @@ where
         }
 
         if self.should_checkpoint() {
-            self.save_state().await.map_err(|e| {
-                error!(node = %self.node.name(), error = %e, "Failed to save checkpoint after batch");
-                e
-            })?;
+            match self.save_state().await {
+                Ok(()) => {
+                    self.consecutive_checkpoint_failures = 0;
+                }
+                Err(e) => {
+                    self.consecutive_checkpoint_failures += 1;
+                    error!(
+                        node = %self.node.name(),
+                        error = %e,
+                        consecutive_failures = self.consecutive_checkpoint_failures,
+                        "Failed to save checkpoint after batch"
+                    );
+                    if self.consecutive_checkpoint_failures >= 3 {
+                        return Err(SinexError::checkpoint(format!(
+                            "Checkpoint save failed {} consecutive times; halting to prevent \
+                             silent progress loss on crash+restart",
+                            self.consecutive_checkpoint_failures
+                        )));
+                    }
+                }
+            }
         }
 
         if let Some(e) = retry_error {
@@ -1393,17 +1414,38 @@ where
 
                 // Periodic checkpoint
                 () = tokio::time::sleep(Duration::from_mins(1)) => {
-                    if self.events_since_checkpoint > 0
-                        && let Err(e) = self.save_state().await
-                    {
-                        warn!(node = %node_name, error = %e, "Failed to save periodic checkpoint");
+                    if self.events_since_checkpoint > 0 {
+                        match self.save_state().await {
+                            Ok(()) => {
+                                self.consecutive_checkpoint_failures = 0;
+                            }
+                            Err(e) => {
+                                self.consecutive_checkpoint_failures += 1;
+                                error!(
+                                    node = %node_name,
+                                    error = %e,
+                                    consecutive_failures = self.consecutive_checkpoint_failures,
+                                    "Failed to save periodic checkpoint"
+                                );
+                                if self.consecutive_checkpoint_failures >= 3 {
+                                    return Err(SinexError::checkpoint(format!(
+                                        "Checkpoint save failed {} consecutive times; halting to \
+                                         prevent silent progress loss on crash+restart",
+                                        self.consecutive_checkpoint_failures
+                                    )));
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         if let Err(e) = self.save_state().await {
-            warn!(node = %node_name, error = %e, "Failed to save final checkpoint");
+            error!(node = %node_name, error = %e, "Failed to save final checkpoint after invalidation run");
+            return Err(SinexError::checkpoint(format!(
+                "Failed to save final checkpoint after invalidation run: {e}"
+            )));
         }
 
         Ok(ScanReport {
@@ -1575,10 +1617,12 @@ where
             }
         }
 
-        self.save_state().await.map_err(|e| {
+        if let Err(e) = self.save_state().await {
             error!(node = %self.node.name(), error = %e, "Failed to save checkpoint after replay");
-            e
-        })?;
+            return Err(SinexError::checkpoint(format!(
+                "Failed to save checkpoint after historical replay: {e}"
+            )));
+        }
 
         info!(
             node = %self.node.name(),
