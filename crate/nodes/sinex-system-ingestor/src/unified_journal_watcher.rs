@@ -124,8 +124,7 @@ async fn read_child_stderr(child: &mut Child, process_name: &str) -> NodeResult<
 
     let mut bytes = Vec::new();
     stderr.read_to_end(&mut bytes).await.map_err(|error| {
-        SinexError::io(format!("failed to read {process_name} stderr"))
-            .with_std_error(&error)
+        SinexError::io(format!("failed to read {process_name} stderr")).with_std_error(&error)
     })?;
 
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
@@ -174,11 +173,9 @@ fn signal_child_terminate(child: &Child, process_name: &str) -> NodeResult<()> {
         .with_std_error(&error)
     })?;
     signal::kill(Pid::from_raw(pid_raw), Signal::SIGTERM).map_err(|error| {
-        SinexError::processing(format!(
-            "failed to send SIGTERM to {process_name} process"
-        ))
-        .with_context("pid", pid.to_string())
-        .with_std_error(&error)
+        SinexError::processing(format!("failed to send SIGTERM to {process_name} process"))
+            .with_context("pid", pid.to_string())
+            .with_std_error(&error)
     })
 }
 
@@ -194,12 +191,10 @@ async fn shutdown_child_process(
                 info!("Journal watcher process exited: {:?}", status);
                 Ok(status)
             }
-            Ok(Err(error)) => {
-                Err(
-                    SinexError::io("failed to wait for journal watcher process exit")
-                        .with_std_error(&error),
-                )
-            }
+            Ok(Err(error)) => Err(SinexError::io(
+                "failed to wait for journal watcher process exit",
+            )
+            .with_std_error(&error)),
             Err(_) => {
                 warn!(
                     "Journal watcher process did not exit within {:?}, killing",
@@ -220,8 +215,7 @@ async fn shutdown_child_process(
             SinexError::io("failed to kill journal watcher process").with_std_error(&error)
         })?;
         child.wait().await.map_err(|error| {
-            SinexError::io("failed to reap killed journal watcher process")
-                .with_std_error(&error)
+            SinexError::io("failed to reap killed journal watcher process").with_std_error(&error)
         })
     }
 }
@@ -247,9 +241,7 @@ fn validate_journal_cursor(cursor: &str) -> bool {
         }
     }
 
-    CURSOR_REQUIRED_KEYS
-        .iter()
-        .all(|key| parts.contains(key))
+    CURSOR_REQUIRED_KEYS.iter().all(|key| parts.contains(key))
 }
 
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
@@ -366,41 +358,21 @@ impl UnifiedJournalWatcher {
                 if validate_journal_cursor(&trimmed) {
                     Ok(Some(trimmed))
                 } else {
-                    Err(
-                        SinexError::processing("Journal cursor file is invalid")
-                            .with_context("cursor_file", cursor_file.to_string())
-                            .with_context("cursor", trimmed),
-                    )
+                    Err(SinexError::processing("Journal cursor file is invalid")
+                        .with_context("cursor_file", cursor_file.to_string())
+                        .with_context("cursor", trimmed))
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(
-                SinexError::io("Failed to read journal cursor file")
-                    .with_context("cursor_file", cursor_file.to_string())
-                    .with_std_error(&error),
-            ),
+            Err(error) => Err(SinexError::io("Failed to read journal cursor file")
+                .with_context("cursor_file", cursor_file.to_string())
+                .with_std_error(&error)),
         }
     }
 
     fn resolve_max_line_bytes() -> NodeResult<usize> {
-        match std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES") {
-            Ok(raw) => raw.parse::<usize>().map_err(|error| {
-                sinex_node_sdk::SinexError::configuration(
-                    "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer".to_string(),
-                )
-                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
-                .with_context("value", raw)
-                .with_source(error)
-            }),
-            Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAX_JOURNAL_LINE_BYTES),
-            Err(error) => Err(
-                sinex_node_sdk::SinexError::configuration(
-                    "Failed to read SINEX_JOURNAL_MAX_LINE_BYTES".to_string(),
-                )
-                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
-                .with_source(error),
-            ),
-        }
+        Ok(sinex_primitives::env::strict_parsed::<usize>("SINEX_JOURNAL_MAX_LINE_BYTES")?
+            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES))
     }
 
     fn parse_optional_field<T>(
@@ -489,10 +461,7 @@ impl UnifiedJournalWatcher {
         })
     }
 
-    fn parse_realtime_timestamp_us(
-        entry: &serde_json::Value,
-        unit_name: &str,
-    ) -> NodeResult<u64> {
+    fn parse_realtime_timestamp_us(entry: &serde_json::Value, unit_name: &str) -> NodeResult<u64> {
         let raw = entry["__REALTIME_TIMESTAMP"].as_str().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(format!(
                 "Systemd journal entry for {unit_name} is missing __REALTIME_TIMESTAMP"
@@ -602,9 +571,7 @@ impl UnifiedJournalWatcher {
         (preview, preview_truncated)
     }
 
-    fn parse_oversized_line_metadata(
-        line: &str,
-    ) -> NodeResult<(String, Option<String>)> {
+    fn parse_oversized_line_metadata(line: &str) -> NodeResult<(String, Option<String>)> {
         let entry: serde_json::Value = serde_json::from_str(line).map_err(|error| {
             SinexError::processing("failed to parse oversized journal line metadata")
                 .with_std_error(&error)
@@ -624,7 +591,10 @@ impl UnifiedJournalWatcher {
         Ok((cursor, unit))
     }
 
-    fn require_sync_end_cursor(entries_count: u64, last_cursor: Option<String>) -> NodeResult<String> {
+    fn require_sync_end_cursor(
+        entries_count: u64,
+        last_cursor: Option<String>,
+    ) -> NodeResult<String> {
         last_cursor.ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(format!(
                 "Historical journal import processed {entries_count} entries without a terminal cursor"
@@ -712,10 +682,7 @@ impl UnifiedJournalWatcher {
         *last_cursor = Some(cursor.to_string());
     }
 
-    async fn remember_processed_cursor(
-        &mut self,
-        cursor: &str,
-    ) -> NodeResult<()> {
+    async fn remember_processed_cursor(&mut self, cursor: &str) -> NodeResult<()> {
         self.last_cursor = Some(cursor.to_string());
         self.save_cursor(cursor).await
     }
@@ -890,8 +857,9 @@ impl UnifiedJournalWatcher {
             if !line.is_empty() {
                 if line.len() > self.max_line_bytes {
                     let raw_line = String::from_utf8_lossy(line);
-                    if let Some(cursor) =
-                        self.handle_oversized_line(raw_line.as_ref(), material).await?
+                    if let Some(cursor) = self
+                        .handle_oversized_line(raw_line.as_ref(), material)
+                        .await?
                     {
                         Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
                     }
@@ -924,7 +892,8 @@ impl UnifiedJournalWatcher {
 
                         // Check if this is a systemd event and emit systemd-specific event
                         if self.systemd_enabled
-                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
+                            && let Some(systemd_event) =
+                                self.parse_systemd_entry(&entry, material)?
                             && let Some(tx) = systemd_tx.as_ref()
                         {
                             self.send_event(tx, systemd_event, "systemd_batch", material)
@@ -977,11 +946,9 @@ impl UnifiedJournalWatcher {
             )
             .to_json_event()
             .map_err(|error| {
-                SinexError::serialization(
-                    "failed to serialize journal sync completion event",
-                )
-                .with_std_error(&error)
-                .with_context("entries_count", entries_count.to_string())
+                SinexError::serialization("failed to serialize journal sync completion event")
+                    .with_std_error(&error)
+                    .with_context("entries_count", entries_count.to_string())
             })?;
             self.send_event(journal_tx, sync_event, "journal_sync_event", material)
                 .await?;
@@ -1202,8 +1169,7 @@ impl UnifiedJournalWatcher {
         })?;
 
         // Extract required fields
-        let cursor =
-            Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Journal entry")?;
+        let cursor = Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Journal entry")?;
 
         let timestamp_us = Self::parse_journal_timestamp_us(obj, &cursor)?;
         let privacy_engine = privacy::engine().map_err(|error| {
@@ -1394,8 +1360,7 @@ impl UnifiedJournalWatcher {
         let obj = entry.as_object().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing("Invalid systemd journal entry".to_string())
         })?;
-        let message =
-            Self::require_entry_string_field(obj, "MESSAGE", "Systemd journal entry")?;
+        let message = Self::require_entry_string_field(obj, "MESSAGE", "Systemd journal entry")?;
         let cursor =
             Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Systemd journal entry")?;
 
@@ -1423,8 +1388,8 @@ impl UnifiedJournalWatcher {
         let event = match event_kind {
             SystemdEventKind::Started => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let main_pid =
-                    Self::parse_optional_field::<u32>(obj, "_PID", &cursor)?.map(ProcessId::from_raw);
+                let main_pid = Self::parse_optional_field::<u32>(obj, "_PID", &cursor)?
+                    .map(ProcessId::from_raw);
                 let e = Event::new(
                     SystemdUnitStartedPayload {
                         unit_name: unit_name.to_string(),
@@ -1608,7 +1573,8 @@ impl UnifiedJournalWatcher {
         material.decorate_event(&mut event).await?;
         if let Err(err) = tx.send(event).await {
             let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
-            let error_message = format!("system journal event channel closed while sending {context}: {err}");
+            let error_message =
+                format!("system journal event channel closed while sending {context}: {err}");
             self.record_error(error_message.clone());
             if drops == 1 || drops == 10 || drops == 100 || drops.is_multiple_of(1000) {
                 warn!(
@@ -1676,7 +1642,10 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         if let Some(ref mut child) = self.child_process {
             let status =
                 shutdown_child_process(child, graceful, GRACEFUL_CHILD_SHUTDOWN_TIMEOUT).await?;
-            debug!(?status, graceful, "Journal watcher child shutdown completed");
+            debug!(
+                ?status,
+                graceful, "Journal watcher child shutdown completed"
+            );
         }
 
         Ok(())
@@ -1755,42 +1724,6 @@ mod tests {
         Arc::new(TestMaterialContext)
     }
 
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, original }
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let original = std::env::var(key).ok();
-            unsafe {
-                std::env::remove_var(key);
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match self.original.as_deref() {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
-            }
-        }
-    }
-
     fn fake_journalctl_script(stdout_lines: &[String]) -> String {
         let mut script =
             "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'journalctl test\\n'\n  exit 0\nfi\n"
@@ -1836,7 +1769,7 @@ mod tests {
     #[sinex_test]
     async fn resolve_max_line_bytes_rejects_invalid_env(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
-        let _guard = EnvVarGuard::set("SINEX_JOURNAL_MAX_LINE_BYTES", "not-a-number");
+        let _guard = EnvGuard::set_single("SINEX_JOURNAL_MAX_LINE_BYTES", "not-a-number");
 
         let error = UnifiedJournalWatcher::resolve_max_line_bytes()
             .expect_err("invalid journal max line env must fail honestly");
@@ -1855,7 +1788,8 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let _ = ctx;
-        let _guard = EnvVarGuard::unset("SINEX_JOURNAL_MAX_LINE_BYTES");
+        let mut _guard = EnvGuard::new();
+        _guard.clear("SINEX_JOURNAL_MAX_LINE_BYTES");
 
         assert_eq!(
             UnifiedJournalWatcher::resolve_max_line_bytes()?,
@@ -1901,8 +1835,8 @@ mod tests {
             .parse_journal_entry(&entry, &material)?
             .expect("valid journal entry should produce an event");
 
-        let expected =
-            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        let expected = Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000)
+            .expect("valid timestamp");
         assert_eq!(event.ts_orig, Some(expected));
         Ok(())
     }
@@ -1982,8 +1916,8 @@ mod tests {
             .parse_systemd_entry(&entry, &material)?
             .expect("matching systemd entry should produce an event");
 
-        let expected =
-            Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000).expect("valid timestamp");
+        let expected = Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000)
+            .expect("valid timestamp");
         assert_eq!(event.ts_orig, Some(expected));
         Ok(())
     }
@@ -2050,9 +1984,8 @@ mod tests {
             "MESSAGE": "X".repeat(256),
         })
         .to_string();
-        let runtime_dir =
-            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
-        let _path = EnvVarGuard::set(
+        let runtime_dir = install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvGuard::set_single(
             "PATH",
             runtime_dir
                 .to_str()
@@ -2091,9 +2024,8 @@ mod tests {
             "MESSAGE": "Y".repeat(256),
         })
         .to_string();
-        let runtime_dir =
-            install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
-        let _path = EnvVarGuard::set(
+        let runtime_dir = install_fake_journalctl(&fake_journalctl_script(&[oversized_line]))?;
+        let _path = EnvGuard::set_single(
             "PATH",
             runtime_dir
                 .to_str()
@@ -2143,9 +2075,11 @@ mod tests {
         let error = UnifiedJournalWatcher::require_sync_end_cursor(3, None)
             .expect_err("sync events must not fabricate an empty end cursor");
 
-        assert!(error
-            .to_string()
-            .contains("processed 3 entries without a terminal cursor"));
+        assert!(
+            error
+                .to_string()
+                .contains("processed 3 entries without a terminal cursor")
+        );
         Ok(())
     }
 
@@ -2172,9 +2106,11 @@ mod tests {
             .await
             .expect_err("directory creation failures must surface honestly");
 
-        assert!(error
-            .to_string()
-            .contains("Failed to create cursor directory"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to create cursor directory")
+        );
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
@@ -2202,10 +2138,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn validate_journal_cursor_rejects_malformed_segments(ctx: TestContext) -> TestResult<()> {
+    async fn validate_journal_cursor_rejects_malformed_segments(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let _ = ctx;
 
-        assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1;x=1;garbage"));
+        assert!(!validate_journal_cursor(
+            "s=abc;i=1;b=boot;m=1;t=1;x=1;garbage"
+        ));
         assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1"));
         assert!(!validate_journal_cursor("s=abc;i=1;b=boot;m=1;t=1;x="));
         Ok(())
@@ -2237,15 +2177,17 @@ mod tests {
         .await
         .expect_err("unreadable cursor paths must not silently trigger a fresh replay");
 
-        assert!(error.to_string().contains("Failed to read journal cursor file"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read journal cursor file")
+        );
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
 
     #[sinex_test]
-    async fn save_cursor_rejects_poisoned_pending_cursor_lock(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn save_cursor_rejects_poisoned_pending_cursor_lock(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
         poison_mutex(Arc::clone(&watcher.pending_cursor), None::<String>);
@@ -2277,12 +2219,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn flush_cursor_rejects_poisoned_pending_cursor_lock(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn flush_cursor_rejects_poisoned_pending_cursor_lock(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
-        poison_mutex(Arc::clone(&watcher.pending_cursor), Some("s=abc".to_string()));
+        poison_mutex(
+            Arc::clone(&watcher.pending_cursor),
+            Some("s=abc".to_string()),
+        );
 
         let error = watcher
             .flush_cursor()
@@ -2301,8 +2244,12 @@ mod tests {
         let mut watcher = test_watcher();
         let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&runtime_dir)?;
-        watcher.journal_config.cursor_file =
-            Some(runtime_dir.join("cursor.state").to_string_lossy().into_owned());
+        watcher.journal_config.cursor_file = Some(
+            runtime_dir
+                .join("cursor.state")
+                .to_string_lossy()
+                .into_owned(),
+        );
         watcher
             .pending_cursor
             .lock()
@@ -2321,9 +2268,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn graceful_shutdown_propagates_cursor_flush_failure(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn graceful_shutdown_propagates_cursor_flush_failure(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let mut watcher = test_watcher();
         let runtime_dir = std::env::temp_dir().join(format!("sinex-journal-{}", Uuid::now_v7()));
@@ -2343,9 +2288,11 @@ mod tests {
             .await
             .expect_err("graceful shutdown must surface cursor flush failures");
 
-        assert!(error
-            .to_string()
-            .contains("Failed to create cursor directory"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to create cursor directory")
+        );
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
     }
@@ -2364,7 +2311,9 @@ mod tests {
             material.initial_provenance(),
         );
 
-        watcher.send_event(&tx, event, "test_send", &material).await?;
+        watcher
+            .send_event(&tx, event, "test_send", &material)
+            .await?;
         let _received = rx.recv().await.expect("event should reach the channel");
 
         let snapshot = watcher.health_snapshot();
@@ -2394,7 +2343,11 @@ mod tests {
             .await
             .expect_err("closed journal event channels must fail honestly");
 
-        assert!(error.to_string().contains("system journal event channel closed"));
+        assert!(
+            error
+                .to_string()
+                .contains("system journal event channel closed")
+        );
         assert!(error.to_string().contains("test_closed_send"));
 
         let snapshot = watcher.health_snapshot();
@@ -2428,7 +2381,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let _ = ctx;
-        let _path = EnvVarGuard::set("PATH", "");
+        let _path = EnvGuard::set_single("PATH", "");
         let mut watcher = test_watcher();
         watcher.journal_config.import_on_startup = true;
         watcher.journal_config.follow = false;
@@ -2459,7 +2412,9 @@ mod tests {
 
     fn poison_mutex<T: Send + 'static>(mutex: Arc<StdMutex<T>>, value: T) {
         let result = std::thread::spawn(move || {
-            let mut guard = mutex.lock().expect("test mutex should lock before poisoning");
+            let mut guard = mutex
+                .lock()
+                .expect("test mutex should lock before poisoning");
             *guard = value;
             panic!("poison mutex for regression coverage");
         })

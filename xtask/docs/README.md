@@ -114,7 +114,7 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 | `xtask test coverage` | Run with coverage collection |
 | `xtask test fuzz` | Discover / run fuzz targets |
 | `xtask test mutants` | Mutation testing |
-| `xtask test vm` | NixOS VM smoke tests |
+| `xtask test vm` | Exported NixOS VM flake checks |
 
 See `verification.md` for the current perf-verification and contract workflow.
 

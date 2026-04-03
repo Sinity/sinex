@@ -19,13 +19,13 @@
   };
 
   outputs =
-    inputs@{
-      self,
-      nixpkgs,
-      fenix,
-      crane,
-      agenix,
-      flake-utils,
+    inputs@{ self
+    , nixpkgs
+    , fenix
+    , crane
+    , agenix
+    , flake-utils
+    ,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -251,33 +251,29 @@
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
-          limitedVmTests = pkgs.lib.filterAttrs (
-            name: _:
-            pkgs.lib.elem name [
-              "basic"
-              "preflight"
-            ]
-          ) vmTests;
+          limitedVmTests = pkgs.lib.filterAttrs
+            (
+              name: _:
+                pkgs.lib.elem name [
+                  "basic"
+                  "preflight"
+                ]
+            )
+            vmTests;
 
-          vmPackagesAll = pkgs.lib.mapAttrs' (
-            name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
-          ) vmTests;
-
-          vmPackagesEssential = pkgs.lib.mapAttrs' (
-            name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
-          ) limitedVmTests;
+          vmCheckOutputs = pkgs.lib.mapAttrs'
+            (
+              name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
+            )
+            (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests);
 
         in
         rec {
-          packages = sinexPackages // vmPackagesEssential;
-
-          legacyPackages = vmPackagesAll;
+          packages = sinexPackages;
 
           formatter = pkgs.nixpkgs-fmt;
 
-          checks = pkgs.lib.mapAttrs' (name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value) (
-            pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests
-          );
+          checks = vmCheckOutputs;
 
           devShells.default =
             let
@@ -443,15 +439,15 @@
     // {
       # NixOS module
       nixosModules = {
-        default =
+        default = import ./nixos;
+        "with-agenix" =
           { ... }:
           {
             imports = [
               agenix.nixosModules.default
-              (import ./nixos)
+              self.nixosModules.default
             ];
           };
-        sinex = args: (self.nixosModules.default args);
       };
 
       nixosConfigurations = {

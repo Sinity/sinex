@@ -2397,6 +2397,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let mut events_since_checkpoint = 0u64;
         let mut last_checkpoint_time = std::time::Instant::now();
         let mut last_event_id: Option<Uuid> = None;
+        let mut consecutive_checkpoint_failures = 0u32;
 
         // Batch processing: accumulate up to BATCH_SIZE events before processing.
         // Block on the first event, then non-blocking drain whatever else is queued.
@@ -2446,19 +2447,22 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Periodic checkpoint save: every N events or M seconds
-            if (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
-                && let Some(revision) = Self::try_save_checkpoint(
+            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
+            {
+                if let Some(revision) = Self::try_save_checkpoint(
                     &checkpoint_manager,
                     &mut checkpoint_state,
                     last_event_id,
                     processed_events,
+                    &mut consecutive_checkpoint_failures,
                 )
-                .await
-            {
-                checkpoint_state.revision = revision;
-                events_since_checkpoint = 0;
-                last_checkpoint_time = std::time::Instant::now();
+                .await?
+                {
+                    checkpoint_state.revision = revision;
+                    events_since_checkpoint = 0;
+                    last_checkpoint_time = std::time::Instant::now();
+                }
             }
         }
 
@@ -2468,8 +2472,9 @@ impl<T: Node + 'static> NodeRunner<T> {
             &mut checkpoint_state,
             last_event_id,
             processed_events,
+            &mut consecutive_checkpoint_failures,
         )
-        .await
+        .await?
         .is_some()
         {
             info!(processed_events, "Final checkpoint saved on clean shutdown");
@@ -2800,14 +2805,21 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     /// Save a checkpoint if `last_event_id` is `Some`. Returns the new revision
     /// on success, or `None` if there was nothing to save or the save failed.
+    ///
+    /// Tracks consecutive failures in `consecutive_failures`. Resets to 0 on success.
+    /// Returns a hard error after 3 consecutive failures to prevent silent progress loss
+    /// on crash+restart (which would cause duplicate event processing).
     #[cfg(feature = "messaging")]
     async fn try_save_checkpoint(
         checkpoint_manager: &CheckpointManager,
         checkpoint_state: &mut crate::checkpoint::CheckpointState,
         last_event_id: Option<Uuid>,
         processed_events: u64,
-    ) -> Option<u64> {
-        let eid = last_event_id?;
+        consecutive_failures: &mut u32,
+    ) -> NodeResult<Option<u64>> {
+        let Some(eid) = last_event_id else {
+            return Ok(None);
+        };
         checkpoint_state.checkpoint = Checkpoint::Internal {
             event_id: eid,
             message_count: processed_events,
@@ -2816,12 +2828,25 @@ impl<T: Node + 'static> NodeRunner<T> {
         checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
         match checkpoint_manager.save_checkpoint(checkpoint_state).await {
             Ok(revision) => {
+                *consecutive_failures = 0;
                 debug!(processed_events, revision, "Checkpoint saved");
-                Some(revision)
+                Ok(Some(revision))
             }
             Err(err) => {
-                warn!(error = %err, "Failed to save checkpoint; will retry next interval");
-                None
+                *consecutive_failures += 1;
+                error!(
+                    error = %err,
+                    consecutive_failures = *consecutive_failures,
+                    "Failed to save checkpoint; will retry next interval"
+                );
+                if *consecutive_failures >= 3 {
+                    return Err(SinexError::checkpoint(format!(
+                        "Checkpoint save failed {} consecutive times; halting to prevent \
+                         silent progress loss on crash+restart",
+                        *consecutive_failures
+                    )));
+                }
+                Ok(None)
             }
         }
     }

@@ -729,7 +729,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Run NixOS VM tests",
+          "about": "Run exported NixOS VM flake checks",
           "args": [
             {
               "global": false,
@@ -1191,7 +1191,7 @@ expression: json
           "name": "vm",
           "subcommands": [
             {
-              "about": "Run NixOS VM tests natively (replaces run-vm-tests.sh) (Q2)",
+              "about": "Run exported NixOS VM flake checks natively (replaces run-vm-tests.sh) (Q2)",
               "args": [
                 {
                   "global": false,
@@ -1284,7 +1284,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "VM preset: minimal, standard, full",
+                  "help": "VM preset placeholder. Interactive preset wiring is currently unfinished.",
                   "long": null,
                   "name": "preset",
                   "possible_values": [],

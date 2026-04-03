@@ -217,10 +217,10 @@ impl CoordinationKvClient {
         create_or_open_kv_store(
             &self.js,
             async_nats::jetstream::kv::Config {
-            bucket: self.instances_bucket.clone(),
-            history: 5,
-            max_age: self.timing.instance_stale_timeout(),
-            ..Default::default()
+                bucket: self.instances_bucket.clone(),
+                history: 5,
+                max_age: self.timing.instance_stale_timeout(),
+                ..Default::default()
             },
         )
         .await
@@ -230,10 +230,10 @@ impl CoordinationKvClient {
         create_or_open_kv_store(
             &self.js,
             async_nats::jetstream::kv::Config {
-            bucket: self.leadership_bucket.clone(),
-            history: 5,
-            max_age: self.timing.leadership_timeout(),
-            ..Default::default()
+                bucket: self.leadership_bucket.clone(),
+                history: 5,
+                max_age: self.timing.leadership_timeout(),
+                ..Default::default()
             },
         )
         .await
@@ -438,7 +438,8 @@ impl CoordinationKvClient {
             }
             let Some(entry) = bucket.get(&key).await.map_err(|e| {
                 SinexError::kv(format!("Failed to read instance metadata for {key}: {e}"))
-            })? else {
+            })?
+            else {
                 continue;
             };
             let metadata = match serde_json::from_slice::<InstanceMetadata>(&entry) {
@@ -519,37 +520,15 @@ impl CoordinationKvClient {
 
     fn instance_is_fresh(&self, metadata: &InstanceMetadata) -> bool {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        now.saturating_sub(metadata.last_heartbeat) <= self.timing.instance_stale_timeout().as_secs() as i64
+        now.saturating_sub(metadata.last_heartbeat)
+            <= self.timing.instance_stale_timeout().as_secs() as i64
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
-    use xtask::sandbox::sinex_test;
-
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
+    use xtask::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn coordination_timing_defaults_match_deployment_contract()
@@ -562,8 +541,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn coordination_timing_accepts_positive_overrides()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn coordination_timing_accepts_positive_overrides() -> ::xtask::sandbox::TestResult<()> {
         let timing = CoordinationTiming::from_overrides(Some(7), Some(31), Some(11));
         assert_eq!(timing.heartbeat_secs, Seconds::from_secs(7));
         assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(31));
@@ -572,8 +550,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn coordination_timing_rejects_zero_overrides()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn coordination_timing_rejects_zero_overrides() -> ::xtask::sandbox::TestResult<()> {
         let timing = CoordinationTiming::from_overrides(Some(0), Some(0), Some(0));
         assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
         assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
@@ -584,9 +561,9 @@ mod tests {
     #[sinex_test(serial = true)]
     async fn coordination_timing_from_env_accepts_positive_overrides()
     -> ::xtask::sandbox::TestResult<()> {
-        let _heartbeat = EnvVarGuard::set("SINEX_COORDINATION_HEARTBEAT", "7");
-        let _timeout = EnvVarGuard::set("SINEX_COORDINATION_TIMEOUT", "31");
-        let _handoff = EnvVarGuard::set("SINEX_COORDINATION_HANDOFF", "11");
+        let _heartbeat = EnvGuard::set_single("SINEX_COORDINATION_HEARTBEAT", "7");
+        let _timeout = EnvGuard::set_single("SINEX_COORDINATION_TIMEOUT", "31");
+        let _handoff = EnvGuard::set_single("SINEX_COORDINATION_HANDOFF", "11");
 
         let timing = CoordinationTiming::from_env();
 
@@ -599,9 +576,9 @@ mod tests {
     #[sinex_test(serial = true)]
     async fn coordination_timing_from_env_ignores_invalid_overrides()
     -> ::xtask::sandbox::TestResult<()> {
-        let _heartbeat = EnvVarGuard::set("SINEX_COORDINATION_HEARTBEAT", "oops");
-        let _timeout = EnvVarGuard::set("SINEX_COORDINATION_TIMEOUT", "0");
-        let _handoff = EnvVarGuard::set("SINEX_COORDINATION_HANDOFF", "-5");
+        let _heartbeat = EnvGuard::set_single("SINEX_COORDINATION_HEARTBEAT", "oops");
+        let _timeout = EnvGuard::set_single("SINEX_COORDINATION_TIMEOUT", "0");
+        let _handoff = EnvGuard::set_single("SINEX_COORDINATION_HANDOFF", "-5");
 
         let timing = CoordinationTiming::from_env();
 
@@ -613,21 +590,17 @@ mod tests {
 
     #[sinex_test]
     async fn parse_leader_id_accepts_valid_utf8() -> ::xtask::sandbox::TestResult<()> {
-        let leader = CoordinationKvClient::parse_leader_id(
-            b"node-a",
-            "coordination leadership entry",
-        )?;
+        let leader =
+            CoordinationKvClient::parse_leader_id(b"node-a", "coordination leadership entry")?;
         assert_eq!(leader, "node-a");
         Ok(())
     }
 
     #[sinex_test]
     async fn parse_leader_id_rejects_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
-        let error = CoordinationKvClient::parse_leader_id(
-            &[0xff, 0xfe],
-            "coordination leadership entry",
-        )
-        .expect_err("invalid leader bytes must fail honestly");
+        let error =
+            CoordinationKvClient::parse_leader_id(&[0xff, 0xfe], "coordination leadership entry")
+                .expect_err("invalid leader bytes must fail honestly");
         assert!(
             error
                 .to_string()
@@ -638,9 +611,8 @@ mod tests {
 
     #[sinex_test]
     async fn parse_leader_id_rejects_empty_value() -> ::xtask::sandbox::TestResult<()> {
-        let error =
-            CoordinationKvClient::parse_leader_id(b"   ", "coordination leadership entry")
-                .expect_err("empty leader bytes must fail honestly");
+        let error = CoordinationKvClient::parse_leader_id(b"   ", "coordination leadership entry")
+            .expect_err("empty leader bytes must fail honestly");
         assert!(
             error
                 .to_string()

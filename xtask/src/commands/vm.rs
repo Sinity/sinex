@@ -8,11 +8,13 @@
 //! VM tests ARE the NixOS compatibility enforcement mechanism.
 //! They import real NixOS modules and exercise actual deployment paths.
 //!
-//! Fast compatibility gate (5-10min):
-//!   `xtask test --vm --category smoke`
+//! Current exported flake checks:
+//!   `xtask test vm --category smoke`       # basic
+//!   `xtask test vm --category integration` # preflight
 //!
-//! Full suite (integration + performance, 30-90min):
-//!   `xtask test --vm --category all`
+//! Additional VM scenario files exist under `tests/e2e/nixos-vm/test-scenarios`,
+//! but they are not runnable through `xtask test vm` until they are exported via
+//! flake `checks` for the active system.
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
@@ -23,8 +25,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
-use crate::history::TestStatus;
 use crate::history::InvocationStatus;
+use crate::history::TestStatus;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue
@@ -87,7 +89,7 @@ fn all_tests() -> Vec<&'static str> {
 /// VM management command variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum VmSubcommand {
-    /// Run NixOS VM tests natively (replaces run-vm-tests.sh) (Q2)
+    /// Run exported NixOS VM flake checks natively (replaces run-vm-tests.sh) (Q2)
     Test {
         /// Test category: smoke, integration, performance, chaos, all
         #[arg(long, short)]
@@ -112,7 +114,7 @@ pub enum VmSubcommand {
     },
     /// Start an interactive VM
     Start {
-        /// VM preset: minimal, standard, full
+        /// VM preset placeholder. Interactive preset wiring is currently unfinished.
         preset: String,
         /// Keep state between runs
         #[arg(long)]
@@ -217,7 +219,10 @@ struct VmTestResult {
     timed_out: bool,
 }
 
-async fn collect_vm_stream_output<R>(reader: Option<BufReader<R>>, stream_name: &str) -> Result<String>
+async fn collect_vm_stream_output<R>(
+    reader: Option<BufReader<R>>,
+    stream_name: &str,
+) -> Result<String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -252,15 +257,73 @@ fn append_stream_task_output(
     }
 }
 
+fn detect_nix_system(workspace_root: &Path) -> Result<String> {
+    if let Ok(system) = std::env::var("NIX_SYSTEM") {
+        if !system.trim().is_empty() {
+            return Ok(system);
+        }
+    }
+
+    let output = Command::new("nix")
+        .args([
+            "eval",
+            "--impure",
+            "--raw",
+            "--expr",
+            "builtins.currentSystem",
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .wrap_err("Failed to detect the current Nix system")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to detect the current Nix system: {stderr}");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>> {
+    let attr_path = format!(".#checks.{system}");
+    let output = Command::new("nix")
+        .args([
+            "eval",
+            &attr_path,
+            "--apply",
+            "builtins.attrNames",
+            "--json",
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .wrap_err("Failed to enumerate exported VM checks")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to enumerate exported VM checks: {stderr}");
+    }
+
+    let exported: Vec<String> = serde_json::from_slice(&output.stdout)
+        .wrap_err("Failed to parse exported VM check list")?;
+    Ok(exported
+        .into_iter()
+        .filter_map(|name| {
+            name.strip_prefix("sinex-vm-")
+                .map(|short| short.to_string())
+        })
+        .collect())
+}
+
 /// Run a single NixOS VM test via `nix build`.
 ///
-/// Tries `.#sinex-vm-{name}` first, falls back to `.#checks.x86_64-linux.sinex-vm-{name}`.
+/// Builds the canonical flake check output `.#checks.<system>.sinex-vm-{name}`.
 /// Captures all output for history DB recording (Q3).
 async fn run_single_vm_test(
     name: &str,
     timeout_secs: u64,
     keep_failed: bool,
     workspace_root: &std::path::Path,
+    system: &str,
 ) -> VmTestResult {
     let start = Instant::now();
 
@@ -270,66 +333,63 @@ async fn run_single_vm_test(
         timeout_secs
     };
 
-    let build_targets = [
-        format!(".#sinex-vm-{name}"),
-        format!(".#checks.x86_64-linux.sinex-vm-{name}"),
-    ];
+    let build_target = format!(".#checks.{system}.sinex-vm-{name}");
 
     let mut combined_output = String::new();
     let mut passed = false;
     let mut timed_out = false;
 
-    for target in &build_targets {
-        let mut cmd = tokio::process::Command::new("nix");
-        cmd.args(["build", target, "-L"]);
-        if keep_failed {
-            cmd.arg("--keep-failed");
+    let mut cmd = tokio::process::Command::new("nix");
+    cmd.args(["build", &build_target, "-L"]);
+    if keep_failed {
+        cmd.arg("--keep-failed");
+    }
+    cmd.current_dir(workspace_root);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let child_result = cmd.spawn();
+    let mut child = match child_result {
+        Ok(c) => c,
+        Err(e) => {
+            combined_output.push_str(&format!("Failed to spawn nix build {build_target}: {e}\n"));
+            return VmTestResult {
+                name: name.to_string(),
+                passed,
+                duration_secs: start.elapsed().as_secs_f64(),
+                output: combined_output,
+                timed_out,
+            };
         }
-        cmd.current_dir(workspace_root);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+    };
 
-        let child_result = cmd.spawn();
-        let mut child = match child_result {
-            Ok(c) => c,
-            Err(e) => {
-                combined_output.push_str(&format!("Failed to spawn nix build {target}: {e}\n"));
-                continue;
+    let stdout = child.stdout.take().map(BufReader::new);
+    let stderr = child.stderr.take().map(BufReader::new);
+
+    let stdout_task = tokio::spawn(async move { collect_vm_stream_output(stdout, "stdout").await });
+    let stderr_task = tokio::spawn(async move { collect_vm_stream_output(stderr, "stderr").await });
+
+    let timeout_duration = std::time::Duration::from_secs(effective_timeout);
+    let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
+
+    let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
+    append_stream_task_output(&mut combined_output, "stdout", stdout_out);
+    append_stream_task_output(&mut combined_output, "stderr", stderr_out);
+
+    match wait_result {
+        Ok(Ok(status)) => {
+            if status.success() {
+                passed = true;
             }
-        };
-
-        // Stream output while collecting it
-        let stdout = child.stdout.take().map(BufReader::new);
-        let stderr = child.stderr.take().map(BufReader::new);
-
-        let stdout_task = tokio::spawn(async move { collect_vm_stream_output(stdout, "stdout").await });
-        let stderr_task = tokio::spawn(async move { collect_vm_stream_output(stderr, "stderr").await });
-
-        let timeout_duration = std::time::Duration::from_secs(effective_timeout);
-        let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
-
-        let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
-        append_stream_task_output(&mut combined_output, "stdout", stdout_out);
-        append_stream_task_output(&mut combined_output, "stderr", stderr_out);
-
-        match wait_result {
-            Ok(Ok(status)) => {
-                if status.success() {
-                    passed = true;
-                    break;
-                }
-                // Non-zero exit: try the fallback target
-            }
-            Ok(Err(e)) => {
-                combined_output.push_str(&format!("Process wait error: {e}\n"));
-            }
-            Err(_elapsed) => {
-                timed_out = true;
-                combined_output.push_str(&format!(
-                    "Test {name} timed out after {effective_timeout}s\n"
-                ));
-                break;
-            }
+        }
+        Ok(Err(e)) => {
+            combined_output.push_str(&format!("Process wait error: {e}\n"));
+        }
+        Err(_elapsed) => {
+            timed_out = true;
+            combined_output.push_str(&format!(
+                "Test {name} timed out after {effective_timeout}s\n"
+            ));
         }
     }
 
@@ -355,33 +415,44 @@ async fn execute_test(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     // --list: show available tests and exit
+    let workspace_root = config::workspace_root();
+    let system = detect_nix_system(&workspace_root)?;
+    let available_tests = available_vm_tests(&workspace_root, &system)?;
+
     if list {
-        println!("\n{}", style("Available VM tests:").bold());
-        println!(
-            "\n  {} (smoke)",
-            style("Smoke (fast NixOS compatibility gate):").dim()
-        );
-        for t in SMOKE_TESTS {
-            println!("    - {t}");
-        }
-        println!("\n  {}", style("Integration:").dim());
-        for t in INTEGRATION_TESTS {
-            println!("    - {t}");
-        }
-        println!("\n  {}", style("Performance:").dim());
-        for t in PERFORMANCE_TESTS {
-            println!("    - {t}");
-        }
-        println!("\n  {}", style("Chaos:").dim());
-        if CHAOS_TESTS.is_empty() {
-            println!("    (pending failure-injection harness)");
-        } else {
-            for t in CHAOS_TESTS {
-                println!("    - {t}");
+        let categories = [
+            ("smoke", SMOKE_TESTS),
+            ("integration", INTEGRATION_TESTS),
+            ("performance", PERFORMANCE_TESTS),
+            ("chaos", CHAOS_TESTS),
+        ];
+
+        println!("\n{}", style("Exported VM checks:").bold());
+        println!("  System: {system}");
+        for (name, tests) in categories {
+            let exported: Vec<&str> = tests
+                .iter()
+                .copied()
+                .filter(|test| available_tests.iter().any(|available| available == test))
+                .collect();
+            println!("\n  {}", style(name).dim());
+            if exported.is_empty() {
+                println!("    (no exported checks)");
+            } else {
+                for test in exported {
+                    println!("    - {test}");
+                }
             }
         }
         println!();
-        return Ok(CommandResult::success().with_message("listed VM tests"));
+        println!(
+            "  Scenario files that are not exported through flake checks stay out of `xtask test vm`."
+        );
+        println!(
+            "  Finish that wiring by adding the scenario's dependencies to tests/e2e/nixos-vm/default.nix and exporting it from flake checks."
+        );
+        println!();
+        return Ok(CommandResult::success().with_message("listed exported VM checks"));
     }
 
     // --validate: check nix syntax of test scenario files
@@ -389,21 +460,17 @@ async fn execute_test(
         return execute_validate(ctx);
     }
 
-    let workspace_root = config::workspace_root();
-
     // Resolve tests to run
     let tests_to_run: Vec<&str> = if !explicit_tests.is_empty() {
-        let all = all_tests();
+        let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
         for t in explicit_tests {
-            if !all.contains(&t.as_str()) {
-                bail!(
-                    "Unknown VM test: '{t}'\nRun `xtask infra vm test --list` to see available tests."
-                );
+            if !available.contains(&t.as_str()) {
+                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
             }
         }
         explicit_tests.iter().map(String::as_str).collect()
     } else {
-        match category {
+        let catalogue = match category {
             Some("smoke") => SMOKE_TESTS.to_vec(),
             Some("integration") => INTEGRATION_TESTS.to_vec(),
             Some("performance") => PERFORMANCE_TESTS.to_vec(),
@@ -413,7 +480,11 @@ async fn execute_test(
                 "Unknown category: '{unknown}'\nValid: smoke, integration, performance, chaos, all"
             ),
             None => SMOKE_TESTS.to_vec(), // default: smoke
-        }
+        };
+        catalogue
+            .into_iter()
+            .filter(|name| available_tests.iter().any(|available| available == name))
+            .collect()
     };
 
     if tests_to_run.is_empty() {
@@ -443,9 +514,23 @@ async fn execute_test(
 
     // Run tests
     let results: Vec<VmTestResult> = if parallel && tests_to_run.len() > 1 {
-        run_parallel(&tests_to_run, timeout_secs, keep_failed, &workspace_root).await
+        run_parallel(
+            &tests_to_run,
+            timeout_secs,
+            keep_failed,
+            &workspace_root,
+            &system,
+        )
+        .await
     } else {
-        run_sequential(&tests_to_run, timeout_secs, keep_failed, &workspace_root).await
+        run_sequential(
+            &tests_to_run,
+            timeout_secs,
+            keep_failed,
+            &workspace_root,
+            &system,
+        )
+        .await
     };
 
     let suite_duration = suite_start.elapsed().as_secs_f64();
@@ -497,7 +582,9 @@ async fn execute_test(
             InvocationStatus::Failed
         };
         let exit_code = if failed.is_empty() { 0 } else { 1 };
-        ctx.with_history_db(|db| db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration));
+        ctx.with_history_db(|db| {
+            db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration)
+        });
     }
 
     if failed.is_empty() {
@@ -525,11 +612,12 @@ async fn run_sequential(
     timeout_secs: u64,
     keep_failed: bool,
     workspace_root: &std::path::Path,
+    system: &str,
 ) -> Vec<VmTestResult> {
     let mut results = Vec::with_capacity(tests.len());
     for &name in tests {
         print!("  Running {name}… ");
-        let r = run_single_vm_test(name, timeout_secs, keep_failed, workspace_root).await;
+        let r = run_single_vm_test(name, timeout_secs, keep_failed, workspace_root, system).await;
         if r.passed {
             println!("{} ({:.1}s)", style("PASS").green(), r.duration_secs);
         } else if r.timed_out {
@@ -548,6 +636,7 @@ async fn run_parallel(
     timeout_secs: u64,
     keep_failed: bool,
     workspace_root: &std::path::Path,
+    system: &str,
 ) -> Vec<VmTestResult> {
     let workspace_root = workspace_root.to_path_buf();
     let mut handles = Vec::with_capacity(tests.len());
@@ -555,10 +644,10 @@ async fn run_parallel(
     for &name in tests {
         let name = name.to_string();
         let wr = workspace_root.clone();
-        let handle =
-            tokio::spawn(
-                async move { run_single_vm_test(&name, timeout_secs, keep_failed, &wr).await },
-            );
+        let system = system.to_string();
+        let handle = tokio::spawn(async move {
+            run_single_vm_test(&name, timeout_secs, keep_failed, &wr, &system).await
+        });
         handles.push(handle);
     }
 
@@ -693,12 +782,16 @@ fn display_vm_test_label(file: &Path) -> String {
 
 fn discover_vm_test_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
     let scenarios_dir = workspace_root.join("tests/e2e/nixos-vm/test-scenarios");
-    let mut test_files = vec![workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix")];
+    let mut test_files =
+        vec![workspace_root.join("tests/e2e/nixos-vm/preflight_deployment_test.nix")];
 
     let mut discovered = Vec::new();
-    for entry in std::fs::read_dir(&scenarios_dir)
-        .wrap_err_with(|| format!("failed to read VM scenarios directory {}", scenarios_dir.display()))?
-    {
+    for entry in std::fs::read_dir(&scenarios_dir).wrap_err_with(|| {
+        format!(
+            "failed to read VM scenarios directory {}",
+            scenarios_dir.display()
+        )
+    })? {
         let entry = entry.wrap_err_with(|| {
             format!(
                 "failed to enumerate an entry in VM scenarios directory {}",
@@ -736,8 +829,6 @@ fn execute_start(
         );
     }
 
-    let workspace_root = config::workspace_root();
-
     if ctx.is_human() {
         println!("Starting VM...");
         println!("  Preset: {preset}");
@@ -748,44 +839,13 @@ fn execute_start(
         println!();
     }
 
-    let flake_output = format!(".#sinex-vm-{preset}");
+    let _ = persistent;
+    let _ = snapshot;
 
-    if ctx.is_human() {
-        println!("Building VM: nix build {flake_output}");
-    }
-
-    let build_status = Command::new("nix")
-        .args(["build", &flake_output, "--no-link", "--print-out-paths"])
-        .current_dir(&workspace_root)
-        .stdout(Stdio::piped())
-        .status()
-        .context("Failed to build VM")?;
-
-    if !build_status.success() {
-        bail!("Failed to build VM with preset: {preset}");
-    }
-
-    let output = Command::new("nix")
-        .args(["build", &flake_output, "--no-link", "--print-out-paths"])
-        .current_dir(&workspace_root)
-        .output()
-        .context("Failed to get VM path")?;
-
-    let vm_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let run_script = PathBuf::from(&vm_path).join("bin/run-sinex-vm");
-
-    if !run_script.exists() {
-        let alt_script = PathBuf::from(&vm_path).join("bin").join("run-nixos-vm");
-        if alt_script.exists() {
-            return run_vm(&alt_script, persistent, snapshot, ctx);
-        }
-        bail!(
-            "VM run script not found at {} or alternate locations",
-            run_script.display()
-        );
-    }
-
-    run_vm(&run_script, persistent, snapshot, ctx)
+    bail!(
+        "Interactive VM presets are not exported from the flake yet. Finish this by wiring runnable `config.system.build.vm` outputs for presets {} and mapping them here; current flake VM support only exposes exported test checks through `xtask test vm`.",
+        valid_presets.join(", ")
+    )
 }
 
 fn run_vm(
@@ -958,7 +1018,12 @@ mod tests {
         let files = discover_vm_test_files(temp.path())?;
         let labels: Vec<_> = files
             .iter()
-            .map(|path| path.strip_prefix(temp.path()).unwrap().to_string_lossy().to_string())
+            .map(|path| {
+                path.strip_prefix(temp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
 
         assert_eq!(
@@ -973,8 +1038,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_display_vm_test_label_falls_back_to_full_path()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_display_vm_test_label_falls_back_to_full_path() -> ::xtask::sandbox::TestResult<()>
+    {
         let root = Path::new("/");
         assert_eq!(display_vm_test_label(root), root.display().to_string());
         Ok(())
@@ -998,8 +1063,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_collect_vm_stream_output_collects_utf8_lines()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_collect_vm_stream_output_collects_utf8_lines() -> ::xtask::sandbox::TestResult<()>
+    {
         use tokio::io::AsyncWriteExt;
 
         let (reader, mut writer) = tokio::io::duplex(64);

@@ -97,12 +97,18 @@ sudo nixos-rebuild switch --flake .#your-host
 >       modules = [
 >         # Apply the overlay - REQUIRED
 >         ({ ... }: { nixpkgs.overlays = [ sinex.overlays.default ]; })
+>         # Plain module export
 >         sinex.nixosModules.default
 >         ./configuration.nix
 >       ];
 >     };
 >   };
 > }
+> ```
+>
+> If you want the convenience wrapper that also imports agenix, use:
+> ```nix
+> sinex.nixosModules."with-agenix"
 > ```
 >
 > Alternatively, provide packages explicitly without the overlay:

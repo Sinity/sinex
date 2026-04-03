@@ -212,7 +212,12 @@ struct EventListingRow {
 fn event_listing_cursor(row: &EventListingRow, has_text_search: bool) -> Cursor {
     let mut anchor = CursorAnchor::from_id(Id::from_uuid(row.record.id));
     if has_text_search {
-        anchor = anchor.with_relevance_score(row.relevance_score.unwrap_or(0.0));
+        // Truncate to 6 decimal places to match the TRUNC(...)::float8 projection in
+        // push_text_search_projection. This ensures the cursor value is bit-for-bit
+        // identical to the projected score, preventing float8 round-trip precision loss
+        // (f64 → JSON → f64) from causing rows to be skipped or duplicated during pagination.
+        let score = (row.relevance_score.unwrap_or(0.0) * 1_000_000.0).trunc() / 1_000_000.0;
+        anchor = anchor.with_relevance_score(score);
     }
     Cursor::after_anchor(anchor)
 }
@@ -256,7 +261,7 @@ impl EventRepository<'_> {
             qb.push(" IS NOT NULL");
         }
 
-        qb.push(" GROUP BY 1 ORDER BY count DESC LIMIT ");
+        qb.push(" GROUP BY 1 ORDER BY count DESC, key ASC LIMIT ");
         qb.push_bind(limit);
 
         let rows: Vec<GroupedCountRow> = qb
@@ -302,7 +307,7 @@ impl EventRepository<'_> {
 
         match order {
             TimeSeriesOrder::TimeAsc => qb.push(" ORDER BY bucket ASC"),
-            TimeSeriesOrder::CountDesc => qb.push(" ORDER BY count DESC"),
+            TimeSeriesOrder::CountDesc => qb.push(" ORDER BY count DESC, bucket ASC"),
         };
 
         qb.push(" LIMIT ");
@@ -345,7 +350,7 @@ impl EventRepository<'_> {
             FROM core.events WHERE TRUE",
         );
         push_filters(&mut qb, &query);
-        qb.push(" GROUP BY source ORDER BY event_count DESC LIMIT ");
+        qb.push(" GROUP BY source ORDER BY event_count DESC, source ASC LIMIT ");
         qb.push_bind(limit);
 
         let rows: Vec<SourceStatsRow> = qb
@@ -624,11 +629,11 @@ fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
 }
 
 fn push_numeric_payload_path_expr(qb: &mut QueryBuilder<'_, Postgres>, path: &str) {
-    qb.push(" AND jsonb_typeof(payload->");
+    qb.push(" AND CASE WHEN jsonb_typeof(payload->");
     qb.push_bind(path.to_string());
-    qb.push(") = 'number' AND (payload->>");
+    qb.push(") = 'number' THEN (payload->>");
     qb.push_bind(path.to_string());
-    qb.push(")::numeric");
+    qb.push(")::numeric ELSE NULL END");
 }
 
 fn push_json_numeric(qb: &mut QueryBuilder<'_, Postgres>, val: &JsonValue) {
@@ -709,19 +714,32 @@ fn direction_sql(dir: SortDirection) -> &'static str {
 }
 
 fn push_text_search_projection(qb: &mut QueryBuilder<'_, Postgres>, terms: &[String]) {
-    qb.push(", ts_rank_cd(");
+    // Known limitation: when TextSearch filters are nested in Or/And combinators,
+    // relevance scoring and snippet generation use a single combined tsquery (all positive
+    // terms OR'd together) regardless of combinator semantics. A row that matches only term
+    // A in an Or(A, B) will be ranked and highlighted as if both A and B were relevant.
+    // This is correct enough for display — the filter WHERE clause still enforces the exact
+    // combinator semantics — but may produce lower-quality snippets for multi-term Or queries.
+    qb.push(", TRUNC(ts_rank_cd(");
     push_text_search_vector_expr(qb);
     qb.push(", ");
     push_text_search_query_expr(qb, terms);
-    qb.push(")::float8 AS relevance_score");
+    // Truncate to 6 decimal places so the stored projection value exactly matches the
+    // cursor value built in event_listing_cursor. Without truncation, float8 round-trip
+    // through JSON serialization (f64 → JSON number → f64) can lose precision, causing
+    // rows to be skipped or duplicated across pages.
+    qb.push(")::numeric, 6)::float8 AS relevance_score");
 
-    qb.push(", CASE WHEN ");
+    // COALESCE ensures callers always receive '' rather than NULL when ts_headline finds no
+    // highlighted fragment (e.g. very short payloads, or the matched tsquery lexeme does not
+    // align with any word boundary that MaxFragments/MinWords can anchor on).
+    qb.push(", COALESCE(CASE WHEN ");
     push_text_search_vector_expr(qb);
     qb.push(" @@ ");
     push_text_search_query_expr(qb, terms);
     qb.push(" THEN ts_headline('simple', payload::text, ");
     push_text_search_query_expr(qb, terms);
-    qb.push(", 'MaxFragments=2, MinWords=8, MaxWords=24') ELSE NULL END AS snippet");
+    qb.push(", 'MaxFragments=2, MinWords=8, MaxWords=24') ELSE NULL END, '') AS snippet");
 }
 
 fn push_text_search_vector_expr(qb: &mut QueryBuilder<'_, Postgres>) {

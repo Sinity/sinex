@@ -137,25 +137,8 @@ where
     T: FromStr,
     T::Err: std::fmt::Display,
 {
-    match std::env::var(key) {
-        Ok(value) => match value.parse::<T>() {
-            Ok(parsed) => *target = parsed,
-            Err(error) => {
-                warn!(
-                    env = key,
-                    value = %value,
-                    %error,
-                    "Invalid health automaton env override; using default"
-                );
-            }
-        },
-        Err(std::env::VarError::NotPresent) => {}
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                env = key,
-                "Health automaton env override is not valid UTF-8; using default"
-            );
-        }
+    if let Some(parsed) = sinex_primitives::env::parse_optional::<T>(key, "health automaton config") {
+        *target = parsed;
     }
 }
 
