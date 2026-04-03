@@ -95,6 +95,22 @@ fn cache_path() -> std::path::PathBuf {
     state_dir().join("preflight-cache.json")
 }
 
+fn schema_apply_lock_path(state_dir: &Path) -> std::path::PathBuf {
+    state_dir.join("schema-apply.lock")
+}
+
+fn open_schema_apply_lock_file(state_dir: &Path) -> Result<std::fs::File> {
+    std::fs::create_dir_all(state_dir)
+        .wrap_err_with(|| format!("failed to create preflight state dir {}", state_dir.display()))?;
+    let lock_path = schema_apply_lock_path(state_dir);
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .wrap_err_with(|| format!("failed to open schema-apply lock {}", lock_path.display()))
+}
+
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
@@ -895,22 +911,8 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
 fn auto_apply_schema(verbose: bool) -> Result<bool> {
     // Serialize concurrent schema-apply runs. If another process is already applying,
     // skip — it will complete the work. Use LOCK_NB (non-blocking) so we never wait.
-    let lock_path = state_dir().join("schema-apply.lock");
-    let _ = std::fs::create_dir_all(state_dir());
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path);
-
-    let lock_file = match lock_file {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("⚠️  Could not open schema-apply lock ({e}), proceeding without lock");
-            // Continue without lock rather than failing
-            return run_schema_apply_inner(verbose);
-        }
-    };
+    let state_dir = state_dir();
+    let lock_file = open_schema_apply_lock_file(&state_dir)?;
 
     use std::os::fd::AsRawFd;
     // LOCK_EX | LOCK_NB — exclusive, non-blocking
@@ -1454,6 +1456,33 @@ mod tests {
         write_state_file_atomically(&path, "new")?;
 
         assert_eq!(std::fs::read_to_string(&path)?, "new");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_open_schema_apply_lock_file_creates_state_dir() -> TestResult<()> {
+        let dir = tempdir()?;
+        let state_dir = dir.path().join("nested").join("preflight");
+
+        let lock_file = open_schema_apply_lock_file(&state_dir)?;
+        drop(lock_file);
+
+        assert!(state_dir.is_dir());
+        assert!(schema_apply_lock_path(&state_dir).is_file());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_open_schema_apply_lock_file_surfaces_state_dir_creation_failure() -> TestResult<()> {
+        let dir = tempdir()?;
+        let blocking_file = dir.path().join("not-a-directory");
+        std::fs::write(&blocking_file, "occupied")?;
+
+        let error = open_schema_apply_lock_file(&blocking_file)
+            .expect_err("state-dir collision must surface");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to create preflight state dir"));
+        assert!(rendered.contains(&blocking_file.display().to_string()));
         Ok(())
     }
 
