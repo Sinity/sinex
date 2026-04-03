@@ -181,6 +181,21 @@ pub fn path_optional(name: &str, context: &str) -> Option<PathBuf> {
     var_optional(name, context).map(PathBuf::from)
 }
 
+/// Load the raw `RUST_LOG` filter string or fall back to `default_filter`.
+///
+/// Invalid UTF-8 is treated as a configuration error. Parsing into
+/// `tracing_subscriber::EnvFilter` stays in the caller so this crate does not
+/// need a tracing-subscriber dependency.
+pub fn strict_env_filter_source(default_filter: &str) -> Result<String> {
+    let Some(raw) = std::env::var_os("RUST_LOG") else {
+        return Ok(default_filter.to_string());
+    };
+
+    raw.into_string().map_err(|_| {
+        SinexError::configuration("RUST_LOG is not valid UTF-8".to_string())
+    })
+}
+
 /// Simple bool flag: true if the var is set to a truthy value, false otherwise.
 /// Does not warn — intended for feature toggles where absence means off.
 #[must_use]

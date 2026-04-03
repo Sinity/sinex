@@ -59,6 +59,7 @@ pub use deployment_readiness::{
 };
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
 pub use environment::{SinexEnvironment, environment};
+pub use env::strict_env_filter_source;
 pub use error::{Result, SinexError};
 pub use events::builder::{OffsetKind, Provenance};
 pub use events::payload::DynamicPayload;

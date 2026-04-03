@@ -772,7 +772,11 @@ fn default_annex_repo_path() -> Utf8PathBuf {
     }
 
     let annex = default_work_dir().join("annex");
-    validated_path_or_fallback(annex, Utf8PathBuf::from("/tmp/sinex/ingestd/annex"), "annex repository path")
+    validated_path_or_fallback(
+        annex,
+        Utf8PathBuf::from("/tmp/sinex/ingestd/annex"),
+        "annex repository path",
+    )
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {

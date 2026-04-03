@@ -472,32 +472,27 @@ fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::Validation
     Ok(())
 }
 
-fn env_var_optional(name: &str) -> Result<Option<String>, ConfigError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::Validation(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-    }
-}
-
 fn service_or_global_env_value(
     service_prefix: &str,
     suffix: &str,
 ) -> Result<Option<(String, String)>, ConfigError> {
     let service_key = format!("SINEX_{service_prefix}_{suffix}");
-    if let Some(value) = env_var_optional(&service_key)? {
+    if let Some(value) = shared_env::strict_var(&service_key)
+        .map_err(|error| ConfigError::Validation(error.to_string()))?
+    {
         return Ok(Some((service_key, value)));
     }
 
     let global_key = format!("SINEX_{suffix}");
-    if let Some(value) = env_var_optional(&global_key)? {
+    if let Some(value) = shared_env::strict_var(&global_key)
+        .map_err(|error| ConfigError::Validation(error.to_string()))?
+    {
         return Ok(Some((global_key, value)));
     }
 
     if suffix == "DATABASE_URL"
-        && let Some(value) = env_var_optional("DATABASE_URL")?
+        && let Some(value) = shared_env::strict_var("DATABASE_URL")
+            .map_err(|error| ConfigError::Validation(error.to_string()))?
     {
         return Ok(Some(("DATABASE_URL".to_string(), value)));
     }
