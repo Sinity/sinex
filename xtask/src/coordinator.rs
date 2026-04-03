@@ -73,6 +73,8 @@ pub struct QueuedWork {
     pub args: Vec<String>,
     pub is_foreground: bool,
     pub output_format: OutputFormat,
+    pub tree_fingerprint: String,
+    pub scope_key: String,
 }
 
 /// Scoped job coordinator.
@@ -188,7 +190,15 @@ impl JobCoordinator {
                 // sentinel values but hasn't called update_state yet, ~100ms gap).
                 // Queue behind it to avoid double-spawn. Worst case: the reservation
                 // was abandoned — the queue item runs after the 8h timeout cleans up.
-                self.queue_behind(&state, args, is_foreground, output_format, &state_path)?;
+                self.queue_behind(
+                    &state,
+                    args,
+                    is_foreground,
+                    output_format,
+                    &tree_fingerprint,
+                    &scope_key,
+                    &state_path,
+                )?;
                 CoordinationResult::Queued {
                     current_job_id: state.job_id,
                 }
@@ -303,6 +313,8 @@ impl JobCoordinator {
                     state.job_id = -1;
                     state.pid = 0;
                     state.is_foreground = next.is_foreground;
+                    state.tree_fingerprint.clone_from(&next.tree_fingerprint);
+                    state.scope_key.clone_from(&next.scope_key);
                     state.args.clone_from(&next.args);
                     state.started_at =
                         sinex_primitives::temporal::Timestamp::now().format_rfc3339();
@@ -350,7 +362,15 @@ impl JobCoordinator {
             // Same scope, different tree → SUPERSEDE (if bg), QUEUE (if fg)
             if state.is_foreground {
                 // Don't cancel interactive foreground jobs — queue instead
-                self.queue_behind(state, args, is_foreground, output_format, state_path)?;
+                self.queue_behind(
+                    state,
+                    args,
+                    is_foreground,
+                    output_format,
+                    tree_fingerprint,
+                    scope_key,
+                    state_path,
+                )?;
                 Ok(CoordinationResult::Queued {
                     current_job_id: state.job_id,
                 })
@@ -383,7 +403,15 @@ impl JobCoordinator {
             }
         } else {
             // Different scope → QUEUE (don't cancel valid work)
-            self.queue_behind(state, args, is_foreground, output_format, state_path)?;
+            self.queue_behind(
+                state,
+                args,
+                is_foreground,
+                output_format,
+                tree_fingerprint,
+                scope_key,
+                state_path,
+            )?;
             Ok(CoordinationResult::Queued {
                 current_job_id: state.job_id,
             })
@@ -483,6 +511,8 @@ impl JobCoordinator {
         args: &[String],
         is_foreground: bool,
         output_format: OutputFormat,
+        tree_fingerprint: &str,
+        scope_key: &str,
         state_path: &std::path::Path,
     ) -> Result<()> {
         // Append to FIFO queue (supports multiple concurrent requesters)
@@ -491,6 +521,8 @@ impl JobCoordinator {
             args: args.to_vec(),
             is_foreground,
             output_format,
+            tree_fingerprint: tree_fingerprint.to_string(),
+            scope_key: scope_key.to_string(),
         });
         write_state(state_path, &updated)?;
         Ok(())
@@ -1556,11 +1588,15 @@ mod tests {
                     args: vec!["-p".into(), "sinex-gateway".into()],
                     is_foreground: false,
                     output_format: OutputFormat::Human,
+                    tree_fingerprint: "queued-fp-1".into(),
+                    scope_key: "queued-scope-1".into(),
                 },
                 QueuedWork {
                     args: vec!["-p".into(), "sinex-primitives".into()],
                     is_foreground: true,
                     output_format: OutputFormat::Json,
+                    tree_fingerprint: "queued-fp-2".into(),
+                    scope_key: "queued-scope-2".into(),
                 },
             ],
         };
@@ -1573,6 +1609,8 @@ mod tests {
         assert!(deserialized.queue[1].is_foreground);
         assert_eq!(deserialized.queue[0].output_format.as_cli_str(), "human");
         assert_eq!(deserialized.queue[1].output_format.as_cli_str(), "json");
+        assert_eq!(deserialized.queue[0].tree_fingerprint, "queued-fp-1");
+        assert_eq!(deserialized.queue[1].scope_key, "queued-scope-2");
         Ok(())
     }
 
@@ -1619,16 +1657,22 @@ mod tests {
             args: vec!["first".into()],
             is_foreground: false,
             output_format: OutputFormat::Human,
+            tree_fingerprint: "fp-first".into(),
+            scope_key: "scope-first".into(),
         });
         s.queue.push(QueuedWork {
             args: vec!["second".into()],
             is_foreground: false,
             output_format: OutputFormat::Json,
+            tree_fingerprint: "fp-second".into(),
+            scope_key: "scope-second".into(),
         });
         s.queue.push(QueuedWork {
             args: vec!["third".into()],
             is_foreground: true,
             output_format: OutputFormat::Compact,
+            tree_fingerprint: "fp-third".into(),
+            scope_key: "scope-third".into(),
         });
         write_state(&state_path, &s)?;
 
@@ -1643,8 +1687,66 @@ mod tests {
         let mut s = s;
         let popped = s.queue.remove(0);
         assert_eq!(popped.args, vec!["first"]);
+        assert_eq!(popped.tree_fingerprint, "fp-first");
         assert_eq!(s.queue.len(), 2);
         assert_eq!(s.queue[0].args, vec!["second"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_handle_completion_promotes_next_queued_scope_and_fingerprint() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let _state_guard = env_set_path("SINEX_STATE_DIR", tempdir.path());
+        let coordinator = JobCoordinator::new()?;
+        let state_path = tempdir.path().join("coordinator/check.state.json");
+        fs::create_dir_all(state_path.parent().expect("state path parent"))?;
+        write_state(
+            &state_path,
+            &CoordinationState {
+                job_id: 41,
+                pid: 4242,
+                is_foreground: false,
+                tree_fingerprint: "running-fp".into(),
+                scope_key: "running-scope".into(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                args: vec!["--lint".into()],
+                queue: vec![
+                    QueuedWork {
+                        args: vec!["-p".into(), "sinex-gateway".into()],
+                        is_foreground: false,
+                        output_format: OutputFormat::Json,
+                        tree_fingerprint: "queued-fp".into(),
+                        scope_key: "queued-scope".into(),
+                    },
+                    QueuedWork {
+                        args: vec!["-p".into(), "xtask".into()],
+                        is_foreground: false,
+                        output_format: OutputFormat::Human,
+                        tree_fingerprint: "queued-fp-2".into(),
+                        scope_key: "queued-scope-2".into(),
+                    },
+                ],
+            },
+        )?;
+
+        let next = coordinator
+            .handle_completion("check")?
+            .expect("queued work should be promoted");
+        assert_eq!(next.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(next.tree_fingerprint, "queued-fp");
+        assert_eq!(next.scope_key, "queued-scope");
+
+        let promoted = coordinator
+            .state("check")?
+            .expect("remaining queued state should still exist");
+        assert_eq!(promoted.job_id, -1);
+        assert_eq!(promoted.pid, 0);
+        assert_eq!(promoted.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(promoted.tree_fingerprint, "queued-fp");
+        assert_eq!(promoted.scope_key, "queued-scope");
+        assert_eq!(promoted.queue.len(), 1);
+        assert_eq!(promoted.queue[0].scope_key, "queued-scope-2");
+
         Ok(())
     }
 
@@ -1775,6 +1877,8 @@ mod tests {
                 args: vec!["bar".into()],
                 is_foreground: false,
                 output_format: OutputFormat::Human,
+                tree_fingerprint: "queued-fp".into(),
+                scope_key: "queued-scope".into(),
             }],
         };
 
@@ -1786,6 +1890,8 @@ mod tests {
         assert!(loaded.is_foreground);
         assert_eq!(loaded.queue.len(), 1);
         assert_eq!(loaded.queue[0].args, vec!["bar"]);
+        assert_eq!(loaded.queue[0].tree_fingerprint, "queued-fp");
+        assert_eq!(loaded.queue[0].scope_key, "queued-scope");
         Ok(())
     }
 
