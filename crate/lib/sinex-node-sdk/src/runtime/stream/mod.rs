@@ -2912,13 +2912,24 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
-            "event batcher",
-            self.shutdown_event_batcher().await,
+            "automaton consumer",
+            Self::shutdown_task(&mut self.consumer_handle, None, "automaton consumer").await,
+        );
+        // Save checkpoint BEFORE draining the event batcher. This ensures the
+        // checkpoint reflects the last fully-processed position. Events still in
+        // the batcher channel will be published during drain but are "ahead" of
+        // the checkpoint — on restart they'll be re-processed (at-least-once).
+        // The previous order (batcher first, then checkpoint) could silently drop
+        // events if the batcher's 250ms grace period expired mid-flush.
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "node shutdown",
+            self.node.shutdown().await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
-            "automaton consumer",
-            Self::shutdown_task(&mut self.consumer_handle, None, "automaton consumer").await,
+            "event batcher",
+            self.shutdown_event_batcher().await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
@@ -2929,11 +2940,6 @@ impl<T: Node + 'static> NodeRunner<T> {
                 "checkpoint cleanup",
             )
             .await,
-        );
-        Self::push_shutdown_error(
-            &mut shutdown_errors,
-            "node shutdown",
-            self.node.shutdown().await,
         );
 
         match Self::collapse_shutdown_errors(shutdown_errors) {
