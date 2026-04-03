@@ -1,6 +1,22 @@
 //! `JetStream` event consumer with confirmations and DLQ support
 //!
 //! See `crate::docs::ingestion_pipeline` for architectural details.
+//!
+//! # Batch Atomicity Contract
+//!
+//! The ingestd consumer does NOT guarantee all-or-nothing atomicity for a NATS pull-batch.
+//! When persistence fails, the batch is split in half and each sub-batch is retried independently.
+//! This means a single pull-batch may result in partial persistence:
+//!
+//! - Sub-batch A succeeds → events committed, NATS messages acked
+//! - Sub-batch B fails → events not committed, NATS messages NAK'd for redelivery
+//!
+//! This is intentional: maximizing throughput takes priority over batch-level atomicity.
+//! Individual events within a successful sub-batch ARE atomically persisted (single DB transaction).
+//! Downstream consumers must tolerate duplicate processing on redelivery of the NAK'd messages.
+//!
+//! The `BATCH_ATOMICITY_SCOPE` context field is attached to all related error diagnostics
+//! so operators can correlate partial-commit scenarios in logs.
 
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
@@ -248,6 +264,10 @@ const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
 const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
 const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_gap";
+/// Diagnostic context value attached to errors and log fields that arise from the split-retry
+/// persistence path. The value `"per_successful_persistence_attempt"` signals that atomicity is
+/// scoped to each individual sub-batch attempt, not the enclosing pull-batch: a pull-batch may
+/// be partially committed if one sub-batch succeeds before a sibling fails.
 const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
 /// Events with ts_orig before this date are implausibly old: sinex didn't exist then.
