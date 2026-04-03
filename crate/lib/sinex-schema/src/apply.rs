@@ -214,9 +214,12 @@ async fn operations_log_operation_type_constraint_is_current(
     .await?;
 
     Ok(definition.is_some_and(|def| {
-        def.contains("operation_type ~")
-            && def.contains("^[a-z][a-z0-9_.-]*$")
+        operations_log_operation_type_constraint_definition_is_current(&def)
     }))
+}
+
+fn operations_log_operation_type_constraint_definition_is_current(definition: &str) -> bool {
+    definition.contains("operation_type ~") && definition.contains("^[a-z][a-z0-9_.-]*$")
 }
 
 async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<(), ApplyError> {
@@ -260,13 +263,17 @@ async fn source_material_registry_status_constraint_is_current(
     .await?;
 
     Ok(definition.is_some_and(|def| {
-        def.contains("status IN")
-            && def.contains("'sensing'")
-            && def.contains("'completed'")
-            && def.contains("'cancelled'")
-            && def.contains("'recovered_partial'")
-            && def.contains("'failed'")
+        source_material_registry_status_constraint_definition_is_current(&def)
     }))
+}
+
+fn source_material_registry_status_constraint_definition_is_current(definition: &str) -> bool {
+    (definition.contains("status IN") || definition.contains("status = ANY"))
+        && definition.contains("'sensing'")
+        && definition.contains("'completed'")
+        && definition.contains("'cancelled'")
+        && definition.contains("'recovered_partial'")
+        && definition.contains("'failed'")
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {

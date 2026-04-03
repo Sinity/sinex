@@ -57,6 +57,32 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn declarative_diff_accepts_normalized_source_material_status_constraint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sqlx::query(
+        r#"
+        ALTER TABLE raw.source_material_registry
+            DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+            ADD CONSTRAINT source_material_registry_status_check
+            CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !drift
+            .iter()
+            .any(|entry| entry.contains("source_material_registry_status_check")),
+        "normalized Postgres CHECK definition must not be reported as drift: {drift:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
 

@@ -44,11 +44,12 @@ use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
 use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
-    create_database_from_template, database_exists, detect_connection_budget,
+    converge_pool_database_schema, create_database_from_template, database_exists,
+    detect_connection_budget,
     drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
-    wait_for_database_absence,
+    mark_pool_database_clean, recreate_pool_database, store_pool_meta, store_pool_meta_checked,
+    url_with_db_name, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -736,14 +737,15 @@ impl DatabasePool {
                                     eprintln!(
                                         "  Recreated pool database from template: {name}"
                                     );
-                                    let meta = PoolMeta {
-                                        fingerprint: Some(schema_fingerprint()?),
-                                        extensions: template_ext_versions.clone(),
-                                        dirty: false,
-                                        updated_at_rfc3339: Timestamp::now().format_rfc3339(),
-                                        last_error: None,
-                                    };
-                                    store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
+                                    grant_pool_database_permissions_checked(&name).await?;
+                                    converge_pool_database_schema(&name, &db_url).await?;
+                                    mark_pool_database_clean(
+                                        conn.as_mut(),
+                                        &name,
+                                        &db_url,
+                                        &template_ext_versions,
+                                    )
+                                    .await?;
                                 }
                                 CreateDatabaseOutcome::AlreadyExists => {
                                     eprintln!(
@@ -752,16 +754,16 @@ impl DatabasePool {
                                 }
                             }
                         } else {
-                            let meta = PoolMeta {
-                                fingerprint: Some(schema_fingerprint()?),
-                                extensions: template_ext_versions.clone(),
-                                dirty: false,
-                                updated_at_rfc3339: Timestamp::now().format_rfc3339(),
-                                last_error: None,
-                            };
-                            store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
+                            mark_pool_database_clean(
+                                conn.as_mut(),
+                                &name,
+                                &db_url,
+                                &template_ext_versions,
+                            )
+                            .await?;
                         }
                     } else {
+                        let db_url = url_with_db_name(&base_url, &name)?;
                         match create_database_from_template(
                             &mut conn,
                             &name,
@@ -771,14 +773,15 @@ impl DatabasePool {
                         {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Created new pool database: {name}");
-                                let meta = PoolMeta {
-                                    fingerprint: Some(schema_fingerprint()?),
-                                    extensions: template_ext_versions.clone(),
-                                    dirty: false,
-                                    updated_at_rfc3339: Timestamp::now().format_rfc3339(),
-                                    last_error: None,
-                                };
-                                store_pool_meta_checked(conn.as_mut(), &name, &meta).await?;
+                                grant_pool_database_permissions_checked(&name).await?;
+                                converge_pool_database_schema(&name, &db_url).await?;
+                                mark_pool_database_clean(
+                                    conn.as_mut(),
+                                    &name,
+                                    &db_url,
+                                    &template_ext_versions,
+                                )
+                                .await?;
                             }
                             CreateDatabaseOutcome::AlreadyExists => {
                                 eprintln!(
