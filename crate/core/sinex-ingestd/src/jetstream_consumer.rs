@@ -252,6 +252,7 @@ const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
 const CONFIRM_RETRY_BATCH_TIMEOUT: Duration = Duration::from_millis(100);
+const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_gap";
 const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
@@ -345,6 +346,7 @@ struct ConsumerStats {
     confirmation_failures: AtomicU64,
     confirmation_retries_enqueued: AtomicU64,
     confirmation_retry_failures: AtomicU64,
+    confirmation_durability_gaps: AtomicU64,
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
@@ -363,6 +365,7 @@ impl ConsumerStats {
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
             confirmation_retries_enqueued = self.confirmation_retries_enqueued.load(Ordering::Relaxed),
             confirmation_retry_failures = self.confirmation_retry_failures.load(Ordering::Relaxed),
+            confirmation_durability_gaps = self.confirmation_durability_gaps.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
             "JetStream consumer stats"
@@ -373,6 +376,36 @@ impl ConsumerStats {
 impl JetStreamConsumer {
     fn log_observer_error(metric: &'static str, error: &sinex_node_sdk::SelfObservationError) {
         warn!(metric, error = %error, "Failed to emit ingestd telemetry");
+    }
+
+    fn is_fatal_batch_processing_error(err: &SinexError) -> bool {
+        err.context_map()
+            .get("error_class")
+            .is_some_and(|value| value == ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+    }
+
+    fn confirmation_durability_gap_error(
+        errors: Vec<(Uuid, SinexError)>,
+        acked_count: usize,
+    ) -> SinexError {
+        let Err(combined) =
+            Self::collapse_settlement_errors("post-persist confirmation durability", errors)
+        else {
+            unreachable!("confirmation durability gap requires at least one event");
+        };
+
+        combined
+            .with_context("error_class", ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+            .with_context("acked_event_count", acked_count.to_string())
+            .with_context("raw_message_settlement", "left_unacked_for_redelivery")
+            .with_context(
+                "terminal_state",
+                "database commit landed but confirmation durability was not established",
+            )
+            .with_context(
+                "recovery",
+                "shut down the consumer and let JetStream redeliver unsettled raw messages once confirmation transport recovers",
+            )
     }
 
     async fn emit_observer_gauge(
@@ -762,6 +795,10 @@ impl JetStreamConsumer {
                 }
                 batch_result = &mut batch_future => {
                     if let Err(e) = batch_result {
+                        if Self::is_fatal_batch_processing_error(&e) {
+                            error!("Fatal batch processing error: {}", e);
+                            return Err(e);
+                        }
                         error!("Batch processing error: {}", e);
                     }
                     batch_future = Box::pin(self.process_batch(&consumer));
@@ -1018,7 +1055,7 @@ impl JetStreamConsumer {
                     let confirmation_results = join_all(confirmation_futs).await;
 
                     let mut ack_messages = Vec::with_capacity(batch.len());
-                    let mut nack_prepared = Vec::new();
+                    let mut confirmation_durability_gaps = Vec::new();
                     for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
                         match result {
                             Ok(()) => {
@@ -1056,12 +1093,25 @@ impl JetStreamConsumer {
                                         error!(
                                             event_id = %prepared.parsed_id,
                                             error = %retry_err,
-                                            "Failed to queue durable confirmation retry; falling back to raw message redelivery"
+                                            "Failed to queue durable confirmation retry after persistence; leaving the raw message unsettled and failing the consumer"
                                         );
                                         self.stats
                                             .confirmation_retry_failures
                                             .fetch_add(1, Ordering::Relaxed);
-                                        nack_prepared.push(prepared);
+                                        confirmation_durability_gaps.push((
+                                            prepared.parsed_id,
+                                            SinexError::network(
+                                                "Persisted event could not publish a confirmation or durably enqueue its retry",
+                                            )
+                                            .with_context(
+                                                "confirmation_publish_error",
+                                                err.to_string(),
+                                            )
+                                            .with_context(
+                                                "confirmation_retry_enqueue_error",
+                                                retry_err.to_string(),
+                                            ),
+                                        ));
                                     }
                                 }
                             }
@@ -1077,64 +1127,28 @@ impl JetStreamConsumer {
                         }
                     }
 
-                    if !nack_prepared.is_empty() {
-                        let nak_futs: Vec<_> = nack_prepared
-                            .iter()
-                            .map(|prepared| {
-                                prepared
-                                    .message
-                                    .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
-                            })
-                            .collect();
-                        let nak_results = join_all(nak_futs).await;
-                        let mut settlement_errors = Vec::new();
-                        for (result, prepared) in nak_results.iter().zip(nack_prepared.iter()) {
-                            if let Err(err) = result {
-                                warn!(
-                                    event_id = %prepared.parsed_id,
-                                    error = %err,
-                                    "Failed to NAK after confirmation publish failure"
-                                );
-                                self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                                settlement_errors.push((
-                                    prepared.parsed_id,
-                                    Self::message_settlement_failure(
-                                        "failed to NAK after confirmation publish failure",
-                                        prepared.parsed_id,
-                                        err,
-                                    ),
-                                ));
-                            }
-                        }
-                        let processed_count = ack_messages.len() as u64;
-                        if processed_count > 0 {
-                            self.stats
-                                .events_processed
-                                .fetch_add(processed_count, Ordering::Relaxed);
-                            if let Some(ref handle) = self.heartbeat_handle {
-                                handle.increment_events_processed(processed_count);
-                            }
-                        }
-                        let failed_count = nack_prepared.len() as u64;
+                    let acked_count = ack_messages.len() as u64;
+                    if acked_count > 0 {
                         self.stats
-                            .events_failed
-                            .fetch_add(failed_count, Ordering::Relaxed);
+                            .events_processed
+                            .fetch_add(acked_count, Ordering::Relaxed);
                         if let Some(ref handle) = self.heartbeat_handle {
-                            handle.record_error("confirmation publish failure");
+                            handle.increment_events_processed(acked_count);
                         }
-                        Self::collapse_settlement_errors(
-                            "confirmation publish retry settlement",
-                            settlement_errors,
-                        )?;
-                        continue;
                     }
 
-                    let count = ack_messages.len() as u64;
-                    self.stats
-                        .events_processed
-                        .fetch_add(count, Ordering::Relaxed);
-                    if let Some(ref handle) = self.heartbeat_handle {
-                        handle.increment_events_processed(count);
+                    if !confirmation_durability_gaps.is_empty() {
+                        let gap_count = confirmation_durability_gaps.len() as u64;
+                        self.stats
+                            .confirmation_durability_gaps
+                            .fetch_add(gap_count, Ordering::Relaxed);
+                        if let Some(ref handle) = self.heartbeat_handle {
+                            handle.record_error("confirmation durability gap");
+                        }
+                        return Err(Self::confirmation_durability_gap_error(
+                            confirmation_durability_gaps,
+                            acked_count as usize,
+                        ));
                     }
                     info!("Processed and confirmed {} events", batch.len());
                 }
@@ -2182,6 +2196,49 @@ mod tests {
                 .map(String::as_str),
             Some("metadata missing")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn confirmation_durability_gap_errors_are_marked_fatal() -> TestResult<()> {
+        let event_id = Uuid::now_v7();
+        let error = JetStreamConsumer::confirmation_durability_gap_error(
+            vec![(
+                event_id,
+                SinexError::network("confirmation transport exhausted")
+                    .with_context("confirmation_publish_error", "publish failed")
+                    .with_context("confirmation_retry_enqueue_error", "enqueue failed"),
+            )],
+            2,
+        );
+
+        assert!(JetStreamConsumer::is_fatal_batch_processing_error(&error));
+        assert_eq!(
+            error.context_map().get("error_class").map(String::as_str),
+            Some(ERROR_CLASS_CONFIRMATION_DURABILITY_GAP)
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("acked_event_count")
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            error
+                .context_map()
+                .get("raw_message_settlement")
+                .map(String::as_str),
+            Some("left_unacked_for_redelivery")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ordinary_errors_are_not_marked_as_fatal_confirmation_gaps() -> TestResult<()> {
+        assert!(!JetStreamConsumer::is_fatal_batch_processing_error(
+            &SinexError::network("ordinary nack failure")
+        ));
         Ok(())
     }
 }
