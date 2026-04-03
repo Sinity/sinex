@@ -69,8 +69,14 @@ struct MaterialDlqPayload {
     failed_at: Timestamp,
 }
 
+#[derive(Clone, Copy)]
+enum FailureCleanupClaim {
+    Claimed { resume_phase: AssemblyPhase },
+    Skipped,
+}
+
 impl MaterialAssembler {
-    async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> bool {
+    async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> FailureCleanupClaim {
         if let Some(state_handle) = self.get_state_handle(&material_id).await {
             let mut state = state_handle.lock().await;
             if state.phase == AssemblyPhase::Finalizing {
@@ -79,10 +85,11 @@ impl MaterialAssembler {
                     failure_reason = reason,
                     "Skipping failed-material cleanup because terminal transition is already in progress"
                 );
-                return false;
+                return FailureCleanupClaim::Skipped;
             }
+            let resume_phase = state.phase;
             state.phase = AssemblyPhase::Finalizing;
-            return true;
+            return FailureCleanupClaim::Claimed { resume_phase };
         }
 
         match self.material_is_terminal(material_id).await {
@@ -92,9 +99,11 @@ impl MaterialAssembler {
                     failure_reason = reason,
                     "Skipping failed-material cleanup because material is already terminal"
                 );
-                false
+                FailureCleanupClaim::Skipped
             }
-            Ok(false) => true,
+            Ok(false) => FailureCleanupClaim::Claimed {
+                resume_phase: AssemblyPhase::Accumulating,
+            },
             Err(error) => {
                 warn!(
                     material_id = %material_id,
@@ -102,7 +111,18 @@ impl MaterialAssembler {
                     error = %error,
                     "Failed to confirm material terminal state before failure cleanup; proceeding"
                 );
-                true
+                FailureCleanupClaim::Claimed {
+                    resume_phase: AssemblyPhase::Accumulating,
+                }
+            }
+        }
+    }
+
+    async fn revert_failure_cleanup_start(&self, material_id: Uuid, resume_phase: AssemblyPhase) {
+        if let Some(state_handle) = self.get_state_handle(&material_id).await {
+            let mut state = state_handle.lock().await;
+            if state.phase == AssemblyPhase::Finalizing {
+                state.phase = resume_phase;
             }
         }
     }
@@ -613,34 +633,52 @@ impl MaterialAssembler {
         }
     }
 
-    /// Mark material as failed in the database to prevent reprocessing
-    pub(super) async fn mark_material_failed(&self, material_id: Uuid, reason: &str) {
+    /// Mark material as failed in the database to prevent reprocessing.
+    async fn mark_material_failed_checked(
+        &self,
+        material_id: Uuid,
+        reason: &str,
+    ) -> IngestdResult<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(material_id);
-        if let Err(e) = self
-            .pool
+        self.pool
             .source_materials()
             .mark_as_failed(id, reason)
             .await
-        {
-            warn!(
-                material_id = %material_id,
-                error = %e,
-                "Failed to mark material as failed in database"
-            );
-        }
+            .map_err(|error| {
+                SinexError::database("Failed to mark material as failed in database")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("failure_reason", reason)
+                    .with_source(error)
+            })
     }
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
-        if !self.begin_failure_cleanup(material_id, reason).await {
+        let FailureCleanupClaim::Claimed { resume_phase } =
+            self.begin_failure_cleanup(material_id, reason).await
+        else {
             return;
-        }
+        };
 
-        self.finalize_failed_material_claimed(material_id, reason).await;
+        if let Err(error) = self
+            .finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
+            .await
+        {
+            warn!(
+                material_id = %material_id,
+                failure_reason = reason,
+                error = %error,
+                "Failed-material cleanup could not durably land; preserving retry state"
+            );
+        }
     }
 
-    /// Finalize a failed material after the caller has already claimed the terminal transition.
-    pub(super) async fn finalize_failed_material_claimed(&self, material_id: Uuid, reason: &str) {
+    pub(super) async fn finalize_failed_material_claimed_checked(
+        &self,
+        material_id: Uuid,
+        reason: &str,
+        resume_phase: AssemblyPhase,
+    ) -> IngestdResult<()> {
         debug!(
             material_id = %material_id,
             failure_reason = reason,
@@ -654,10 +692,35 @@ impl MaterialAssembler {
             material_id = %material_id,
             failure_reason = reason,
         );
-        let mark = self.mark_material_failed(material_id, reason);
-        let cleanup = self.cleanup_state(material_id);
-        tokio::join!(mark, cleanup);
+
+        if let Err(error) = self.mark_material_failed_checked(material_id, reason).await {
+            self.revert_failure_cleanup_start(material_id, resume_phase)
+                .await;
+            return Err(error);
+        }
+
+        self.cleanup_state(material_id).await;
         let _ = self.assembler_state.remove(&material_id);
+        Ok(())
+    }
+
+    async fn route_terminal_failure_with_retry(
+        &self,
+        material_id: Uuid,
+        reason: &'static str,
+        context: JsonValue,
+        state_handle: &Arc<Mutex<super::state::AssemblerState>>,
+        end: MaterialEndMessage,
+    ) -> IngestdResult<()> {
+        self.route_material_error(material_id, reason, context).await;
+        if let Err(error) = self
+            .finalize_failed_material_claimed_checked(material_id, reason, AssemblyPhase::Accumulating)
+            .await
+        {
+            Self::revert_finalization_start(state_handle, end).await;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(super) async fn try_finalize_pending_end(
@@ -703,6 +766,7 @@ impl MaterialAssembler {
                         "buffered_offsets": state.buffered_slices.keys().copied().collect::<Vec<_>>(),
                         "error": error.to_string(),
                     });
+                    let resume_phase = state.phase;
                     state.phase = AssemblyPhase::Finalizing;
                     drop(state);
                     self.route_material_error(
@@ -711,11 +775,12 @@ impl MaterialAssembler {
                         context,
                     )
                     .await;
-                    self.finalize_failed_material_claimed(
+                    self.finalize_failed_material_claimed_checked(
                         material_id,
                         "material_end_timestamp_invalid",
+                        resume_phase,
                     )
-                    .await;
+                    .await?;
                     return Ok(());
                 }
             };
@@ -780,6 +845,7 @@ impl MaterialAssembler {
                     }
                 });
 
+                let resume_phase = state.phase;
                 state.phase = AssemblyPhase::Finalizing;
                 drop(state);
                 self.route_material_error(
@@ -788,11 +854,12 @@ impl MaterialAssembler {
                     ctx,
                 )
                 .await;
-                self.finalize_failed_material_claimed(
+                self.finalize_failed_material_claimed_checked(
                     material_id,
                     "material assembly corruption detected",
+                    resume_phase,
                 )
-                .await;
+                .await?;
                 return Ok(());
             }
 
@@ -868,17 +935,17 @@ impl MaterialAssembler {
                 "Material ended with no content; skipping annex import and routing to DLQ"
             );
 
-            self.route_material_error(
+            self.route_terminal_failure_with_retry(
                 material_id,
                 "empty_material",
                 serde_json::json!({
                     "slice_count": slice_count,
                     "total_size": end.total_size_bytes,
                 }),
+                &state_handle,
+                end,
             )
-            .await;
-            self.finalize_failed_material_claimed(material_id, "empty_material")
-                .await;
+            .await?;
             return Ok(());
         }
 
@@ -889,7 +956,7 @@ impl MaterialAssembler {
                 max_material_size_bytes = self.max_material_size_bytes,
                 "Material exceeded the configured per-material size limit"
             );
-            self.route_material_error(
+            self.route_terminal_failure_with_retry(
                 material_id,
                 "material_size_limit_exceeded",
                 serde_json::json!({
@@ -898,10 +965,10 @@ impl MaterialAssembler {
                     "max_material_size_bytes": self.max_material_size_bytes,
                     "slice_count": slice_count,
                 }),
+                &state_handle,
+                end,
             )
-            .await;
-            self.finalize_failed_material_claimed(material_id, "material_size_limit_exceeded")
-                .await;
+            .await?;
             return Ok(());
         }
 
@@ -919,17 +986,17 @@ impl MaterialAssembler {
                     %error,
                     "Failed to stat assembled material file; routing to DLQ"
                 );
-                self.route_material_error(
+                self.route_terminal_failure_with_retry(
                     material_id,
                     "material_stat_failed",
                     serde_json::json!({
                         "path": final_state.temp_path.display().to_string(),
                         "error": error.to_string(),
                     }),
+                    &state_handle,
+                    end,
                 )
-                .await;
-                self.finalize_failed_material_claimed(material_id, "material_stat_failed")
-                    .await;
+                .await?;
                 return Ok(());
             }
         };
@@ -940,7 +1007,7 @@ impl MaterialAssembler {
                 assembled_bytes,
                 "Assembled file size on disk does not match assembled bytes; routing to DLQ"
             );
-            self.route_material_error(
+            self.route_terminal_failure_with_retry(
                 material_id,
                 "material_size_mismatch_disk",
                 serde_json::json!({
@@ -948,10 +1015,10 @@ impl MaterialAssembler {
                     "file_size": file_size,
                     "reported_total": end.total_size_bytes,
                 }),
+                &state_handle,
+                end,
             )
-            .await;
-            self.finalize_failed_material_claimed(material_id, "material_size_mismatch_disk")
-                .await;
+            .await?;
             return Ok(());
         }
 
@@ -968,17 +1035,17 @@ impl MaterialAssembler {
                 actual = %computed_hash,
                 "Material hash mismatch; routing to DLQ"
             );
-            self.route_material_error(
+            self.route_terminal_failure_with_retry(
                 material_id,
                 "material_hash_mismatch",
                 serde_json::json!({
                     "expected_hash": end.content_hash,
                     "actual_hash": computed_hash,
                 }),
+                &state_handle,
+                end,
             )
-            .await;
-            self.finalize_failed_material_claimed(material_id, "material_hash_mismatch")
-                .await;
+            .await?;
             return Ok(());
         }
 
@@ -1272,6 +1339,46 @@ mod tests {
             .await?
             .expect("material should exist");
         assert_eq!(material.status.as_str(), status::COMPLETED);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalize_failed_material_preserves_retry_state_when_failure_mark_is_not_durable(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        let temp_path = state.temp_path.clone();
+        tokio::fs::write(&temp_path, b"partial").await?;
+        state.phase = AssemblyPhase::Accumulating;
+        let state_handle = assembler.insert_state_handle(material_id, state).await;
+
+        ctx.pool.close().await;
+
+        let error = assembler
+            .finalize_failed_material_claimed_checked(
+                material_id,
+                "material_hash_mismatch",
+                AssemblyPhase::Accumulating,
+            )
+            .await
+            .expect_err("cleanup should fail honestly when the durable failure mark cannot land");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to mark material as failed in database"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            assembler.assembler_state.contains_key(&material_id),
+            "retry state must be preserved until the failure mark lands durably"
+        );
+        assert!(temp_path.exists(), "staged material should remain on disk for retry");
+        assert_eq!(state_handle.lock().await.phase, AssemblyPhase::Accumulating);
         Ok(())
     }
 

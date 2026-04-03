@@ -10,6 +10,7 @@ use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::events::{Event, EventPayload, payloads::LogLinePayload};
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -61,11 +62,15 @@ impl StageCleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::StageAsYouGoContext;
+    use crate::acquisition_manager::AcquisitionManager;
     use crate::runtime::stream::EventEmitter;
+    use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
+    use std::sync::Arc;
     use tokio::sync::watch;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
+    use tokio_stream::StreamExt;
     use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
@@ -190,6 +195,61 @@ mod tests {
                 .contains("log-file staging requires a non-empty source URI"),
             "unexpected error: {error}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalize_source_material_resumes_from_already_staged_bytes(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let acquisition = Arc::new(
+            AcquisitionManager::with_defaults(ctx.nats_client(), "stage-retry-test", "/stage")
+                .with_work_dir(work_dir.path()),
+        );
+        let (tx, _rx) = mpsc::channel(1);
+        let context = StageAsYouGoContext::from_sender(acquisition.clone(), tx, false);
+        let material_id = context
+            .register_in_flight("log_file", Some("test://resume"), serde_json::json!({}))
+            .await?;
+        let end_subject = environment().nats_subject_with_namespace(None, "source_material.end");
+        let mut end_sub = ctx.nats_client().subscribe(end_subject).await?;
+
+        let mut handle = context
+            .acquisition_handles
+            .lock()
+            .await
+            .remove(&material_id)
+            .expect("registered material should have an acquisition handle");
+        acquisition.append_slice(&mut handle, b"abc").await?;
+        context
+            .acquisition_handles
+            .lock()
+            .await
+            .insert(material_id, handle);
+
+        context
+            .finalize_source_material(material_id, b"abcdef", Some("text/plain"), Some("utf-8"))
+            .await?;
+
+        let end = timeout(Duration::from_secs(1), end_sub.next())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing material end message"))?;
+        let payload: serde_json::Value = serde_json::from_slice(&end.payload)?;
+        if payload["material_id"] != material_id.to_string() {
+            let end = timeout(Duration::from_secs(1), end_sub.next())
+                .await?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing material end message"))?;
+            let payload: serde_json::Value = serde_json::from_slice(&end.payload)?;
+            assert_eq!(payload["material_id"], material_id.to_string());
+            assert_eq!(payload["total_size_bytes"], 6);
+            assert_eq!(payload["total_slices"], 2);
+            return Ok(());
+        }
+
+        assert_eq!(payload["total_size_bytes"], 6);
+        assert_eq!(payload["total_slices"], 2);
         Ok(())
     }
 }
@@ -591,7 +651,6 @@ impl StageAsYouGoContext {
     {
         let is_text = mime_type.is_some_and(|m| m.starts_with("text/"));
         let mut preview_bytes: Vec<u8> = Vec::new();
-        let mut total_bytes: i64 = 0;
 
         let material_info = {
             let registry = self.material_registry.lock().await;
@@ -616,6 +675,11 @@ impl StageAsYouGoContext {
             .ok_or_else(|| {
                 SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
+        let resume_offset = resumed_prefix_len(&handle, usize::MAX)?;
+        if resume_offset > 0 {
+            skip_stream_prefix(reader, resume_offset, is_text.then_some(&mut preview_bytes)).await?;
+        }
+        let mut total_bytes = resume_offset as i64;
 
         let finalize_result = async {
             let mut buffer = vec![0u8; MAX_SLICE_BYTES];
@@ -688,7 +752,8 @@ impl StageAsYouGoContext {
         encoding: Option<&str>,
         content_preview: Option<String>,
     ) -> NodeResult<()> {
-        for chunk in content.chunks(MAX_SLICE_BYTES) {
+        let resume_offset = resumed_prefix_len(handle, content.len())?;
+        for chunk in content[resume_offset..].chunks(MAX_SLICE_BYTES) {
             manager
                 .append_slice(handle, chunk)
                 .await
@@ -703,6 +768,59 @@ impl StageAsYouGoContext {
             .await
             .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))
     }
+}
+
+fn resumed_prefix_len(handle: &SourceMaterialHandle, content_len: usize) -> NodeResult<usize> {
+    let resume_offset = usize::try_from(handle.bytes_written()).map_err(|error| {
+        SinexError::processing("staged material progress exceeds addressable memory size")
+            .with_context("bytes_written", handle.bytes_written().to_string())
+            .with_std_error(&error)
+    })?;
+    if content_len != usize::MAX && resume_offset > content_len {
+        return Err(
+            SinexError::processing("staged material progress exceeds supplied content length")
+                .with_context("bytes_written", resume_offset.to_string())
+                .with_context("content_len", content_len.to_string()),
+        );
+    }
+    Ok(resume_offset)
+}
+
+async fn skip_stream_prefix<R>(
+    reader: &mut R,
+    bytes_to_skip: usize,
+    mut preview: Option<&mut Vec<u8>>,
+) -> NodeResult<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut remaining = bytes_to_skip;
+    let mut discard = vec![0u8; MAX_SLICE_BYTES];
+    while remaining > 0 {
+        let window_len = remaining.min(discard.len());
+        let read = reader
+            .read(&mut discard[..window_len])
+            .await
+            .map_err(|e| SinexError::processing(e.to_string()))?;
+        if read == 0 {
+            return Err(
+                SinexError::processing("reader ended before previously staged bytes were replayed")
+                    .with_context("bytes_to_skip", bytes_to_skip.to_string())
+                    .with_context("bytes_consumed", (bytes_to_skip - remaining).to_string())
+                    .with_context("kind", ErrorKind::UnexpectedEof.to_string()),
+            );
+        }
+
+        if let Some(preview_bytes) = preview.as_deref_mut()
+            && preview_bytes.len() < CONTENT_PREVIEW_BYTES
+        {
+            let take_len = (CONTENT_PREVIEW_BYTES - preview_bytes.len()).min(read);
+            preview_bytes.extend_from_slice(&discard[..take_len]);
+        }
+
+        remaining -= read;
+    }
+    Ok(())
 }
 
 /// Helper trait for nodes that support Stage-as-You-Go

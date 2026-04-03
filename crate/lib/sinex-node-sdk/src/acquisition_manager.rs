@@ -72,6 +72,7 @@ pub struct SourceMaterialHandle {
     bytes_written: i64,
     started_at: Timestamp,
     pending_begin: Option<PendingMaterialBegin>,
+    pending_published_slice: Option<PendingPublishedSlice>,
 }
 
 struct PendingMaterialBegin {
@@ -79,9 +80,19 @@ struct PendingMaterialBegin {
     metadata: JsonValue,
 }
 
+struct PendingPublishedSlice {
+    offset: i64,
+    slice_index: usize,
+    data: Vec<u8>,
+}
+
 impl SourceMaterialHandle {
     pub fn temp_path(&self) -> &Path {
         &self.temp_path
+    }
+
+    pub fn bytes_written(&self) -> i64 {
+        self.bytes_written
     }
 
     /// The wall-clock timestamp recorded when this material capture began.
@@ -425,6 +436,57 @@ impl AcquisitionManager {
         Ok(())
     }
 
+    async fn mirror_slice_to_local_stage(
+        handle: &mut SourceMaterialHandle,
+        data: &[u8],
+        offset_start: i64,
+    ) -> NodeResult<()> {
+        if let Some(ref mut file) = handle.temp_file {
+            file.write_all(data).await.map_err(|error| {
+                SinexError::io("Failed to mirror published slice into the local staging file")
+                    .with_context("material_id", handle.material_id.to_string())
+                    .with_context("slice_index", handle.slice_count.to_string())
+                    .with_context("offset", offset_start.to_string())
+                    .with_context("bytes", data.len().to_string())
+                    .with_std_error(&error)
+            })?;
+        }
+
+        handle.hasher.update(data);
+        handle.bytes_written = offset_start + data.len() as i64;
+        handle.slice_count += 1;
+        Ok(())
+    }
+
+    async fn ensure_pending_slice_mirrored(
+        &self,
+        handle: &mut SourceMaterialHandle,
+    ) -> NodeResult<()> {
+        let Some(pending) = handle.pending_published_slice.take() else {
+            return Ok(());
+        };
+
+        if pending.offset != handle.bytes_written || pending.slice_index != handle.slice_count {
+            return Err(
+                SinexError::invalid_state(
+                    "pending published slice is inconsistent with local acquisition progress",
+                )
+                .with_context("material_id", handle.material_id.to_string())
+                .with_context("pending_offset", pending.offset.to_string())
+                .with_context("pending_slice_index", pending.slice_index.to_string())
+                .with_context("bytes_written", handle.bytes_written.to_string())
+                .with_context("slice_count", handle.slice_count.to_string()),
+            );
+        }
+
+        if let Err(error) = Self::mirror_slice_to_local_stage(handle, &pending.data, pending.offset).await {
+            handle.pending_published_slice = Some(pending);
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
     /// Append data slice to material
     ///
     /// Writes locally and publishes slice to NATS
@@ -434,31 +496,36 @@ impl AcquisitionManager {
         data: &[u8],
     ) -> NodeResult<()> {
         self.ensure_begin_published(handle).await?;
+        self.ensure_pending_slice_mirrored(handle).await?;
 
-        // Write to temp file
-        if let Some(ref mut file) = handle.temp_file {
-            file.write_all(data).await?;
-        }
-
-        // Update hash
-        handle.hasher.update(data);
-
-        // Publish slice to NATS
         let offset_start = handle.bytes_written;
-        let offset_end = offset_start + data.len() as i64;
+        let slice_index = handle.slice_count;
 
-        self.publish_slice(handle.material_id, handle.slice_count, data, offset_start)
+        self.publish_slice(handle.material_id, slice_index, data, offset_start)
             .await?;
 
-        handle.bytes_written = offset_end;
-        handle.slice_count += 1;
+        if let Err(error) = Self::mirror_slice_to_local_stage(handle, data, offset_start).await {
+            handle.pending_published_slice = Some(PendingPublishedSlice {
+                offset: offset_start,
+                slice_index,
+                data: data.to_vec(),
+            });
+            return Err(
+                error
+                    .with_context("pending_local_mirror", "true")
+                    .with_context(
+                        "recovery",
+                        "retry the acquisition operation before finalizing",
+                    ),
+            );
+        }
 
         debug!(
             material_id = %handle.material_id,
-            slice_index = handle.slice_count - 1,
+            slice_index,
             bytes = data.len(),
             offset_start,
-            offset_end,
+            offset_end = handle.bytes_written,
             "Appended material slice"
         );
 
@@ -551,6 +618,7 @@ impl AcquisitionManager {
         metadata: JsonValue,
     ) -> NodeResult<()> {
         self.ensure_begin_published(handle).await?;
+        self.ensure_pending_slice_mirrored(handle).await?;
 
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
@@ -715,6 +783,7 @@ impl<'a> MaterialBuilder<'a> {
                 source_identifier: self.source_identifier,
                 metadata: self.metadata,
             }),
+            pending_published_slice: None,
         })
     }
 }
@@ -885,6 +954,35 @@ mod tests {
             2,
             "failed bootstrap should not poison future retries"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test", "/oversized")
+            .with_work_dir(work_dir.path());
+        let mut handle = manager.begin_material("test://oversized").await?;
+        let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
+
+        let error = manager
+            .append_slice(&mut handle, &oversized)
+            .await
+            .expect_err("oversized slice should be rejected before mutating local state");
+
+        assert!(
+            error.to_string().contains("exceeds NATS max payload"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(handle.bytes_written(), 0);
+        assert_eq!(
+            handle.hasher.clone().finalize().to_hex().to_string(),
+            blake3::Hasher::new().finalize().to_hex().to_string()
+        );
+
+        let metadata = tokio::fs::metadata(handle.temp_path()).await?;
+        assert_eq!(metadata.len(), 0, "oversized rejection must not stage bytes locally");
         Ok(())
     }
 }

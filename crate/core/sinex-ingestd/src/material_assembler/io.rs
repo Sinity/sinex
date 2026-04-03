@@ -11,6 +11,8 @@ use super::{
         AssemblyPhase,
         BUFFER_DIR_NAME,
         FinalizationState,
+        PendingWrite,
+        PersistedState,
 
         // MaterialBeginMessage removed (unused)
         MaterialEndMessage,
@@ -236,54 +238,28 @@ async fn restore_state_params(
         return Ok(None);
     }
 
-    // Resume sequence numbering from where the WAL left off
-    let next_seq = max_seq + 1;
-    // Validate temp file size matches WAL state — catches crash-during-write corruption
-    // where the WAL recorded a slice but the temp file has incomplete data (or is missing).
-    if state_snapshot.expected_offset > 0 {
-        if !temp_path.exists() {
-            warn!(
-                material_id = %material_id,
-                expected_bytes = state_snapshot.expected_offset,
-                "WAL indicates assembled data but temp file is missing; cleaning up stale state"
-            );
-            cleanup_state(assembler, material_id).await;
-            return Ok(None);
-        }
-        let actual_size = match fs::metadata(&temp_path).await {
-            Ok(m) => m.len() as i64,
-            Err(error) => {
-                warn!(
-                    material_id = %material_id,
-                    path = %temp_path.display(),
-                    %error,
-                    "Failed to stat temp file after WAL replay; cleaning up"
-                );
-                cleanup_state(assembler, material_id).await;
-                return Ok(None);
-            }
-        };
-        if actual_size != state_snapshot.expected_offset {
-            warn!(
-                material_id = %material_id,
-                expected = state_snapshot.expected_offset,
-                actual = actual_size,
-                "Temp file size mismatch after WAL replay; cleaning up inconsistent state"
-            );
-            cleanup_state(assembler, material_id).await;
-            return Ok(None);
-        }
-    }
-
-    // Check terminal status
-    let is_terminal = assembler.material_is_terminal(material_id).await?;
-    if is_terminal
-        && state_snapshot.phase != AssemblyPhase::Finalizing
-        && state_snapshot.pending_end.is_none()
-    {
-        info!(material_id = %material_id, "Material is terminal but state incomplete; treating as stale and cleaning up");
+    if assembler.material_is_terminal(material_id).await? {
+        info!(
+            material_id = %material_id,
+            "Persisted assembler state belongs to an already terminal material; cleaning it up"
+        );
         cleanup_state(assembler, material_id).await;
         return Ok(None);
+    }
+
+    // Resume sequence numbering from where the WAL left off
+    let next_seq = max_seq + 1;
+    match reconcile_replayed_file_progress(material_id, &temp_path, &mut state_snapshot).await {
+        Ok(()) => {}
+        Err(error) => {
+            warn!(
+                material_id = %material_id,
+                error = %error,
+                "Persisted material file progress is inconsistent with WAL; cleaning it up"
+            );
+            cleanup_state(assembler, material_id).await;
+            return Ok(None);
+        }
     }
 
     // Reopen WAL in append mode for the live state
@@ -353,7 +329,7 @@ async fn restore_state_params(
         metadata: state_snapshot.metadata,
         phase: state_snapshot.phase,
         hasher,
-        pending_write: None,
+        pending_write: state_snapshot.pending_write,
         pending_end: state_snapshot.pending_end,
         last_slice_received,
     }))
@@ -413,6 +389,7 @@ struct ReplayedState {
     source_identifier: String,
     metadata: serde_json::Value,
     phase: AssemblyPhase,
+    pending_write: Option<PendingWrite>,
     pending_end: Option<MaterialEndMessage>,
 }
 
@@ -430,6 +407,7 @@ impl ReplayedState {
                 // WAL implies this slice was processed successfully (written to temp file)
                 self.expected_offset += len as i64;
                 self.slice_count += 1;
+                self.pending_write = None;
             }
             WalEntry::End(msg) => {
                 self.pending_end = Some(msg);
@@ -443,10 +421,107 @@ impl ReplayedState {
                 self.source_identifier = state.source_identifier;
                 self.metadata = state.metadata;
                 self.phase = state.phase;
+                self.pending_write = state.pending_write;
                 self.pending_end = state.pending_end;
             }
             _ => {} // Buffer events don't change core state reconstruction directly
         }
+    }
+}
+
+async fn reconcile_replayed_file_progress(
+    material_id: Uuid,
+    temp_path: &Path,
+    state_snapshot: &mut ReplayedState,
+) -> IngestdResult<()> {
+    let actual_size = staged_file_size_bytes(temp_path).await?;
+
+    if let Some(pending_write) = state_snapshot.pending_write.clone() {
+        let committed_size = pending_write
+            .offset
+            .checked_add(pending_write.len as i64)
+            .ok_or_else(|| {
+                SinexError::invalid_state("pending_write length overflowed restored material size")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("offset", pending_write.offset.to_string())
+                    .with_context("len", pending_write.len.to_string())
+            })?;
+
+        if actual_size == state_snapshot.expected_offset {
+            debug!(
+                material_id = %material_id,
+                offset = pending_write.offset,
+                len = pending_write.len,
+                "Dropped restored pending_write that never reached the staging file"
+            );
+            state_snapshot.pending_write = None;
+            return Ok(());
+        }
+
+        if actual_size == committed_size {
+            state_snapshot.expected_offset = committed_size;
+            state_snapshot.slice_count = state_snapshot
+                .slice_count
+                .saturating_add(pending_write.slice_count_delta);
+            state_snapshot.pending_write = None;
+            debug!(
+                material_id = %material_id,
+                offset = pending_write.offset,
+                len = pending_write.len,
+                "Promoted restored pending_write into committed material progress"
+            );
+            return Ok(());
+        }
+
+        return Err(
+            SinexError::invalid_state("pending_write does not match staged file progress")
+                .with_context("material_id", material_id.to_string())
+                .with_context("expected_offset", state_snapshot.expected_offset.to_string())
+                .with_context("pending_offset", pending_write.offset.to_string())
+                .with_context("pending_len", pending_write.len.to_string())
+                .with_context("actual_size", actual_size.to_string()),
+        );
+    }
+
+    if actual_size != state_snapshot.expected_offset {
+        return Err(
+            SinexError::invalid_state("staged file size does not match restored WAL progress")
+                .with_context("material_id", material_id.to_string())
+                .with_context("expected_offset", state_snapshot.expected_offset.to_string())
+                .with_context("actual_size", actual_size.to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+async fn staged_file_size_bytes(temp_path: &Path) -> IngestdResult<i64> {
+    match fs::metadata(temp_path).await {
+        Ok(metadata) => i64::try_from(metadata.len()).map_err(|error| {
+            SinexError::invalid_state("staged file length exceeds i64 range")
+                .with_context("path", temp_path.display().to_string())
+                .with_std_error(&error)
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(
+            SinexError::io(format!("Failed to stat staged file {}", temp_path.display()))
+                .with_source(error),
+        ),
+    }
+}
+
+fn checkpoint_snapshot(state: &AssemblerState) -> PersistedState {
+    PersistedState {
+        material_id: state.material_id.to_string(),
+        expected_offset: state.expected_offset,
+        slice_count: state.slice_count,
+        started_at: state.started_at.format_rfc3339(),
+        material_kind: state.material_kind.clone(),
+        source_identifier: state.source_identifier.clone(),
+        metadata: state.metadata.clone(),
+        pending_write: state.pending_write.clone(),
+        pending_end: state.pending_end.clone(),
+        phase: state.phase,
     }
 }
 
@@ -741,6 +816,7 @@ pub(super) async fn handle_slice(
                 let current_total = state.total_staged_bytes();
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
+                let resume_phase = state.phase;
                 state.phase = AssemblyPhase::Finalizing;
                 drop(state);
 
@@ -760,11 +836,12 @@ pub(super) async fn handle_slice(
                     )
                     .await;
                 assembler
-                    .finalize_failed_material_claimed(
+                    .finalize_failed_material_claimed_checked(
                         material_id,
                         "material_size_limit_exceeded",
+                        resume_phase,
                     )
-                    .await;
+                    .await?;
                 return Ok(());
             }
 
@@ -783,6 +860,7 @@ pub(super) async fn handle_slice(
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
                 let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
+                let resume_phase = state.phase;
                 state.phase = AssemblyPhase::Finalizing;
                 drop(state);
 
@@ -800,11 +878,12 @@ pub(super) async fn handle_slice(
                     )
                     .await;
                 assembler
-                    .finalize_failed_material_claimed(
+                    .finalize_failed_material_claimed_checked(
                         material_id,
                         "buffered_slice_limit_exceeded",
+                        resume_phase,
                     )
-                    .await;
+                    .await?;
                 return Ok(());
             } else {
                 let projected_total = state.total_staged_bytes().saturating_add(data.len() as i64);
@@ -813,6 +892,7 @@ pub(super) async fn handle_slice(
                     let buffered_count = state.buffered_slices.len();
                     let expected_offset = state.expected_offset;
                     let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
+                    let resume_phase = state.phase;
                     state.phase = AssemblyPhase::Finalizing;
                     drop(state);
 
@@ -833,11 +913,12 @@ pub(super) async fn handle_slice(
                         )
                         .await;
                     assembler
-                        .finalize_failed_material_claimed(
+                        .finalize_failed_material_claimed_checked(
                             material_id,
                             "material_size_limit_exceeded",
+                            resume_phase,
                         )
-                        .await;
+                        .await?;
                     return Ok(());
                 }
 
@@ -898,35 +979,107 @@ async fn append_slice_data(
     material_id: Uuid,
     data: &[u8],
 ) -> IngestdResult<()> {
-    if state.temp_file.is_some()
-        && let Some(file) = state.temp_file.as_mut()
-    {
-        file.write_all(data).await.map_err(|e| {
-            SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
+    let pending_write = if let Some(existing) = state.pending_write.clone() {
+        if existing.offset != state.expected_offset || existing.len != data.len() {
+            return Err(
+                SinexError::invalid_state("pending_write does not match retried slice")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("expected_offset", state.expected_offset.to_string())
+                    .with_context("pending_offset", existing.offset.to_string())
+                    .with_context("pending_len", existing.len.to_string())
+                    .with_context("incoming_len", data.len().to_string()),
+            );
+        }
+        existing
+    } else {
+        let pending_write = PendingWrite {
+            offset: state.expected_offset,
+            len: data.len(),
+            slice_count_delta: 1,
+        };
+        state.pending_write = Some(pending_write.clone());
+        append_wal_entry(
+            assembler,
+            state,
+            WalEntry::Checkpoint(checkpoint_snapshot(state)),
+        )
+        .await?;
+        pending_write
+    };
+
+    let expected_size_after_write = pending_write
+        .offset
+        .checked_add(pending_write.len as i64)
+        .ok_or_else(|| {
+            SinexError::invalid_state("slice write overflowed expected material size")
+                .with_context("material_id", material_id.to_string())
+                .with_context("offset", pending_write.offset.to_string())
+                .with_context("len", pending_write.len.to_string())
         })?;
-        // fsync temp file BEFORE writing WAL entry. Without this, crash after WAL write
-        // but before data reaches disk = WAL says "slice received" but temp file is incomplete
-        // → hash mismatch on recovery → material marked failed.
-        file.sync_all().await.map_err(|e| {
-            SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
-        })?;
+
+    let actual_size = staged_file_size_bytes(&state.temp_path).await?;
+    match actual_size {
+        size if size == pending_write.offset => {
+            if state.temp_file.is_none() {
+                state.temp_file = Some(
+                    File::options()
+                        .create(true)
+                        .append(true)
+                        .open(&state.temp_path)
+                        .await
+                        .map_err(|e| {
+                            SinexError::io(format!(
+                                "Failed to reopen staging file for {material_id}"
+                            ))
+                            .with_source(e)
+                        })?,
+                );
+            }
+            if let Some(file) = state.temp_file.as_mut() {
+                file.write_all(data).await.map_err(|e| {
+                    SinexError::io(format!("Failed to write slice for {material_id}"))
+                        .with_source(e)
+                })?;
+                file.sync_all().await.map_err(|e| {
+                    SinexError::io(format!("Failed to sync slice for {material_id}"))
+                        .with_source(e)
+                })?;
+            }
+        }
+        size if size == expected_size_after_write => {
+            debug!(
+                material_id = %material_id,
+                offset = pending_write.offset,
+                len = pending_write.len,
+                "Resuming slice commit from previously staged bytes"
+            );
+        }
+        size => {
+            return Err(
+                SinexError::invalid_state("slice staging file is inconsistent with pending_write")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("pending_offset", pending_write.offset.to_string())
+                    .with_context("pending_len", pending_write.len.to_string())
+                    .with_context("actual_size", size.to_string()),
+            );
+        }
     }
 
-    state.hasher.update(data);
-
-    // Log slice processing to WAL *after* temp file write succeeds
     append_wal_entry(
         assembler,
         state,
         WalEntry::Slice {
-            offset: state.expected_offset,
-            len: data.len(),
+            offset: pending_write.offset,
+            len: pending_write.len,
         },
     )
     .await?;
 
-    state.expected_offset += data.len() as i64;
-    state.slice_count += 1;
+    state.hasher.update(data);
+    state.expected_offset = expected_size_after_write;
+    state.slice_count = state
+        .slice_count
+        .saturating_add(pending_write.slice_count_delta);
     state.pending_write = None;
 
     Ok(())
@@ -1381,6 +1534,114 @@ mod tests {
             .await
             .expect("valid WAL state must restore");
         assert_eq!(state.lock().await.last_slice_received, wal_modified);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_promotes_fully_staged_pending_write(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+        tokio::fs::write(material_dir.join(TEMP_FILE_NAME), b"data").await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Checkpoint(PersistedState {
+                material_id: material_id.to_string(),
+                expected_offset: 0,
+                slice_count: 0,
+                started_at: Timestamp::now().format_rfc3339(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                pending_write: Some(PendingWrite {
+                    offset: 0,
+                    len: 4,
+                    slice_count_delta: 1,
+                }),
+                pending_end: None,
+                phase: AssemblyPhase::Accumulating,
+            }),
+        )
+        .await?;
+
+        restore_state(&assembler).await?;
+
+        let state = assembler
+            .get_state_handle(&material_id)
+            .await
+            .expect("fully staged pending write should restore as committed");
+        let state = state.lock().await;
+        assert_eq!(state.expected_offset, 4);
+        assert_eq!(state.slice_count, 1);
+        assert!(state.pending_write.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_cleans_up_terminal_material_even_with_pending_end(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::from_uuid(material_id);
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://terminal-restore"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+        ctx.pool
+            .source_materials()
+            .finalize_in_flight(material_id_typed, None, None, None, Some(0))
+            .await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://terminal-restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::End(MaterialEndMessage {
+                material_id: material_id.to_string(),
+                ended_at: Timestamp::now().format_rfc3339(),
+                content_hash: blake3::hash(b"").to_hex().to_string(),
+                total_slices: 0,
+                total_size_bytes: 0,
+                metadata: json!({}),
+            }),
+        )
+        .await?;
+
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "terminal materials must not be resurrected from persisted pending_end state"
+        );
+        assert!(
+            assembler.get_state_handle(&material_id).await.is_none(),
+            "terminal materials must not occupy the active assembler set after restore"
+        );
         Ok(())
     }
 
