@@ -328,10 +328,10 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
                     self.state.revision = ckpt.revision;
                 }
                 None => {
-                    return Err(
-                        SinexError::checkpoint("Ingestor checkpoint KV entry is missing state data")
-                            .with_context("node", self.ingestor.name()),
-                    );
+                    return Err(SinexError::checkpoint(
+                        "Ingestor checkpoint KV entry is missing state data",
+                    )
+                    .with_context("node", self.ingestor.name()));
                 }
             }
         }
@@ -372,8 +372,7 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         if let Some(cm) = &self.checkpoint_manager {
             self.state.revision = cm.save_checkpoint(&ckpt_state).await?;
             ckpt_state.revision = self.state.revision;
-            self.finalize_restored_hot_reload_file(&ckpt_state)
-                .await?;
+            self.finalize_restored_hot_reload_file(&ckpt_state).await?;
         }
 
         Ok(())
@@ -491,9 +490,7 @@ mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     use super::{IngestorNodeAdapter, IngestorState, signal_shutdown_channel};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
-    use crate::runtime::stream::{
-        Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
-    };
+    use crate::runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon};
     use crate::shutdown::ShutdownConfig;
     use crate::{IngestorNode, NodeResult};
     use futures::TryStreamExt;
@@ -713,10 +710,7 @@ mod tests {
         manager.save_checkpoint(&CheckpointState::default()).await?;
 
         let mut keys = kv.keys().await?;
-        let key = keys
-            .try_next()
-            .await?
-            .expect("checkpoint key should exist");
+        let key = keys.try_next().await?.expect("checkpoint key should exist");
         let corrupt = serde_json::to_vec(&CheckpointState {
             checkpoint: Checkpoint::stream("restored", None),
             processed_count: 0,

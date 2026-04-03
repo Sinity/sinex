@@ -139,10 +139,8 @@ impl NatsPublisher {
             prov.offset_kind,
             prov.source_event_ids,
         )?;
-        let original_event =
-            serde_json::from_slice::<JsonValue>(&original_event_bytes).map_err(
-                sinex_primitives::SinexError::from,
-            )?;
+        let original_event = serde_json::from_slice::<JsonValue>(&original_event_bytes)
+            .map_err(sinex_primitives::SinexError::from)?;
         let original_subject = self.env.nats_raw_event_subject_with_namespace(
             self.namespace.as_deref(),
             event.source.as_str(),
@@ -176,7 +174,8 @@ impl NatsPublisher {
         headers.insert("Original-Subject", original_subject.as_str());
         headers.insert("Retry-Count", "0");
 
-        let ack_future = self.js
+        let ack_future = self
+            .js
             .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| {
@@ -224,7 +223,8 @@ impl NatsPublisher {
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
 
         // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
-        let ack_future = self.js
+        let ack_future = self
+            .js
             .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| {
@@ -316,7 +316,9 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, wait_for_publish_ack};
+    use super::{
+        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, wait_for_publish_ack,
+    };
     use sinex_primitives::{DynamicPayload, Id, Uuid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;

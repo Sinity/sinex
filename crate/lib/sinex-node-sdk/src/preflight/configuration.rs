@@ -11,8 +11,8 @@
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
 use sinex_primitives::DeploymentReadinessDescriptor;
-use std::fmt::Display;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
@@ -330,12 +330,10 @@ fn validate_sqlite_tables(path: &Path, label: &str, tables: &[&str]) -> NodeResu
             .map(|table| format!("`{table}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(
-            SinexError::processing(format!(
-                "configured {label} database is missing required table(s): {missing}"
-            ))
-            .with_context("path", path.display().to_string()),
-        );
+        return Err(SinexError::processing(format!(
+            "configured {label} database is missing required table(s): {missing}"
+        ))
+        .with_context("path", path.display().to_string()));
     }
 
     Ok(())
@@ -759,9 +757,11 @@ mod tests {
         let error = parse_systemd_version_line(b"\n\n")
             .expect_err("empty systemctl version output must fail honestly");
 
-        assert!(error
-            .to_string()
-            .contains("systemctl --version returned empty output"));
+        assert!(
+            error
+                .to_string()
+                .contains("systemctl --version returned empty output")
+        );
         Ok(())
     }
 

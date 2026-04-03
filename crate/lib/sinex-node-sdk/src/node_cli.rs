@@ -5,8 +5,8 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use crate::event_node::EventTransport;
 use crate::error_helpers::env_bool_with_default;
+use crate::event_node::EventTransport;
 pub use crate::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
@@ -417,12 +417,10 @@ fn render_cli_time(timestamp: Timestamp) -> String {
 }
 
 fn edge_mode_enabled(database_url_supplied: bool) -> bool {
-    env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode")
-        && !database_url_supplied
+    env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
 }
 
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
-
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
         Self::new_with_factory(node, Arc::new(T::default))
@@ -576,11 +574,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             )
             .await?;
 
-        let coordination_disabled = env_bool_with_default(
-            "SINEX_COORDINATION_DISABLED",
-            false,
-            "node coordination",
-        );
+        let coordination_disabled =
+            env_bool_with_default("SINEX_COORDINATION_DISABLED", false, "node coordination");
         let node_type = runner.node_type();
 
         // Run service with optional coordination
@@ -843,15 +838,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                     println!("Ingestion History ({} entries):", history.len());
                     for entry in &history {
                         println!("  ID: {}", entry.id);
-                        println!(
-                            "    Started: {}",
-                            render_cli_timestamp(entry.started_at)
-                        );
+                        println!("    Started: {}", render_cli_timestamp(entry.started_at));
                         if let Some(completed) = entry.completed_at {
-                            println!(
-                                "    Completed: {}",
-                                render_cli_timestamp(completed)
-                            );
+                            println!("    Completed: {}", render_cli_timestamp(completed));
                         }
                         println!("    Events: {}", entry.events_generated);
                         if let Some(error) = &entry.error {
@@ -972,9 +961,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 #[cfg(test)]
 mod tests {
     use super::{
-        NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result,
-        parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
-        resolve_primary_database_url, unavailable_section,
+        NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result, parse_checkpoint,
+        render_cli_value, render_optional_cli_timestamp, resolve_primary_database_url,
+        unavailable_section,
     };
     use crate::SinexError;
     use crate::runtime::stream::Checkpoint;
@@ -993,13 +982,10 @@ mod tests {
 
     #[test]
     fn export_result_surfaces_failure_with_path_context() {
-        let path = SanitizedPath::from_str("/tmp/export.json")
-            .expect("test export path should validate");
-        let error = handle_export_result(
-            &path,
-            Err(SinexError::io("disk full while exporting")),
-        )
-        .expect_err("export failures should not be swallowed");
+        let path =
+            SanitizedPath::from_str("/tmp/export.json").expect("test export path should validate");
+        let error = handle_export_result(&path, Err(SinexError::io("disk full while exporting")))
+            .expect_err("export failures should not be swallowed");
 
         let message = format!("{error:#}");
         assert!(message.contains("failed to export node exploration data"));
@@ -1055,14 +1041,16 @@ mod tests {
 
     #[test]
     fn parse_checkpoint_rejects_invalid_timestamp_like_input() {
-        let error = parse_checkpoint("2026-03-28T25:61:61Z")
-            .expect_err("timestamp-like checkpoint input must not silently fall back to a stream id");
+        let error = parse_checkpoint("2026-03-28T25:61:61Z").expect_err(
+            "timestamp-like checkpoint input must not silently fall back to a stream id",
+        );
 
         assert!(format!("{error:#}").contains("Invalid timestamp format"));
     }
 
     #[test]
-    fn parse_checkpoint_accepts_stream_ids_after_structured_parsers_fail() -> xtask::sandbox::TestResult<()> {
+    fn parse_checkpoint_accepts_stream_ids_after_structured_parsers_fail()
+    -> xtask::sandbox::TestResult<()> {
         let checkpoint = parse_checkpoint("1234567890-0")?;
         match checkpoint {
             Checkpoint::Stream { message_id, .. } => {

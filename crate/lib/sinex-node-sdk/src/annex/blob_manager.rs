@@ -54,10 +54,7 @@ fn attach_verification_status_update_error(
     error: SinexError,
     status_error: &SinexError,
 ) -> SinexError {
-    error.with_context(
-        "verification_status_update_error",
-        status_error.to_string(),
-    )
+    error.with_context("verification_status_update_error", status_error.to_string())
 }
 
 fn material_name_for_blob(blob: &Blob) -> String {
@@ -258,8 +255,8 @@ impl BlobManager {
         mime_type: String,
         blake3_hash: String,
     ) -> NodeResult<BlobMetadata> {
-        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
-            .map_err(SinexError::processing)?;
+        let (backend, _, _) =
+            Blob::parse_annex_key(&annex_key.key).map_err(SinexError::processing)?;
 
         let blob = Blob::builder()
             .annex_backend(backend)
@@ -742,9 +739,11 @@ mod tests {
             &SinexError::database("write failed"),
         );
 
-        assert!(error
-            .to_string()
-            .contains("failed to persist blob verification status"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to persist blob verification status")
+        );
         assert_eq!(
             error.context_map().get("verification_status"),
             Some(&BlobVerificationStatus::Verified.to_string()),
@@ -766,7 +765,9 @@ mod tests {
         );
 
         assert_eq!(
-            combined.context_map().get("verification_status_update_error"),
+            combined
+                .context_map()
+                .get("verification_status_update_error"),
             Some(&"Processing error: failed to persist blob verification status".to_string()),
         );
     }

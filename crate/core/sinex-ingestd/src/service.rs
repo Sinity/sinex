@@ -877,6 +877,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
         let reload_interval = Duration::from_secs(self.config.schema_reload_interval_secs);
+        let heartbeat_handle = self.heartbeat_counter_handle.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(reload_interval);
@@ -892,7 +893,12 @@ impl IngestService {
                             read_guard.load_fresh_schemas(&pool).await
                         };
                         match load_result {
-                            Err(e) => warn!("Failed to reload schemas: {}", e),
+                            Err(e) => {
+                                warn!("Failed to reload schemas: {}", e);
+                                if let Some(ref hb) = heartbeat_handle {
+                                    hb.record_error(&format!("schema reload failed: {e}"));
+                                }
+                            }
                             Ok(new_inner) => {
                                 // Brief write lock: swap only, no I/O
                                 let mut write_guard = validator.write().await;

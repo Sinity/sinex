@@ -53,8 +53,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::{RwLock, watch};
 use tokio::sync::mpsc;
+use tokio::sync::{RwLock, watch};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
@@ -100,7 +100,10 @@ async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, Handl
 {
     loop {
         if *shutdown_rx.borrow() {
-            debug!(listener, subject, "Listener shutdown requested before subscribe");
+            debug!(
+                listener,
+                subject, "Listener shutdown requested before subscribe"
+            );
             return;
         }
 
@@ -139,7 +142,10 @@ async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, Handl
 
         if handle_subscription(subscription).await {
             if *shutdown_rx.borrow() {
-                debug!(listener, subject, "Listener shutdown requested after subscription exit");
+                debug!(
+                    listener,
+                    subject, "Listener shutdown requested after subscription exit"
+                );
                 return;
             }
             warn!(
@@ -480,7 +486,12 @@ async fn maybe_start_schema_listener(
 
     info!("Started schema broadcast listener and validator for {subject}");
 
-    Ok((Some(cache), Some(validator), Some(shutdown_tx), Some(handle)))
+    Ok((
+        Some(cache),
+        Some(validator),
+        Some(shutdown_tx),
+        Some(handle),
+    ))
 }
 
 /// Report from a completed scan operation
@@ -797,11 +808,9 @@ impl<T: Node + 'static> NodeRunner<T> {
                 debug!(task = task_name, "Task aborted during shutdown cleanup");
                 Ok(())
             }
-            Err(join_error) => {
-                Err(SinexError::processing("Task failed during shutdown")
-                    .with_context("task", task_name.to_string())
-                    .with_context("join_error", join_error.to_string()))
-            }
+            Err(join_error) => Err(SinexError::processing("Task failed during shutdown")
+                .with_context("task", task_name.to_string())
+                .with_context("join_error", join_error.to_string())),
         }
     }
 
@@ -856,9 +865,9 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
         match value {
-            serde_json::Value::Array(values) => serde_json::Value::Array(
-                values.into_iter().map(Self::canonicalize_json).collect(),
-            ),
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(Self::canonicalize_json).collect())
+            }
             serde_json::Value::Object(map) => {
                 let ordered = map
                     .into_iter()
@@ -1021,7 +1030,11 @@ impl<T: Node + 'static> NodeRunner<T> {
         let Some(node_run_id) = service_info.node_run_id() else {
             return;
         };
-        if let Err(error) = pool.state().update_node_run_status(node_run_id, status).await {
+        if let Err(error) = pool
+            .state()
+            .update_node_run_status(node_run_id, status)
+            .await
+        {
             warn!(
                 node = %service_info.node_name(),
                 service = %service_info.service_name(),
@@ -1149,12 +1162,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let (schema_cache, schema_validator, schema_listener_shutdown, schema_listener_handle) =
             maybe_start_schema_listener(&transport).await?;
         #[cfg(not(feature = "messaging"))]
-        let (
-            schema_cache,
-            schema_validator,
-            schema_listener_shutdown,
-            schema_listener_handle,
-        ) = (
+        let (schema_cache, schema_validator, schema_listener_shutdown, schema_listener_handle) = (
             Option::<Arc<crate::runtime::stream::SchemaBroadcastCache>>::None,
             Option::<()>::None,
             Option::<watch::Sender<bool>>::None,
@@ -1973,7 +1981,8 @@ impl<T: Node + 'static> NodeRunner<T> {
         let shutdown_result = worker.shutdown().await;
         drop(worker);
 
-        let forwarder_result = Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
+        let forwarder_result =
+            Self::finish_replay_forwarder(forwarder_handle, emitted_counter).await;
 
         match (scan_result, shutdown_result, forwarder_result) {
             (Ok(report), Ok(()), Ok(events_emitted)) => Ok(DispatchedScanOutcome {
@@ -2011,10 +2020,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 Err(FailedDispatchedScanOutcome {
                     error: scan_error
                         .with_context("shutdown_error", shutdown_error.to_string())
-                        .with_context(
-                            "replay_forwarder_error",
-                            forwarder_error.error.to_string(),
-                        ),
+                        .with_context("replay_forwarder_error", forwarder_error.error.to_string()),
                     events_emitted: forwarder_error.events_emitted,
                 })
             }
@@ -2390,8 +2396,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
         let checkpoint_manager = handles.checkpoint_manager();
-        let mut checkpoint_state =
-            Self::load_bridge_checkpoint_state(&checkpoint_manager).await?;
+        let mut checkpoint_state = Self::load_bridge_checkpoint_state(&checkpoint_manager).await?;
 
         let mut processed_events = 0u64;
         let mut events_since_checkpoint = 0u64;
@@ -2685,17 +2690,17 @@ impl<T: Node + 'static> NodeRunner<T> {
                             }
                         }
                         None => Some(
-                            Self::build_event_from_provisional(provisional).map_err(|error| {
-                                Self::provisional_decode_error(event_id, error)
-                            })?,
+                            Self::build_event_from_provisional(provisional)
+                                .map_err(|error| Self::provisional_decode_error(event_id, error))?,
                         ),
                     }
                 }
                 #[cfg(not(feature = "db"))]
                 {
-                    Some(Self::build_event_from_provisional(provisional).map_err(|error| {
-                        Self::provisional_decode_error(event_id, error)
-                    })?)
+                    Some(
+                        Self::build_event_from_provisional(provisional)
+                            .map_err(|error| Self::provisional_decode_error(event_id, error))?,
+                    )
                 }
             };
 
@@ -2719,9 +2724,11 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     #[cfg(feature = "messaging")]
     fn provisional_decode_error(event_id: &EventId, error: SinexError) -> SinexError {
-        SinexError::processing("Confirmed event could not be reconstructed from provisional payload")
-            .with_context("event_id", event_id.to_string())
-            .with_source(error)
+        SinexError::processing(
+            "Confirmed event could not be reconstructed from provisional payload",
+        )
+        .with_context("event_id", event_id.to_string())
+        .with_source(error)
     }
 
     /// Process a batch of events, falling back to per-event processing with DLQ
@@ -2771,26 +2778,21 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .send_to_dlq(&event, &event_err.to_string(), &node_name)
                                 .await
                             {
-                                return Err(
-                                    SinexError::processing(
-                                        "failed to route failed automaton event to DLQ",
-                                    )
-                                    .with_context("node", node_name.clone())
-                                    .with_context(
-                                        "event_id",
-                                        event_id
-                                            .as_ref()
-                                            .map(std::string::ToString::to_string)
-                                            .unwrap_or_else(|| "missing".to_string()),
-                                    )
-                                    .with_context("source", event.source.as_str().to_string())
-                                    .with_context(
-                                        "event_type",
-                                        event.event_type.as_str().to_string(),
-                                    )
-                                    .with_context("processing_error", event_err.to_string())
-                                    .with_source(dlq_err),
-                                );
+                                return Err(SinexError::processing(
+                                    "failed to route failed automaton event to DLQ",
+                                )
+                                .with_context("node", node_name.clone())
+                                .with_context(
+                                    "event_id",
+                                    event_id
+                                        .as_ref()
+                                        .map(std::string::ToString::to_string)
+                                        .unwrap_or_else(|| "missing".to_string()),
+                                )
+                                .with_context("source", event.source.as_str().to_string())
+                                .with_context("event_type", event.event_type.as_str().to_string())
+                                .with_context("processing_error", event_err.to_string())
+                                .with_source(dlq_err));
                             }
                         }
                     }
@@ -2928,7 +2930,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             )
             .await,
         );
-        Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "node shutdown",
+            self.node.shutdown().await,
+        );
 
         match Self::collapse_shutdown_errors(shutdown_errors) {
             Ok(()) => {
@@ -3168,12 +3174,8 @@ mod tests {
             error: None,
         };
 
-        let encoded = encode_control_message(
-            "scan acknowledgement",
-            operation_id,
-            &ack.node_name,
-            &ack,
-        )?;
+        let encoded =
+            encode_control_message("scan acknowledgement", operation_id, &ack.node_name, &ack)?;
         let decoded: NodeScanAck = serde_json::from_slice(&encoded)?;
 
         assert_eq!(decoded.operation_id, operation_id);
@@ -3269,9 +3271,10 @@ mod tests {
             ))
         });
 
-        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder failures must fail the dispatched scan honestly");
+        let outcome =
+            NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+                .await
+                .expect_err("forwarder failures must fail the dispatched scan honestly");
 
         assert_eq!(outcome.events_emitted, 7);
         assert!(
@@ -3291,12 +3294,18 @@ mod tests {
             panic!("forwarder panic");
         });
 
-        let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder panics must fail the dispatched scan honestly");
+        let outcome =
+            NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+                .await
+                .expect_err("forwarder panics must fail the dispatched scan honestly");
 
         assert_eq!(outcome.events_emitted, 3);
-        assert!(outcome.error.to_string().contains("Replay forwarder join failed"));
+        assert!(
+            outcome
+                .error
+                .to_string()
+                .contains("Replay forwarder join failed")
+        );
         Ok(())
     }
 
@@ -3320,10 +3329,9 @@ mod tests {
         .await
         {
             Ok(_) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "missing confirmed events must fail honestly"
-                )
-                .into());
+                return Err(
+                    color_eyre::eyre::eyre!("missing confirmed events must fail honestly").into(),
+                );
             }
             Err(error) => error,
         };
@@ -3359,8 +3367,8 @@ mod tests {
 
     #[cfg(feature = "messaging")]
     #[sinex_test]
-    async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db()
-    -> TestResult<()> {
+    async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() -> TestResult<()>
+    {
         let provisional = ProvisionalEvent {
             event_id: EventId::from(Uuid::now_v7()),
             source: EventSource::new("runtime-test-source")?,
@@ -3393,9 +3401,9 @@ mod tests {
         };
 
         let message = format!("{error:#}");
-        assert!(message.contains(
-            "Confirmed event could not be reconstructed from provisional payload"
-        ));
+        assert!(
+            message.contains("Confirmed event could not be reconstructed from provisional payload")
+        );
         assert!(message.contains("Invalid UUID for node_run_id"));
         Ok(())
     }
@@ -3406,7 +3414,8 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
-        let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+        let transport =
+            EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
         let mut node = FailingBatchNode;
         let event = Event {
             id: Some(EventId::from(Uuid::now_v7())),
@@ -3449,9 +3458,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
@@ -3485,7 +3492,10 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         drop(rx);
 
-        assert!(!NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
+        assert!(!NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(
+            tx,
+            "heartbeat"
+        ));
         Ok(())
     }
 
@@ -3493,7 +3503,10 @@ mod tests {
     async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        assert!(NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(tx, "heartbeat"));
+        assert!(NodeRunner::<RuntimeTestNode>::signal_shutdown_channel(
+            tx,
+            "heartbeat"
+        ));
         rx.await?;
         Ok(())
     }
@@ -3503,7 +3516,9 @@ mod tests {
         let (tx, rx) = tokio::sync::watch::channel(false);
         drop(rx);
 
-        assert!(!NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(tx, "listener"));
+        assert!(!NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(
+            tx, "listener"
+        ));
         Ok(())
     }
 
@@ -3511,7 +3526,9 @@ mod tests {
     async fn signal_watch_shutdown_delivers_to_receiver() -> TestResult<()> {
         let (tx, mut rx) = tokio::sync::watch::channel(false);
 
-        assert!(NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(tx, "listener"));
+        assert!(NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(
+            tx, "listener"
+        ));
         rx.changed().await?;
         assert!(*rx.borrow());
         Ok(())
@@ -3523,8 +3540,9 @@ mod tests {
             panic!("runtime panic");
         });
 
-        let error = NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
-            .expect_err("panicked runtime tasks must fail shutdown honestly");
+        let error =
+            NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+                .expect_err("panicked runtime tasks must fail shutdown honestly");
         let message = format!("{error:#}");
         assert!(message.contains("Task failed during shutdown"));
         assert!(message.contains("runtime-task"));
@@ -3602,11 +3620,7 @@ mod tests {
                     let handled_subscriptions = handled_subscriptions.clone();
                     async move {
                         let handled = handled_subscriptions.fetch_add(1, Ordering::SeqCst);
-                        if handled == 0 {
-                            true
-                        } else {
-                            false
-                        }
+                        if handled == 0 { true } else { false }
                     }
                 }
             },

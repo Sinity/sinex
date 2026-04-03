@@ -128,23 +128,18 @@ impl HealthThresholds {
         Self::validate_rate("health failed threshold", self.error_rate_failed)?;
 
         if self.error_rate_degraded > self.error_rate_failed {
-            return Err(
-                SinexError::configuration(
-                    "health degraded threshold must not exceed the failed threshold".to_string(),
-                )
-                .with_context(
-                    "error_rate_degraded",
-                    self.error_rate_degraded.to_string(),
-                )
-                .with_context("error_rate_failed", self.error_rate_failed.to_string()),
-            );
+            return Err(SinexError::configuration(
+                "health degraded threshold must not exceed the failed threshold".to_string(),
+            )
+            .with_context("error_rate_degraded", self.error_rate_degraded.to_string())
+            .with_context("error_rate_failed", self.error_rate_failed.to_string()));
         }
 
         if self.window_seconds == 0 {
-            return Err(
-                SinexError::configuration("health window must be greater than zero".to_string())
-                    .with_context("window_seconds", self.window_seconds.to_string()),
-            );
+            return Err(SinexError::configuration(
+                "health window must be greater than zero".to_string(),
+            )
+            .with_context("window_seconds", self.window_seconds.to_string()));
         }
 
         Ok(self)

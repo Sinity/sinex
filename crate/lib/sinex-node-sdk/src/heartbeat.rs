@@ -580,7 +580,11 @@ impl HeartbeatEmitter {
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({}))
+            .unwrap_or_else(|e| json!({
+                "_serialization_error": e.to_string(),
+                "process_name": metrics.service_name,
+                "errors_in_window": recent_errors_in_window,
+            }))
         } else {
             serde_json::to_value(ProcessDegradedPayload {
                 process_name: metrics.service_name.clone(),
@@ -589,7 +593,11 @@ impl HeartbeatEmitter {
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({}))
+            .unwrap_or_else(|e| json!({
+                "_serialization_error": e.to_string(),
+                "process_name": metrics.service_name,
+                "errors_in_window": recent_errors_in_window,
+            }))
         };
 
         let alert_entry = json!({

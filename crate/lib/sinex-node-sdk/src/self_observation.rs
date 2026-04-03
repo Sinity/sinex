@@ -30,8 +30,8 @@
 //! observer.emit_gauge("connections.active", 42.0, None).await?;
 //! ```
 
-use async_nats::Client as NatsClient;
 use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
+use async_nats::Client as NatsClient;
 use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
@@ -94,11 +94,8 @@ impl SelfObserverConfig {
     /// Create configuration from environment variables
     #[must_use]
     pub fn from_env(component: &str) -> Self {
-        let enabled = env_bool_with_default(
-            "SINEX_SELF_OBSERVATION_ENABLED",
-            true,
-            "self-observation",
-        );
+        let enabled =
+            env_bool_with_default("SINEX_SELF_OBSERVATION_ENABLED", true, "self-observation");
         let min_interval_secs = env_parse_with_default(
             "SINEX_SELF_OBSERVATION_INTERVAL_SECS",
             1_u64,

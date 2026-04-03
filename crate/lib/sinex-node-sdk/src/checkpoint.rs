@@ -164,11 +164,9 @@ impl CheckpointState {
                 return Ok(None);
             }
             Err(error) => {
-                return Err(
-                    SinexError::io("Failed to read checkpoint file")
-                        .with_context("path", path.display().to_string())
-                        .with_std_error(&error),
-                );
+                return Err(SinexError::io("Failed to read checkpoint file")
+                    .with_context("path", path.display().to_string())
+                    .with_std_error(&error));
             }
         };
 
@@ -180,21 +178,17 @@ impl CheckpointState {
 
         // Validate magic and version
         if record.magic != FILE_CHECKPOINT_MAGIC {
-            return Err(
-                SinexError::checkpoint("Invalid checkpoint file magic")
-                    .with_context("path", path.display().to_string())
-                    .with_context("expected", FILE_CHECKPOINT_MAGIC)
-                    .with_context("found", record.magic),
-            );
+            return Err(SinexError::checkpoint("Invalid checkpoint file magic")
+                .with_context("path", path.display().to_string())
+                .with_context("expected", FILE_CHECKPOINT_MAGIC)
+                .with_context("found", record.magic));
         }
 
         if record.version > FILE_CHECKPOINT_VERSION {
-            return Err(
-                SinexError::checkpoint("Checkpoint file version too new")
-                    .with_context("path", path.display().to_string())
-                    .with_context("file_version", record.version.to_string())
-                    .with_context("supported_version", FILE_CHECKPOINT_VERSION.to_string()),
-            );
+            return Err(SinexError::checkpoint("Checkpoint file version too new")
+                .with_context("path", path.display().to_string())
+                .with_context("file_version", record.version.to_string())
+                .with_context("supported_version", FILE_CHECKPOINT_VERSION.to_string()));
         }
 
         let mut state = record.state;
@@ -429,13 +423,11 @@ impl CheckpointManager {
         };
 
         if entry.value.is_empty() {
-            return Err(
-                SinexError::checkpoint("Checkpoint KV entry is empty")
-                    .with_context("key", key.to_string())
-                    .with_context("node", self.node_name.clone())
-                    .with_context("consumer_group", self.consumer_group.clone())
-                    .with_context("consumer_name", self.consumer_name.clone()),
-            );
+            return Err(SinexError::checkpoint("Checkpoint KV entry is empty")
+                .with_context("key", key.to_string())
+                .with_context("node", self.node_name.clone())
+                .with_context("consumer_group", self.consumer_group.clone())
+                .with_context("consumer_name", self.consumer_name.clone()));
         }
 
         let mut state = self.decode_checkpoint_state(key, &entry.value)?;
@@ -491,7 +483,7 @@ impl CheckpointManager {
                     SinexError::checkpoint(
                         "Failed to create checkpoint in KV (already exists or create failed)",
                     )
-                        .with_source(e)
+                    .with_source(e)
                 })?
         };
 
@@ -854,7 +846,7 @@ mod tests {
     // Inline because this covers local checkpoint env/default semantics.
     use super::{CheckpointCleanupConfig, checkpoint_cleanup_cutoff};
     use sinex_primitives::prelude::Timestamp;
-    use xtask::sandbox::{sinex_serial_test, EnvGuard};
+    use xtask::sandbox::{EnvGuard, sinex_serial_test};
 
     #[sinex_serial_test]
     async fn checkpoint_cleanup_default_is_disabled() -> xtask::sandbox::TestResult<()> {
@@ -863,7 +855,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn checkpoint_cleanup_from_env_defaults_invalid_overrides() -> xtask::sandbox::TestResult<()> {
+    async fn checkpoint_cleanup_from_env_defaults_invalid_overrides()
+    -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_CHECKPOINT_CLEANUP_ENABLED", "maybe");
         env.set("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS", "bogus");
@@ -877,7 +870,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn checkpoint_cleanup_cutoff_rejects_out_of_range_max_age() -> xtask::sandbox::TestResult<()> {
+    async fn checkpoint_cleanup_cutoff_rejects_out_of_range_max_age()
+    -> xtask::sandbox::TestResult<()> {
         let error = checkpoint_cleanup_cutoff(Timestamp::now(), std::time::Duration::MAX)
             .expect_err("out-of-range cleanup ages must fail honestly");
         assert!(

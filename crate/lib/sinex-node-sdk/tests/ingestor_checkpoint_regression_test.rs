@@ -8,8 +8,8 @@ use sinex_node_sdk::runtime::stream::{
 use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter, NodeResult};
 use sinex_primitives::Timestamp;
 use std::collections::HashMap;
-use tokio::sync::watch;
 use support::runtime::TestRuntimeBuilder;
+use tokio::sync::watch;
 use xtask::sandbox::prelude::*;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ impl IngestorNode for SnapshotCheckpointIngestor {
     type Config = ();
     type State = TestState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "snapshot-checkpoint-ingestor"
     }
 
@@ -124,8 +124,7 @@ async fn snapshot_scan_preserves_existing_checkpoint(ctx: TestContext) -> TestRe
         .await?;
 
     assert_eq!(
-        snapshot_report.final_checkpoint,
-        historical_report.final_checkpoint,
+        snapshot_report.final_checkpoint, historical_report.final_checkpoint,
         "snapshot scans must preserve the last real checkpoint when they do not advance it"
     );
     assert_eq!(

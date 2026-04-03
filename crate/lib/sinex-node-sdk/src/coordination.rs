@@ -53,8 +53,8 @@
 //! let mut tracker = self.work_tracker.write().await; // DEADLOCK!
 //! ```
 
-use crate::heartbeat::HeartbeatEmitter;
 use crate::error_helpers::unix_timestamp_secs_with_warning;
+use crate::heartbeat::HeartbeatEmitter;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
@@ -235,8 +235,7 @@ mod tests {
         let err = NodeCoordination::decode_handoff_request(b"{not-json", "handoff request")
             .expect_err("malformed handoff payload should be rejected");
         assert!(
-            err.to_string()
-                .contains("Failed to decode handoff request"),
+            err.to_string().contains("Failed to decode handoff request"),
             "unexpected error: {err}"
         );
         Ok(())
@@ -897,9 +896,8 @@ impl NodeCoordination {
     }
 
     fn decode_handoff_request(payload: &[u8], context: &'static str) -> Result<HandoffRequest> {
-        serde_json::from_slice(payload).map_err(|error| {
-            SinexError::validation(format!("Failed to decode {context}: {error}"))
-        })
+        serde_json::from_slice(payload)
+            .map_err(|error| SinexError::validation(format!("Failed to decode {context}: {error}")))
     }
 
     fn current_metadata(&self) -> InstanceMetadata {
@@ -1061,7 +1059,10 @@ impl NodeCoordination {
                 self.record_coordination_failure("instance_heartbeat", &e);
             }
 
-            match self.apply_mode_transition(desired_mode, &process_events).await {
+            match self
+                .apply_mode_transition(desired_mode, &process_events)
+                .await
+            {
                 Ok(CoordinationLoopDirective::Continue) => {}
                 Ok(CoordinationLoopDirective::Exit) => {
                     self.unregister_current_instance("coordination loop exited")
