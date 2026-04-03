@@ -52,21 +52,18 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
 type MaterialTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
 
 fn material_task_cleanup_failure(name: &'static str, error: &SinexError) -> SinexError {
-    SinexError::service(format!("material task failed during shutdown: {name}"))
-        .with_source(error.clone())
+    crate::service::task_shutdown_error("material", name, error)
 }
 
 fn material_task_join_failure(
     name: &'static str,
     error: &tokio::task::JoinError,
 ) -> SinexError {
-    SinexError::service(format!("material task join failed during shutdown: {name}"))
-        .with_context("join_error", error.to_string())
+    crate::service::task_shutdown_error("material", name, error)
 }
 
 fn material_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
-    SinexError::service("material task monitor join failed during shutdown")
-        .with_context("join_error", error.to_string())
+    crate::service::task_shutdown_error("material", "monitor", error)
 }
 
 fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
@@ -81,6 +78,7 @@ fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
 struct AssemblyStats {
     started: AtomicU64,
     completed: AtomicU64,
+    cancelled: AtomicU64,
     failed: AtomicU64,
     timed_out: AtomicU64,
     disk_backpressure: AtomicU64,
@@ -93,6 +91,10 @@ impl AssemblyStats {
 
     fn inc_completed(&self) {
         self.completed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_cancelled(&self) {
+        self.cancelled.fetch_add(1, Ordering::Relaxed);
     }
 
     fn inc_failed(&self) {
@@ -111,6 +113,7 @@ impl AssemblyStats {
         AssemblyStatsSnapshot {
             started: self.started.load(Ordering::Relaxed),
             completed: self.completed.load(Ordering::Relaxed),
+            cancelled: self.cancelled.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
             timed_out: self.timed_out.load(Ordering::Relaxed),
             disk_backpressure: self.disk_backpressure.load(Ordering::Relaxed),
@@ -122,6 +125,7 @@ impl AssemblyStats {
 struct AssemblyStatsSnapshot {
     started: u64,
     completed: u64,
+    cancelled: u64,
     failed: u64,
     timed_out: u64,
     disk_backpressure: u64,
@@ -355,6 +359,57 @@ impl MaterialAssembler {
                 async move {
                     observer
                         .emit_counter("sinex_assembly_completed_total", 1, None)
+                        .await
+                },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_bytes_total",
+                async move { observer.emit_counter("sinex_assembly_bytes_total", bytes, None).await },
+            );
+        }
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_duration_seconds",
+                async move {
+                    observer
+                        .emit_histogram(
+                            "sinex_assembly_duration_seconds",
+                            1,
+                            duration_secs,
+                            duration_secs,
+                            duration_secs,
+                            None,
+                            None,
+                        )
+                        .await
+                },
+            );
+        }
+    }
+
+    /// Increment the "cancelled" stats counter when assembly is ended intentionally.
+    pub(super) fn stats_inc_cancelled(&self, duration_secs: f64, bytes: u64) {
+        self.stats.inc_cancelled();
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_cancelled",
+            total_cancelled = self.stats.cancelled.load(Ordering::Relaxed),
+            active_assemblies = self.assembler_state.len() as u64,
+        );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit(
+                "sinex_assembly_cancelled_total",
+                async move {
+                    observer
+                        .emit_counter("sinex_assembly_cancelled_total", 1, None)
                         .await
                 },
             );
@@ -725,6 +780,7 @@ impl MaterialAssembler {
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
         let mut cleanup_error = None;
+        let mut timed_out = false;
 
         loop {
             tokio::select! {
@@ -757,23 +813,17 @@ impl MaterialAssembler {
                         break;
                     }
                 }
-                () = &mut deadline => {
+                () = &mut deadline, if !timed_out => {
+                    timed_out = true;
                     let remaining = tasks.len();
                     warn!(
-                        "Timed out waiting for {} material tasks after {:?}, aborting remaining work",
+                        "Timed out waiting for {} material tasks after {:?}, continuing to drain shutdown work",
                         remaining,
                         timeout
                     );
-                    tasks.abort_all();
-                    while let Some(result) = tasks.join_next().await {
-                        if let Err(error) = result {
-                            debug!(error = ?error, "Material task aborted during shutdown cleanup");
-                        }
-                    }
                     if cleanup_error.is_none() {
                         cleanup_error = Some(material_task_timeout(remaining, timeout));
                     }
-                    break;
                 }
             }
         }
@@ -838,6 +888,7 @@ impl MaterialAssembler {
                 active_assemblies = active,
                 total_started = stats.started,
                 total_completed = stats.completed,
+                total_cancelled = stats.cancelled,
                 total_failed = stats.failed,
                 total_timed_out = stats.timed_out,
                 total_disk_backpressure = stats.disk_backpressure,
@@ -851,6 +902,7 @@ impl MaterialAssembler {
                         active,
                         stats.started,
                         stats.completed,
+                        stats.cancelled,
                         stats.failed,
                         stats.timed_out,
                         None, // avg_duration_ms - would need tracking
@@ -1167,8 +1219,11 @@ mod tests {
     #[sinex_test]
     async fn wait_for_material_tasks_times_out_hung_tasks() -> TestResult<()> {
         let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
-        tasks.spawn(async {
+        let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let completed_flag = completed.clone();
+        tasks.spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
+            completed_flag.store(true, std::sync::atomic::Ordering::Release);
             ("material stale cleanup task", Ok(Ok(())))
         });
 
@@ -1180,7 +1235,11 @@ mod tests {
         .expect("hung task should time out");
 
         assert!(error.to_string().contains("timed out waiting"));
-        assert!(tasks.is_empty(), "timed out tasks should be aborted and drained");
+        assert!(
+            completed.load(std::sync::atomic::Ordering::Acquire),
+            "timed out shutdown should still let the material task finish"
+        );
+        assert!(tasks.is_empty(), "timed out tasks should still be drained");
         Ok(())
     }
 

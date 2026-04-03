@@ -24,8 +24,8 @@ use sqlx::FromRow;
 /// managed by capture pipelines using the "Stage-as-you-go" pattern. An entry is
 /// created with `status = 'sensing'` before the data is
 /// fully captured, providing a stable `id` that ingestors can immediately use
-/// for event provenance. The record is then updated to `status = 'completed'`
-/// upon finalization.
+/// for event provenance. The record is then updated to a terminal status
+/// (`completed`, `cancelled`, `recovered_partial`, or `failed`) upon finalization.
 #[derive(Iden, Copy, Clone)]
 pub enum SourceMaterialRegistry {
     Table,
@@ -99,10 +99,7 @@ impl SourceMaterialRegistry {
             .col(
                 ColumnDef::new(SourceMaterialRegistry::Status)
                     .text()
-                    .not_null()
-                    .check(Expr::cust(
-                        "status IN ('sensing', 'completed', 'recovered_partial', 'failed')",
-                    )),
+                    .not_null(),
             )
             .col(
                 ColumnDef::new(SourceMaterialRegistry::TimingInfoType)

@@ -182,6 +182,13 @@ impl PrivacyEngine {
             }
         }
 
+        // Pre-compute default redact labels so the hot path never allocates.
+        for def in &mut definitions {
+            if let Strategy::Redact { label: ref mut l @ None } = def.strategy {
+                *l = Some(format!("<{}>", def.name.to_uppercase()));
+            }
+        }
+
         // Compile
         let mut rules = Vec::with_capacity(definitions.len());
         for def in &definitions {
@@ -440,9 +447,8 @@ impl PrivacyEngine {
         }
         let result = match strategy {
             Strategy::Redact { label } => {
-                let replacement = label.as_deref().unwrap_or_else(|| {
-                    Box::leak(format!("<{}>", rule_name.to_uppercase()).into_boxed_str())
-                });
+                // Label is always pre-computed during engine construction.
+                let replacement = label.as_deref().unwrap_or("<UNKNOWN>");
                 re.replace_all(input, replacement)
             }
             Strategy::Encrypt => {
@@ -451,7 +457,10 @@ impl PrivacyEngine {
                     re.replace_all(input, |caps: &regex::Captures| {
                         let matched = caps.get(0).map_or("", |m| m.as_str());
                         envelope::encrypt_token(matched, &key)
-                            .unwrap_or_else(|_| "<ENCRYPT_ERR>".into())
+                            .unwrap_or_else(|error| {
+                                tracing::warn!(rule = %rule_name, %error, "PII encryption failed; token redacted");
+                                format!("<ENCRYPT_ERR:{}>", rule_name.to_uppercase())
+                            })
                     })
                 } else {
                     // Degrade to redact
@@ -565,13 +574,14 @@ impl PrivacyEngine {
         match strategy {
             Strategy::Redact { label } => label
                 .as_deref()
-                .unwrap_or_else(|| {
-                    Box::leak(format!("<{}>", rule_name.to_uppercase()).into_boxed_str())
-                })
+                .unwrap_or("<UNKNOWN>")
                 .to_string(),
             Strategy::Encrypt => {
                 if let Some(ref key) = self.key {
-                    envelope::encrypt_token(matched, key).unwrap_or_else(|_| "<ENCRYPT_ERR>".into())
+                    envelope::encrypt_token(matched, key).unwrap_or_else(|error| {
+                        tracing::warn!(rule = %rule_name, %error, "PII encryption failed; token redacted");
+                        format!("<ENCRYPT_ERR:{}>", rule_name.to_uppercase())
+                    })
                 } else {
                     format!("<{}>", rule_name.to_uppercase())
                 }
@@ -777,6 +787,7 @@ mod tests {
         let result = e.process(input, ProcessingContext::Clipboard);
         assert!(result.any_matched());
         // Degrades to redact since no key
+        assert!(result.text.contains("<EMAIL_ADDRESS>"), "got: {}", result.text);
         assert!(!result.text.contains("user@example.com"));
         Ok(())
     }

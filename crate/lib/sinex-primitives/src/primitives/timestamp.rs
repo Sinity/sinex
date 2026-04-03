@@ -62,7 +62,10 @@ impl Timestamp {
         use time::format_description::well_known::Rfc3339;
         self.0
             .format(&Rfc3339)
-            .unwrap_or_else(|_| "invalid_time".to_string())
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, timestamp = ?self.0, "Failed to format timestamp as RFC3339");
+                "invalid_time".to_string()
+            })
     }
 
     /// Get the sub-microsecond component (0-999 nanoseconds).

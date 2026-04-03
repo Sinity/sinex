@@ -48,6 +48,9 @@ pub(crate) struct PersistedState<S> {
     pub state: S,
     /// Number of events processed.
     pub events_processed: u64,
+    /// Last input event that was durably incorporated into this state.
+    #[serde(default)]
+    pub last_input_event_id: Option<uuid::Uuid>,
     /// Last checkpoint time.
     pub last_checkpoint: sinex_primitives::temporal::Timestamp,
     /// State version for future migrations.
@@ -59,6 +62,7 @@ impl<S: Default + Serialize + DeserializeOwned> Default for PersistedState<S> {
         Self {
             state: S::default(),
             events_processed: 0,
+            last_input_event_id: None,
             last_checkpoint: sinex_primitives::temporal::Timestamp::now(),
             version: 1,
         }

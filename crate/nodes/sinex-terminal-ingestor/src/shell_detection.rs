@@ -33,7 +33,8 @@ impl ShellType {
             ShellType::Bash => "bash",
             ShellType::Zsh => "zsh",
             ShellType::Fish => "fish",
-            ShellType::Nushell => "nushell",
+            // Nushell is invoked as `nu`; keep the canonical executable name here.
+            ShellType::Nushell => "nu",
             ShellType::Elvish => "elvish",
             ShellType::PowerShell => "powershell",
             ShellType::Unknown(name) => name,
@@ -45,7 +46,6 @@ impl ShellType {
     pub fn executable_name(&self) -> &str {
         match self {
             ShellType::PowerShell => "pwsh",
-            ShellType::Nushell => "nu",
             _ => self.name(),
         }
     }
@@ -420,6 +420,7 @@ mod tests {
 
     #[sinex_test]
     async fn executable_names_use_real_shell_binaries() -> xtask::sandbox::TestResult<()> {
+        assert_eq!(ShellType::Nushell.name(), "nu");
         assert_eq!(ShellType::Nushell.executable_name(), "nu");
         assert_eq!(ShellType::PowerShell.executable_name(), "pwsh");
         assert_eq!(ShellType::Bash.executable_name(), "bash");

@@ -169,6 +169,8 @@ pub use processing::{ErrorAction, NodeLogicError};
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
+pub use shutdown::wait_for_shutdown_signal;
+#[cfg(feature = "messaging")]
 pub use sqlite_source::stage_material;
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,

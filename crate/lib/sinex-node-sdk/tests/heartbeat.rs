@@ -1,39 +1,11 @@
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{domain::{NodeName, NodeType}, Seconds};
+use sinex_primitives::{
+    Seconds, Uuid,
+    domain::{NodeName, NodeType},
+};
 use xtask::sandbox::prelude::*;
-
-struct ScopedEnvGuard {
-    keys: Vec<(String, Option<String>)>,
-}
-
-impl ScopedEnvGuard {
-    fn new(keys: &[&str]) -> Self {
-        let previous = keys
-            .iter()
-            .map(|key| ((*key).to_string(), std::env::var(key).ok()))
-            .collect();
-        Self { keys: previous }
-    }
-
-    fn set(&mut self, key: &str, value: &str) {
-        unsafe { std::env::set_var(key, value) };
-    }
-}
-
-impl Drop for ScopedEnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.keys.drain(..) {
-            unsafe {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-}
 
 #[sinex_test]
 async fn heartbeat_emitter_tracks_metadata() -> TestResult<()> {
@@ -78,10 +50,7 @@ async fn emit_heartbeat_macro_compiles() -> TestResult<()> {
 
 #[sinex_test]
 async fn heartbeat_invalid_threshold_overrides_fall_back_to_defaults() -> TestResult<()> {
-    let mut env = ScopedEnvGuard::new(&[
-        "SINEX_HEARTBEAT_DEGRADED_THRESHOLD",
-        "SINEX_HEARTBEAT_FAILED_THRESHOLD",
-    ]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_HEARTBEAT_DEGRADED_THRESHOLD", "bogus");
     env.set("SINEX_HEARTBEAT_FAILED_THRESHOLD", "bogus");
 
@@ -120,6 +89,31 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
     assert!(
         manifest.last_heartbeat_at.is_some(),
         "heartbeat emission should persist last_heartbeat_at"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let emitter = HeartbeatEmitter::new("missing-heartbeat-rows".to_string(), Seconds::from_secs(30))
+        .with_node_name(NodeName::new("missing-heartbeat-rows"))
+        .with_node_run_id(Uuid::now_v7())
+        .with_db_pool(pool.clone());
+
+    emitter.emit_heartbeat(None).await;
+
+    let metrics = emitter.create_heartbeat_metrics(None).await;
+    assert_eq!(
+        metrics.errors_count, 2,
+        "missing manifest and node-run rows should count as heartbeat persistence errors"
+    );
+    assert!(
+        metrics.last_error_message.as_deref().is_some_and(|message| {
+            message.contains("node run row is missing")
+        }),
+        "latest heartbeat persistence error should be retained for operators: {:?}",
+        metrics.last_error_message
     );
     Ok(())
 }

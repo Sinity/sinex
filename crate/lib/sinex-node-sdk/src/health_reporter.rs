@@ -5,8 +5,11 @@
 
 use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
+use parking_lot::Mutex;
 use parking_lot::RwLock;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -19,6 +22,12 @@ fn get_process_start() -> Instant {
     *PROCESS_START.get_or_init(Instant::now)
 }
 
+#[derive(Debug)]
+struct OutcomeSample {
+    recorded_at: Instant,
+    is_error: bool,
+}
+
 /// Atomic counters for health metrics
 #[derive(Debug, Default)]
 pub struct HealthMetrics {
@@ -27,35 +36,48 @@ pub struct HealthMetrics {
     pub warnings: AtomicU64,
     pub last_error_time: AtomicU64, // Unix timestamp in seconds (wall clock)
     pub last_error_monotonic: AtomicU64, // Seconds since process start (monotonic)
+    recent_outcomes: Mutex<VecDeque<OutcomeSample>>,
 }
 
 impl HealthMetrics {
+    fn prune_recent_outcomes(
+        outcomes: &mut VecDeque<OutcomeSample>,
+        window_seconds: u64,
+        now: Instant,
+    ) {
+        let window = std::time::Duration::from_secs(window_seconds);
+        while outcomes
+            .front()
+            .is_some_and(|sample| now.duration_since(sample.recorded_at) >= window)
+        {
+            outcomes.pop_front();
+        }
+    }
+
+    fn push_recent_outcome(&self, is_error: bool, window_seconds: u64) {
+        let now = Instant::now();
+        let mut outcomes = self.recent_outcomes.lock();
+        Self::prune_recent_outcomes(&mut outcomes, window_seconds, now);
+        outcomes.push_back(OutcomeSample {
+            recorded_at: now,
+            is_error,
+        });
+    }
+
     /// Calculate error rate over the sliding window.
     ///
-    /// Returns 0.0 when no errors have been recorded, or when the most recent
-    /// error is older than `window_seconds`. Otherwise returns the cumulative
-    /// error rate (errors / total events). This is a conservative approximation:
-    /// once errors leave the window the rate drops to zero, but while any error
-    /// is inside the window the all-time rate is reported.
+    /// Returns the share of recorded outcomes inside the active window that were
+    /// errors. This stays faithful to the advertised sliding-window semantics
+    /// instead of diluting recent failures with long-expired lifetime totals.
     pub fn error_rate(&self, window_seconds: u64) -> f64 {
-        let errors = self.errors.load(Ordering::Relaxed);
-        if errors == 0 {
-            return 0.0;
-        }
-
-        let last_error = self.last_error_monotonic.load(Ordering::Relaxed);
-        let now_monotonic = Instant::now().duration_since(get_process_start()).as_secs();
-
-        // If the most recent error is at or beyond the window boundary, rate is 0.
-        // Uses >= to avoid flakiness from as_secs() truncation at the boundary.
-        if now_monotonic.saturating_sub(last_error) >= window_seconds {
-            return 0.0;
-        }
-
-        let total = self.events_processed.load(Ordering::Relaxed);
+        let now = Instant::now();
+        let mut outcomes = self.recent_outcomes.lock();
+        Self::prune_recent_outcomes(&mut outcomes, window_seconds, now);
+        let total = outcomes.len();
         if total == 0 {
             0.0
         } else {
+            let errors = outcomes.iter().filter(|sample| sample.is_error).count();
             errors as f64 / total as f64
         }
     }
@@ -98,17 +120,7 @@ where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
 {
-    match std::env::var(name) {
-        Ok(value) => value.parse::<T>().map(Some).map_err(|error| {
-            SinexError::configuration(format!(
-                "Environment variable {name} has invalid value `{value}`: {error}"
-            ))
-        }),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-    }
+    shared_env::strict_parsed(name)
 }
 
 /// Standardized health reporter for nodes
@@ -146,6 +158,8 @@ impl HealthReporter {
         self.metrics
             .events_processed
             .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .push_recent_outcome(false, self.thresholds.window_seconds);
     }
 
     /// Record an error with context
@@ -169,6 +183,8 @@ impl HealthReporter {
         self.metrics
             .last_error_monotonic
             .store(now_monotonic, Ordering::Relaxed);
+        self.metrics
+            .push_recent_outcome(true, self.thresholds.window_seconds);
     }
 
     /// Record a warning (non-fatal issue)

@@ -5,6 +5,7 @@ mod build {
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Result, eyre};
 use sinex_ingestd::{IngestService, IngestdConfig};
+use sinex_primitives::strict_env_filter_source;
 use std::io;
 use tracing::{error, info};
 
@@ -168,32 +169,22 @@ async fn load_runtime_config(args: &Args) -> Result<IngestdConfig> {
     Ok(config)
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum LogFormat {
-    /// Human-readable text output (default)
-    Text,
-    /// Structured JSON output for machine parsing
-    Json,
-}
-
 fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter> {
-    let Some(raw) = std::env::var_os(tracing_subscriber::EnvFilter::DEFAULT_ENV) else {
-        return Ok(tracing_subscriber::EnvFilter::new(default_filter));
-    };
-
-    let raw = raw.into_string().map_err(|_| {
-        eyre!(
-            "{} is not valid UTF-8",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })?;
-
+    let raw = strict_env_filter_source(default_filter)?;
     tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
         eyre!(
             "Invalid {} directive `{raw}`: {error}",
             tracing_subscriber::EnvFilter::DEFAULT_ENV
         )
     })
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LogFormat {
+    /// Human-readable text output (default)
+    Text,
+    /// Structured JSON output for machine parsing
+    Json,
 }
 
 fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -> Result<()> {

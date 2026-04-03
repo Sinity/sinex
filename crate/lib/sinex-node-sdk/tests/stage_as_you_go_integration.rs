@@ -268,6 +268,40 @@ async fn stage_as_you_go_reconciliation_cancels_stale_materials(ctx: TestContext
 }
 
 #[sinex_test]
+async fn stage_as_you_go_reconciliation_ignores_unrepresentable_stale_ttl(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    let acquisition = Arc::new(AcquisitionManager::with_defaults(
+        nats_client.clone(),
+        "reconciliation-max-ttl-log",
+        "/tmp/reconciliation-max-ttl.log",
+    ));
+
+    let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+    let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
+    let material_id = context
+        .register_in_flight("reconciliation-max-ttl", None, json!({}))
+        .await?;
+
+    let summary = context.reconcile_inflight_older_than(Duration::MAX).await?;
+
+    assert_eq!(summary.cancelled, 0);
+    assert_eq!(summary.errors, 0);
+    assert_eq!(summary.skipped, 0);
+    assert!(
+        context.material_started_at(material_id).await.is_some(),
+        "overflowing stale TTL must not immediately cancel in-flight material"
+    );
+    assert!(event_rx.try_recv().is_err());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn stage_as_you_go_stream_failure_retains_reconcilable_state(
     ctx: TestContext,
 ) -> Result<()> {
@@ -308,6 +342,44 @@ async fn stage_as_you_go_stream_failure_retains_reconcilable_state(
     assert_eq!(summary.cancelled, 1);
     assert_eq!(summary.errors, 0);
     assert_eq!(summary.skipped, 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn stage_as_you_go_reconciliation_preserves_state_when_cancel_fails(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats_client = ctx.nats_client();
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    let acquisition = Arc::new(AcquisitionManager::with_defaults(
+        nats_client,
+        "cancel-failure-log",
+        "/tmp/cancel-failure.log",
+    ));
+
+    let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+    let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
+    let material_id = context
+        .register_in_flight("cancel-failure", None, json!({ "case": "nats-down" }))
+        .await?;
+
+    ctx.nats_handle()?.shutdown().await?;
+
+    let summary = context
+        .reconcile_inflight_older_than(Duration::from_millis(0))
+        .await?;
+
+    assert_eq!(summary.cancelled, 0);
+    assert_eq!(summary.errors, 1);
+    assert_eq!(summary.skipped, 0);
+    assert!(
+        context.material_started_at(material_id).await.is_some(),
+        "failed stale cancellation must preserve the acquisition handle for retry"
+    );
+    assert!(event_rx.try_recv().is_err());
 
     Ok(())
 }

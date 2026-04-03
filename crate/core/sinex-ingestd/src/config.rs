@@ -246,10 +246,26 @@ impl IngestdConfig {
         assembler_state_dir: Option<String>,
         namespace: Option<String>,
     ) -> IngestdResult<Self> {
+        let work_dir_override =
+            strict_env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir")?;
+        let annex_repo_env_override =
+            strict_env_validated_path("SINEX_ANNEX_PATH", "annex repository path")?;
+        let assembler_state_dir_env_override =
+            strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
+        let gitops_work_dir_override =
+            strict_env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")?;
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let strict_validation = env_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
         let gitops_enabled = env_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
+        let consumer_fetch_max_messages_env =
+            env_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
+        let consumer_fetch_timeout_ms_env =
+            env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
+        let consumer_max_ack_pending_env =
+            env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
+        let material_slices_max_ack_pending_env =
+            env_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
         let schema_reload_interval_secs: u64 =
             env_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
@@ -287,27 +303,42 @@ impl IngestdConfig {
         config.stats_log_interval_secs = stats_log_interval_secs;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
+        if let Some(path) = work_dir_override {
+            config.work_dir = path;
+        }
+        if let Some(path) = annex_repo_env_override {
+            config.annex_repo_path = path;
+        }
+        if let Some(path) = gitops_work_dir_override {
+            config.gitops_work_dir = path;
+        }
+        if let Some(path) = assembler_state_dir_env_override {
+            config.assembler_state_dir = path;
+        }
 
         // Override fetch config if specified
-        if let Some(max_msgs) = consumer_fetch_max_messages {
+        if let Some(max_msgs) = consumer_fetch_max_messages.or(consumer_fetch_max_messages_env) {
             config.consumer_fetch_max_messages = max_msgs;
         }
-        if let Some(timeout_ms) = consumer_fetch_timeout_ms {
+        if let Some(timeout_ms) = consumer_fetch_timeout_ms.or(consumer_fetch_timeout_ms_env) {
             config.consumer_fetch_timeout_ms = Milliseconds::from_millis(timeout_ms);
         }
-        if let Some(pending) = consumer_max_ack_pending {
+        if let Some(pending) = consumer_max_ack_pending.or(consumer_max_ack_pending_env) {
             config.consumer_max_ack_pending = pending;
         }
-        if let Some(pending) = material_slices_max_ack_pending {
+        if let Some(pending) =
+            material_slices_max_ack_pending.or(material_slices_max_ack_pending_env)
+        {
             config.material_slices_max_ack_pending = pending;
         }
 
         if let Some(path) = annex_repo_path {
-            config.annex_repo_path = Utf8PathBuf::from(path);
+            config.annex_repo_path = validated_path_override(&path, "annex repository path")?;
         }
 
         if let Some(path) = assembler_state_dir {
-            config.assembler_state_dir = Utf8PathBuf::from(path);
+            config.assembler_state_dir =
+                validated_path_override(&path, "assembler state directory")?;
         }
 
         Ok(config.normalize())
@@ -469,6 +500,28 @@ fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
     }
 }
 
+fn strict_env_validated_path(name: &str, context: &str) -> IngestdResult<Option<Utf8PathBuf>> {
+    let Some(raw) = shared_env::strict_var(name)? else {
+        return Ok(None);
+    };
+
+    validated_path_override(&raw, context)
+        .map(Some)
+        .map_err(|error| {
+            error
+                .with_context("environment_variable", name)
+                .with_context("raw_value", raw)
+        })
+}
+
+fn validated_path_override(raw: &str, context: &str) -> IngestdResult<Utf8PathBuf> {
+    sinex_primitives::validation::validate_path(raw).map_err(|error| {
+        SinexError::configuration(format!("invalid path value for {context}"))
+            .with_context("context", context)
+            .with_std_error(&error)
+    })
+}
+
 fn default_path_base_dir() -> Utf8PathBuf {
     match dirs::cache_dir() {
         Some(path) => match Utf8PathBuf::from_path_buf(path) {
@@ -608,19 +661,63 @@ fn default_pool_idle_timeout_secs() -> u64 {
 }
 
 fn default_consumer_fetch_max_messages() -> usize {
-    100
+    match env_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES") {
+        Ok(Some(value)) => value,
+        Ok(None) => 100,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
+                %error,
+                "Invalid env override for consumer fetch max messages; using default"
+            );
+            100
+        }
+    }
 }
 
 fn default_consumer_fetch_timeout_ms() -> Milliseconds {
-    Milliseconds::from_millis(100)
+    match env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS") {
+        Ok(Some(value)) => Milliseconds::from_millis(value),
+        Ok(None) => Milliseconds::from_millis(100),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
+                %error,
+                "Invalid env override for consumer fetch timeout; using default"
+            );
+            Milliseconds::from_millis(100)
+        }
+    }
 }
 
 fn default_consumer_max_ack_pending() -> i64 {
-    100
+    match env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING") {
+        Ok(Some(value)) => value,
+        Ok(None) => 100,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING",
+                %error,
+                "Invalid env override for consumer max_ack_pending; using default"
+            );
+            100
+        }
+    }
 }
 
 fn default_material_slices_max_ack_pending() -> i64 {
-    1_000
+    match env_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING") {
+        Ok(Some(value)) => value,
+        Ok(None) => 1_000,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING",
+                %error,
+                "Invalid env override for material slices max_ack_pending; using default"
+            );
+            1_000
+        }
+    }
 }
 
 fn default_max_message_size() -> Bytes {
@@ -675,10 +772,20 @@ fn default_annex_repo_path() -> Utf8PathBuf {
     }
 
     let annex = default_work_dir().join("annex");
-    validated_path_or_fallback(annex, Utf8PathBuf::from("/tmp/sinex/ingestd/annex"), "annex repository path")
+    validated_path_or_fallback(
+        annex,
+        Utf8PathBuf::from("/tmp/sinex/ingestd/annex"),
+        "annex repository path",
+    )
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {
+    if let Some(validated) =
+        env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")
+    {
+        return validated;
+    }
+
     let state_dir = default_work_dir().join("assembler_state");
     validated_path_or_fallback(
         state_dir,
@@ -828,8 +935,8 @@ fn default_stats_log_interval_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        IngestdConfig, default_annex_repo_path, default_gitops_work_dir, default_path_base_dir,
-        default_work_dir, env_validated_path,
+        IngestdConfig, default_annex_repo_path, default_assembler_state_dir,
+        default_gitops_work_dir, default_path_base_dir, default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
     use sinex_primitives::environment::environment;
@@ -861,11 +968,16 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-config-root");
         env.set("SINEX_ANNEX_PATH", "../../bad-annex");
+        env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
         env.set("SINEX_INGESTD_GITOPS_WORK_DIR", "../../bad-gitops");
 
         assert_eq!(
             default_annex_repo_path(),
             Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/annex")
+        );
+        assert_eq!(
+            default_assembler_state_dir(),
+            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/assembler_state")
         );
         assert_eq!(
             default_gitops_work_dir(),

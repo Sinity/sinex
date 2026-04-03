@@ -1529,9 +1529,12 @@ impl JetStreamConsumer {
         event_id: Uuid,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        SinexError::network(operation)
-            .with_context("event_id", event_id.to_string())
-            .with_source(error.to_string())
+        sinex_node_sdk::error_helpers::nats_settlement_error(
+            operation,
+            "",
+            Some(event_id.to_string().as_str()),
+            error,
+        )
     }
 
     fn collapse_settlement_errors(

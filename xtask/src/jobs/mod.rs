@@ -677,32 +677,10 @@ fn pid_is_expected_process(pid: u32) -> bool {
 mod tests {
     use super::*;
     use crate::history::HistoryDb;
-    use std::ffi::OsString;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
 
-    struct ScopedEnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl ScopedEnvGuard {
-        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for ScopedEnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                unsafe { std::env::set_var(self.key, previous) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
+    use xtask::sandbox::EnvGuard;
 
     #[sinex_test]
     async fn test_job_tail_stdout() -> TestResult<()> {
@@ -771,7 +749,8 @@ mod tests {
         let blocking_parent = dir.path().join("not-a-directory");
         fs::write(&blocking_parent, "occupied")?;
         let unreadable_db_path = blocking_parent.join("xtask-history.db");
-        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", &unreadable_db_path);
+        let mut _history_db_guard = EnvGuard::new();
+        _history_db_guard.set("XTASK_HISTORY_DB", &unreadable_db_path);
 
         let job = Job {
             id: 42,
@@ -822,7 +801,8 @@ mod tests {
     async fn test_job_read_stdout_errors_when_terminal_archive_is_missing() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("xtask-history.db");
-        let _history_db_guard = ScopedEnvGuard::set_path("XTASK_HISTORY_DB", &db_path);
+        let mut _history_db_guard = EnvGuard::new();
+        _history_db_guard.set("XTASK_HISTORY_DB", &db_path);
         let db = HistoryDb::open(&db_path)?;
         let stdout_path = dir.path().join("stdout.log");
         let stderr_path = dir.path().join("stderr.log");

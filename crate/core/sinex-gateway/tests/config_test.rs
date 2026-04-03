@@ -5,45 +5,9 @@ use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use xtask::sandbox::prelude::*;
 
-struct EnvGuard {
-    saved: Vec<(String, Option<std::ffi::OsString>)>,
-}
-
-impl EnvGuard {
-    fn new(keys: &[&str]) -> Self {
-        Self {
-            saved: keys
-                .iter()
-                .map(|key| ((*key).to_string(), std::env::var_os(key)))
-                .collect(),
-        }
-    }
-
-    fn set(&mut self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
-        unsafe { std::env::set_var(key, value) };
-    }
-
-    fn remove(&mut self, key: &str) {
-        unsafe { std::env::remove_var(key) };
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.saved.drain(..) {
-            unsafe {
-                match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-}
-
 #[sinex_serial_test]
 async fn gateway_config_load_namespaces_database_url_from_env() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
 
     let config = GatewayConfig::load()?;
@@ -53,8 +17,8 @@ async fn gateway_config_load_namespaces_database_url_from_env() -> TestResult<()
 
 #[sinex_serial_test]
 async fn gateway_config_load_requires_database_url() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL"]);
-    env.remove("DATABASE_URL");
+    let mut env = EnvGuard::new();
+    env.clear("DATABASE_URL");
 
     let error = GatewayConfig::load().expect_err("missing database url should fail gateway config load");
     let message = error.to_string();
@@ -65,7 +29,7 @@ async fn gateway_config_load_requires_database_url() -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn gateway_config_load_rejects_malformed_database_url() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "not-a-database-url");
 
     let error = GatewayConfig::load().expect_err("malformed database url should fail gateway config load");
@@ -88,7 +52,7 @@ async fn gateway_cli_database_override_uses_effective_database_url() -> TestResu
 
 #[sinex_serial_test]
 async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["SINEX_GATEWAY_MAX_CONCURRENCY"]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_GATEWAY_MAX_CONCURRENCY", "many");
 
     let error = GatewayConfig::load().expect_err("invalid env should fail gateway config load");
@@ -101,7 +65,7 @@ async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()
 
 #[sinex_serial_test]
 async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["SINEX_NATS_URL", "SINEX_GATEWAY_ANNEX_PATH"]);
+    let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");
     env.set("SINEX_GATEWAY_ANNEX_PATH", "/tmp/sinex-annex-test");
 
@@ -115,7 +79,7 @@ async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> T
 
 #[sinex_serial_test]
 async fn gateway_config_prefers_gateway_specific_annex_override() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL", "SINEX_ANNEX_PATH", "SINEX_GATEWAY_ANNEX_PATH"]);
+    let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
     env.set("SINEX_ANNEX_PATH", "/tmp/sinex-annex-shared");
     env.set("SINEX_GATEWAY_ANNEX_PATH", "/tmp/sinex-annex-gateway");
@@ -129,7 +93,7 @@ async fn gateway_config_prefers_gateway_specific_annex_override() -> TestResult<
 #[cfg(unix)]
 #[sinex_serial_test]
 async fn gateway_config_rejects_non_unicode_database_url() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL"]);
+    let mut env = EnvGuard::new();
     env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
 
     let error =
@@ -144,7 +108,7 @@ async fn gateway_config_rejects_non_unicode_database_url() -> TestResult<()> {
 #[cfg(unix)]
 #[sinex_serial_test]
 async fn gateway_config_rejects_non_unicode_shared_annex_path() -> TestResult<()> {
-    let mut env = EnvGuard::new(&["DATABASE_URL", "SINEX_ANNEX_PATH"]);
+    let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
     env.set(
         "SINEX_ANNEX_PATH",

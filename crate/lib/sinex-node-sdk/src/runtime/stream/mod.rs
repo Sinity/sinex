@@ -53,7 +53,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -82,11 +82,13 @@ pub struct SchemaBroadcastEntry {
 }
 const CONFIRMED_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const LISTENER_RETRY_DELAY: Duration = Duration::from_secs(1);
+const TASK_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
 async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, HandleFut>(
     listener: &'static str,
     subject: &str,
     retry_delay: Duration,
+    mut shutdown_rx: watch::Receiver<bool>,
     mut subscribe: Subscribe,
     mut handle_subscription: Handle,
 ) where
@@ -97,7 +99,21 @@ async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, Handl
     HandleFut: Future<Output = bool>,
 {
     loop {
-        let subscription = match subscribe().await {
+        if *shutdown_rx.borrow() {
+            debug!(listener, subject, "Listener shutdown requested before subscribe");
+            return;
+        }
+
+        let subscription = match tokio::select! {
+            result = subscribe() => result,
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    debug!(listener, subject, "Listener shutdown requested while waiting to subscribe");
+                    return;
+                }
+                continue;
+            }
+        } {
             Ok(subscription) => subscription,
             Err(error) => {
                 warn!(
@@ -107,20 +123,40 @@ async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, Handl
                     retry_delay_ms = retry_delay.as_millis(),
                     "Listener subscribe failed; retrying"
                 );
-                tokio::time::sleep(retry_delay).await;
+                tokio::select! {
+                    () = tokio::time::sleep(retry_delay) => {}
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            debug!(listener, subject, "Listener shutdown requested during subscribe retry delay");
+                            return;
+                        }
+                    }
+                }
                 continue;
             }
         };
         info!(listener, subject, "Listener subscribed");
 
         if handle_subscription(subscription).await {
-                warn!(
-                    listener,
-                    subject,
-                    retry_delay_ms = retry_delay.as_millis(),
-                    "Listener subscription closed; reconnecting"
-                );
-                tokio::time::sleep(retry_delay).await;
+            if *shutdown_rx.borrow() {
+                debug!(listener, subject, "Listener shutdown requested after subscription exit");
+                return;
+            }
+            warn!(
+                listener,
+                subject,
+                retry_delay_ms = retry_delay.as_millis(),
+                "Listener subscription closed; reconnecting"
+            );
+            tokio::select! {
+                () = tokio::time::sleep(retry_delay) => {}
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        debug!(listener, subject, "Listener shutdown requested during retry delay");
+                        return;
+                    }
+                }
+            }
         } else {
             break;
         }
@@ -351,6 +387,7 @@ async fn maybe_start_schema_listener(
 ) -> NodeResult<(
     Option<Arc<SchemaBroadcastCache>>,
     Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
+    Option<watch::Sender<bool>>,
     Option<tokio::task::JoinHandle<()>>,
 )> {
     // Enable schema cache and validation when infrastructure is available.
@@ -370,7 +407,7 @@ async fn maybe_start_schema_listener(
         Ok(kv) => kv,
         Err(e) => {
             debug!("Schema KV bucket unavailable (edge mode): {e}");
-            return Ok((None, None, None));
+            return Ok((None, None, None, None));
         }
     };
 
@@ -379,16 +416,20 @@ async fn maybe_start_schema_listener(
     let cache_clone = cache.clone();
     let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Background task to update cache and validator
     let listener_subject = subject.clone();
     let handle = tokio::spawn(async move {
         let subscribe_subject = listener_subject.clone();
         let subscribe_client = client.clone();
+        let helper_shutdown_rx = shutdown_rx.clone();
+        let subscription_shutdown_rx = shutdown_rx.clone();
         run_resubscribing_listener(
             "schema broadcast listener",
             &listener_subject,
             LISTENER_RETRY_DELAY,
+            helper_shutdown_rx,
             move || {
                 let client = subscribe_client.clone();
                 let subject = subscribe_subject.clone();
@@ -398,26 +439,39 @@ async fn maybe_start_schema_listener(
                 let cache = cache_clone.clone();
                 let validator = validator_clone.clone();
                 let kv = kv.clone();
+                let mut shutdown_rx = subscription_shutdown_rx.clone();
                 async move {
-                    while let Some(msg) = sub.next().await {
-                        match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
-                            Ok(entries) => {
-                                cache.update(entries.clone()).await;
-                                match validator.update_from_broadcast(entries, &kv).await {
-                                    Ok(count) => {
-                                        debug!(count, "Updated schema validator from broadcast");
+                    loop {
+                        tokio::select! {
+                            maybe_msg = sub.next() => {
+                                let Some(msg) = maybe_msg else {
+                                    return true;
+                                };
+                                match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
+                                    Ok(entries) => {
+                                        cache.update(entries.clone()).await;
+                                        match validator.update_from_broadcast(entries, &kv).await {
+                                            Ok(count) => {
+                                                debug!(count, "Updated schema validator from broadcast");
+                                            }
+                                            Err(err) => {
+                                                warn!(error = %err, "Failed to update schema validator");
+                                            }
+                                        }
                                     }
                                     Err(err) => {
-                                        warn!(error = %err, "Failed to update schema validator");
+                                        warn!(error = %err, "Failed to decode schema broadcast payload");
                                     }
                                 }
                             }
-                            Err(err) => {
-                                warn!(error = %err, "Failed to decode schema broadcast payload");
+                            changed = shutdown_rx.changed() => {
+                                if changed.is_err() || *shutdown_rx.borrow() {
+                                    debug!("Schema broadcast listener subscription received shutdown");
+                                    return false;
+                                }
                             }
                         }
                     }
-                    true
                 }
             },
         )
@@ -426,7 +480,7 @@ async fn maybe_start_schema_listener(
 
     info!("Started schema broadcast listener and validator for {subject}");
 
-    Ok((Some(cache), Some(validator), Some(handle)))
+    Ok((Some(cache), Some(validator), Some(shutdown_tx), Some(handle)))
 }
 
 /// Report from a completed scan operation
@@ -667,9 +721,12 @@ pub struct NodeRunner<T: Node> {
     work_dir_utf8: Option<Utf8PathBuf>,
     event_batcher_handle: Option<tokio::task::JoinHandle<NodeResult<()>>>,
     event_batcher_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    schema_listener_shutdown: Option<watch::Sender<bool>>,
     schema_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    checkpoint_cleanup_shutdown: Option<watch::Sender<bool>>,
     checkpoint_cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
+    command_listener_shutdown: Option<watch::Sender<bool>>,
     command_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
@@ -710,6 +767,17 @@ impl<T: Node + 'static> NodeRunner<T> {
             warn!(
                 task = task_name,
                 "Shutdown receiver was already dropped before graceful shutdown"
+            );
+            return false;
+        }
+        true
+    }
+
+    fn signal_watch_shutdown(shutdown_tx: watch::Sender<bool>, task_name: &str) -> bool {
+        if shutdown_tx.send(true).is_err() {
+            warn!(
+                task = task_name,
+                "Watch shutdown receiver was already dropped before graceful shutdown"
             );
             return false;
         }
@@ -986,9 +1054,12 @@ impl<T: Node + 'static> NodeRunner<T> {
             work_dir_utf8: None,
             event_batcher_handle: None,
             event_batcher_shutdown: None,
+            schema_listener_shutdown: None,
             schema_listener_handle: None,
+            checkpoint_cleanup_shutdown: None,
             checkpoint_cleanup_handle: None,
             consumer_handle: None,
+            command_listener_shutdown: None,
             command_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
@@ -1075,14 +1146,21 @@ impl<T: Node + 'static> NodeRunner<T> {
         let kv_store = create_checkpoint_kv(&transport).await?;
 
         #[cfg(feature = "messaging")]
-        let (schema_cache, schema_validator, schema_listener_handle) =
+        let (schema_cache, schema_validator, schema_listener_shutdown, schema_listener_handle) =
             maybe_start_schema_listener(&transport).await?;
         #[cfg(not(feature = "messaging"))]
-        let (schema_cache, schema_validator, schema_listener_handle) = (
+        let (
+            schema_cache,
+            schema_validator,
+            schema_listener_shutdown,
+            schema_listener_handle,
+        ) = (
             Option::<Arc<crate::runtime::stream::SchemaBroadcastCache>>::None,
             Option::<()>::None,
+            Option::<watch::Sender<bool>>::None,
             Option::<tokio::task::JoinHandle<()>>::None,
         );
+        self.schema_listener_shutdown = schema_listener_shutdown;
         self.schema_listener_handle = schema_listener_handle;
 
         // Start checkpoint cleanup background task if enabled
@@ -1103,10 +1181,13 @@ impl<T: Node + 'static> NodeRunner<T> {
             {
                 let cleanup_config = crate::checkpoint::CheckpointCleanupConfig::from_env();
                 let kv_for_cleanup = kv_store.clone();
+                let (cleanup_shutdown_tx, cleanup_shutdown_rx) = watch::channel(false);
                 let cleanup_handle = crate::checkpoint::spawn_checkpoint_cleanup_task(
                     kv_for_cleanup,
                     cleanup_config,
+                    cleanup_shutdown_rx,
                 );
+                self.checkpoint_cleanup_shutdown = Some(cleanup_shutdown_tx);
                 self.checkpoint_cleanup_handle = Some(cleanup_handle);
                 tracing::info!("Checkpoint cleanup task started");
             }
@@ -1486,16 +1567,20 @@ impl<T: Node + 'static> NodeRunner<T> {
         let dry_run = service_info.dry_run();
         let node_factory = self.node_factory.clone();
 
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
             let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
             let active_scan = Arc::new(AtomicBool::new(false));
             let subscribe_client = nats_client.clone();
             let subscribe_subject = subject.clone();
+            let helper_shutdown_rx = shutdown_rx.clone();
+            let subscription_shutdown_rx = shutdown_rx.clone();
 
             run_resubscribing_listener(
                 "command listener",
                 &subject,
                 LISTENER_RETRY_DELAY,
+                helper_shutdown_rx,
                 move || {
                     let client = subscribe_client.clone();
                     let subject = subscribe_subject.clone();
@@ -1511,8 +1596,24 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let loop_work_dir_utf8 = work_dir_utf8.clone();
                     let loop_node_factory = node_factory.clone();
                     let loop_active_scan = active_scan.clone();
+                    let mut shutdown_rx = subscription_shutdown_rx.clone();
                     async move {
-                        while let Some(msg) = sub.next().await {
+                        loop {
+                            let msg = tokio::select! {
+                                maybe_msg = sub.next() => {
+                                    let Some(msg) = maybe_msg else {
+                                        return true;
+                                    };
+                                    msg
+                                }
+                                changed = shutdown_rx.changed() => {
+                                    if changed.is_err() || *shutdown_rx.borrow() {
+                                        debug!(node = %loop_node_name, "Command listener subscription received shutdown");
+                                        return false;
+                                    }
+                                    continue;
+                                }
+                            };
                             let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
                                 Ok(cmd) => cmd,
                                 Err(err) => {
@@ -1785,14 +1886,13 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 }
                             });
                         }
-
-                        true
                     }
                 },
             )
             .await;
         });
 
+        self.command_listener_shutdown = Some(shutdown_tx);
         self.command_listener_handle = Some(handle);
     }
 
@@ -2337,7 +2437,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 &transport,
                 resolve_result.events,
             )
-            .await;
+            .await?;
 
             processed_events += batch_count;
             events_since_checkpoint += batch_count;
@@ -2579,24 +2679,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 return Err(Self::confirmed_event_missing_error(event_id));
                             }
                         }
-                        None => match Self::build_event_from_provisional(provisional) {
-                            Ok(event) => Some(event),
-                            Err(err) => {
-                                warn!(error = %err, "Failed to build event from provisional payload");
-                                None
-                            }
-                        },
+                        None => Some(
+                            Self::build_event_from_provisional(provisional).map_err(|error| {
+                                Self::provisional_decode_error(event_id, error)
+                            })?,
+                        ),
                     }
                 }
                 #[cfg(not(feature = "db"))]
                 {
-                    match Self::build_event_from_provisional(provisional) {
-                        Ok(event) => Some(event),
-                        Err(err) => {
-                            warn!(error = %err, "Failed to build event from provisional payload");
-                            None
-                        }
-                    }
+                    Some(Self::build_event_from_provisional(provisional).map_err(|error| {
+                        Self::provisional_decode_error(event_id, error)
+                    })?)
                 }
             };
 
@@ -2618,6 +2712,13 @@ impl<T: Node + 'static> NodeRunner<T> {
             .with_context("event_id", event_id.to_string())
     }
 
+    #[cfg(feature = "messaging")]
+    fn provisional_decode_error(event_id: &EventId, error: SinexError) -> SinexError {
+        SinexError::processing("Confirmed event could not be reconstructed from provisional payload")
+            .with_context("event_id", event_id.to_string())
+            .with_source(error)
+    }
+
     /// Process a batch of events, falling back to per-event processing with DLQ
     /// routing if the batch fails. Returns the total number of events processed
     /// (including those routed to the DLQ).
@@ -2626,7 +2727,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         node: &mut T,
         transport: &EventTransport,
         events: Vec<Event<JsonValue>>,
-    ) -> u64 {
+    ) -> NodeResult<u64> {
         let batch_size = events.len();
         let events_backup = events.clone();
 
@@ -2639,7 +2740,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                         "Processed event batch"
                     );
                 }
-                stats.processed as u64
+                Ok(stats.processed as u64)
             }
             Err(batch_err) => {
                 warn!(
@@ -2665,11 +2766,25 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .send_to_dlq(&event, &event_err.to_string(), &node_name)
                                 .await
                             {
-                                error!(
-                                    error = %event_err,
-                                    dlq_error = %dlq_err,
-                                    ?event_id,
-                                    "Failed to route event to DLQ"
+                                return Err(
+                                    SinexError::processing(
+                                        "failed to route failed automaton event to DLQ",
+                                    )
+                                    .with_context("node", node_name.clone())
+                                    .with_context(
+                                        "event_id",
+                                        event_id
+                                            .as_ref()
+                                            .map(std::string::ToString::to_string)
+                                            .unwrap_or_else(|| "missing".to_string()),
+                                    )
+                                    .with_context("source", event.source.as_str().to_string())
+                                    .with_context(
+                                        "event_type",
+                                        event.event_type.as_str().to_string(),
+                                    )
+                                    .with_context("processing_error", event_err.to_string())
+                                    .with_source(dlq_err),
                                 );
                             }
                         }
@@ -2678,7 +2793,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let dlq_count = batch_size as u64 - succeeded;
                 info!(succeeded, dlq_count, "Per-event fallback complete");
                 // Count DLQ'd events as processed for checkpoint advancement
-                batch_size as u64
+                Ok(batch_size as u64)
             }
         }
     }
@@ -2746,8 +2861,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "schema broadcast listener",
-            Self::abort_task(
+            Self::shutdown_task(
                 &mut self.schema_listener_handle,
+                self.schema_listener_shutdown.take(),
                 "schema broadcast listener",
             )
             .await,
@@ -2755,7 +2871,12 @@ impl<T: Node + 'static> NodeRunner<T> {
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "command listener",
-            Self::abort_task(&mut self.command_listener_handle, "command listener").await,
+            Self::shutdown_task(
+                &mut self.command_listener_handle,
+                self.command_listener_shutdown.take(),
+                "command listener",
+            )
+            .await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
@@ -2770,12 +2891,17 @@ impl<T: Node + 'static> NodeRunner<T> {
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "automaton consumer",
-            Self::abort_task(&mut self.consumer_handle, "automaton consumer").await,
+            Self::shutdown_task(&mut self.consumer_handle, None, "automaton consumer").await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "checkpoint cleanup",
-            Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await,
+            Self::shutdown_task(
+                &mut self.checkpoint_cleanup_handle,
+                self.checkpoint_cleanup_shutdown.take(),
+                "checkpoint cleanup",
+            )
+            .await,
         );
         Self::push_shutdown_error(&mut shutdown_errors, "node shutdown", self.node.shutdown().await);
 
@@ -2791,13 +2917,27 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
     }
 
-    async fn abort_task(
+    async fn shutdown_task(
         handle: &mut Option<tokio::task::JoinHandle<()>>,
+        shutdown_tx: Option<watch::Sender<bool>>,
         name: &str,
     ) -> NodeResult<()> {
-        if let Some(h) = handle.take() {
-            h.abort();
-            Self::shutdown_join_result(name, h.await)
+        if let Some(shutdown_tx) = shutdown_tx {
+            Self::signal_watch_shutdown(shutdown_tx, name);
+        }
+        if let Some(mut h) = handle.take() {
+            match tokio::time::timeout(TASK_SHUTDOWN_GRACE_PERIOD, &mut h).await {
+                Ok(result) => Self::shutdown_join_result(name, result),
+                Err(_) => {
+                    debug!(
+                        task = name,
+                        grace_period_ms = TASK_SHUTDOWN_GRACE_PERIOD.as_millis(),
+                        "Task did not exit within shutdown grace period; aborting"
+                    );
+                    h.abort();
+                    Self::shutdown_join_result(name, h.await)
+                }
+            }
         } else {
             Ok(())
         }
@@ -2853,6 +2993,9 @@ mod tests {
 
     #[derive(Default)]
     struct FailingShutdownNode;
+
+    #[derive(Default)]
+    struct FailingBatchNode;
 
     impl Node for RuntimeTestNode {
         type Config = ();
@@ -2931,6 +3074,51 @@ mod tests {
 
         async fn shutdown(&mut self) -> NodeResult<()> {
             Err(SinexError::processing("node shutdown failed"))
+        }
+    }
+
+    impl Node for FailingBatchNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "runtime-failing-batch-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn process_event_batch(
+            &mut self,
+            _events: Vec<Event<JsonValue>>,
+        ) -> NodeResult<ProcessingStats> {
+            Err(SinexError::processing("batch processing boom"))
         }
     }
 
@@ -3144,6 +3332,97 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db()
+    -> TestResult<()> {
+        let provisional = ProvisionalEvent {
+            event_id: EventId::from(Uuid::now_v7()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({
+                "source": "runtime-test-source",
+                "event_type": "runtime.test",
+                "host": "runtime-test-host",
+                "payload": {"ok": true},
+                "source_event_ids": [Uuid::now_v7().to_string()],
+                "node_run_id": "not-a-uuid"
+            }),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
+        };
+
+        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+            &[provisional],
+            &None,
+        )
+        .await
+        {
+            Ok(_) => {
+                return Err(color_eyre::eyre::eyre!(
+                    "invalid provisional payloads must fail honestly when no db pool is available"
+                )
+                .into());
+            }
+            Err(error) => error,
+        };
+
+        let message = format!("{error:#}");
+        assert!(message.contains(
+            "Confirmed event could not be reconstructed from provisional payload"
+        ));
+        assert!(message.contains("Invalid UUID for node_run_id"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+        let mut node = FailingBatchNode;
+        let event = Event {
+            id: Some(EventId::from(Uuid::now_v7())),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({"ok": true}),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        let error = NodeRunner::<FailingBatchNode>::process_batch_with_dlq_fallback(
+            &mut node,
+            &transport,
+            vec![event],
+        )
+        .await
+        .expect_err("failed DLQ routing must stop checkpoint advancement");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to route failed automaton event to DLQ"));
+        assert!(message.contains("batch processing boom"));
+        assert!(message.contains("runtime-failing-batch-node"));
+        Ok(())
+    }
+
     #[sinex_test]
     async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(
         ctx: TestContext,
@@ -3195,6 +3474,25 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn signal_watch_shutdown_reports_dropped_receiver() -> TestResult<()> {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        drop(rx);
+
+        assert!(!NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(tx, "listener"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn signal_watch_shutdown_delivers_to_receiver() -> TestResult<()> {
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+
+        assert!(NodeRunner::<RuntimeTestNode>::signal_watch_shutdown(tx, "listener"));
+        rx.changed().await?;
+        assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("runtime panic");
@@ -3212,11 +3510,13 @@ mod tests {
     async fn run_resubscribing_listener_retries_after_subscribe_error() -> TestResult<()> {
         let subscribe_attempts = Arc::new(AtomicU64::new(0));
         let handled_subscriptions = Arc::new(AtomicU64::new(0));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         run_resubscribing_listener(
             "test listener",
             "sinex.test.subject",
             Duration::from_millis(1),
+            shutdown_rx,
             {
                 let subscribe_attempts = subscribe_attempts.clone();
                 move || {
@@ -3254,11 +3554,13 @@ mod tests {
     async fn run_resubscribing_listener_retries_after_subscription_exit() -> TestResult<()> {
         let subscribe_attempts = Arc::new(AtomicU64::new(0));
         let handled_subscriptions = Arc::new(AtomicU64::new(0));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         run_resubscribing_listener(
             "test listener",
             "sinex.test.subject",
             Duration::from_millis(1),
+            shutdown_rx,
             {
                 let subscribe_attempts = subscribe_attempts.clone();
                 move || {
@@ -3292,6 +3594,52 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn run_resubscribing_listener_stops_after_shutdown_signal() -> TestResult<()> {
+        let subscribe_attempts = Arc::new(AtomicU64::new(0));
+        let handled_subscriptions = Arc::new(AtomicU64::new(0));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handler_shutdown_tx = shutdown_tx.clone();
+
+        let listener = tokio::spawn({
+            let subscribe_attempts = subscribe_attempts.clone();
+            let handled_subscriptions = handled_subscriptions.clone();
+            async move {
+                run_resubscribing_listener(
+                    "test listener",
+                    "sinex.test.subject",
+                    Duration::from_secs(1),
+                    shutdown_rx,
+                    move || {
+                        let subscribe_attempts = subscribe_attempts.clone();
+                        async move {
+                            subscribe_attempts.fetch_add(1, Ordering::SeqCst);
+                            Ok::<&'static str, SinexError>("subscription")
+                        }
+                    },
+                    move |_subscription| {
+                        let handled_subscriptions = handled_subscriptions.clone();
+                        let mut shutdown_rx = handler_shutdown_tx.subscribe();
+                        async move {
+                            handled_subscriptions.fetch_add(1, Ordering::SeqCst);
+                            shutdown_rx.changed().await.ok();
+                            false
+                        }
+                    },
+                )
+                .await;
+            }
+        });
+
+        tokio::task::yield_now().await;
+        shutdown_tx.send(true)?;
+        tokio::time::timeout(Duration::from_secs(1), listener).await??;
+
+        assert_eq!(subscribe_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(handled_subscriptions.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
         let handle = tokio::spawn(async move {
             panic!("batcher panic");
@@ -3303,6 +3651,25 @@ mod tests {
             .expect_err("panicked batcher tasks must fail shutdown honestly");
         let message = format!("{error:#}");
         assert!(message.contains("Event batcher failed during shutdown"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_clone = finished.clone();
+        let task = tokio::spawn(async move {
+            shutdown_rx.changed().await.ok();
+            finished_clone.store(true, Ordering::SeqCst);
+        });
+
+        let mut task = Some(task);
+        NodeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
+            .await?;
+
+        assert!(finished.load(Ordering::SeqCst));
+        assert!(task.is_none());
         Ok(())
     }
 

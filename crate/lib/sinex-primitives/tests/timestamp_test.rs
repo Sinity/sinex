@@ -230,6 +230,24 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_timestamp_rfc3339_format_falls_back_for_non_minute_offset(
+    _ctx: TestContext,
+) -> TestResult<()> {
+    let offset = time::UtcOffset::from_hms(1, 2, 3).expect("test offset must be valid");
+    let timestamp = Timestamp::new(
+        time::PrimitiveDateTime::new(
+            time::Date::from_calendar_date(2024, time::Month::January, 1)
+                .expect("test date must be valid"),
+            time::Time::from_hms(12, 0, 0).expect("test time must be valid"),
+        )
+        .assume_offset(offset),
+    );
+
+    assert_eq!(timestamp.format_rfc3339(), "invalid_time");
+    Ok(())
+}
+
 /// Test cross-timezone timestamp handling
 #[sinex_test]
 async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {

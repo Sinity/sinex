@@ -38,7 +38,9 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::{environment::environment, units::Seconds, validation::validate_path};
+use sinex_primitives::{
+    env as shared_env, environment::environment, units::Seconds, validation::validate_path,
+};
 use std::collections::HashMap;
 use validator::Validate;
 
@@ -236,8 +238,8 @@ impl NodeConfig {
                 None => service_or_global_env_parse(&env_prefix, "DATABASE_POOL_SIZE")?
                     .unwrap_or(defaults.database_pool_size),
             },
-            work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")?
-                .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
+            work_dir: service_or_global_env_validated_path(&env_prefix, "WORK_DIR")?
+                .unwrap_or(defaults.work_dir),
             dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?.unwrap_or(defaults.dry_run),
         };
         config.validate_config()?;
@@ -447,51 +449,6 @@ fn default_checkpoint_interval() -> Seconds {
 
 // Custom validator functions
 
-/// Sanitize a work directory path by making it absolute and removing traversal sequences.
-///
-/// This function:
-/// 1. Converts relative paths to absolute by joining with `current_dir`
-/// 2. Normalizes the path by removing `.` and `..` components
-/// 3. Ensures the result doesn't contain path traversal sequences
-fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
-    use std::path::{Component, PathBuf};
-
-    let path = PathBuf::from(path_str);
-
-    // Make absolute if relative
-    let absolute = if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("/"))
-            .join(path)
-    };
-
-    // Clean the path by processing components
-    let mut components = Vec::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {} // Skip .
-            Component::ParentDir => {
-                // Pop if possible, but never go above root
-                if let Some(last) = components.last()
-                    && !matches!(last, Component::RootDir | Component::Prefix(_))
-                {
-                    components.pop();
-                }
-                // If we can't pop, just skip the ..
-            }
-            _ => components.push(component),
-        }
-    }
-
-    let cleaned: PathBuf = components.iter().collect();
-    Utf8PathBuf::try_from(cleaned).unwrap_or_else(|e| {
-        // Fallback: lossy conversion if path contains non-UTF8
-        Utf8PathBuf::from(e.into_path_buf().to_string_lossy().to_string())
-    })
-}
-
 fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
     if matches!(level, "trace" | "debug" | "info" | "warn" | "error") {
         Ok(())
@@ -515,32 +472,27 @@ fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::Validation
     Ok(())
 }
 
-fn env_var_optional(name: &str) -> Result<Option<String>, ConfigError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::Validation(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-    }
-}
-
 fn service_or_global_env_value(
     service_prefix: &str,
     suffix: &str,
 ) -> Result<Option<(String, String)>, ConfigError> {
     let service_key = format!("SINEX_{service_prefix}_{suffix}");
-    if let Some(value) = env_var_optional(&service_key)? {
+    if let Some(value) = shared_env::strict_var(&service_key)
+        .map_err(|error| ConfigError::Validation(error.to_string()))?
+    {
         return Ok(Some((service_key, value)));
     }
 
     let global_key = format!("SINEX_{suffix}");
-    if let Some(value) = env_var_optional(&global_key)? {
+    if let Some(value) = shared_env::strict_var(&global_key)
+        .map_err(|error| ConfigError::Validation(error.to_string()))?
+    {
         return Ok(Some((global_key, value)));
     }
 
     if suffix == "DATABASE_URL"
-        && let Some(value) = env_var_optional("DATABASE_URL")?
+        && let Some(value) = shared_env::strict_var("DATABASE_URL")
+            .map_err(|error| ConfigError::Validation(error.to_string()))?
     {
         return Ok(Some(("DATABASE_URL".to_string(), value)));
     }
@@ -553,6 +505,18 @@ fn service_or_global_env_string(
     suffix: &str,
 ) -> Result<Option<String>, ConfigError> {
     Ok(service_or_global_env_value(service_prefix, suffix)?.map(|(_, value)| value))
+}
+
+fn service_or_global_env_validated_path(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<Utf8PathBuf>, ConfigError> {
+    let Some((env_name, _value)) = service_or_global_env_value(service_prefix, suffix)? else {
+        return Ok(None);
+    };
+
+    shared_env::strict_validated_path(&env_name)
+        .map_err(|error| ConfigError::Validation(error.to_string()))
 }
 
 fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Result<Option<T>, ConfigError>

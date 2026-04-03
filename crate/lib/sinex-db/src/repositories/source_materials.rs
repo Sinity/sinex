@@ -27,6 +27,7 @@ pub mod timing_info_types {
 pub mod status {
     pub const SENSING: &str = "sensing";
     pub const COMPLETED: &str = "completed";
+    pub const CANCELLED: &str = "cancelled";
     pub const RECOVERED_PARTIAL: &str = "recovered_partial";
     pub const FAILED: &str = "failed";
 }
@@ -1072,9 +1073,10 @@ impl SourceMaterialRepository<'_> {
         content_preview: Option<String>,
         total_bytes: Option<i64>,
     ) -> DbResult<()> {
-        self.finalize_in_flight_with_executor(
+        self.finalize_in_flight_as(
             self.pool,
             id,
+            status::COMPLETED,
             blob_id,
             encoding,
             content_preview,
@@ -1087,6 +1089,32 @@ impl SourceMaterialRepository<'_> {
         &self,
         executor: E,
         id: Id<SourceMaterialRecord>,
+        blob_id: Option<Id<crate::Blob>>,
+        encoding: Option<&str>,
+        content_preview: Option<String>,
+        total_bytes: Option<i64>,
+    ) -> DbResult<()>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        self.finalize_in_flight_as(
+            executor,
+            id,
+            status::COMPLETED,
+            blob_id,
+            encoding,
+            content_preview,
+            total_bytes,
+        )
+        .await
+    }
+
+    /// Finalize in-flight source material with an explicit terminal status.
+    pub async fn finalize_in_flight_as<'e, E>(
+        &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+        final_status: &str,
         blob_id: Option<Id<crate::Blob>>,
         encoding: Option<&str>,
         content_preview: Option<String>,
@@ -1114,7 +1142,7 @@ impl SourceMaterialRepository<'_> {
         self.update_material_state(
             executor,
             id,
-            status::COMPLETED,
+            final_status,
             blob_id,
             metadata_update,
         )

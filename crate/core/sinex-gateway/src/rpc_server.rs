@@ -1674,11 +1674,14 @@ impl RpcServer {
             let mut task = Some(task);
             tokio::select! {
                 task_result = async {
-                    task.take()
-                        .expect("background task handle must be present until awaited")
-                        .await
+                    let Some(task_handle) = task.take() else {
+                        return Err(eyre!(
+                            "background task handle for {task_name} was unexpectedly missing before await"
+                        ));
+                    };
+                    Ok(task_handle.await)
                 } => {
-                    match task_result {
+                    match task_result? {
                         Ok(()) => {
                             if *shutdown.borrow() {
                                 Ok(())
@@ -1694,11 +1697,12 @@ impl RpcServer {
                     if shutdown_result.is_err() {
                         warn!(task = task_name, "Background task monitor shutdown channel dropped before explicit shutdown");
                     }
-                    match task
-                        .take()
-                        .expect("background task handle must be present until awaited")
-                        .await
-                    {
+                    let Some(task_handle) = task.take() else {
+                        return Err(eyre!(
+                            "background task handle for {task_name} was unexpectedly missing after shutdown"
+                        ));
+                    };
+                    match task_handle.await {
                         Ok(()) => {
                             if shutdown_requested {
                                 Ok(())

@@ -53,6 +53,25 @@ enum ReplayAction {
     Cancel,
 }
 
+fn ensure_preview_allowed(operation: &ReplayOperation) -> Result<()> {
+    match operation.state {
+        ReplayState::Planning | ReplayState::Previewed => Ok(()),
+        ReplayState::Approved => Err(eyre!(
+            "Operation {} is already approved; create a new plan to refresh the preview",
+            operation.operation_id
+        )),
+        ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => Err(eyre!(
+            "Operation {} is already executing; preview is no longer available",
+            operation.operation_id
+        )),
+        ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => Err(eyre!(
+            "Operation {} is in terminal state {:?}; preview is no longer available",
+            operation.operation_id,
+            operation.state
+        )),
+    }
+}
+
 fn allow_test_actors_in_runtime(is_test_runtime: bool) -> Result<bool> {
     if is_test_runtime {
         return Ok(true);
@@ -124,7 +143,7 @@ fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
 /// results as a JSON blob suitable for embedding in a preview response under
 /// `"safety_analysis"`.
 ///
-/// This is best-effort: on error the result is `null` with a warning logged so that
+/// This is best-effort: on error the result becomes a structured failure object so that
 /// the preview remains useful even when the analyzer cannot complete (e.g., timeout,
 /// memory limit exceeded).
 async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_json::Value {
@@ -177,8 +196,12 @@ async fn run_safety_analysis(pool: &sqlx::PgPool, root_ids: &[Uuid]) -> serde_js
             })
         }
         Err(e) => {
-            warn!(error = %e, "Cascade safety analysis failed; omitting from preview");
-            serde_json::Value::Null
+            warn!(error = %e, "Cascade safety analysis failed");
+            serde_json::json!({
+                "status": "failed",
+                "error": e.to_string(),
+                "warning": "Cascade impact could not be determined. Approve with caution."
+            })
         }
     }
 }
@@ -688,6 +711,7 @@ impl ReplayControlServer {
             }
             ReplayControlRequest::Preview { operation_id } => {
                 let operation = replay.load_operation(operation_id).await?;
+                ensure_preview_allowed(&operation)?;
                 let mut preview = replay.generate_preview_summary(&operation.scope).await?;
 
                 // Augment preview with cascade safety analysis (integrity violations, cycles).
@@ -721,26 +745,9 @@ impl ReplayControlServer {
                 validate_actor_for_action(&actor, ReplayAction::Execute)?;
 
                 if dry_run {
-                    // Dry-run: compute cascade impact then cancel. No side effects.
-                    let operation = replay.load_operation(operation_id).await?;
-                    let mut preview = replay.generate_preview_summary(&operation.scope).await?;
-
-                    // Augment preview with cascade safety analysis (integrity violations, cycles).
-                    let root_ids = replay.collect_scope_root_ids(&operation.scope).await?;
-                    let safety = run_safety_analysis(replay.pool(), &root_ids).await;
-                    if let serde_json::Value::Object(ref mut map) = preview {
-                        map.insert("safety_analysis".to_string(), safety);
-                    }
-
-                    replay.update_preview(operation_id, preview.clone()).await?;
-                    replay
-                        .cancel(
-                            operation_id,
-                            "dry-run completed (no changes persisted)".into(),
-                        )
-                        .await?;
-                    let updated = replay.load_operation(operation_id).await?;
-                    ReplayControlResponse::success(Some(updated), Some(preview), None)
+                    return Err(eyre!(
+                        "Replay execute does not support dry-run semantics; use preview before approval instead"
+                    ));
                 } else {
                     let updated = executor.execute(operation_id, actor).await?;
                     ReplayControlResponse::success(Some(updated), None, None)
@@ -797,12 +804,22 @@ struct ReplayExecutionEngine {
     checkpoint_failures_remaining: Option<Arc<AtomicUsize>>,
     #[cfg(test)]
     scope_metadata_failures_remaining: Option<Arc<AtomicUsize>>,
+    #[cfg(test)]
+    replacement_record_failures_remaining: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug)]
 struct OperationOutputEvent {
     id: Uuid,
     equivalence_key: Option<String>,
+}
+
+#[derive(Debug)]
+struct ScopeInvalidationBucket {
+    event_ids: Vec<Uuid>,
+    event_source: String,
+    event_type: String,
+    scope_keys: Vec<String>,
 }
 
 impl ReplayExecutionEngine {
@@ -819,6 +836,8 @@ impl ReplayExecutionEngine {
             checkpoint_failures_remaining: None,
             #[cfg(test)]
             scope_metadata_failures_remaining: None,
+            #[cfg(test)]
+            replacement_record_failures_remaining: None,
         }
     }
 
@@ -846,6 +865,15 @@ impl ReplayExecutionEngine {
         scope_metadata_failures_remaining: Arc<AtomicUsize>,
     ) -> Self {
         self.scope_metadata_failures_remaining = Some(scope_metadata_failures_remaining);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_replacement_record_failures(
+        mut self,
+        replacement_record_failures_remaining: Arc<AtomicUsize>,
+    ) -> Self {
+        self.replacement_record_failures_remaining = Some(replacement_record_failures_remaining);
         self
     }
 
@@ -930,12 +958,18 @@ impl ReplayExecutionEngine {
                 error = %err,
                 "Replay execution failed"
             );
-            self.replay
+            if let Err(mark_err) = self.replay
                 .mark_failed(operation_id, format!("{err:#}"))
                 .await
-                .wrap_err_with(|| {
-                    format!("failed to mark replay operation as failed for operation {operation_id}")
-                })?;
+            {
+                error!(
+                    operation_id = %operation_id,
+                    mark_error = %mark_err,
+                    execution_error = %err,
+                    "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
+                     Run: sinexctl replay recover --operation {operation_id}"
+                );
+            }
         }
 
         Ok(())
@@ -1163,6 +1197,23 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
+    #[cfg(test)]
+    fn maybe_fail_replacement_recording(&self) -> Result<()> {
+        if let Some(remaining) = &self.replacement_record_failures_remaining
+            && remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
+                .is_ok()
+        {
+            return Err(eyre!("forced replay replacement recording failure"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail_replacement_recording(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Pagination batch size for collecting scope events from the database.
     const SCOPE_QUERY_BATCH_SIZE: i64 = 500;
 
@@ -1362,7 +1413,7 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         cascade_ids: &[Uuid],
-    ) -> Result<Vec<(String, Vec<String>)>> {
+    ) -> Result<Vec<ScopeInvalidationBucket>> {
         if cascade_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -1370,9 +1421,10 @@ impl ReplayExecutionEngine {
         self.maybe_fail_scope_metadata_collection()
             .wrap_err("Failed to collect replay cascade scope metadata")?;
 
-        // Query scope_key and event_type for cascade events that have scope_keys
+        // Query scope metadata for cascade events that have scope_keys so invalidations
+        // stay bucketed by the archived event source + type pair.
         let rows = sqlx::query!(
-            "SELECT event_type, scope_key FROM core.events \
+            "SELECT id, source, event_type, scope_key FROM core.events \
              WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
             cascade_ids,
         )
@@ -1380,21 +1432,30 @@ impl ReplayExecutionEngine {
         .await
         .map_err(|e| eyre!("Failed to collect cascade scope metadata: {e}"))?;
 
-        // Group scope_keys by event_type
-        let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+        let mut grouped: HashMap<(String, String), ScopeInvalidationBucket> = HashMap::new();
         for row in rows {
             if let Some(sk) = row.scope_key {
-                grouped.entry(row.event_type).or_default().push(sk);
+                let bucket = grouped
+                    .entry((row.source.clone(), row.event_type.clone()))
+                    .or_insert_with(|| ScopeInvalidationBucket {
+                        event_ids: Vec::new(),
+                        event_source: row.source.clone(),
+                        event_type: row.event_type.clone(),
+                        scope_keys: Vec::new(),
+                    });
+                bucket.event_ids.push(row.id);
+                bucket.scope_keys.push(sk);
             }
         }
 
-        // Dedup scope_keys per event_type
-        for keys in grouped.values_mut() {
-            keys.sort_unstable();
-            keys.dedup();
+        for bucket in grouped.values_mut() {
+            bucket.event_ids.sort_unstable();
+            bucket.event_ids.dedup();
+            bucket.scope_keys.sort_unstable();
+            bucket.scope_keys.dedup();
         }
 
-        Ok(grouped.into_iter().collect())
+        Ok(grouped.into_values().collect())
     }
 
     /// Publish scope invalidation signals for archived events.
@@ -1403,38 +1464,35 @@ impl ReplayExecutionEngine {
     /// were archived. Only publishes for events that had `scope_keys`.
     async fn publish_scope_invalidations(
         &self,
-        scope_metadata: &[(String, Vec<String>)],
-        cascade_ids: &[Uuid],
+        scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
-        event_source: &str,
     ) {
         if scope_metadata.is_empty() {
             return;
         }
 
-        let event_source = match EventSource::new(event_source.to_string()) {
-            Ok(source) => source,
-            Err(error) => {
-                warn!(
-                    operation_id = %operation_id,
-                    event_source,
-                    error = %error,
-                    "Skipping scope invalidation publish because archived event source is invalid"
-                );
-                return;
-            }
-        };
-
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
 
-        for (event_type, scope_keys) in scope_metadata {
-            let event_type = match EventType::new(event_type.clone()) {
+        for bucket in scope_metadata {
+            let event_source = match EventSource::new(bucket.event_source.clone()) {
+                Ok(source) => source,
+                Err(error) => {
+                    warn!(
+                        operation_id = %operation_id,
+                        event_source = %bucket.event_source,
+                        error = %error,
+                        "Skipping scope invalidation publish because archived event source is invalid"
+                    );
+                    continue;
+                }
+            };
+            let event_type = match EventType::new(bucket.event_type.clone()) {
                 Ok(event_type) => event_type,
                 Err(error) => {
                     warn!(
                         operation_id = %operation_id,
-                        raw_event_type = %event_type,
-                        scope_count = scope_keys.len(),
+                        raw_event_type = %bucket.event_type,
+                        scope_count = bucket.scope_keys.len(),
                         error = %error,
                         "Skipping scope invalidation publish because archived event type is invalid"
                     );
@@ -1442,12 +1500,12 @@ impl ReplayExecutionEngine {
                 }
             };
             let invalidation = DerivedScopeInvalidation::archived(
-                cascade_ids.to_vec(),
+                bucket.event_ids.clone(),
                 event_source.clone(),
                 event_type.clone(),
             )
             .with_operation(operation_id)
-            .with_scope_keys(scope_keys.clone());
+            .with_scope_keys(bucket.scope_keys.clone());
 
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
@@ -1459,7 +1517,7 @@ impl ReplayExecutionEngine {
                         warn!(
                             operation_id = %operation_id,
                             event_type = %event_type,
-                            scope_count = scope_keys.len(),
+                            scope_count = bucket.scope_keys.len(),
                             error = %e,
                             "Failed to publish scope invalidation"
                         );
@@ -1467,7 +1525,7 @@ impl ReplayExecutionEngine {
                         debug!(
                             operation_id = %operation_id,
                             event_type = %event_type,
-                            scope_count = scope_keys.len(),
+                            scope_count = bucket.scope_keys.len(),
                             "Published scope invalidation"
                         );
                     }
@@ -1505,6 +1563,7 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         cascade_ids: &[Uuid],
+        scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
         error: color_eyre::eyre::Report,
     ) -> Result<u64> {
@@ -1514,8 +1573,10 @@ impl ReplayExecutionEngine {
             )));
         }
 
+        self.publish_scope_invalidations(scope_metadata, operation_id).await;
+
         Err(error.wrap_err(
-            "Replay dispatch failed before node acknowledgement; restored archived cascade",
+            "Replay dispatch failed before node acknowledgement; restored archived cascade and published compensating scope invalidations",
         ))
     }
 
@@ -1619,11 +1680,15 @@ impl ReplayExecutionEngine {
             return Ok(());
         }
 
+        self.maybe_fail_replacement_recording()
+            .wrap_err("Failed to record replay replacement relations")?;
+
         let count = pool
             .events()
             .record_replacements(operation_id, &replacements)
             .await
-            .map_err(|e| eyre!("{e}"))?;
+            .map_err(|e| eyre!("{e}"))
+            .wrap_err("Failed to record replay replacement relations")?;
 
         info!(
             operation_id = %operation_id,
@@ -1706,13 +1771,8 @@ impl ReplayExecutionEngine {
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty() {
-            self.publish_scope_invalidations(
-                &scope_metadata,
-                &cascade_ids,
-                operation_id,
-                &scope.node_id,
-            )
-            .await;
+            self.publish_scope_invalidations(&scope_metadata, operation_id)
+                .await;
         }
 
         checkpoint.total_events = material_roots.len() as u64;
@@ -1732,6 +1792,7 @@ impl ReplayExecutionEngine {
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
+                        &scope_metadata,
                         operation_id,
                         eyre!("Failed to subscribe to replay progress: {error}"),
                     )
@@ -1783,6 +1844,7 @@ impl ReplayExecutionEngine {
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
+                        &scope_metadata,
                         operation_id,
                         eyre!("NATS request to {} failed: {error}", scan_subject),
                     )
@@ -1793,6 +1855,7 @@ impl ReplayExecutionEngine {
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
+                        &scope_metadata,
                         operation_id,
                         eyre!(
                             "Timed out waiting for scan ack from node '{}' after {:?}. Is the node running?",
@@ -1811,6 +1874,7 @@ impl ReplayExecutionEngine {
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
+                        &scope_metadata,
                         operation_id,
                         eyre!("Failed to deserialize NodeScanAck: {error}"),
                     )
@@ -1823,6 +1887,7 @@ impl ReplayExecutionEngine {
                 .abort_before_scan_ack(
                     pool,
                     &cascade_ids,
+                    &scope_metadata,
                     operation_id,
                     eyre!(
                         "Node '{}' rejected scan command: {}",
@@ -1987,16 +2052,8 @@ impl ReplayExecutionEngine {
                 checkpoint.updated_at = sinex_primitives::temporal::now();
 
                 // Record replacement relations between archived and newly-created events
-                if let Err(e) = self
-                    .record_event_replacements(pool, operation_id, &cascade_ids)
-                    .await
-                {
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %e,
-                        "Failed to record event replacements (non-fatal)"
-                    );
-                }
+                self.record_event_replacements(pool, operation_id, &cascade_ids)
+                    .await?;
 
                 Ok(count)
             }
@@ -2562,6 +2619,36 @@ mod tests {
         let connected = client.health_snapshot();
         assert!(connected.connected);
         assert!(connected.last_error.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_preview_surfaces_safety_analysis_failure(ctx: TestContext) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let pool = ctx.pool.clone();
+        pool.close().await;
+
+        let analysis = run_safety_analysis(&pool, &[Uuid::now_v7()]).await;
+
+        assert_eq!(
+            analysis
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        assert!(
+            analysis
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| !message.is_empty()),
+            "expected concrete analyzer failure message, got: {analysis:?}"
+        );
+        assert_eq!(
+            analysis
+                .get("warning")
+                .and_then(serde_json::Value::as_str),
+            Some("Cascade impact could not be determined. Approve with caution.")
+        );
         Ok(())
     }
 
@@ -3273,6 +3360,155 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn replay_execution_fails_when_replacement_recording_fails(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-replacement-record-fail"))
+            .await?;
+        let mut event = DynamicPayload::new(
+            "replacement-record-fail-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-replacement-record-fail.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.equivalence_key = Some("replacement-record-eq".to_string());
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = environment();
+        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+            nats_client.clone(),
+            env,
+            "replacement-record-fail-test",
+            1,
+            0,
+        )
+        .await?;
+
+        let mut scope = sample_scope();
+        scope.node_id = "replacement-record-fail-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:replacement-record-fail".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let replacement_material = ctx
+            .create_source_material(Some("replay-replacement-record-fail-output"))
+            .await?;
+        let mut replacement_event = DynamicPayload::new(
+            "replacement-output-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-replacement-record-fail-output.txt" }),
+        )
+        .from_material(replacement_material)
+        .build()?;
+        replacement_event.equivalence_key = Some("replacement-record-eq".to_string());
+        replacement_event.created_by_operation_id = Some(planned.operation_id);
+        let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
+        let replacement_id = replacement_inserted
+            .id
+            .expect("replacement replay event must have an id")
+            .to_uuid();
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
+            .with_replacement_record_failures(Arc::new(AtomicUsize::new(1)))
+            .with_scan_completion_timeout(Duration::from_secs(5));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("replacement-record failure should abort replay execution");
+        assert!(
+            err.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains("Failed to record replay replacement relations")
+            }),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+        assert!(
+            failed.error_details.as_deref().is_some_and(|details| {
+                details.contains("Failed to record replay replacement relations")
+            }),
+            "failure details should include replacement recording context: {:?}",
+            failed.error_details
+        );
+
+        let live_target_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_target_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let live_replacement_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(replacement_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        assert_eq!(
+            live_target_count, 0,
+            "replacement-record failure occurs after the original event has already been archived"
+        );
+        assert_eq!(
+            archived_target_count, 1,
+            "replacement-record failure must leave the archived target in audit storage"
+        );
+        assert_eq!(
+            live_replacement_count, 1,
+            "replacement-record failure must not delete already-emitted replay outputs"
+        );
+
+        let replacements = ctx
+            .pool
+            .events()
+            .get_replacements_by_operation(planned.operation_id)
+            .await?;
+        assert!(
+            replacements.is_empty(),
+            "failed replacement recording must not partially insert lineage rows"
+        );
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake replacement-record-fail-test node task failed: {e}"))?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_ack(
         ctx: TestContext,
     ) -> Result<()> {
@@ -3514,6 +3750,65 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn replay_preview_rejects_refresh_after_approval(ctx: TestContext) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let client =
+            spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
+                .await?;
+
+        let planned = client.plan("test:planner".into(), sample_scope()).await?;
+        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        let err = client
+            .preview(approved.operation_id)
+            .await
+            .expect_err("approved operations must not accept preview refreshes");
+        assert!(
+            err.to_string().contains("already approved"),
+            "unexpected error: {err}"
+        );
+
+        let stored = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(stored.state, ReplayState::Approved);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execute_dry_run_is_rejected_without_state_changes(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let client =
+            spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
+                .await?;
+
+        let planned = client.plan("test:planner".into(), sample_scope()).await?;
+        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let approved = client
+            .approve(previewed.operation_id, "admin:approver".into())
+            .await?;
+
+        let err = client
+            .execute(approved.operation_id, "service:executor-node".into(), true)
+            .await
+            .expect_err("dry-run execute should redirect callers back to preview");
+        assert!(
+            err.to_string().contains("does not support dry-run semantics"),
+            "unexpected error: {err}"
+        );
+
+        let stored = replay.load_operation(approved.operation_id).await?;
+        assert_eq!(stored.state, ReplayState::Approved);
+        assert!(stored.finished_at.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn replay_execute_fails_when_live_scope_disappears_after_approval(
         ctx: TestContext,
     ) -> Result<()> {
@@ -3584,6 +3879,91 @@ mod tests {
         let failed = replay.load_operation(approved.operation_id).await?;
         assert_eq!(failed.state, ReplayState::Failed);
         assert_eq!(failed.outcome, Some(sinex_primitives::domain::ReplayOutcome::Failed));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_invalidation(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
+
+        let material_id = ctx
+            .create_source_material(Some("replay-compensating-invalidation"))
+            .await?;
+        let mut event = DynamicPayload::new(
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-compensating-invalidation.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        event.scope_key = Some("scope://fs-test/replay-compensating-invalidation".to_string());
+        let inserted = ctx.pool.events().insert(event).await?;
+        let event_id = inserted.id.expect("inserted replay target must have id");
+        let operation_id = Uuid::now_v7();
+
+        let scope_metadata = engine
+            .collect_cascade_scope_metadata(&ctx.pool, &[event_id.to_uuid()])
+            .await?;
+        assert_eq!(scope_metadata.len(), 1);
+        assert_eq!(scope_metadata[0].event_source, "fs-test");
+        assert_eq!(
+            scope_metadata[0].event_type,
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
+        assert_eq!(scope_metadata[0].event_ids, vec![event_id.to_uuid()]);
+
+        ctx.pool
+            .events()
+            .execute_cascade_archive(
+                &[event_id.to_uuid()],
+                "archive before compensating restore test",
+                &operation_id.to_string(),
+                "test:replay-compensating",
+            )
+            .await?;
+
+        let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
+        let mut invalidation_sub = ctx
+            .nats_client()
+            .subscribe(invalidation_subject)
+            .await
+            .map_err(|error| eyre!("failed to subscribe for invalidation test: {error}"))?;
+
+        let err = engine
+            .abort_before_scan_ack(
+                &ctx.pool,
+                &[event_id.to_uuid()],
+                &scope_metadata,
+                operation_id,
+                eyre!("boom"),
+            )
+            .await
+            .expect_err("abort helper should surface the caller failure");
+        assert!(
+            err.to_string()
+                .contains("published compensating scope invalidations"),
+            "unexpected error: {err}"
+        );
+
+        let live_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(live_count, 1, "aborted replay should restore the archived event");
+
+        let invalidation_msg = tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
+            .await?
+            .expect("compensating invalidation should be published");
+        let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
+        assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
+        assert!(payload.contains(&event_id.to_string()));
 
         Ok(())
     }

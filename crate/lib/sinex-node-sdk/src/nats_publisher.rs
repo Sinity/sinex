@@ -16,12 +16,57 @@ const DEFAULT_PUBLISH_CONCURRENCY: usize = 100;
 #[derive(Debug, Clone)]
 pub struct NatsPublisher {
     nats_client: async_nats::Client,
+    js: async_nats::jetstream::Context,
     env: SinexEnvironment,
     namespace: Option<String>,
     /// Per-publisher backpressure semaphore. Bounds how many in-flight publishes
     /// this publisher instance can have simultaneously. Override via
     /// `SINEX_PUBLISH_CONCURRENCY` env var (falls back to 100).
     publish_semaphore: Arc<Semaphore>,
+}
+
+/// Destructured provenance fields for publish payloads.
+struct ProvenanceFields {
+    source_material_id: Option<String>,
+    anchor_byte: Option<i64>,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+    offset_kind: Option<String>,
+    source_event_ids: Option<Vec<String>>,
+}
+
+fn destructure_provenance(provenance: &Provenance) -> ProvenanceFields {
+    match provenance {
+        Provenance::Material {
+            id,
+            anchor_byte,
+            offset_start,
+            offset_end,
+            offset_kind,
+        } => ProvenanceFields {
+            source_material_id: Some(id.to_string()),
+            anchor_byte: Some(*anchor_byte),
+            offset_start: *offset_start,
+            offset_end: *offset_end,
+            offset_kind: Some(offset_kind_label(*offset_kind).to_string()),
+            source_event_ids: None,
+        },
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => ProvenanceFields {
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: Some(
+                source_event_ids
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+            ),
+        },
+    }
 }
 
 #[derive(Serialize)]
@@ -57,8 +102,10 @@ impl NatsPublisher {
             DEFAULT_PUBLISH_CONCURRENCY,
             "nats publisher concurrency",
         );
+        let js = async_nats::jetstream::new(nats_client.clone());
         Self {
             nats_client,
+            js,
             env,
             namespace,
             publish_semaphore: Arc::new(Semaphore::new(concurrency)),
@@ -81,55 +128,16 @@ impl NatsPublisher {
         error: &str,
         node_name: &str,
     ) -> NodeResult<()> {
-        let js = async_nats::jetstream::new(self.nats_client.clone());
-
-        let (
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
-        ) = match event.provenance() {
-            Provenance::Material {
-                id,
-                anchor_byte,
-                offset_start,
-                offset_end,
-                offset_kind,
-            } => (
-                Some(id.to_string()),
-                Some(*anchor_byte),
-                *offset_start,
-                *offset_end,
-                Some(offset_kind_label(*offset_kind).to_string()),
-                None,
-            ),
-            Provenance::Synthesis {
-                source_event_ids, ..
-            } => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(
-                    source_event_ids
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        };
+        let prov = destructure_provenance(event.provenance());
 
         let (event_id, original_event_bytes) = build_publish_payload(
             event,
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
         )?;
         let original_event =
             serde_json::from_slice::<JsonValue>(&original_event_bytes).map_err(
@@ -168,7 +176,7 @@ impl NatsPublisher {
         headers.insert("Original-Subject", original_subject.as_str());
         headers.insert("Retry-Count", "0");
 
-        let ack_future = js
+        let ack_future = self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| {
@@ -193,55 +201,16 @@ impl NatsPublisher {
             std::io::Error::other(format!("Failed to acquire publish semaphore: {e}"))
         })?;
 
-        let js = async_nats::jetstream::new(self.nats_client.clone());
-
-        let (
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
-        ) = match event.provenance() {
-            Provenance::Material {
-                id,
-                anchor_byte,
-                offset_start,
-                offset_end,
-                offset_kind,
-            } => (
-                Some(id.to_string()),
-                Some(*anchor_byte),
-                *offset_start,
-                *offset_end,
-                Some(offset_kind_label(*offset_kind).to_string()),
-                None,
-            ),
-            Provenance::Synthesis {
-                source_event_ids, ..
-            } => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(
-                    source_event_ids
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        };
+        let prov = destructure_provenance(event.provenance());
 
         let (event_id_str, payload) = build_publish_payload(
             event,
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
         )?;
 
         let subject = self.env.nats_raw_event_subject_with_namespace(
@@ -255,7 +224,7 @@ impl NatsPublisher {
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
 
         // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
-        let ack_future = js
+        let ack_future = self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| {

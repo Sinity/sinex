@@ -29,6 +29,7 @@ use sinex_node_sdk::{
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
     stage_material,
+    wait_for_shutdown_signal,
     SqliteHistoryImportError, SqliteHistoryRowOutcome,
     watcher_handle::WatcherHandle,
 };
@@ -93,7 +94,7 @@ impl Default for DesktopConfig {
             clipboard_poll_interval_secs: Seconds::from_secs(1),
             // Allow running in headless/degraded mode by default
             require_hyprland: false,
-            activitywatch_db_path: default_activitywatch_db_path_from(dirs::data_local_dir()),
+            activitywatch_db_path: default_activitywatch_db_path_from(dirs::data_dir()),
         }
     }
 }
@@ -960,7 +961,7 @@ impl IngestorNode for DesktopNode {
         }
 
         // Wait for shutdown
-        if shutdown_rx.changed().await.is_err() {
+        if !wait_for_shutdown_signal(&mut shutdown_rx).await {
             let warning =
                 "desktop continuous monitoring shutdown channel dropped before explicit shutdown";
             warn!("{warning}");
@@ -1133,6 +1134,21 @@ mod tests {
         assert_eq!(
             path,
             Utf8PathBuf::from("/tmp/data/activitywatch/aw-server-rust/sqlite.db")
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn desktop_default_activitywatch_db_path_prefers_xdg_data_home()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("XDG_DATA_HOME", "/tmp/xdg-data");
+
+        let config = DesktopConfig::default();
+
+        assert_eq!(
+            config.activitywatch_db_path,
+            Some(Utf8PathBuf::from("/tmp/xdg-data/activitywatch/aw-server-rust/sqlite.db"))
         );
         Ok(())
     }
@@ -1469,6 +1485,41 @@ mod tests {
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_run_continuous_returns_immediately_when_shutdown_already_requested(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let runtime = TestRuntimeBuilder::new(&ctx, "desktop-pre-signaled-shutdown")
+            .with_dry_run(true)
+            .build()
+            .await?;
+
+        let mut node = DesktopNode::new();
+        let mut config = DesktopConfig::default();
+        config.clipboard_enabled = false;
+        config.window_manager_enabled = false;
+        config.activitywatch_db_path = None;
+        let mut state = DesktopPersistentState::default();
+        node.initialize(config, &runtime.runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let _ = shutdown_tx.send(true);
+
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+        )
+        .await??;
+        assert!(
+            report.warnings.is_empty(),
+            "pre-signaled shutdown should not be reported as a dropped shutdown channel: {:?}",
+            report.warnings
+        );
+
+        node.shutdown(&state).await?;
         Ok(())
     }
 
