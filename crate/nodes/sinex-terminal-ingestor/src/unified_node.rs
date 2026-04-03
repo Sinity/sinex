@@ -244,28 +244,9 @@ enum LocalStateRestore {
 }
 
 fn default_polling_interval() -> Seconds {
-    match std::env::var(ENV_POLLING_INTERVAL) {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(seconds) => Seconds::from_secs(seconds),
-            Err(error) => {
-                warn!(
-                    env = ENV_POLLING_INTERVAL,
-                    value = %raw,
-                    %error,
-                    "Invalid terminal polling interval override; using default"
-                );
-                DEFAULT_POLLING_INTERVAL
-            }
-        },
-        Err(std::env::VarError::NotPresent) => DEFAULT_POLLING_INTERVAL,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                env = ENV_POLLING_INTERVAL,
-                "Terminal polling interval override is not valid UTF-8; using default"
-            );
-            DEFAULT_POLLING_INTERVAL
-        }
-    }
+    sinex_primitives::env::parse_optional::<u64>(ENV_POLLING_INTERVAL, "terminal polling interval")
+        .map(Seconds::from_secs)
+        .unwrap_or(DEFAULT_POLLING_INTERVAL)
 }
 
 fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {

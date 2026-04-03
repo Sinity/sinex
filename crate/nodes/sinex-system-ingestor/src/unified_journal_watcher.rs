@@ -371,22 +371,8 @@ impl UnifiedJournalWatcher {
     }
 
     fn resolve_max_line_bytes() -> NodeResult<usize> {
-        match std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES") {
-            Ok(raw) => raw.parse::<usize>().map_err(|error| {
-                sinex_node_sdk::SinexError::configuration(
-                    "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer".to_string(),
-                )
-                .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
-                .with_context("value", raw)
-                .with_source(error)
-            }),
-            Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAX_JOURNAL_LINE_BYTES),
-            Err(error) => Err(sinex_node_sdk::SinexError::configuration(
-                "Failed to read SINEX_JOURNAL_MAX_LINE_BYTES".to_string(),
-            )
-            .with_context("env_var", "SINEX_JOURNAL_MAX_LINE_BYTES")
-            .with_source(error)),
-        }
+        Ok(sinex_primitives::env::strict_parsed::<usize>("SINEX_JOURNAL_MAX_LINE_BYTES")?
+            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES))
     }
 
     fn parse_optional_field<T>(
