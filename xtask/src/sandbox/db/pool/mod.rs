@@ -484,7 +484,15 @@ async fn prune_stale_lazy_slot_databases(
                 if meta.fingerprint == *expected_fingerprint
                     && meta.extensions == *expected_extensions =>
             {
-                None
+                let slot_url = url_with_db_name(admin_url, slot_name)?;
+                let slot_pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(2)
+                    .connect(&slot_url)
+                    .await
+                    .map_err(|error| eyre!("failed to connect for lazy slot schema verification: {error}"))?;
+                let schema_drift = reset::schema_mismatch_reason(&slot_pool).await?;
+                slot_pool.close().await;
+                schema_drift.map(|reason| format!("actual schema drift ({reason})"))
             }
             Ok(Some(meta)) => Some(format!(
                 "pool metadata mismatch (fingerprint={:?}, extensions={:?})",
@@ -1488,6 +1496,60 @@ mod tests {
             .execute(&mut admin_conn)
             .await;
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_clean_metadata(
+    ) -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_prune_schema_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let meta = load_pool_meta(&mut admin_conn, &db_name)
+            .await?
+            .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
+
+        let slot_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&slot_url)
+            .await?;
+        sqlx::query(
+            r#"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+                ADD CONSTRAINT source_material_registry_status_check
+                CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
+            "#,
+        )
+        .execute(&slot_pool)
+        .await?;
+        let drift = reset::schema_mismatch_reason(&slot_pool).await?;
+        assert!(
+            drift.as_deref().is_some_and(|reason| reason.contains("source_material_registry_status_check")),
+            "expected real schema drift before lazy prune, got {drift:?}"
+        );
+        slot_pool.close().await;
+
+        let pruned = prune_stale_lazy_slot_databases(
+            &config.admin_url,
+            std::slice::from_ref(&db_name),
+            &meta.fingerprint,
+            &meta.extensions,
+        )
+        .await?;
+        assert_eq!(pruned, 1, "schema-drifted lazy slot should be pruned");
+        assert!(
+            !provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
+            "schema-drifted lazy slot database should be removed"
+        );
 
         Ok(())
     }
