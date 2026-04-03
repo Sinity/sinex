@@ -783,9 +783,19 @@ impl HistoryWatcherContext {
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
                 shutdown_result = shutdown_rx.changed() => {
-                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
-                        info!(path = %self.path, "History watcher shutdown requested");
-                        break;
+                    match shutdown_result {
+                        Ok(()) if *shutdown_rx.borrow() => {
+                            info!(path = %self.path, "History watcher shutdown requested");
+                            break;
+                        }
+                        Ok(()) => {}
+                        Err(_) => {
+                            warn!(
+                                path = %self.path,
+                                "History watcher shutdown channel dropped before explicit shutdown"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -828,9 +838,19 @@ impl HistoryWatcherContext {
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
                 shutdown_result = shutdown_rx.changed() => {
-                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
-                        info!(path = %self.path, "Fish history watcher shutdown requested");
-                        break;
+                    match shutdown_result {
+                        Ok(()) if *shutdown_rx.borrow() => {
+                            info!(path = %self.path, "Fish history watcher shutdown requested");
+                            break;
+                        }
+                        Ok(()) => {}
+                        Err(_) => {
+                            warn!(
+                                path = %self.path,
+                                "Fish history watcher shutdown channel dropped before explicit shutdown"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -873,9 +893,19 @@ impl HistoryWatcherContext {
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
                 shutdown_result = shutdown_rx.changed() => {
-                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
-                        info!(path = %self.path, "Atuin history watcher shutdown requested");
-                        break;
+                    match shutdown_result {
+                        Ok(()) if *shutdown_rx.borrow() => {
+                            info!(path = %self.path, "Atuin history watcher shutdown requested");
+                            break;
+                        }
+                        Ok(()) => {}
+                        Err(_) => {
+                            warn!(
+                                path = %self.path,
+                                "Atuin history watcher shutdown channel dropped before explicit shutdown"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -1836,33 +1866,27 @@ impl HistoryWatcherContext {
             |from_row_id, end_time| fish_history::read_fish_history(&self.path, from_row_id, end_time),
             |entry| entry.row_id,
             |entry| {
-                let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
+                let row_id = entry.row_id;
+                let prepared = match sqlite_row_id_to_line_number(self, row_id) {
                     Ok(line_number) => prepare_command_for_capture(
                         self,
                         &entry.command,
                         line_number,
                         Some(recent_hashes),
-                    ),
+                    )
+                    .map_err(|error| {
+                        let message = format!("failed to process Fish row {row_id}: {error}");
+                        self.record_error("process_fish_entry", &message);
+                        self.skippable_sqlite_warning(message)
+                    }),
                     Err(error) => {
-                        self.record_error("process_fish_entry", &error.to_string());
-                        warn!(
-                            "Failed to process Fish history entry from {}: {}",
-                            self.path, error
-                        );
-                        Ok(None)
+                        let message = format!("failed to process Fish row {row_id}: {error}");
+                        self.record_error("process_fish_entry", &message);
+                        Err(self.skippable_sqlite_warning(message))
                     }
                 };
                 async move {
-                    let Some(final_command) = prepared
-                        .map_err(|error| {
-                            self.record_error("process_fish_entry", &error.to_string());
-                            warn!(
-                                "Failed to process Fish history entry from {}: {}",
-                                self.path, error
-                            );
-                            self.skippable_sqlite_warning(error.to_string())
-                        })?
-                    else {
+                    let Some(final_command) = prepared? else {
                         return Ok(SqliteHistoryRowOutcome::Skipped);
                     };
 
@@ -1931,30 +1955,25 @@ impl HistoryWatcherContext {
             },
             |entry| entry.row_id,
             |entry| {
-                let prepared = match sqlite_row_id_to_line_number(self, entry.row_id) {
+                let row_id = entry.row_id;
+                let prepared = match sqlite_row_id_to_line_number(self, row_id) {
                     Ok(line_number) => {
                         prepare_command_for_capture(self, &entry.command, line_number, None)
+                            .map_err(|error| {
+                                let message =
+                                    format!("failed to process Atuin row {row_id}: {error}");
+                                self.record_error("process_atuin_entry", &message);
+                                self.skippable_sqlite_warning(message)
+                            })
                     }
                     Err(error) => {
-                        self.record_error("process_atuin_entry", &error.to_string());
-                        warn!(
-                            "Failed to process Atuin history entry from {}: {}",
-                            self.path, error
-                        );
-                        Ok(None)
+                        let message = format!("failed to process Atuin row {row_id}: {error}");
+                        self.record_error("process_atuin_entry", &message);
+                        Err(self.skippable_sqlite_warning(message))
                     }
                 };
                 async move {
-                    let Some(final_command) = prepared
-                        .map_err(|error| {
-                            self.record_error("process_atuin_entry", &error.to_string());
-                            warn!(
-                                "Failed to process Atuin history entry from {}: {}",
-                                self.path, error
-                            );
-                            self.skippable_sqlite_warning(error.to_string())
-                        })?
-                    else {
+                    let Some(final_command) = prepared? else {
                         return Ok(SqliteHistoryRowOutcome::Skipped);
                     };
 
