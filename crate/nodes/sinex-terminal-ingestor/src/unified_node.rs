@@ -237,6 +237,12 @@ enum HistorySourceMode {
     ConfiguredError(String),
 }
 
+enum LocalStateRestore {
+    Present(HistoryState),
+    Missing,
+    Unusable,
+}
+
 fn default_polling_interval() -> Seconds {
     match std::env::var(ENV_POLLING_INTERVAL) {
         Ok(raw) => match raw.parse::<u64>() {
@@ -910,23 +916,26 @@ impl HistoryWatcherContext {
         }
     }
 
-    async fn load_valid_local_state_or_empty(&self, warnings: &mut Vec<String>) -> HistoryState {
+    async fn load_valid_local_state_for_recovery(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> LocalStateRestore {
         match self.load_state().await {
             Ok(Some(state)) => match self.validate_state(state) {
-                Ok(state) => state,
+                Ok(state) => LocalStateRestore::Present(state),
                 Err(error) => {
                     warnings.push(self.strict_warning(format!(
                         "preserved local watcher state is unusable after failure: {error}"
                     )));
-                    self.empty_state()
+                    LocalStateRestore::Unusable
                 }
             },
-            Ok(None) => self.empty_state(),
+            Ok(None) => LocalStateRestore::Missing,
             Err(error) => {
                 warnings.push(self.strict_warning(format!(
                     "failed to preserve local watcher state after failure: {error}"
                 )));
-                self.empty_state()
+                LocalStateRestore::Unusable
             }
         }
     }
@@ -2771,18 +2780,22 @@ impl TerminalNode {
         from: &Checkpoint,
         context: &HistoryWatcherContext,
         warnings: &mut Vec<String>,
-    ) -> NodeResult<HistoryState> {
+    ) -> NodeResult<Option<HistoryState>> {
         let checkpoint_key = context.checkpoint_key();
         match Self::incoming_checkpoint_state_for_source_mode(
             from,
             &checkpoint_key,
             &context.source_mode,
         ) {
-            Ok(IncomingHistoryCheckpointState::State(state)) => Ok(state),
+            Ok(IncomingHistoryCheckpointState::State(state)) => Ok(Some(state)),
             Ok(IncomingHistoryCheckpointState::MissingSource)
-            | Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
-                Ok(context.load_valid_local_state_or_empty(warnings).await)
-            }
+            | Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => match context
+                .load_valid_local_state_for_recovery(warnings)
+                .await
+            {
+                LocalStateRestore::Present(state) => Ok(Some(state)),
+                LocalStateRestore::Missing | LocalStateRestore::Unusable => Ok(None),
+            },
             Err(error) => {
                 warnings.push(context.strict_warning(format!(
                     "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -3002,11 +3015,12 @@ impl IngestorNode for TerminalNode {
                 warnings.push(watch_ctx.strict_warning(
                     "configured source will not be monitored until its SQLite database is repaired",
                 ));
-                checkpoint_states.insert(
-                    checkpoint_key,
+                if let Some(state) =
                     Self::preserve_checkpoint_state_after_failure(&from, &watch_ctx, &mut warnings)
-                        .await?,
-                );
+                        .await?
+                {
+                    checkpoint_states.insert(checkpoint_key, state);
+                }
             } else {
                 let state_override = match Self::incoming_checkpoint_state_for_source_mode(
                     &from,
@@ -3015,9 +3029,20 @@ impl IngestorNode for TerminalNode {
                 ) {
                     Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
                     Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
-                    Ok(IncomingHistoryCheckpointState::MissingSource) => {
-                        Some(watch_ctx.load_valid_local_state_or_empty(&mut warnings).await)
-                    }
+                    Ok(IncomingHistoryCheckpointState::MissingSource) => match watch_ctx
+                        .load_valid_local_state_for_recovery(&mut warnings)
+                        .await
+                    {
+                        LocalStateRestore::Present(state) => Some(state),
+                        LocalStateRestore::Missing => Some(watch_ctx.empty_state()),
+                        LocalStateRestore::Unusable => {
+                            failed_targets.push((
+                                checkpoint_key.clone(),
+                                "failed to restore local terminal watcher state for omitted checkpoint source".to_string(),
+                            ));
+                            continue;
+                        }
+                    },
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
                             "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -3026,15 +3051,12 @@ impl IngestorNode for TerminalNode {
                             checkpoint_key.clone(),
                             format!("failed to restore incoming terminal checkpoint state: {error}"),
                         ));
-                        checkpoint_states.insert(
-                            checkpoint_key,
-                            watch_ctx
-                                .load_state()
-                                .await?
-                                .map(|state| watch_ctx.validate_state(state))
-                                .transpose()?
-                                .unwrap_or_else(|| watch_ctx.empty_state()),
-                        );
+                        match watch_ctx.load_valid_local_state_for_recovery(&mut warnings).await {
+                            LocalStateRestore::Present(state) => {
+                                checkpoint_states.insert(checkpoint_key, state);
+                            }
+                            LocalStateRestore::Missing | LocalStateRestore::Unusable => {}
+                        }
                         continue;
                     }
                 };
@@ -3093,7 +3115,7 @@ impl IngestorNode for TerminalNode {
 
             let final_state = match watch_ctx.load_state().await {
                 Ok(Some(state)) => match watch_ctx.validate_state(state) {
-                    Ok(state) => state,
+                    Ok(state) => Some(state),
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
                             "final watcher state is unusable after continuous monitoring: {error}"
@@ -3119,7 +3141,9 @@ impl IngestorNode for TerminalNode {
                     fallback_state.clone()
                 }
             };
-            checkpoint_states.insert(watch_ctx.checkpoint_key(), final_state);
+            if let Some(final_state) = final_state {
+                checkpoint_states.insert(watch_ctx.checkpoint_key(), final_state);
+            }
             if let Some(failure) = failure {
                 failed_targets.push((checkpoint_key, failure));
             } else {
@@ -5590,9 +5614,88 @@ mod tests {
         let restored = TerminalNode::checkpoint_state_for_source(
             &report.final_checkpoint,
             &format!("atuin:{history_path}"),
-        )?
-        .ok_or_else(|| color_eyre::eyre::eyre!("missing preserved checkpoint state"))?;
-        assert_eq!(restored.sqlite_row_id, Some(0));
+        )?;
+        assert!(
+            restored.is_none(),
+            "corrupt local sqlite state must not be rewritten as fake row-id progress: {restored:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_does_not_reset_omitted_source_with_corrupt_local_state(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-omitted-source-corrupt-local")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT,
+                exit INTEGER,
+                duration INTEGER,
+                hostname TEXT,
+                session TEXT,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("invalid Atuin temp path should be utf-8: {}", path.display())
+        })?;
+
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path.clone(),
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let state_path = node
+            .build_history_contexts(tokio::sync::watch::channel(false).1)?
+            .into_iter()
+            .next()
+            .and_then(|ctx| ctx.state_path)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing terminal watcher state path"))?;
+        tokio::fs::write(&state_path, "{ definitely not valid json").await?;
+
+        let incoming = TerminalNode::checkpoint_from_states(HashMap::from([(
+            "atuin:/tmp/other.db".to_string(),
+            HistoryState {
+                sqlite_row_id: Some(42),
+                ..HistoryState::default()
+            },
+        )]))?;
+
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let error = node
+            .run_continuous(&mut state, incoming, shutdown_rx)
+            .await
+            .expect_err("corrupt local state for an omitted source must fail instead of resetting progress");
+        let message = error.to_string();
+        assert!(
+            message.contains("no usable history sources"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            message.contains("failed to restore local terminal watcher state for omitted checkpoint source"),
+            "unexpected error: {error}"
+        );
         Ok(())
     }
 
