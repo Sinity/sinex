@@ -667,6 +667,11 @@ async fn prune_stale_buffered_slices(
 /// Each entry is serialized as `{"seq":N,"crc":CHECKSUM,"entry":{...}}\n` and fsync'd.
 /// The CRC is computed over the serialized `entry` JSON, allowing recovery to detect
 /// corruption (bit-flips, partial writes) before applying the entry.
+///
+/// Error construction below uses `SinexError::io(msg).with_source(e)` inline throughout.
+/// Each site carries a distinct message that identifies the precise failure point
+/// (open, write, newline, sync), so extracting a shared helper would only obscure that
+/// specificity. The pattern is intentionally repeated rather than abstracted.
 pub(super) async fn append_wal_entry(
     _assembler: &MaterialAssembler,
     state: &mut AssemblerState,
