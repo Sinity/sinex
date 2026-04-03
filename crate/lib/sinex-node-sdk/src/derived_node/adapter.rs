@@ -52,18 +52,16 @@ fn stale_output_ids_or_fail_scope(
     stale_query_result: Result<Vec<QueryResultEvent>, SinexError>,
 ) -> Result<Vec<Uuid>, SinexError> {
     match stale_query_result {
-        Ok(events) => Ok(
-            events
-                .iter()
-                .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
-                .collect(),
-        ),
-        Err(error) => {
-            Err(SinexError::processing("Failed to query stale outputs for invalidation recompute")
-                .with_context("node", node_name)
-                .with_context("scope_key", scope_key)
-                .with_source(error))
-        }
+        Ok(events) => Ok(events
+            .iter()
+            .filter_map(|qe| qe.event.id.map(|id| *id.as_uuid()))
+            .collect()),
+        Err(error) => Err(SinexError::processing(
+            "Failed to query stale outputs for invalidation recompute",
+        )
+        .with_context("node", node_name)
+        .with_context("scope_key", scope_key)
+        .with_source(error)),
     }
 }
 
@@ -988,7 +986,10 @@ where
                     .iter()
                     .flat_map(|old_id| {
                         let scope_key = scope_key.clone();
-                        scope.new_event_ids.iter().map(move |(new_id, eq_key)| ReplacementRecord {
+                        scope
+                            .new_event_ids
+                            .iter()
+                            .map(move |(new_id, eq_key)| ReplacementRecord {
                                 old_event_id: *old_id,
                                 new_event_id: *new_id,
                                 relation_kind: ReplacementKind::Recomputed,
@@ -1524,21 +1525,15 @@ where
                             }
                             ErrorAction::SendToDLQ => {
                                 let event_for_dlq = query_event.event.clone();
-                                if let Err(dlq_err) =
-                                    self.send_to_dlq_or_fail(&event_for_dlq, &e).await
-                                {
+                                let dlq_err = self.send_to_dlq_or_fail(&event_for_dlq, &e).await;
+                                if let Err(cp_err) = self.save_state().await {
                                     error!(
                                         node = %self.node.name(),
-                                        error = %dlq_err,
-                                        "Failed to send to DLQ during replay"
+                                        error = %cp_err,
+                                        "Failed to save checkpoint after replay DLQ error"
                                     );
-                                    if let Err(cp_err) = self.save_state().await {
-                                        error!(
-                                            node = %self.node.name(),
-                                            error = %cp_err,
-                                            "Failed to save checkpoint after replay DLQ error"
-                                        );
-                                    }
+                                }
+                                if let Err(dlq_err) = dlq_err {
                                     return Err(dlq_err);
                                 }
                             }
@@ -1836,7 +1831,8 @@ where
         }
 
         Ok(self.health_reporter.as_ref().map_or(true, |reporter| {
-            reporter.current_status() == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
+            reporter.current_status()
+                == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
         }))
     }
 
@@ -1978,8 +1974,6 @@ pub type ScopeReconcilerNodeAdapter<N> =
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     #[cfg(feature = "messaging")]
-    use crate::health_reporter::{HealthReporter, HealthThresholds};
-    #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
     use super::signal_shutdown_channel;
     use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
@@ -1988,6 +1982,8 @@ mod tests {
         TransducerWrapper,
     };
     use crate::exploration::ExplorationProvider;
+    #[cfg(feature = "messaging")]
+    use crate::health_reporter::{HealthReporter, HealthThresholds};
     use crate::runtime::stream::{
         Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
     };
@@ -3036,11 +3032,11 @@ mod tests {
     async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         ctx: TestContext,
     ) -> TestResult<()> {
+        use super::super::DerivedScopeInvalidation;
         use sinex_db::DbPoolExt;
         use sinex_primitives::events::DynamicPayload;
         use sinex_primitives::query::{AggregationMode, EventQuery, EventQueryResult};
         use sinex_primitives::{EventSource, EventType};
-        use super::super::DerivedScopeInvalidation;
 
         let ctx = ctx.with_nats().dedicated().await?;
         let material_id = ctx
@@ -3072,12 +3068,8 @@ mod tests {
         stale_output.scope_key = Some(scope_key.to_string());
         ctx.pool().events().insert_batch(vec![stale_output]).await?;
 
-        let (runtime, event_receiver) = make_runtime_state_with_db(
-            &ctx,
-            "adapter-regression-scope-reconciler",
-            None,
-        )
-        .await?;
+        let (runtime, event_receiver) =
+            make_runtime_state_with_db(&ctx, "adapter-regression-scope-reconciler", None).await?;
         drop(event_receiver);
 
         let mut adapter = DerivedNodeAdapter::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
@@ -3143,10 +3135,10 @@ mod tests {
     async fn handle_invalidation_message_checkpoints_state_only_mutations(
         ctx: TestContext,
     ) -> TestResult<()> {
+        use super::super::DerivedScopeInvalidation;
         use sinex_db::DbPoolExt;
         use sinex_primitives::events::DynamicPayload;
         use sinex_primitives::{EventSource, EventType};
-        use super::super::DerivedScopeInvalidation;
 
         let ctx = ctx.with_nats().dedicated().await?;
         let material_id = ctx
@@ -3164,12 +3156,9 @@ mod tests {
         input.scope_key = Some(scope_key.to_string());
         ctx.pool().events().insert_batch(vec![input]).await?;
 
-        let (runtime, _event_receiver) = make_runtime_state_with_db(
-            &ctx,
-            "adapter-regression-stateful-invalidation",
-            None,
-        )
-        .await?;
+        let (runtime, _event_receiver) =
+            make_runtime_state_with_db(&ctx, "adapter-regression-stateful-invalidation", None)
+                .await?;
 
         let mut adapter = DerivedNodeAdapter::with_config(
             ScopeReconcilerWrapper(StatefulInvalidationNode),
@@ -3203,14 +3192,13 @@ mod tests {
             "state-only invalidation should force a checkpoint-worthy state save"
         );
         assert_eq!(
-            adapter.events_since_checkpoint,
-            0,
+            adapter.events_since_checkpoint, 0,
             "successful invalidation checkpoint should clear the dirty counter"
         );
         Ok(())
     }
 
-    #[cfg(feature = "messaging")]
+    #[cfg(feature = "db")]
     #[sinex_test]
     async fn historical_replay_fails_when_dlq_routing_fails(
         ctx: TestContext,
