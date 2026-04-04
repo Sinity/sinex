@@ -11,17 +11,16 @@ use crate::history::{
     DiagnosticCounts, HistoryAnalysis, HistoryDb, Invocation, InvocationStatus, Recommendation,
     VelocityTrend, WorkspaceHealthReport,
 };
+use crate::infra::stack::StackConfig;
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
-use crate::jobs::JobManager;
 use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeMetrics};
 use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::{Result, WrapErr};
 use console::style;
 use serde::Serialize;
-use sinex_primitives::DeploymentReadinessDescriptor;
 use std::any::Any;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusCommand {
@@ -86,102 +85,184 @@ struct ServiceStatus {
 enum ServiceRunStatus {
     Running,
     Stopped,
+    Skipped,
     Unknown,
 }
 
-const CORE_SERVICE_NAMES: [&str; 2] = ["sinex-gateway", "sinex-ingestd"];
-
-fn probe_service_status(service_name: &str) -> ServiceStatus {
-    let output = std::process::Command::new("pgrep")
-        .arg("-x")
-        .arg(service_name)
-        .output();
-    probe_service_status_with(service_name, output)
+fn service_status_from_active_job(service_name: &str, job: &crate::jobs::Job) -> ServiceStatus {
+    ServiceStatus {
+        name: service_name.to_string(),
+        status: ServiceRunStatus::Running,
+        probe: "background_job",
+        pid: job.pid,
+        message: None,
+    }
 }
 
-fn probe_service_status_with(
+fn active_job_for_service<'a>(
     service_name: &str,
-    output: std::io::Result<std::process::Output>,
+    active_jobs: &'a [crate::jobs::Job],
+) -> Option<&'a crate::jobs::Job> {
+    active_jobs.iter().find(|job| {
+        job.is_alive()
+            && std::path::Path::new(&job.command)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|binary| binary == service_name)
+    })
+}
+
+fn gateway_service_status_from_readiness(
+    readiness: crate::commands::doctor::DeploymentReadinessItem,
+    pid: Option<u32>,
+    force_probe: bool,
 ) -> ServiceStatus {
-    let (status, pid, message) = match output {
-        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
-            let pid_str = String::from_utf8_lossy(&output.stdout);
-            match pid_str
-                .lines()
-                .next()
-                .and_then(|line| line.trim().parse().ok())
-            {
-                Some(pid) => (ServiceRunStatus::Running, Some(pid), None),
-                None => (
+    let (status, message) = match readiness.status.as_str() {
+        "pass" => (ServiceRunStatus::Running, None),
+        "fail" => {
+            if force_probe {
+                (
                     ServiceRunStatus::Unknown,
-                    None,
                     Some(format!(
-                        "process probe returned unreadable pid output: {}",
-                        pid_str.trim()
+                        "gateway process is alive but readiness probe failed: {}",
+                        readiness.description
                     )),
-                ),
+                )
+            } else {
+                (ServiceRunStatus::Stopped, Some(readiness.description))
             }
         }
-        Ok(output) if output.status.code() == Some(1) => (
-            ServiceRunStatus::Stopped,
-            None,
-            Some("exact process-name probe found no matching process".to_string()),
-        ),
-        Ok(output) => (
+        "skip" => {
+            if force_probe {
+                (
+                    ServiceRunStatus::Unknown,
+                    Some(format!(
+                        "gateway process is alive but readiness probe skipped unexpectedly: {}",
+                        readiness.description
+                    )),
+                )
+            } else {
+                (ServiceRunStatus::Skipped, Some(readiness.description))
+            }
+        }
+        other => (
             ServiceRunStatus::Unknown,
-            None,
             Some(format!(
-                "process probe exited with status {}{}",
-                output.status,
-                render_probe_stderr(&output)
+                "gateway readiness probe returned unexpected status `{other}`: {}",
+                readiness.description
             )),
-        ),
-        Err(error) => (
-            ServiceRunStatus::Unknown,
-            None,
-            Some(format!("failed to run process probe: {error}")),
         ),
     };
 
     ServiceStatus {
-        name: service_name.to_string(),
+        name: "sinex-gateway".to_string(),
         status,
-        probe: "process_exact_name",
+        probe: "gateway_ready_http",
         pid,
         message,
     }
 }
 
-fn render_probe_stderr(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let detail = stderr.trim();
-    if detail.is_empty() {
-        String::new()
-    } else {
-        format!(" ({detail})")
+async fn probe_gateway_service_status(
+    gateway_url: Option<&str>,
+    force_probe: bool,
+    pid: Option<u32>,
+) -> ServiceStatus {
+    let readiness = crate::commands::doctor::check_gateway_ready(gateway_url, None).await;
+    gateway_service_status_from_readiness(readiness, pid, force_probe)
+}
+
+fn status_profile_enabled() -> bool {
+    std::env::var("SINEX_STATUS_PROFILE").is_ok_and(|value| {
+        matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    })
+}
+
+fn emit_status_profile(label: &str, started_at: Instant) {
+    if status_profile_enabled() {
+        eprintln!(
+            "[status-profile] {label}: {:.3}s",
+            started_at.elapsed().as_secs_f64()
+        );
     }
 }
 
-fn collect_core_service_statuses() -> Vec<ServiceStatus> {
-    CORE_SERVICE_NAMES
-        .iter()
-        .map(|service_name| probe_service_status(service_name))
-        .collect()
+fn emit_status_profile_duration(label: &str, duration: Duration) {
+    if status_profile_enabled() {
+        eprintln!("[status-profile] {label}: {:.3}s", duration.as_secs_f64());
+    }
+}
+
+async fn collect_core_service_statuses(
+    gateway_url: Option<&str>,
+    runtime_metrics: Option<&RuntimeMetrics>,
+    active_jobs: &[crate::jobs::Job],
+) -> Vec<ServiceStatus> {
+    let ingestd = active_job_for_service("sinex-ingestd", active_jobs)
+        .map(|job| service_status_from_active_job("sinex-ingestd", job))
+        .unwrap_or_else(|| ingestd_service_status_from_runtime_metrics(runtime_metrics));
+    let gateway_process = active_job_for_service("sinex-gateway", active_jobs)
+        .map(|job| service_status_from_active_job("sinex-gateway", job))
+        .unwrap_or_else(|| ServiceStatus {
+            name: "sinex-gateway".to_string(),
+            status: ServiceRunStatus::Stopped,
+            probe: "checkout_local",
+            pid: None,
+            message: Some("no active checkout-local gateway job is tracked".to_string()),
+        });
+    let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
+
+    vec![
+        probe_gateway_service_status(gateway_url, gateway_force_probe, gateway_process.pid).await,
+        ingestd,
+    ]
 }
 
 fn resolve_runtime_metrics_database_url(database_url: Option<&str>) -> Result<Option<String>> {
-    let descriptor = if database_url.is_some() {
-        None
-    } else {
-        DeploymentReadinessDescriptor::load()
-            .wrap_err("failed to load deployment readiness descriptor for runtime metrics")?
+    if let Some(url) = database_url {
+        return Ok(Some(url.to_string()));
+    }
+
+    let stack_config = StackConfig::for_current_checkout()
+        .wrap_err("failed to load checkout stack config for runtime metrics")?;
+    Ok(Some(stack_config.database_url()))
+}
+
+fn ingestd_service_status_from_runtime_metrics(
+    runtime_metrics: Option<&RuntimeMetrics>,
+) -> ServiceStatus {
+    let (status, message) = match runtime_metrics {
+        Some(metrics) => match metrics.ingestd_status {
+            IngestdStatus::Healthy => (ServiceRunStatus::Running, None),
+            IngestdStatus::Down => (
+                ServiceRunStatus::Stopped,
+                Some("no checkout-local ingestd heartbeat found in the local runtime database".to_string()),
+            ),
+            IngestdStatus::Stale => (
+                ServiceRunStatus::Unknown,
+                Some("checkout-local ingestd heartbeat is stale in the local runtime database".to_string()),
+            ),
+            IngestdStatus::Unknown => (
+                ServiceRunStatus::Unknown,
+                metrics
+                    .query_error
+                    .clone()
+                    .or_else(|| Some("checkout-local ingestd status is unavailable".to_string())),
+            ),
+        },
+        None => (
+            ServiceRunStatus::Unknown,
+            Some("checkout-local runtime database target is unavailable".to_string()),
+        ),
     };
-    crate::commands::doctor::resolve_effective_database_probe_url(
-        database_url,
-        descriptor.as_ref(),
-        "runtime metrics",
-    )
-    .map(|value| value.map(|(url, _source)| url))
+
+    ServiceStatus {
+        name: "sinex-ingestd".to_string(),
+        status,
+        probe: "runtime_metrics",
+        pid: None,
+        message,
+    }
 }
 
 fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<RuntimeMetrics> {
@@ -210,6 +291,7 @@ fn describe_thread_panic(payload: &(dyn Any + Send)) -> String {
     }
 }
 
+#[cfg(test)]
 fn recover_runtime_metrics_thread(
     result: std::thread::Result<Option<RuntimeMetrics>>,
 ) -> Option<RuntimeMetrics> {
@@ -452,7 +534,7 @@ impl XtaskCommand for StatusCommand {
         if self.schemas {
             Ok(execute_schemas(ctx))
         } else if self.summary {
-            execute_summary(ctx)
+            execute_summary(ctx).await
         } else {
             execute_full_status(self.watch, ctx).await
         }
@@ -516,11 +598,19 @@ fn summarize_git_probe_output(output: &std::process::Output) -> String {
     format!("exit status {}", output.status)
 }
 
-fn record_git_probe_issue(probe_issues: &mut Vec<String>, args: &[&str], detail: impl Into<String>) {
+fn record_git_probe_issue(
+    probe_issues: &mut Vec<String>,
+    args: &[&str],
+    detail: impl Into<String>,
+) {
     probe_issues.push(format!("git {} failed: {}", args.join(" "), detail.into()));
 }
 
-fn run_git_output(cwd: &Path, probe_issues: &mut Vec<String>, args: &[&str]) -> Option<std::process::Output> {
+fn run_git_output(
+    cwd: &Path,
+    probe_issues: &mut Vec<String>,
+    args: &[&str],
+) -> Option<std::process::Output> {
     match std::process::Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -541,62 +631,48 @@ fn run_git_output(cwd: &Path, probe_issues: &mut Vec<String>, args: &[&str]) -> 
 fn probe_git_state(cwd: &Path) -> GitState {
     let mut probe_issues = Vec::new();
 
-    let branch = run_git_output(cwd, &mut probe_issues, &["branch", "--show-current"]).and_then(
-        |output| {
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            (!branch.is_empty()).then_some(branch)
-        },
-    );
-
-    let porcelain_output = run_git_output(cwd, &mut probe_issues, &["status", "--porcelain"]);
-    let dirty = porcelain_output
-        .as_ref()
-        .is_some_and(|output| !output.stdout.is_empty());
-    let uncommitted_count = porcelain_output
-        .as_ref()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|line| !line.is_empty())
-                .count()
-        });
-
-    let (ahead, behind) = run_git_output(
+    let (branch, dirty, uncommitted_count, ahead, behind) = run_git_output(
         cwd,
         &mut probe_issues,
-        &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+        &["status", "--porcelain=v2", "--branch"],
     )
-    .map_or((0, 0), |output| {
-        parse_git_upstream_counts(&String::from_utf8_lossy(&output.stdout), &mut probe_issues)
+    .map_or((None, false, None, 0, 0), |output| {
+        parse_git_status_branch_porcelain(
+            &String::from_utf8_lossy(&output.stdout),
+            &mut probe_issues,
+        )
     });
 
-    let commit = run_git_output(cwd, &mut probe_issues, &["log", "-1", "--format=%h\t%s\t%ct"])
-        .and_then(|output| {
-            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let parts: Vec<&str> = text.splitn(3, '\t').collect();
-            if parts.len() == 3 {
-                Some((
-                    parts[0].to_string(),
-                    parts[1].to_string(),
-                    parts[2].to_string(),
-                ))
-            } else {
-                record_git_probe_issue(
-                    &mut probe_issues,
-                    &["log", "-1", "--format=%h\t%s\t%cr"],
-                    format!("unexpected output: {text}"),
-                );
-                None
-            }
-        });
+    let commit = run_git_output(
+        cwd,
+        &mut probe_issues,
+        &["log", "-1", "--format=%h\t%s\t%ct"],
+    )
+    .and_then(|output| {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let parts: Vec<&str> = text.splitn(3, '\t').collect();
+        if parts.len() == 3 {
+            Some((
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            ))
+        } else {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["log", "-1", "--format=%h\t%s\t%cr"],
+                format!("unexpected output: {text}"),
+            );
+            None
+        }
+    });
 
-    let stash_count = run_git_output(cwd, &mut probe_issues, &["stash", "list"])
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|line| !line.is_empty())
-                .count()
-        });
+    let stash_count = run_git_output(cwd, &mut probe_issues, &["stash", "list"]).map(|output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .count()
+    });
 
     let files_changed = run_git_output(cwd, &mut probe_issues, &["diff", "--shortstat", "HEAD"])
         .and_then(|output| {
@@ -605,24 +681,28 @@ fn probe_git_state(cwd: &Path) -> GitState {
         });
 
     let now_unix_ts = current_unix_timestamp_secs();
-    let last_age = commit.as_ref().and_then(|(_, _, commit_unix_ts)| match now_unix_ts {
-        Some(now_unix_ts) => parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["log", "-1", "--format=%h\t%s\t%ct"],
-                format!("unexpected commit timestamp: {commit_unix_ts}"),
-            );
-            None
-        }),
-        None => {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["log", "-1", "--format=%h\t%s\t%ct"],
-                "system clock is before the Unix epoch".to_string(),
-            );
-            None
-        }
-    });
+    let last_age = commit
+        .as_ref()
+        .and_then(|(_, _, commit_unix_ts)| match now_unix_ts {
+            Some(now_unix_ts) => {
+                parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
+                    record_git_probe_issue(
+                        &mut probe_issues,
+                        &["log", "-1", "--format=%h\t%s\t%ct"],
+                        format!("unexpected commit timestamp: {commit_unix_ts}"),
+                    );
+                    None
+                })
+            }
+            None => {
+                record_git_probe_issue(
+                    &mut probe_issues,
+                    &["log", "-1", "--format=%h\t%s\t%ct"],
+                    "system clock is before the Unix epoch".to_string(),
+                );
+                None
+            }
+        });
     let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
     let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
 
@@ -720,39 +800,6 @@ struct SummaryData {
     runtime_metrics: Option<RuntimeMetrics>,
 }
 
-fn collect_jobs_snapshot(recent_limit: usize) -> JobsSnapshot {
-    let jobs_dir = config().jobs_dir();
-    let mut snapshot = JobsSnapshot::default();
-    let manager = match JobManager::new(jobs_dir.clone()) {
-        Ok(manager) => manager,
-        Err(error) => {
-            snapshot.issues.push(format!(
-                "Jobs state unavailable at {}: {error}",
-                jobs_dir.display()
-            ));
-            return snapshot;
-        }
-    };
-
-    match manager.list_active() {
-        Ok(active) => snapshot.active = active,
-        Err(error) => snapshot.issues.push(format!(
-            "Failed to read active jobs from {}: {error}",
-            jobs_dir.display()
-        )),
-    }
-
-    match manager.list_recent(recent_limit) {
-        Ok(recent) => snapshot.recent = recent,
-        Err(error) => snapshot.issues.push(format!(
-            "Failed to read recent jobs from {}: {error}",
-            jobs_dir.display()
-        )),
-    }
-
-    snapshot
-}
-
 fn explain_history_db_open_failure(ctx: &CommandContext) -> String {
     match HistoryDb::open(ctx.history_db_path()) {
         Ok(_) => format!(
@@ -766,41 +813,70 @@ fn explain_history_db_open_failure(ctx: &CommandContext) -> String {
     }
 }
 
-fn collect_history_snapshot(
-    ctx: &CommandContext,
+fn collect_history_snapshot_from_db(
+    db: &HistoryDb,
     recent_limit: usize,
     include_analytics: bool,
 ) -> HistorySnapshot {
     use crate::history::DiagnosticQuery;
 
-    let Some(result) = ctx.try_with_history_db(|db: &HistoryDb| {
-        let mut snapshot = HistorySnapshot {
-            available: true,
-            is_synthetic: db.is_synthetic,
-            ..HistorySnapshot::default()
-        };
+    let total_started_at = Instant::now();
+    let mut snapshot = HistorySnapshot {
+        available: true,
+        is_synthetic: db.is_synthetic,
+        ..HistorySnapshot::default()
+    };
 
-        match db.get_recent(recent_limit, None) {
-            Ok(recent) => snapshot.recent = recent,
-            Err(error) => snapshot
-                .issues
-                .push(format!("Failed to read recent command history: {error}")),
+    let recent_started_at = Instant::now();
+    match db.get_recent(recent_limit, None) {
+        Ok(recent) => snapshot.recent = recent,
+        Err(error) => snapshot
+            .issues
+            .push(format!("Failed to read recent command history: {error}")),
+    }
+    emit_status_profile("history.get_recent", recent_started_at);
+
+    let flaky_started_at = Instant::now();
+    match db.get_flaky_test_count(50) {
+        Ok(flaky_count) => snapshot.flaky_count = flaky_count,
+        Err(error) => snapshot
+            .issues
+            .push(format!("Failed to read flaky-test history: {error}")),
+    }
+    emit_status_profile("history.get_flaky_test_count", flaky_started_at);
+
+    if include_analytics {
+        let analysis = HistoryAnalysis::new(db);
+        let analytics_started_at = Instant::now();
+        match analysis.status_summary_snapshot() {
+            Ok((report, velocity, recommendations)) => {
+                snapshot.diag_counts = DiagnosticCounts {
+                    errors: report.error_count,
+                    warnings: report.warning_count,
+                    fixable: report.fixable_count,
+                };
+                snapshot.health_report = Some(report);
+                snapshot.velocity = velocity;
+                snapshot.recommendations = recommendations;
+            }
+            Err(error) => snapshot.issues.push(format!(
+                "Failed to compute workspace analytics snapshot: {error}"
+            )),
         }
-
+        emit_status_profile("history.analytics_snapshot", analytics_started_at);
+    } else {
+        let diagnostics_started_at = Instant::now();
         match db.get_current_diagnostic_counts() {
             Ok(counts) => snapshot.diag_counts = counts,
             Err(error) => snapshot
                 .issues
                 .push(format!("Failed to read current diagnostics: {error}")),
         }
+        emit_status_profile("history.get_current_diagnostic_counts", diagnostics_started_at);
+    }
 
-        match db.get_flaky_tests(50) {
-            Ok(flaky) => snapshot.flaky_count = flaky.len(),
-            Err(error) => snapshot
-                .issues
-                .push(format!("Failed to read flaky-test history: {error}")),
-        }
-
+    if snapshot.diag_counts.errors > 0 {
+        let error_packages_started_at = Instant::now();
         match DiagnosticQuery::new().level("error").limit(50).run(db) {
             Ok(diags) => {
                 let mut pkgs: Vec<String> =
@@ -813,88 +889,226 @@ fn collect_history_snapshot(
                 .issues
                 .push(format!("Failed to read error-package history: {error}")),
         }
+        emit_status_profile("history.error_packages", error_packages_started_at);
+    }
 
-        if include_analytics {
-            let analysis = HistoryAnalysis::new(db);
-            match analysis.workspace_health_report() {
-                Ok(report) => snapshot.health_report = Some(report),
-                Err(error) => snapshot.issues.push(format!(
-                    "Failed to compute workspace health report: {error}"
-                )),
-            }
-            match analysis.velocity_trends() {
-                Ok(velocity) => snapshot.velocity = velocity,
-                Err(error) => snapshot
-                    .issues
-                    .push(format!("Failed to compute velocity trends: {error}")),
-            }
-            match analysis.recommendations() {
-                Ok(recommendations) => snapshot.recommendations = recommendations,
-                Err(error) => snapshot.issues.push(format!(
-                    "Failed to compute workspace recommendations: {error}"
-                )),
-            }
-        }
+    emit_status_profile("history.total", total_started_at);
+    snapshot
+}
 
-        Ok(snapshot)
+fn collect_history_and_jobs_snapshot(
+    ctx: &CommandContext,
+    history_recent_limit: usize,
+    include_analytics: bool,
+    jobs_recent_limit: usize,
+) -> (HistorySnapshot, JobsSnapshot) {
+    let jobs_dir = config().jobs_dir();
+    let Some(result) = ctx.try_with_history_db(|db| {
+        let history = collect_history_snapshot_from_db(db, history_recent_limit, include_analytics);
+        let jobs_started_at = Instant::now();
+        let jobs = crate::jobs::snapshot_recent_and_active_from_history_db(
+            db,
+            &jobs_dir,
+            jobs_recent_limit,
+        )
+        .map(|(active, recent)| JobsSnapshot {
+            active,
+            recent,
+            issues: Vec::new(),
+        })
+        .unwrap_or_else(|error| JobsSnapshot {
+            active: Vec::new(),
+            recent: Vec::new(),
+            issues: vec![format!(
+                "Failed to read background jobs from {}: {error}",
+                ctx.history_db_path().display()
+            )],
+        });
+        emit_status_profile("jobs.read_snapshot", jobs_started_at);
+        Ok((history, jobs))
     }) else {
-        return HistorySnapshot::unavailable(explain_history_db_open_failure(ctx));
+        return (
+            HistorySnapshot::unavailable(explain_history_db_open_failure(ctx)),
+            JobsSnapshot {
+                active: Vec::new(),
+                recent: Vec::new(),
+                issues: vec![format!(
+                    "Jobs state unavailable at {}",
+                    ctx.history_db_path().display()
+                )],
+            },
+        );
     };
 
     match result {
-        Ok(snapshot) => snapshot,
-        Err(error) => HistorySnapshot::unavailable(format!(
-            "History DB query failed at {}: {error}",
-            ctx.history_db_path().display()
-        )),
+        Ok((history, jobs)) => (history, jobs),
+        Err(error) => (
+            HistorySnapshot::unavailable(format!(
+                "History DB query failed at {}: {error}",
+                ctx.history_db_path().display()
+            )),
+            JobsSnapshot {
+                active: Vec::new(),
+                recent: Vec::new(),
+                issues: vec![format!(
+                    "Failed to read background jobs from {}: {error}",
+                    ctx.history_db_path().display()
+                )],
+            },
+        ),
     }
 }
 
 /// Collect all data for --summary in parallel threads.
-fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
+async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
+    let total_started_at = Instant::now();
     let cfg = config();
+    let gateway_url = cfg.gateway_url.clone();
 
-    std::thread::scope(|s| {
-        // Thread 1: Infrastructure + services
+    let threaded_stage_started_at = Instant::now();
+    let (
+        pg_probe,
+        nats_probe,
+        git,
+        active_job_details,
+        active_job_count,
+        history,
+        job_issues,
+        active_jobs_list,
+        runtime_metrics,
+        gateway_url,
+    ) = std::thread::scope(|s| {
+        // Thread 1: Infrastructure
         let infra_handle = s.spawn(move || {
+            let started_at = Instant::now();
             let pg = probe_postgres();
             let nats = probe_nats();
-
-            let services = collect_core_service_statuses();
-
-            (pg, nats, services)
+            ((pg, nats), started_at.elapsed())
         });
 
         // Thread 2: Runtime metrics from Postgres
         let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
-        let runtime_metrics_handle = s.spawn(move || collect_runtime_metrics(runtime_db_url));
+        let runtime_metrics_handle = s.spawn(move || {
+            let started_at = Instant::now();
+            (collect_runtime_metrics(runtime_db_url), started_at.elapsed())
+        });
 
-        // Thread 3: History snapshot
-        let history_handle = s.spawn(move || collect_history_snapshot(ctx, 50, true));
+        // Thread 3: History + jobs snapshot (single SQLite handle)
+        let history_jobs_handle = s.spawn(move || {
+            let started_at = Instant::now();
+            (
+                collect_history_and_jobs_snapshot(ctx, 50, true, 20),
+                started_at.elapsed(),
+            )
+        });
 
         // Thread 4: Git state (expanded for rich mode)
         let git_handle = s.spawn(move || match std::env::current_dir() {
-            Ok(cwd) => probe_git_state(&cwd),
-            Err(error) => GitState {
-                branch: None,
-                dirty: false,
-                ahead: 0,
-                behind: 0,
-                probe_message: Some(format!("failed to determine current directory for git probe: {error}")),
-                last_commit_hash: None,
-                last_commit_message: None,
-                last_commit_age_mins: None,
-                stash_count: None,
-                files_changed: None,
-                uncommitted_count: None,
-            },
+            Ok(cwd) => {
+                let started_at = Instant::now();
+                (probe_git_state(&cwd), started_at.elapsed())
+            }
+            Err(error) => (
+                GitState {
+                    branch: None,
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    probe_message: Some(format!(
+                        "failed to determine current directory for git probe: {error}"
+                    )),
+                    last_commit_hash: None,
+                    last_commit_message: None,
+                    last_commit_age_mins: None,
+                    stash_count: None,
+                    files_changed: None,
+                    uncommitted_count: None,
+                },
+                Duration::ZERO,
+            ),
         });
 
-        // Main thread: jobs
-        let jobs = collect_jobs_snapshot(20);
+        // Collect thread results
+        let ((pg_probe, nats_probe), infra_duration) = match infra_handle.join() {
+            Ok(result) => result,
+            Err(payload) => {
+                let message = format!(
+                    "infra probe thread panicked: {}",
+                    describe_thread_panic(&*payload)
+                );
+                (
+                    (
+                        PostgresProbe {
+                            running: false,
+                            accepting_connections: false,
+                            latency_ms: 0,
+                            message: Some(message.clone()),
+                        },
+                        NatsProbe {
+                            running: false,
+                            reachable: false,
+                            latency_ms: 0,
+                            port: 4222,
+                            message: Some(message),
+                        },
+                    ),
+                    Duration::ZERO,
+                )
+            }
+        };
+        let (runtime_metrics, runtime_duration) = match runtime_metrics_handle.join() {
+            Ok((metrics, duration)) => (metrics, duration),
+            Err(payload) => (
+                Some(RuntimeMetrics::query_failure(format!(
+                    "runtime metrics collection thread panicked: {}",
+                    describe_thread_panic(&*payload)
+                ))),
+                Duration::ZERO,
+            ),
+        };
+        let (git, git_duration) = git_handle.join().unwrap_or_else(|payload| {
+            (
+                GitState {
+                    branch: None,
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    probe_message: Some(format!(
+                        "git probe thread panicked: {}",
+                        describe_thread_panic(&*payload)
+                    )),
+                    last_commit_hash: None,
+                    last_commit_message: None,
+                    last_commit_age_mins: None,
+                    stash_count: None,
+                    files_changed: None,
+                    uncommitted_count: None,
+                },
+                Duration::ZERO,
+            )
+        });
+        let ((history, jobs), history_jobs_duration) =
+            history_jobs_handle.join().unwrap_or_else(|payload| {
+                (
+                    (
+                        HistorySnapshot::unavailable(format!(
+                            "history collection thread panicked: {}",
+                            describe_thread_panic(&*payload)
+                        )),
+                        JobsSnapshot {
+                            active: Vec::new(),
+                            recent: Vec::new(),
+                            issues: vec![format!(
+                                "background job collection thread panicked: {}",
+                                describe_thread_panic(&*payload)
+                            )],
+                        },
+                    ),
+                    Duration::ZERO,
+                )
+            });
         let active_jobs_list = jobs.active;
         let active_job_count = active_jobs_list.len();
-
         let now_instant = time::OffsetDateTime::now_utc();
         let active_job_details: Vec<ActiveJobDetail> = active_jobs_list
             .iter()
@@ -910,67 +1124,47 @@ fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 }
             })
             .collect();
+        emit_status_profile_duration("summary.infra_probe", infra_duration);
+        emit_status_profile_duration("summary.runtime_metrics", runtime_duration);
+        emit_status_profile_duration("summary.history_jobs", history_jobs_duration);
+        emit_status_profile_duration("summary.git", git_duration);
 
-        // Collect thread results
-        let (pg_probe, nats_probe, services) = match infra_handle.join() {
-            Ok(result) => result,
-            Err(payload) => {
-                let message =
-                    format!("infra probe thread panicked: {}", describe_thread_panic(&*payload));
-                (
-                    PostgresProbe {
-                        running: false,
-                        accepting_connections: false,
-                        latency_ms: 0,
-                        message: Some(message.clone()),
-                    },
-                    NatsProbe {
-                        running: false,
-                        reachable: false,
-                        latency_ms: 0,
-                        port: 4222,
-                        message: Some(message),
-                    },
-                    vec![],
-                )
-            }
-        };
-        let git = git_handle.join().unwrap_or_else(|payload| GitState {
-            branch: None,
-            dirty: false,
-            ahead: 0,
-            behind: 0,
-            probe_message: Some(format!(
-                "git probe thread panicked: {}",
-                describe_thread_panic(&*payload)
-            )),
-            last_commit_hash: None,
-            last_commit_message: None,
-            last_commit_age_mins: None,
-            stash_count: None,
-            files_changed: None,
-            uncommitted_count: None,
-        });
-        let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
-        let history = history_handle.join().unwrap_or_else(|payload| {
-            HistorySnapshot::unavailable(format!(
-                "history collection thread panicked: {}",
-                describe_thread_panic(&*payload)
-            ))
-        });
-
-        SummaryData {
+        (
             pg_probe,
             nats_probe,
-            services,
             git,
             active_job_details,
             active_job_count,
             history,
-            job_issues: jobs.issues,
+            jobs.issues,
+            active_jobs_list,
             runtime_metrics,
-        }
-    })
+            gateway_url,
+        )
+    });
+    emit_status_profile("summary.threaded_stage", threaded_stage_started_at);
+
+    let service_stage_started_at = Instant::now();
+    let services = collect_core_service_statuses(
+        gateway_url.as_deref(),
+        runtime_metrics.as_ref(),
+        &active_jobs_list,
+    )
+    .await;
+    emit_status_profile("summary.service_stage", service_stage_started_at);
+    emit_status_profile("summary.total_collection", total_started_at);
+
+    SummaryData {
+        pg_probe,
+        nats_probe,
+        services,
+        git,
+        active_job_details,
+        active_job_count,
+        history,
+        job_issues,
+        runtime_metrics,
+    }
 }
 
 fn current_unix_timestamp_secs() -> Option<i64> {
@@ -986,49 +1180,73 @@ fn parse_git_commit_age_mins(commit_unix_ts: &str, now_unix_ts: i64) -> Option<i
     Some((now_unix_ts - commit_unix_ts).max(0) / 60)
 }
 
-fn parse_git_upstream_counts(output: &str, probe_issues: &mut Vec<String>) -> (u32, u32) {
-    let trimmed = output.trim();
-    let parts: Vec<&str> = trimmed.split('\t').collect();
-    if parts.len() != 2 {
-        record_git_probe_issue(
-            probe_issues,
-            &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-            format!("unexpected output: {trimmed}"),
-        );
-        return (0, 0);
+fn parse_git_status_branch_porcelain(
+    output: &str,
+    probe_issues: &mut Vec<String>,
+) -> (Option<String>, bool, Option<usize>, u32, u32) {
+    let mut branch = None;
+    let mut ahead = 0u32;
+    let mut behind = 0u32;
+    let mut entry_count = 0usize;
+
+    for line in output.lines() {
+        if let Some(head) = line.strip_prefix("# branch.head ") {
+            let head = head.trim();
+            if !head.is_empty() && head != "(detached)" {
+                branch = Some(head.to_string());
+            }
+            continue;
+        }
+
+        if let Some(ab) = line.strip_prefix("# branch.ab ") {
+            let parts: Vec<&str> = ab.split_whitespace().collect();
+            if parts.len() != 2 {
+                record_git_probe_issue(
+                    probe_issues,
+                    &["status", "--porcelain=v2", "--branch"],
+                    format!("unexpected branch.ab payload: {ab}"),
+                );
+                continue;
+            }
+
+            let parsed_ahead = parts[0]
+                .strip_prefix('+')
+                .and_then(|value| value.parse::<u32>().ok());
+            let parsed_behind = parts[1]
+                .strip_prefix('-')
+                .and_then(|value| value.parse::<u32>().ok());
+
+            match (parsed_ahead, parsed_behind) {
+                (Some(parsed_ahead), Some(parsed_behind)) => {
+                    ahead = parsed_ahead;
+                    behind = parsed_behind;
+                }
+                _ => record_git_probe_issue(
+                    probe_issues,
+                    &["status", "--porcelain=v2", "--branch"],
+                    format!("invalid branch.ab payload: {ab}"),
+                ),
+            }
+            continue;
+        }
+
+        if line.starts_with('#') {
+            continue;
+        }
+
+        if !line.trim().is_empty() {
+            entry_count += 1;
+        }
     }
 
-    let ahead = match parts[0].parse::<u32>() {
-        Ok(value) => value,
-        Err(error) => {
-            record_git_probe_issue(
-                probe_issues,
-                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-                format!("invalid ahead count `{}`: {error}", parts[0]),
-            );
-            return (0, 0);
-        }
-    };
-    let behind = match parts[1].parse::<u32>() {
-        Ok(value) => value,
-        Err(error) => {
-            record_git_probe_issue(
-                probe_issues,
-                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-                format!("invalid behind count `{}`: {error}", parts[1]),
-            );
-            return (0, 0);
-        }
-    };
-
-    (ahead, behind)
+    (branch, entry_count > 0, Some(entry_count), ahead, behind)
 }
 
 // ─── Summary / Compact execution ────────────────────────────────────────────
 
 /// Execute --summary (rich multi-section MOTD)
-fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
-    let data = collect_summary_data(ctx);
+async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
+    let data = collect_summary_data(ctx).await;
 
     let now = time::OffsetDateTime::now_utc();
     let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
@@ -1052,7 +1270,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     let unavailable_services: Vec<&str> = data
         .services
         .iter()
-        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
+        .filter(|service| {
+            !matches!(
+                service.status,
+                ServiceRunStatus::Running | ServiceRunStatus::Skipped
+            )
+        })
         .map(|service| service.name.as_str())
         .collect();
 
@@ -1400,6 +1623,9 @@ impl<'a> MotdRenderer<'a> {
                         }
                         ServiceRunStatus::Stopped => {
                             style(format!("{short}:down")).red().to_string()
+                        }
+                        ServiceRunStatus::Skipped => {
+                            style(format!("{short}:skip")).dim().to_string()
                         }
                         ServiceRunStatus::Unknown => {
                             style(format!("{short}:unknown")).yellow().to_string()
@@ -1870,7 +2096,7 @@ fn format_age(mins: i64) -> String {
 // ─── Full Status ────────────────────────────────────────────────────────────
 
 /// Collect one round of workspace status data.
-fn collect_status_data(
+async fn collect_status_data(
     ctx: &CommandContext,
 ) -> (
     PostgresProbe,
@@ -1881,7 +2107,9 @@ fn collect_status_data(
     JobsSnapshot,
     HistorySnapshot,
 ) {
+    let total_started_at = Instant::now();
     let cfg = config();
+    let gateway_url = cfg.gateway_url.clone();
     let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
     let runtime_configured = runtime_db_url
         .as_ref()
@@ -1889,25 +2117,30 @@ fn collect_status_data(
         .and_then(|value| value.as_ref())
         .is_some();
 
-    let (pg_probe, nats_probe, runtime_metrics, services, jobs, history) =
+    let threaded_stage_started_at = Instant::now();
+    let (pg_probe, nats_probe, runtime_metrics, jobs, history) =
         std::thread::scope(|s| {
-            // Thread 1: Infrastructure + services (subprocesses)
+            // Thread 1: Infrastructure
             let infra_handle = s.spawn(move || {
+                let started_at = Instant::now();
                 let pg = probe_postgres();
                 let nats = probe_nats();
-
-                let svcs = collect_core_service_statuses();
-
-                (pg, nats, svcs)
+                ((pg, nats), started_at.elapsed())
             });
 
-            let runtime_metrics_handle = s.spawn(move || collect_runtime_metrics(runtime_db_url));
-            let history_handle = s.spawn(move || collect_history_snapshot(ctx, 10, false));
+            let runtime_metrics_handle = s.spawn(move || {
+                let started_at = Instant::now();
+                (collect_runtime_metrics(runtime_db_url), started_at.elapsed())
+            });
+            let history_jobs_handle = s.spawn(move || {
+                let started_at = Instant::now();
+                (
+                    collect_history_and_jobs_snapshot(ctx, 10, false, 20),
+                    started_at.elapsed(),
+                )
+            });
 
-            // Main thread: local operations (jobs)
-            let jobs = collect_jobs_snapshot(20);
-
-            let (pg, nats, svcs) = match infra_handle.join() {
+            let ((pg, nats), infra_duration) = match infra_handle.join() {
                 Ok(result) => result,
                 Err(payload) => {
                     let message = format!(
@@ -1915,33 +2148,71 @@ fn collect_status_data(
                         describe_thread_panic(&*payload)
                     );
                     (
-                        PostgresProbe {
-                            running: false,
-                            accepting_connections: false,
-                            latency_ms: 0,
-                            message: Some(message.clone()),
-                        },
-                        NatsProbe {
-                            running: false,
-                            reachable: false,
-                            latency_ms: 0,
-                            port: 4222,
-                            message: Some(message),
-                        },
-                        vec![],
+                        (
+                            PostgresProbe {
+                                running: false,
+                                accepting_connections: false,
+                                latency_ms: 0,
+                                message: Some(message.clone()),
+                            },
+                            NatsProbe {
+                                running: false,
+                                reachable: false,
+                                latency_ms: 0,
+                                port: 4222,
+                                message: Some(message),
+                            },
+                        ),
+                        Duration::ZERO,
                     )
                 }
             };
-            let runtime_metrics = recover_runtime_metrics_thread(runtime_metrics_handle.join());
-            let history = history_handle.join().unwrap_or_else(|payload| {
-                HistorySnapshot::unavailable(format!(
-                    "history collection thread panicked: {}",
-                    describe_thread_panic(&*payload)
-                ))
-            });
+            let (runtime_metrics, runtime_duration) = match runtime_metrics_handle.join() {
+                Ok((metrics, duration)) => (metrics, duration),
+                Err(payload) => (
+                    Some(RuntimeMetrics::query_failure(format!(
+                        "runtime metrics collection thread panicked: {}",
+                        describe_thread_panic(&*payload)
+                    ))),
+                    Duration::ZERO,
+                ),
+            };
+            let ((history, jobs), history_jobs_duration) =
+                history_jobs_handle.join().unwrap_or_else(|payload| {
+                    (
+                        (
+                            HistorySnapshot::unavailable(format!(
+                                "history collection thread panicked: {}",
+                                describe_thread_panic(&*payload)
+                            )),
+                            JobsSnapshot {
+                                active: Vec::new(),
+                                recent: Vec::new(),
+                                issues: vec![format!(
+                                    "background job collection thread panicked: {}",
+                                    describe_thread_panic(&*payload)
+                                )],
+                            },
+                        ),
+                        Duration::ZERO,
+                    )
+                });
+            emit_status_profile_duration("full.infra_probe", infra_duration);
+            emit_status_profile_duration("full.runtime_metrics", runtime_duration);
+            emit_status_profile_duration("full.history_jobs", history_jobs_duration);
 
-            (pg, nats, runtime_metrics, svcs, jobs, history)
+            (pg, nats, runtime_metrics, jobs, history)
         });
+    emit_status_profile("full.threaded_stage", threaded_stage_started_at);
+    let service_stage_started_at = Instant::now();
+    let services = collect_core_service_statuses(
+        gateway_url.as_deref(),
+        runtime_metrics.as_ref(),
+        &jobs.active,
+    )
+    .await;
+    emit_status_profile("full.service_stage", service_stage_started_at);
+    emit_status_profile("full.total_collection", total_started_at);
 
     (
         pg_probe,
@@ -1955,13 +2226,18 @@ fn collect_status_data(
 }
 
 /// Render and optionally return one status snapshot.
-fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
+async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
     let (pg_probe, nats_probe, runtime_configured, runtime_metrics, services, jobs, history) =
-        collect_status_data(ctx);
+        collect_status_data(ctx).await;
     let runtime_assessment = runtime_metrics.as_ref().map(RuntimeMetrics::assessment);
     let unavailable_services: Vec<&str> = services
         .iter()
-        .filter(|service| !matches!(service.status, ServiceRunStatus::Running))
+        .filter(|service| {
+            !matches!(
+                service.status,
+                ServiceRunStatus::Running | ServiceRunStatus::Skipped
+            )
+        })
         .map(|service| service.name.as_str())
         .collect();
 
@@ -2084,11 +2360,13 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
             let status_label = match svc.status {
                 ServiceRunStatus::Running => "running",
                 ServiceRunStatus::Stopped => "stopped",
+                ServiceRunStatus::Skipped => "skipped",
                 ServiceRunStatus::Unknown => "unknown",
             };
             let status_display = match svc.status {
                 ServiceRunStatus::Running => style(status_label).green(),
                 ServiceRunStatus::Stopped => style(status_label).dim(),
+                ServiceRunStatus::Skipped => style(status_label).dim(),
                 ServiceRunStatus::Unknown => style(status_label).yellow(),
             };
             let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
@@ -2280,7 +2558,7 @@ fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<Comman
 /// Full status (default mode)
 async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if !watch {
-        if let Some(result) = render_status_tick(ctx, false)? {
+        if let Some(result) = render_status_tick(ctx, false).await? {
             return Ok(result);
         }
     }
@@ -2295,7 +2573,7 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
                     term.clear_screen()?;
                     term.move_cursor_to(0, 0)?;
                 }
-                render_status_tick(ctx, true)?;
+                render_status_tick(ctx, true).await?;
                 Ok(WatchAction::Continue)
             }
         })
@@ -2308,7 +2586,6 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
-    use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
     use tempfile::tempdir;
     use xtask::sandbox::EnvGuard;
@@ -2353,47 +2630,170 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_probe_service_status_reports_probe_failures_as_unknown()
+    async fn test_ingestd_service_status_maps_healthy_runtime_to_running()
     -> ::xtask::sandbox::TestResult<()> {
-        let status = probe_service_status_with(
-            "sinex-gateway",
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "pgrep unavailable",
-            )),
-        );
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Healthy,
+            last_heartbeat_age_secs: Some(2),
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: None,
+        };
+        let status = ingestd_service_status_from_runtime_metrics(Some(&metrics));
+
+        assert_eq!(status.status, ServiceRunStatus::Running);
+        assert_eq!(status.probe, "runtime_metrics");
+        assert!(status.pid.is_none());
+        assert!(status.message.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ingestd_service_status_reports_query_error_as_unknown()
+    -> ::xtask::sandbox::TestResult<()> {
+        let metrics = RuntimeMetrics {
+            ingestd_status: IngestdStatus::Unknown,
+            last_heartbeat_age_secs: None,
+            consumer_lag_pending: None,
+            consumer_lag_age_secs: None,
+            last_batch_latency_ms: None,
+            last_batch_latency_age_secs: None,
+            query_error: Some("database unavailable".to_string()),
+        };
+        let status = ingestd_service_status_from_runtime_metrics(Some(&metrics));
 
         assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert_eq!(status.probe, "runtime_metrics");
         assert!(status.pid.is_none());
         assert!(
             status
                 .message
                 .as_deref()
-                .is_some_and(|message| message.contains("failed to run process probe"))
+                .is_some_and(|message| message.contains("database unavailable"))
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_probe_service_status_reports_unreadable_pid_output_as_unknown()
+    async fn test_gateway_service_status_maps_ready_probe_pass_to_running()
     -> ::xtask::sandbox::TestResult<()> {
-        let status = probe_service_status_with(
-            "sinex-gateway",
-            Ok(std::process::Output {
-                status: std::process::ExitStatus::from_raw(0),
-                stdout: b"not-a-pid\n".to_vec(),
-                stderr: Vec::new(),
-            }),
+        let status = gateway_service_status_from_readiness(
+            crate::commands::doctor::DeploymentReadinessItem {
+                name: "gateway-ready".into(),
+                status: "pass".into(),
+                description: "gateway is serving".into(),
+                blocking: true,
+            },
+            Some(42),
+            true,
         );
 
-        assert_eq!(status.status, ServiceRunStatus::Unknown);
-        assert!(status.pid.is_none());
+        assert_eq!(status.name, "sinex-gateway");
+        assert_eq!(status.status, ServiceRunStatus::Running);
+        assert_eq!(status.probe, "gateway_ready_http");
+        assert_eq!(status.pid, Some(42));
+        assert!(status.message.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_gateway_service_status_maps_ready_probe_fail_to_stopped()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = gateway_service_status_from_readiness(
+            crate::commands::doctor::DeploymentReadinessItem {
+                name: "gateway-ready".into(),
+                status: "fail".into(),
+                description: "https://127.0.0.1:9999/ready returned HTTP 503".into(),
+                blocking: true,
+            },
+            None,
+            false,
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Stopped);
+        assert_eq!(status.probe, "gateway_ready_http");
         assert!(
             status
                 .message
                 .as_deref()
-                .is_some_and(|message| message.contains("unreadable pid output"))
+                .is_some_and(|message| message.contains("HTTP 503"))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_gateway_service_status_marks_live_process_as_unknown_when_not_ready()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = gateway_service_status_from_readiness(
+            crate::commands::doctor::DeploymentReadinessItem {
+                name: "gateway-ready".into(),
+                status: "fail".into(),
+                description: "https://127.0.0.1:9999/ready returned HTTP 503".into(),
+                blocking: true,
+            },
+            Some(123),
+            true,
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Unknown);
+        assert_eq!(status.pid, Some(123));
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("process is alive"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_gateway_service_status_maps_ready_probe_skip_to_skipped()
+    -> ::xtask::sandbox::TestResult<()> {
+        let status = gateway_service_status_from_readiness(
+            crate::commands::doctor::DeploymentReadinessItem {
+                name: "gateway-ready".into(),
+                status: "skip".into(),
+                description: "Gateway runtime is not expected".into(),
+                blocking: false,
+            },
+            None,
+            false,
+        );
+
+        assert_eq!(status.status, ServiceRunStatus::Skipped);
+        assert_eq!(status.probe, "gateway_ready_http");
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("not expected"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_active_job_for_service_matches_command_basename()
+    -> ::xtask::sandbox::TestResult<()> {
+        use crate::history::JobLifecycleStatus;
+
+        let jobs = vec![crate::jobs::Job {
+            id: 7,
+            invocation_id: None,
+            command: "/realm/project/sinex/.sinex/target/debug/sinex-ingestd".into(),
+            args: vec![],
+            started_at: time::OffsetDateTime::now_utc(),
+            pid: Some(std::process::id()),
+            job_status: JobLifecycleStatus::Running,
+            stdout_path: std::env::temp_dir().join("stdout.log"),
+            stderr_path: std::env::temp_dir().join("stderr.log"),
+            exit_code: None,
+        }];
+
+        let matched = active_job_for_service("sinex-ingestd", &jobs);
+        assert!(matched.is_some(), "active job should match by binary basename");
+        assert_eq!(matched.and_then(|job| job.pid), Some(std::process::id()));
         Ok(())
     }
 
@@ -2629,7 +3029,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_summary_output_preserves_missing_commit_age() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_summary_output_preserves_missing_commit_age() -> ::xtask::sandbox::TestResult<()>
+    {
         let output = SummaryOutput {
             health: "healthy".into(),
             health_indicator: "ok".into(),
@@ -2802,17 +3203,7 @@ mod tests {
     async fn test_classify_summary_health_promotes_history_errors_to_unhealthy()
     -> ::xtask::sandbox::TestResult<()> {
         let (health, indicator) = classify_summary_health(
-            true,
-            true,
-            false,
-            1,
-            0,
-            false,
-            false,
-            false,
-            false,
-            None,
-            true,
+            true, true, false, 1, 0, false, false, false, false, None, true,
         );
         assert_eq!(health, "unhealthy");
         assert_eq!(indicator, "error");
@@ -2823,17 +3214,7 @@ mod tests {
     async fn test_classify_summary_health_marks_warning_only_state_degraded()
     -> ::xtask::sandbox::TestResult<()> {
         let (health, indicator) = classify_summary_health(
-            true,
-            true,
-            true,
-            0,
-            1,
-            false,
-            false,
-            false,
-            false,
-            None,
-            true,
+            true, true, true, 0, 1, false, false, false, false, None, true,
         );
         assert_eq!(health, "degraded");
         assert_eq!(indicator, "warn");
@@ -2881,8 +3262,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_describe_thread_panic_handles_string_payload()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_describe_thread_panic_handles_string_payload() -> ::xtask::sandbox::TestResult<()>
+    {
         let payload: Box<dyn Any + Send> = Box::new(String::from("boom"));
         assert_eq!(describe_thread_panic(&*payload), "boom");
         Ok(())
@@ -2925,7 +3306,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_runtime_metrics_database_url_reports_descriptor_parse_failure_without_explicit_url()
+    async fn test_resolve_runtime_metrics_database_url_uses_checkout_stack_without_descriptor_load()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempdir()?;
         let descriptor_path = temp.path().join("deployment-readiness.json");
@@ -2937,12 +3318,11 @@ mod tests {
             descriptor_path.display().to_string(),
         );
 
-        let error = resolve_runtime_metrics_database_url(None)
-            .expect_err("invalid descriptor should still fail when no DATABASE_URL is provided");
+        let expected = StackConfig::for_current_checkout()?.database_url();
+        let url = resolve_runtime_metrics_database_url(None)?
+            .expect("checkout stack config should provide a runtime metrics database URL");
 
-        let error_text = format!("{error:?}");
-        assert!(error_text.contains("failed to load deployment readiness descriptor"));
-        assert!(error_text.contains("failed to parse deployment readiness descriptor"));
+        assert_eq!(url, expected);
         Ok(())
     }
 
@@ -2981,7 +3361,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_probe_git_state_reports_missing_upstream() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_probe_git_state_handles_missing_upstream_without_probe_error()
+    -> ::xtask::sandbox::TestResult<()> {
         let repo = tempdir()?;
         run_git(&["init", "-q"], repo.path())?;
         run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
@@ -2997,11 +3378,7 @@ mod tests {
         assert!(git.last_commit_hash.is_some());
         assert_eq!(git.stash_count, Some(0));
         assert_eq!(git.uncommitted_count, Some(0));
-        assert!(
-            git.probe_message
-                .as_deref()
-                .is_some_and(|message| message.contains("git rev-list --left-right --count HEAD...@{u} failed"))
-        );
+        assert!(git.probe_message.is_none());
         Ok(())
     }
 
@@ -3017,32 +3394,43 @@ mod tests {
             .probe_message
             .as_deref()
             .unwrap_or_else(|| panic!("expected git probe failure message"));
-        assert!(probe_message.contains("git branch --show-current failed"));
-        assert!(probe_message.contains("git status --porcelain failed"));
+        assert!(probe_message.contains("git status --porcelain=v2 --branch failed"));
         assert_eq!(git.stash_count, None);
         assert_eq!(git.uncommitted_count, None);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_parse_git_upstream_counts_accepts_valid_counts(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_git_status_branch_porcelain_extracts_branch_and_upstream_counts()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut probe_issues = Vec::new();
 
-        assert_eq!(parse_git_upstream_counts("2\t7\n", &mut probe_issues), (2, 7));
+        assert_eq!(
+            parse_git_status_branch_porcelain(
+                "# branch.oid abcdef\n# branch.head master\n# branch.upstream origin/master\n# branch.ab +2 -7\n1 .M N... 100644 100644 100644 abcdef abcdef file.txt\n",
+                &mut probe_issues,
+            ),
+            (Some("master".to_string()), true, Some(1), 2, 7)
+        );
         assert!(probe_issues.is_empty());
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_parse_git_upstream_counts_reports_invalid_numbers(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_git_status_branch_porcelain_reports_invalid_branch_ab_payload()
+    -> ::xtask::sandbox::TestResult<()> {
         let mut probe_issues = Vec::new();
 
-        assert_eq!(parse_git_upstream_counts("2\tnope", &mut probe_issues), (0, 0));
+        assert_eq!(
+            parse_git_status_branch_porcelain(
+                "# branch.head master\n# branch.ab +2 nope\n",
+                &mut probe_issues,
+            ),
+            (Some("master".to_string()), false, Some(0), 0, 0)
+        );
         let message = probe_issues.join("; ");
-        assert!(message.contains("git rev-list --left-right --count HEAD...@{u} failed"));
-        assert!(message.contains("invalid behind count `nope`"));
+        assert!(message.contains("git status --porcelain=v2 --branch failed"));
+        assert!(message.contains("invalid branch.ab payload: +2 nope"));
         Ok(())
     }
 

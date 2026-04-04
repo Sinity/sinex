@@ -343,15 +343,17 @@
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
-                export SINEX_DEV_GATEWAY_PORT="9999"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
                 _sinex_checkout_hash_hex="$(printf '%s' "$PWD" | sha256sum | cut -c1-2)"
                 _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
+                export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
                 export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
-                export SINEX_RPC_URL="https://127.0.0.1:9999"
+                export SINEX_GATEWAY_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
 
                 # xtask binary path — .sinex/target/debug is on PATH via the export above.
                 # Never block direnv: all slow work deferred to first sx/xt invocation.

@@ -19,6 +19,7 @@ use crate::config::config;
 use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
 
 /// A handle to a background job (backed by `HistoryDb`).
+#[derive(Clone)]
 pub struct Job {
     /// Background job ID (`background_jobs.id`) — the process handle used for directories/coordinator.
     pub id: i64,
@@ -173,6 +174,47 @@ impl Job {
                 .pid
                 .is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists())
     }
+}
+
+fn background_job_is_live(job: &BackgroundJob) -> bool {
+    let Some(pid) = job.pid else {
+        return false;
+    };
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+}
+
+pub(crate) fn snapshot_recent_and_active_from_history_db(
+    db: &HistoryDb,
+    jobs_dir: &Path,
+    limit: usize,
+) -> Result<(Vec<Job>, Vec<Job>)> {
+    let active_started_at = std::time::Instant::now();
+    let active = db
+        .get_active_background_jobs()?
+        .into_iter()
+        .filter(background_job_is_live)
+        .map(|bg| Job::from_background_job(bg, jobs_dir))
+        .collect();
+    if std::env::var("SINEX_STATUS_PROFILE").is_ok() {
+        eprintln!(
+            "[status-profile] jobs.get_active_background_jobs: {:.3}s",
+            active_started_at.elapsed().as_secs_f64()
+        );
+    }
+
+    let recent_started_at = std::time::Instant::now();
+    let recent = db
+        .get_recent_background_jobs(limit)?
+        .into_iter()
+        .map(|bg| Job::from_background_job(bg, jobs_dir))
+        .collect();
+    if std::env::var("SINEX_STATUS_PROFILE").is_ok() {
+        eprintln!(
+            "[status-profile] jobs.get_recent_background_jobs: {:.3}s",
+            recent_started_at.elapsed().as_secs_f64()
+        );
+    }
+    Ok((active, recent))
 }
 
 /// Manager for background jobs.
@@ -550,6 +592,65 @@ impl JobManager {
             .into_iter()
             .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
             .collect())
+    }
+
+    /// Read active and recent jobs with a single maintenance pass.
+    pub fn snapshot_recent_and_active(&self, limit: usize) -> Result<(Vec<Job>, Vec<Job>)> {
+        self.reap_zombies()?;
+        self.prune(7)
+            .context("failed to prune completed background jobs")?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+        let active = db
+            .get_active_background_jobs()?
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect();
+        let recent = db
+            .get_recent_background_jobs(limit)?
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect();
+        Ok((active, recent))
+    }
+
+    /// Read active and recent jobs without full directory-prune maintenance.
+    ///
+    /// This is for latency-sensitive status surfaces where pruning old completed
+    /// job directories is unnecessary noise. We still reap obviously stale
+    /// "running" rows so status does not claim phantom background jobs.
+    pub fn snapshot_recent_and_active_fast(&self, limit: usize) -> Result<(Vec<Job>, Vec<Job>)> {
+        let mut active_jobs = {
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+            db.get_active_background_jobs()?
+        };
+
+        let needs_reap = active_jobs.iter().any(|job| {
+            let Some(pid) = job.pid else {
+                return true;
+            };
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_err()
+        });
+
+        if needs_reap {
+            self.reap_zombies()?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+            active_jobs = db.get_active_background_jobs()?;
+        }
+
+        let recent_jobs = {
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+            db.get_recent_background_jobs(limit)?
+        };
+
+        let active = active_jobs
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect();
+        let recent = recent_jobs
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect();
+        Ok((active, recent))
     }
 
     /// Reap zombie jobs: mark "running" jobs whose PIDs no longer exist as failed.
