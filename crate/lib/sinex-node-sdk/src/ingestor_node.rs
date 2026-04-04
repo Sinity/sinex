@@ -434,7 +434,12 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
     async fn shutdown(&mut self) -> NodeResult<()> {
         if let Some(tx) = self.shutdown_tx.take() {
-            signal_shutdown_channel(tx, self.ingestor.name());
+            if !signal_shutdown_channel(tx, self.ingestor.name()) {
+                warn!(
+                    node = self.ingestor.name(),
+                    "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
+                );
+            }
         }
         self.ingestor.shutdown(&self.state.user_state).await?;
         self.save_state(true).await?;
@@ -827,6 +832,69 @@ mod tests {
         assert!(
             adapter.state.revision > baseline_revision,
             "follow-up save should update the prior KV checkpoint revision"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_state_recreates_missing_kv_entry_for_stale_hot_reload_revision(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = Arc::new(CheckpointManager::new(
+            kv.clone(),
+            "ingestor-adapter-test".to_string(),
+            "test-group".to_string(),
+            "stale-hot-reload-consumer".to_string(),
+        ));
+
+        let persisted_state = IngestorState {
+            user_state: TestState,
+            last_checkpoint: Timestamp::now(),
+            revision: 0,
+            checkpoint: Checkpoint::stream("file-restored", None),
+        };
+
+        let temp_dir = tempdir()?;
+        let checkpoint_path = temp_dir.path().join("stale-hot-reload.checkpoint.json");
+        CheckpointState {
+            checkpoint: Checkpoint::stream("file-restored", None),
+            processed_count: 0,
+            last_activity: Timestamp::now(),
+            data: Some(serde_json::to_value(&persisted_state)?),
+            version: 2,
+            revision: 7,
+        }
+        .save_to_file(&checkpoint_path)
+        .await?;
+
+        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        adapter.shutdown_config = ShutdownConfig {
+            checkpoint_path: Some(checkpoint_path.clone()),
+            ..ShutdownConfig::default()
+        };
+        adapter.checkpoint_manager = Some(Arc::clone(&manager));
+
+        adapter.load_state().await?;
+        assert_eq!(adapter.state.revision, 7);
+
+        adapter.save_state(false).await?;
+        assert!(
+            adapter.state.revision > 0,
+            "successful save should recreate the missing KV entry with a fresh revision"
+        );
+        assert!(
+            CheckpointState::load_from_file(&checkpoint_path)
+                .await?
+                .is_none(),
+            "restored hot reload file should be cleaned up after the recreated KV save"
+        );
+
+        let mut keys = kv.keys().await?;
+        assert!(
+            keys.try_next().await?.is_some(),
+            "checkpoint KV entry should be recreated when only a stale hot reload file exists"
         );
         Ok(())
     }

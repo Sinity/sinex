@@ -9,6 +9,9 @@ let
   cfg = config.services.sinex;
   kittySource = cfg.shell.kitty;
   targetUser = cfg.users.target;
+  targetGroup =
+    if targetUser == null then null
+    else lib.attrByPath [ "users" "users" targetUser "group" ] "users" config;
   targetHome = if targetUser == null then null else "/home/${targetUser}";
   kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.snippet;
   
@@ -122,7 +125,7 @@ in
           ExecStart = "${configureKittyScript}";
         } // mkHelperServiceConfig {
           user = targetUser;
-          group = targetUser;
+          group = targetGroup;
           remainAfterExit = true;
           protectHome = false;
           readWritePaths = [ targetHome ];
@@ -138,7 +141,7 @@ in
           ExecStart = "${removeKittyConfigScript}";
         } // mkHelperServiceConfig {
           user = targetUser;
-          group = targetUser;
+          group = targetGroup;
           protectHome = false;
           readWritePaths = [ targetHome ];
         };

@@ -336,6 +336,7 @@ pub struct CheckpointManager {
     node_name: String,
     consumer_group: String,
     consumer_name: String,
+    warn_on_missing_checkpoint: bool,
 }
 
 impl CheckpointManager {
@@ -347,12 +348,37 @@ impl CheckpointManager {
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
+        Self::with_missing_checkpoint_warning(
+            kv,
+            node_name,
+            consumer_group,
+            consumer_name,
+            false,
+        )
+    }
+
+    /// Create a checkpoint manager with an explicit missing-checkpoint log policy.
+    #[must_use]
+    pub fn with_missing_checkpoint_warning(
+        kv: async_nats::jetstream::kv::Store,
+        node_name: String,
+        consumer_group: String,
+        consumer_name: String,
+        warn_on_missing_checkpoint: bool,
+    ) -> Self {
         Self {
             kv,
             node_name,
             consumer_group,
             consumer_name,
+            warn_on_missing_checkpoint,
         }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    fn missing_checkpoint_logs_as_warning(&self) -> bool {
+        self.warn_on_missing_checkpoint
     }
 
     ///
@@ -402,12 +428,21 @@ impl CheckpointManager {
             return Ok(state);
         }
 
-        info!(
-            node = %self.node_name,
-            consumer_group = %self.consumer_group,
-            consumer_name = %self.consumer_name,
-            "No existing checkpoint found, starting fresh"
-        );
+        if self.warn_on_missing_checkpoint {
+            warn!(
+                node = %self.node_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "No existing checkpoint found; derived node will replay all historical events"
+            );
+        } else {
+            info!(
+                node = %self.node_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "No existing checkpoint found, starting fresh"
+            );
+        }
 
         Ok(CheckpointState::default())
     }
@@ -466,18 +501,53 @@ impl CheckpointManager {
 
         // Save to NATS KV only
         let encoded = serde_json::to_vec(state).map_err(SinexError::serialization)?;
+        let key = self.kv_key();
 
         let revision = if state.revision > 0 {
-            self.kv
-                .update(&self.kv_key(), encoded.into(), state.revision)
+            match self
+                .kv
+                .update(&key, encoded.clone().into(), state.revision)
                 .await
-                .map_err(|e| {
-                    SinexError::checkpoint("Failed to update checkpoint in KV (CAS failure?)")
-                        .with_source(e)
-                })?
+            {
+                Ok(revision) => revision,
+                Err(update_error) => {
+                    let existing_entry = self.kv.entry(&key).await.map_err(|error| {
+                        SinexError::checkpoint(
+                            "Failed to check checkpoint KV after update failure",
+                        )
+                        .with_source(error)
+                    })?;
+
+                    if existing_entry.is_none() {
+                        warn!(
+                            node = %self.node_name,
+                            consumer_group = %self.consumer_group,
+                            consumer_name = %self.consumer_name,
+                            stale_revision = state.revision,
+                            "Checkpoint KV entry is missing after restoring a local checkpoint revision; recreating it"
+                        );
+                        self.kv
+                            .create(&key, encoded.into())
+                            .await
+                            .map_err(|error| {
+                                SinexError::checkpoint(
+                                    "Failed to recreate missing checkpoint in KV after stale local revision",
+                                )
+                                .with_source(error)
+                            })?
+                    } else {
+                        return Err(
+                            SinexError::checkpoint(
+                                "Failed to update checkpoint in KV (CAS failure?)",
+                            )
+                            .with_source(update_error),
+                        );
+                    }
+                }
+            }
         } else {
             self.kv
-                .create(&self.kv_key(), encoded.into())
+                .create(&key, encoded.into())
                 .await
                 .map_err(|e| {
                     SinexError::checkpoint(
@@ -844,9 +914,9 @@ pub fn spawn_checkpoint_cleanup_task(
 #[cfg(test)]
 mod tests {
     // Inline because this covers local checkpoint env/default semantics.
-    use super::{CheckpointCleanupConfig, checkpoint_cleanup_cutoff};
+    use super::{CheckpointCleanupConfig, CheckpointManager, checkpoint_cleanup_cutoff};
     use sinex_primitives::prelude::Timestamp;
-    use xtask::sandbox::{EnvGuard, sinex_serial_test};
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
     async fn checkpoint_cleanup_default_is_disabled() -> xtask::sandbox::TestResult<()> {
@@ -879,6 +949,23 @@ mod tests {
                 .to_string()
                 .contains("Checkpoint cleanup max age is out of range")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn checkpoint_manager_can_enable_warning_for_missing_checkpoint(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
+        let manager = CheckpointManager::with_missing_checkpoint_warning(
+            kv,
+            "checkpoint-test-node".to_string(),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+            true,
+        );
+
+        assert!(manager.missing_checkpoint_logs_as_warning());
         Ok(())
     }
 }

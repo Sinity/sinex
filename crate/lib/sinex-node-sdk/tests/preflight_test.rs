@@ -725,25 +725,32 @@ async fn test_phase5_configuration_warns_without_deployment_descriptor(
     ctx: TestContext,
 ) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
-    with_database_url(&db_url, || async {
-        let (status, details, messages) = configuration::verify_configuration_generation().await?;
+    with_env_vars(
+        &[
+            ("DATABASE_URL", db_url),
+            ("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new()),
+        ],
+        || async {
+            let (status, details, messages) =
+                configuration::verify_configuration_generation().await?;
 
-        assert_eq!(status, VerificationStatus::Warning);
-        assert_eq!(
-            details
-                .get("event_sources")
-                .and_then(|value| value.get("deployment_descriptor_loaded"))
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("Deployment descriptor is missing"))
-        );
+            assert_eq!(status, VerificationStatus::Warning);
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("deployment_descriptor_loaded"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains("Deployment descriptor is missing"))
+            );
 
-        Ok(())
-    })
+            Ok(())
+        },
+    )
     .await?;
 
     Ok(())
@@ -927,6 +934,7 @@ async fn test_phase5_configuration_event_sources_require_deployment_descriptor(
         &[
             ("DATABASE_URL", db_url),
             ("HOME", home.display().to_string()),
+            ("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new()),
         ],
         || async {
             let (status, details, messages) =
@@ -1030,6 +1038,10 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
                     {
                         "path": configured_home.join(".local/share/atuin/history.db"),
                         "shell": "atuin"
+                    },
+                    {
+                        "path": configured_home.join(".local/share/fish/fish_history"),
+                        "shell": "fish"
                     }
                 ]
             },
@@ -1052,8 +1064,31 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
             ),
         ],
         || async {
-            let (_status, details, _messages) =
+            let (status, details, _messages) =
                 configuration::verify_configuration_generation().await?;
+
+            assert_eq!(status, VerificationStatus::Warning);
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("configured_unavailable_count"))
+                    .and_then(Value::as_u64),
+                Some(4)
+            );
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("configured_unavailable_blocking_count"))
+                    .and_then(Value::as_u64),
+                Some(0)
+            );
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("configured_unavailable_advisory_count"))
+                    .and_then(Value::as_u64),
+                Some(4)
+            );
 
             let sources = details
                 .get("event_sources")
@@ -1077,6 +1112,13 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
             );
             assert_eq!(
                 sources
+                    .get("terminal")
+                    .and_then(|value| value.get("blocking"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
                     .get("atuin")
                     .and_then(|value| value.get("configured"))
                     .and_then(Value::as_bool),
@@ -1086,6 +1128,13 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
                 sources
                     .get("atuin")
                     .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("atuin")
+                    .and_then(|value| value.get("blocking"))
                     .and_then(Value::as_bool),
                 Some(false)
             );
@@ -1105,6 +1154,13 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
             );
             assert_eq!(
                 sources
+                    .get("activitywatch")
+                    .and_then(|value| value.get("blocking"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
                     .get("hyprland")
                     .and_then(|value| value.get("configured"))
                     .and_then(Value::as_bool),
@@ -1114,6 +1170,13 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
                 sources
                     .get("hyprland")
                     .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                sources
+                    .get("hyprland")
+                    .and_then(|value| value.get("blocking"))
                     .and_then(Value::as_bool),
                 Some(false)
             );
@@ -1315,8 +1378,17 @@ async fn test_phase5_configuration_event_sources_reject_native_fish_history(
             ),
         ],
         || async {
-            let (_status, details, _messages) =
+            let (status, details, _messages) =
                 configuration::verify_configuration_generation().await?;
+
+            assert_eq!(status, VerificationStatus::Fail);
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("configured_unavailable_blocking_count"))
+                    .and_then(Value::as_u64),
+                Some(1)
+            );
 
             let terminal = details
                 .get("event_sources")
@@ -1331,6 +1403,10 @@ async fn test_phase5_configuration_event_sources_reject_native_fish_history(
             assert_eq!(
                 terminal.get("available").and_then(Value::as_bool),
                 Some(false)
+            );
+            assert_eq!(
+                terminal.get("blocking").and_then(Value::as_bool),
+                Some(true)
             );
             assert!(
                 terminal.get("reason").and_then(Value::as_str).is_some_and(
@@ -1474,13 +1550,6 @@ async fn test_phase6_service_dependencies_fail_on_invalid_notify_contract() -> T
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
 
-    let which_output = std::process::Command::new("which").arg("which").output()?;
-    assert!(which_output.status.success(), "expected 'which' to exist");
-    let which_path = String::from_utf8_lossy(&which_output.stdout)
-        .trim()
-        .to_string();
-    std::os::unix::fs::symlink(which_path, bin_dir.join("which"))?;
-
     let systemctl_path = bin_dir.join("systemctl");
     write_executable_script(
         &systemctl_path,
@@ -1533,6 +1602,73 @@ exit 1
 }
 
 #[sinex_test]
+async fn test_phase6_service_dependencies_accept_inactive_declared_unit_watchdog_placeholder(
+) -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "mode": "prepared",
+            "source": "test",
+            "managed_units": ["sinex-ingestd.service"]
+        }))?,
+    )?;
+
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir)?;
+
+    let systemctl_path = bin_dir.join("systemctl");
+    write_executable_script(
+        &systemctl_path,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'systemd 255\n'
+  exit 0
+fi
+if [ "$1" = "show" ]; then
+  unit="$2"
+  case "$unit" in
+    sinex-ingestd.service)
+      printf 'ActiveState=inactive\nSubState=dead\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=infinity\n'
+      exit 0
+      ;;
+    postgresql.service|systemd-resolved.service)
+      printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=3min\n'
+      exit 0
+      ;;
+  esac
+fi
+printf 'unexpected invocation: %s\n' "$*" >&2
+exit 1
+"#,
+    )?;
+
+    with_env_vars(
+        &[
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+            ("SINEX_EDGE_MODE", "1".to_string()),
+            ("PATH", bin_dir.display().to_string()),
+        ],
+        || async {
+            let (status, _details, messages) = services::verify_service_dependencies().await?;
+            assert_ne!(status, VerificationStatus::Fail);
+            assert!(messages.iter().any(|message| {
+                message.contains("watchdog will arm on start")
+            }));
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_phase6_service_dependencies_descriptor_skips_path_service_binaries() -> TestResult<()>
 {
     let temp = tempfile::tempdir()?;
@@ -1549,15 +1685,8 @@ async fn test_phase6_service_dependencies_descriptor_skips_path_service_binaries
 
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
-    for binary in ["which", "systemctl"] {
-        let output = std::process::Command::new("which").arg(binary).output()?;
-        assert!(
-            output.status.success(),
-            "expected '{binary}' to exist for preflight test"
-        );
-        let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        std::os::unix::fs::symlink(source, bin_dir.join(binary))?;
-    }
+    let systemctl = which::which("systemctl")?;
+    std::os::unix::fs::symlink(systemctl, bin_dir.join("systemctl"))?;
 
     with_env_vars(
         &[
@@ -1606,15 +1735,8 @@ async fn test_phase6_service_dependencies_reports_optional_binary_probe_errors()
 
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
-    for binary in ["which", "systemctl"] {
-        let output = std::process::Command::new("which").arg(binary).output()?;
-        assert!(
-            output.status.success(),
-            "expected '{binary}' to exist for preflight test"
-        );
-        let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        std::os::unix::fs::symlink(source, bin_dir.join(binary))?;
-    }
+    let systemctl = which::which("systemctl")?;
+    std::os::unix::fs::symlink(systemctl, bin_dir.join("systemctl"))?;
 
     with_env_vars(
         &[

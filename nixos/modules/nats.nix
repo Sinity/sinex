@@ -468,32 +468,32 @@ in
         ExecStart = let
           mkStreamCommand = stream:
             let
-              subjArgs = concatStringsSep " " (map (s: "--subjects ${escapeShellArg s}") stream.subjects);
-              maxMsgsPerSubjectArg = optionalString (stream ? maxMsgsPerSubject) "--max-msgs-per-subject ${toString stream.maxMsgsPerSubject}";
-              dupeWindowArg = optionalString (stream ? dupeWindow) "--dupe-window ${escapeShellArg stream.dupeWindow}";
-              mutableArgs = ''
-                ${subjArgs} \
-                --retention limits \
-                --max-age ${stream.maxAge} \
-                ${maxMsgsPerSubjectArg} \
-                ${dupeWindowArg}
-              '';
+              streamName = escapeShellArg stream.name;
+              subjectArgLines = concatStringsSep "\n" (
+                map (subject: "  stream_args+=(--subjects ${escapeShellArg subject})") stream.subjects
+              );
+              optionalArgLines = concatStringsSep "\n" (filter (line: line != "") [
+                (optionalString (stream ? maxMsgsPerSubject) "  stream_args+=(--max-msgs-per-subject ${escapeShellArg (toString stream.maxMsgsPerSubject)})")
+                (optionalString (stream ? dupeWindow) "  stream_args+=(--dupe-window ${escapeShellArg stream.dupeWindow})")
+              ]);
             in ''
-              if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${stream.name} >/dev/null 2>&1; then
-                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${stream.name} \
-                  --dry-run \
-                  ${mutableArgs} \
+              stream_args=()
+${subjectArgLines}
+              stream_args+=(--retention limits)
+              stream_args+=(--max-age ${escapeShellArg stream.maxAge})
+${optionalArgLines}
+              if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${streamName} >/dev/null 2>&1; then
+                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${streamName} \
+                  --dry-run "''${stream_args[@]}" \
                   2>&1); then
                   echo "Stream ${stream.name} drifts from declarative bootstrap config; refusing to overwrite it automatically" >&2
                   echo "$output" >&2
                   exit 1
                 fi
               else
-                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${stream.name} \
-                  --defaults \
-                  ${mutableArgs} \
-                  --storage file \
-                  --replicas 1 \
+                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${streamName} \
+                  --defaults "''${stream_args[@]}" \
+                  --storage file --replicas 1 \
                   2>&1); then
                   if echo "$output" | grep -q "subjects overlap with an existing stream"; then
                     echo "Stream ${stream.name} already provisioned elsewhere; skipping bootstrap for it"

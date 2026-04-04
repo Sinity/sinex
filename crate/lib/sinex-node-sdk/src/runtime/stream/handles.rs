@@ -7,7 +7,7 @@ use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::events::Event;
-use sinex_primitives::{HostName, JsonValue, Uuid};
+use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -161,6 +161,10 @@ impl EventEmitter {
     }
 
     pub async fn emit(&self, mut event: Event<JsonValue>) -> Result<(), SinexError> {
+        if event.id.is_none() {
+            event.id = Some(Id::new());
+        }
+
         if event.node_run_id.is_none() {
             event.node_run_id = self.default_node_run_id;
         }
@@ -313,6 +317,45 @@ mod tests {
             .await
             .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
         assert_eq!(emitted.payload_schema_id, Some(explicit_schema_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emit_stamps_missing_event_id() -> TestResult<()> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let emitter = EventEmitter::new(sender, false);
+
+        let event = Event {
+            id: None,
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        emitter.emit(event).await?;
+        let emitted = receiver
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+        assert!(emitted.id.is_some());
         Ok(())
     }
 }

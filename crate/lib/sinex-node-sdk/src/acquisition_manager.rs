@@ -144,6 +144,31 @@ struct MaterialEndMessage {
     metadata: JsonValue,
 }
 
+fn registry_source_identifier(logical_source_identifier: &str, material_id: Uuid) -> String {
+    format!("{logical_source_identifier}#material={material_id}")
+}
+
+fn annotate_material_metadata(
+    metadata: JsonValue,
+    logical_source_identifier: &str,
+    material_id: Uuid,
+) -> JsonValue {
+    let mut metadata = match metadata {
+        JsonValue::Object(map) => JsonValue::Object(map),
+        JsonValue::Null => json!({}),
+        other => json!({ "value": other }),
+    };
+
+    if let Some(obj) = metadata.as_object_mut() {
+        obj.entry("logical_source_identifier".to_string())
+            .or_insert_with(|| JsonValue::String(logical_source_identifier.to_string()));
+        obj.entry("observation_material_id".to_string())
+            .or_insert_with(|| JsonValue::String(material_id.to_string()));
+    }
+
+    metadata
+}
+
 impl AcquisitionManager {
     /// Create an acquisition manager with default rotation policy.
     ///
@@ -722,6 +747,11 @@ impl<'a> MaterialBuilder<'a> {
         self.manager.ensure_streams_ready().await?;
 
         let material_id = Uuid::now_v7();
+        let logical_source_identifier = self.source_identifier;
+        let registry_source_identifier =
+            registry_source_identifier(&logical_source_identifier, material_id);
+        let metadata =
+            annotate_material_metadata(self.metadata, &logical_source_identifier, material_id);
 
         // Create temporary file for local buffering
         let temp_dir = self
@@ -740,7 +770,8 @@ impl<'a> MaterialBuilder<'a> {
 
         info!(
             material_id = %material_id,
-            source_identifier = %self.source_identifier,
+            source_identifier = %logical_source_identifier,
+            registry_source_identifier = %registry_source_identifier,
             temp_path = %temp_path.display(),
             "Created new source material"
         );
@@ -754,8 +785,8 @@ impl<'a> MaterialBuilder<'a> {
             bytes_written: 0,
             started_at: Timestamp::now(),
             pending_begin: Some(PendingMaterialBegin {
-                source_identifier: self.source_identifier,
-                metadata: self.metadata,
+                source_identifier: registry_source_identifier,
+                metadata,
             }),
             pending_published_slice: None,
         };

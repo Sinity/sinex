@@ -420,7 +420,10 @@ where
                 self.last_revision = checkpoint_state.revision;
             }
             None if matches!(checkpoint_state.checkpoint, Checkpoint::None) => {
-                info!(node = %self.node.name(), "No valid checkpoint, starting fresh");
+                warn!(
+                    node = %self.node.name(),
+                    "No valid checkpoint for derived node; replaying full historical input"
+                );
                 self.persisted_state = PersistedState::default();
                 self.last_revision = checkpoint_state.revision;
             }
@@ -1915,7 +1918,11 @@ where
                 "Node {} failed to save final checkpoint to NATS KV during shutdown \
                  (file save {})",
                 self.node.name(),
-                if file_save_success { "succeeded" } else { "also failed" }
+                if file_save_success {
+                    "succeeded"
+                } else {
+                    "also failed"
+                }
             )));
         }
 
@@ -2850,7 +2857,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn process_batch_surfaces_checkpoint_save_failures(ctx: TestContext) -> TestResult<()> {
+    async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let mut adapter = DerivedNodeAdapter::with_config(
             TransducerWrapper(UnserializableDerivedNode),
@@ -2875,14 +2884,32 @@ mod tests {
                 .checkpoint_manager(),
         );
 
-        let error = adapter
-            .process_batch(vec![make_input_event("checkpoint")?])
+        let first = adapter
+            .process_batch(vec![make_input_event("checkpoint-1")?])
             .await
-            .expect_err("checkpoint serialization failures must fail the batch");
+            .expect("first checkpoint serialization failure should not halt the batch");
+        assert!(
+            first.is_empty(),
+            "unserializable checkpoint node should not emit output events"
+        );
 
         assert!(
-            error.to_string().contains("serialize state"),
-            "checkpoint save failure should surface serialization context: {error:#}"
+            adapter
+                .process_batch(vec![make_input_event("checkpoint-2")?])
+                .await
+                .expect("second checkpoint serialization failure should not halt the batch")
+                .is_empty(),
+            "second failed checkpoint should still let batch processing complete"
+        );
+
+        let error = adapter
+            .process_batch(vec![make_input_event("checkpoint-3")?])
+            .await
+            .expect_err("third consecutive checkpoint serialization failure must halt the batch");
+
+        assert!(
+            error.to_string().contains("Checkpoint save failed 3 consecutive times"),
+            "batch halt should report the consecutive failure threshold: {error:#}"
         );
         Ok(())
     }
