@@ -51,7 +51,11 @@ impl WatchLoop {
             .await
     }
 
-    async fn run_with_shutdown_signal<S, F, Fut>(&self, shutdown_signal: S, mut tick_fn: F) -> Result<()>
+    async fn run_with_shutdown_signal<S, F, Fut>(
+        &self,
+        shutdown_signal: S,
+        mut tick_fn: F,
+    ) -> Result<()>
     where
         S: std::future::Future<Output = std::io::Result<()>>,
         F: FnMut(bool) -> Fut,
@@ -110,8 +114,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_watch_loop_surfaces_shutdown_listener_failure()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_watch_loop_surfaces_shutdown_listener_failure() -> ::xtask::sandbox::TestResult<()>
+    {
         let loop_ = WatchLoop::new(Duration::from_millis(1));
 
         let error = loop_

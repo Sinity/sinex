@@ -331,8 +331,7 @@ impl JetStreamEventConsumer {
                 "Buffer at capacity, NAKing message to apply backpressure"
             );
             let nak_delay = Some(std::time::Duration::from_millis(500));
-            msg
-                .ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
+            msg.ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
                 .await
                 .map_err(|error| {
                     Self::message_settlement_error(
@@ -364,19 +363,18 @@ impl JetStreamEventConsumer {
                 )
             })?;
         } else {
-            msg
-                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    Duration::from_secs(5),
-                )))
-                .await
-                .map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to NAK provisional handler failure",
-                        &msg,
-                        Some(event.event_id),
-                        error,
-                    )
-                })?;
+            msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                Duration::from_secs(5),
+            )))
+            .await
+            .map_err(|error| {
+                Self::message_settlement_error(
+                    "failed to NAK provisional handler failure",
+                    &msg,
+                    Some(event.event_id),
+                    error,
+                )
+            })?;
         }
         Ok(())
     }
@@ -473,19 +471,18 @@ impl JetStreamEventConsumer {
                     )
                 })?;
             } else {
-                msg
-                    .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                        Duration::from_secs(5),
-                    )))
-                    .await
-                    .map_err(|error| {
-                        Self::message_settlement_error(
-                            "failed to NAK confirmed handler failure",
-                            &msg,
-                            Some(confirmation.event_id),
-                            error,
-                        )
-                    })?;
+                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    Duration::from_secs(5),
+                )))
+                .await
+                .map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to NAK confirmed handler failure",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
             }
         } else {
             // Confirmation arrived before the provisional event was buffered
@@ -496,19 +493,18 @@ impl JetStreamEventConsumer {
                 event_id = %confirmation.event_id,
                 "Confirmation arrived before provisional event; NAKing for retry"
             );
-            msg
-                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    Duration::from_millis(200),
-                )))
-                .await
-                .map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to NAK early confirmation",
-                        &msg,
-                        Some(confirmation.event_id),
-                        error,
-                    )
-                })?;
+            msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                Duration::from_millis(200),
+            )))
+            .await
+            .map_err(|error| {
+                Self::message_settlement_error(
+                    "failed to NAK early confirmation",
+                    &msg,
+                    Some(confirmation.event_id),
+                    error,
+                )
+            })?;
         }
         Ok(())
     }
@@ -633,8 +629,9 @@ mod tests {
         let handle = tokio::spawn(async { Ok::<(), SinexError>(()) });
         let result = handle.await;
 
-        let error = JetStreamEventConsumer::background_task_exit_result("confirmation task", result, false)
-            .expect_err("unexpected task exit while still running must fail");
+        let error =
+            JetStreamEventConsumer::background_task_exit_result("confirmation task", result, false)
+                .expect_err("unexpected task exit while still running must fail");
         assert!(format!("{error:#}").contains("confirmation task stopped unexpectedly"));
         Ok(())
     }
@@ -653,12 +650,9 @@ mod tests {
         let handle = tokio::spawn(async { panic!("boom") });
         let result = handle.await.map(|_| Ok::<(), SinexError>(()));
 
-        let error = JetStreamEventConsumer::background_task_exit_result(
-            "confirmation task",
-            result,
-            false,
-        )
-        .expect_err("panic must surface as an error");
+        let error =
+            JetStreamEventConsumer::background_task_exit_result("confirmation task", result, false)
+                .expect_err("panic must surface as an error");
         assert!(format!("{error:#}").contains("confirmation task panicked"));
         Ok(())
     }

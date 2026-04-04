@@ -672,7 +672,12 @@ async fn test_phase4_system_resources_rejects_non_unicode_work_dir() -> TestResu
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var_os("SINEX_WORK_DIR");
-    unsafe { env::set_var("SINEX_WORK_DIR", OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x80])) };
+    unsafe {
+        env::set_var(
+            "SINEX_WORK_DIR",
+            OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x80]),
+        );
+    };
 
     let (status, _details, messages) = resources::verify_system_resources().await?;
 
@@ -685,9 +690,9 @@ async fn test_phase4_system_resources_rejects_non_unicode_work_dir() -> TestResu
 
     assert_eq!(status, VerificationStatus::Fail);
     assert!(
-        messages
-            .iter()
-            .any(|message| message.contains("SINEX_WORK_DIR") && message.contains("not valid UTF-8")),
+        messages.iter().any(
+            |message| message.contains("SINEX_WORK_DIR") && message.contains("not valid UTF-8")
+        ),
         "expected invalid UTF-8 work dir message, got {messages:#?}"
     );
     Ok(())
@@ -847,7 +852,7 @@ async fn test_phase5_configuration_rejects_non_unicode_required_env(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous_database_url = env::var_os("DATABASE_URL");
     let previous_rust_log = env::var_os("RUST_LOG");
-    unsafe { env::set_var("DATABASE_URL", ctx.database_url().to_string()) };
+    unsafe { env::set_var("DATABASE_URL", ctx.database_url()) };
     unsafe { env::set_var("RUST_LOG", OsString::from_vec(vec![0x69, 0x6e, 0x80])) };
 
     let (status, _details, messages) = configuration::verify_configuration_generation().await?;
@@ -1328,10 +1333,9 @@ async fn test_phase5_configuration_event_sources_reject_native_fish_history(
                 Some(false)
             );
             assert!(
-                terminal
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .is_some_and(|reason| reason.contains("native Fish YAML history is unsupported"))
+                terminal.get("reason").and_then(Value::as_str).is_some_and(
+                    |reason| reason.contains("native Fish YAML history is unsupported")
+                )
             );
 
             Ok(())
@@ -1472,7 +1476,9 @@ async fn test_phase6_service_dependencies_fail_on_invalid_notify_contract() -> T
 
     let which_output = std::process::Command::new("which").arg("which").output()?;
     assert!(which_output.status.success(), "expected 'which' to exist");
-    let which_path = String::from_utf8_lossy(&which_output.stdout).trim().to_string();
+    let which_path = String::from_utf8_lossy(&which_output.stdout)
+        .trim()
+        .to_string();
     std::os::unix::fs::symlink(which_path, bin_dir.join("which"))?;
 
     let systemctl_path = bin_dir.join("systemctl");
@@ -1513,9 +1519,11 @@ exit 1
         || async {
             let (status, _details, messages) = services::verify_service_dependencies().await?;
             assert_eq!(status, VerificationStatus::Fail);
-            assert!(messages.iter().any(|message| {
-                message.contains("violates the notify/watchdog contract")
-            }));
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| { message.contains("violates the notify/watchdog contract") })
+            );
             Ok(())
         },
     )
@@ -1583,8 +1591,7 @@ async fn test_phase6_service_dependencies_descriptor_skips_path_service_binaries
 }
 
 #[sinex_test]
-async fn test_phase6_service_dependencies_reports_optional_binary_probe_errors() -> TestResult<()>
-{
+async fn test_phase6_service_dependencies_reports_optional_binary_probe_errors() -> TestResult<()> {
     let temp = tempfile::tempdir()?;
     let descriptor_path = temp.path().join("deployment-readiness.json");
     fs::write(
@@ -1636,9 +1643,11 @@ async fn test_phase6_service_dependencies_reports_optional_binary_probe_errors()
                     .and_then(Value::as_str)
                     .is_some_and(|error| error.contains("Binary 'git' not found in PATH"))
             );
-            assert!(messages.iter().any(|message| {
-                message.contains("Optional binary 'git' unavailable")
-            }));
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| { message.contains("Optional binary 'git' unavailable") })
+            );
             Ok(())
         },
     )
@@ -1840,7 +1849,8 @@ async fn test_phase7_integration_warns_when_checkpoint_bucket_missing(
             ("SINEX_ENVIRONMENT", env_name),
         ],
         || async {
-            let (status, _details, messages) = verification::verify_end_to_end_integration().await?;
+            let (status, _details, messages) =
+                verification::verify_end_to_end_integration().await?;
 
             assert_eq!(status, VerificationStatus::Warning);
             assert!(

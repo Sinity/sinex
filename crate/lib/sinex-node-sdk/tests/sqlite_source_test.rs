@@ -4,17 +4,14 @@ use camino::Utf8PathBuf;
 use rusqlite::Connection;
 use sinex_node_sdk::{
     SqliteHistoryImportError, SqliteHistoryRowOutcome, SqliteHistoryWarningDisposition,
-    import_sqlite_history_lenient,
-    import_sqlite_history_strict, read_rows_after,
+    import_sqlite_history_lenient, import_sqlite_history_strict, read_rows_after,
 };
 use sinex_primitives::Timestamp;
 use tokio::sync::Mutex;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn sqlite_history_lenient_import_advances_past_skippable_warning()
--> TestResult<()>
-{
+async fn sqlite_history_lenient_import_advances_past_skippable_warning() -> TestResult<()> {
     let seen_rows = Arc::new(Mutex::new(Vec::new()));
     let expected_end_time =
         Timestamp::from_unix_timestamp(42).expect("static timestamp should be valid");
@@ -81,8 +78,7 @@ async fn sqlite_history_lenient_import_advances_across_processed_and_skipped_row
 
 #[sinex_test]
 async fn sqlite_history_lenient_import_retries_without_advancing_on_retryable_warning()
--> TestResult<()>
-{
+-> TestResult<()> {
     let seen_rows = Arc::new(Mutex::new(Vec::new()));
 
     let report = import_sqlite_history_lenient(

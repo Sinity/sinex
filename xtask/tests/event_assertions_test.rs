@@ -41,15 +41,18 @@ async fn test_event_assert_supports_combined_source_and_type_count(
     .await?;
 
     ctx.timing()
-        .wait_for_condition(|| async {
-            Ok::<bool, color_eyre::Report>(
-                ctx.pool
-                    .events()
-                    .count_by_source_and_event_type(&matching_source, &matching_type)
-                    .await
-                    .map(|count| count == 2)?,
-            )
-        }, 10)
+        .wait_for_condition(
+            || async {
+                Ok::<bool, color_eyre::Report>(
+                    ctx.pool
+                        .events()
+                        .count_by_source_and_event_type(&matching_source, &matching_type)
+                        .await
+                        .map(|count| count == 2)?,
+                )
+            },
+            10,
+        )
         .await?;
 
     let actual = ctx
@@ -81,15 +84,18 @@ async fn test_event_assert_combined_filters_work_with_default_await(
     .await?;
 
     ctx.timing()
-        .wait_for_condition(|| async {
-            Ok::<bool, color_eyre::Report>(
-                ctx.pool
-                    .events()
-                    .count_by_source_and_event_type(&source, &event_type)
-                    .await
-                    .map(|count| count == 1)?,
-            )
-        }, 10)
+        .wait_for_condition(
+            || async {
+                Ok::<bool, color_eyre::Report>(
+                    ctx.pool
+                        .events()
+                        .count_by_source_and_event_type(&source, &event_type)
+                        .await
+                        .map(|count| count == 1)?,
+                )
+            },
+            10,
+        )
         .await?;
 
     let actual = ctx

@@ -92,7 +92,10 @@ fn nextest_test_threads_from_config(
     profile: &str,
     cpu_count: usize,
 ) -> Result<Option<usize>> {
-    let Some(profile_cfg) = config.get("profile").and_then(|profiles| profiles.get(profile)) else {
+    let Some(profile_cfg) = config
+        .get("profile")
+        .and_then(|profiles| profiles.get(profile))
+    else {
         return Ok(None);
     };
     let Some(test_threads) = profile_cfg.get("test-threads") else {
@@ -199,7 +202,8 @@ mod tests {
         let err =
             parse_num_cpus_expression("num-cpus-bad", 24).expect_err("invalid offset should fail");
         assert!(
-            err.to_string().contains("invalid nextest test-threads expression"),
+            err.to_string()
+                .contains("invalid nextest test-threads expression"),
             "unexpected error: {err:#}"
         );
         Ok(())
@@ -228,7 +232,10 @@ mod tests {
             test-threads = 8
             "#,
         )?;
-        assert_eq!(nextest_test_threads_from_config(&config, "default", 24)?, None);
+        assert_eq!(
+            nextest_test_threads_from_config(&config, "default", 24)?,
+            None
+        );
         Ok(())
     }
 

@@ -260,7 +260,10 @@ mod tests {
             cpu_count: 8,
         };
 
-        assert_eq!(status.summary(), "Memory: 16.0/32.0GB free, Load: unavailable (8 CPUs)");
+        assert_eq!(
+            status.summary(),
+            "Memory: 16.0/32.0GB free, Load: unavailable (8 CPUs)"
+        );
         assert!(status.warning(8).is_none());
         assert!(status.load_acceptable());
         Ok(())

@@ -36,9 +36,7 @@ use color_eyre::eyre::Result;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::db::{
-    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation,
-};
+use super::db::{HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation};
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
@@ -1144,7 +1142,10 @@ impl HistoryDb {
         );
 
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(bound_params.iter()), row_to_invocation)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(bound_params.iter()),
+            row_to_invocation,
+        )?;
 
         let mut results = Vec::new();
         for row in rows {

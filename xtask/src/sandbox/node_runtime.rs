@@ -149,6 +149,7 @@ impl TestRuntime {
         rotation_policy: sinex_node_sdk::RotationPolicy,
         source_type: impl Into<String>,
     ) -> sinex_node_sdk::NodeResult<sinex_node_sdk::AcquisitionManager> {
-        self.runtime.acquisition_manager(rotation_policy, source_type)
+        self.runtime
+            .acquisition_manager(rotation_policy, source_type)
     }
 }

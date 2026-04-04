@@ -1,6 +1,6 @@
 //! Mathematical unit tests for `HistoryAnalysis` heuristics.
 //!
-//! Phase 4.2: these tests seed exact known data into a temp SQLite DB and
+//! Phase 4.2: these tests seed exact known data into a temp `SQLite` DB and
 //! assert exact arithmetic — not JSON shape, not "greater than zero", but
 //! precise pass rates, diagnostic counts, and regression detection.
 //!
@@ -10,7 +10,6 @@
 use color_eyre::eyre::Result;
 use std::collections::HashSet;
 use tempfile::tempdir;
-use time;
 use xtask::cargo_diagnostics::CompilerDiagnostic;
 use xtask::history::{HistoryAnalysis, HistoryDb, InvocationStatus};
 use xtask::sandbox::sinex_test;
@@ -25,19 +24,46 @@ fn temp_db() -> Result<(tempfile::TempDir, HistoryDb)> {
 }
 
 /// Seed a completed invocation and return its ID.
-fn seed_invocation(db: &HistoryDb, command: &str, status: InvocationStatus, duration: f64) -> Result<i64> {
+fn seed_invocation(
+    db: &HistoryDb,
+    command: &str,
+    status: InvocationStatus,
+    duration: f64,
+) -> Result<i64> {
     let id = db.start_invocation(command, None, None, None)?;
     db.finish_invocation(id, status, Some(0), duration)?;
     Ok(id)
 }
 
 /// Record test results for an invocation: `pass_count` passes then `fail_count` failures.
-fn seed_tests(db: &HistoryDb, inv_id: i64, package: &str, pass_count: usize, fail_count: usize) -> Result<()> {
+fn seed_tests(
+    db: &HistoryDb,
+    inv_id: i64,
+    package: &str,
+    pass_count: usize,
+    fail_count: usize,
+) -> Result<()> {
     for i in 0..pass_count {
-        db.record_test_result(inv_id, &format!("{package}::pass_{i}"), package, "pass", 0.1, None, "nextest")?;
+        db.record_test_result(
+            inv_id,
+            &format!("{package}::pass_{i}"),
+            package,
+            "pass",
+            0.1,
+            None,
+            "nextest",
+        )?;
     }
     for i in 0..fail_count {
-        db.record_test_result(inv_id, &format!("{package}::fail_{i}"), package, "fail", 0.2, Some("assertion failed"), "nextest")?;
+        db.record_test_result(
+            inv_id,
+            &format!("{package}::fail_{i}"),
+            package,
+            "fail",
+            0.2,
+            Some("assertion failed"),
+            "nextest",
+        )?;
     }
     Ok(())
 }
@@ -57,8 +83,8 @@ fn make_diag(level: &str, package: &str, fixable: bool, tag: &str) -> CompilerDi
         package: Some(package.to_string()),
         fix_replacement: fixable.then(|| "fixed_value".to_string()),
         fix_applicability: fixable.then(|| "MachineApplicable".to_string()),
-        fix_byte_start: fixable.then(|| 100u32),
-        fix_byte_end: fixable.then(|| 110u32),
+        fix_byte_start: fixable.then_some(100u32),
+        fix_byte_end: fixable.then_some(110u32),
     }
 }
 
@@ -151,14 +177,21 @@ async fn test_regression_scan_finds_failures() -> ::xtask::sandbox::TestResult<(
     // One successful invocation — should NOT appear in regressions
     let good_inv = seed_invocation(&db, "check", InvocationStatus::Success, 5.0)?;
     db.record_compiled_packages(good_inv, &HashSet::from(["sinex-primitives".to_string()]))?;
-    db.record_diagnostic(good_inv, &make_diag("warning", "sinex-primitives", false, "w1"))?;
+    db.record_diagnostic(
+        good_inv,
+        &make_diag("warning", "sinex-primitives", false, "w1"),
+    )?;
 
     let analysis = HistoryAnalysis::new(&db);
     let since = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
     let regressions = analysis.regression_scan(since)?;
 
     // Both errors should appear as regressions in sinex-db
-    assert_eq!(regressions.len(), 2, "expected 2 regressions (one per error diag)");
+    assert_eq!(
+        regressions.len(),
+        2,
+        "expected 2 regressions (one per error diag)"
+    );
     for r in &regressions {
         assert_eq!(r.package.as_deref(), Some("sinex-db"), "regression package");
         assert_eq!(r.level, "error", "regression level");
@@ -178,7 +211,10 @@ async fn test_regression_scan_empty_on_clean_history() -> ::xtask::sandbox::Test
     let since = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
     let regressions = analysis.regression_scan(since)?;
 
-    assert!(regressions.is_empty(), "clean history should produce no regressions");
+    assert!(
+        regressions.is_empty(),
+        "clean history should produce no regressions"
+    );
     Ok(())
 }
 
@@ -201,7 +237,10 @@ fn seed_check_with_diagnostics(
     }
     for i in 0..warnings {
         let is_fixable = i < fixable;
-        db.record_diagnostic(inv, &make_diag("warning", package, is_fixable, &format!("w{i}")))?;
+        db.record_diagnostic(
+            inv,
+            &make_diag("warning", package, is_fixable, &format!("w{i}")),
+        )?;
     }
     Ok(inv)
 }
@@ -216,7 +255,10 @@ async fn test_build_score_with_5_errors_20_warnings() -> ::xtask::sandbox::TestR
     seed_check_with_diagnostics(&db, "sinex-primitives", 5, 20, 0, 10.0)?;
     let analysis = HistoryAnalysis::new(&db);
     let report = analysis.workspace_health_report()?;
-    assert_eq!(report.build_score, 46, "build_score: 100 - 5*10 - 20/5 = 46");
+    assert_eq!(
+        report.build_score, 46,
+        "build_score: 100 - 5*10 - 20/5 = 46"
+    );
     assert_eq!(report.error_count, 5);
     assert_eq!(report.warning_count, 20);
     Ok(())
@@ -228,7 +270,10 @@ async fn test_build_score_zero_diagnostics_is_100() -> ::xtask::sandbox::TestRes
     let (_dir, db) = temp_db()?;
     let analysis = HistoryAnalysis::new(&db);
     let report = analysis.workspace_health_report()?;
-    assert_eq!(report.build_score, 100, "zero diagnostics → build_score 100");
+    assert_eq!(
+        report.build_score, 100,
+        "zero diagnostics → build_score 100"
+    );
     Ok(())
 }
 
@@ -253,8 +298,14 @@ async fn test_composite_score_formula() -> ::xtask::sandbox::TestResult<()> {
     let report = analysis.workspace_health_report()?;
     assert_eq!(report.build_score, 46);
     assert_eq!(report.test_score, 75, "no test data → default 75");
-    assert_eq!(report.velocity_score, 75, "insufficient invocations → default 75");
-    assert_eq!(report.score, 61, "46*0.5 + 75*0.3 + 75*0.2 = 60.5 → rounds to 61");
+    assert_eq!(
+        report.velocity_score, 75,
+        "insufficient invocations → default 75"
+    );
+    assert_eq!(
+        report.score, 61,
+        "46*0.5 + 75*0.3 + 75*0.2 = 60.5 → rounds to 61"
+    );
     Ok(())
 }
 
@@ -286,12 +337,17 @@ fn seed_check_invocations(db: &HistoryDb, n: usize, duration: f64) -> Result<()>
 #[sinex_test]
 async fn test_velocity_trend_detects_faster_builds() -> ::xtask::sandbox::TestResult<()> {
     let (_dir, db) = temp_db()?;
-    seed_check_invocations(&db, 4, 20.0)?;  // older by insertion order
-    seed_check_invocations(&db, 4, 10.0)?;  // newer by insertion order → first in DESC
+    seed_check_invocations(&db, 4, 20.0)?; // older by insertion order
+    seed_check_invocations(&db, 4, 10.0)?; // newer by insertion order → first in DESC
     let analysis = HistoryAnalysis::new(&db);
     let trends = analysis.velocity_trends()?;
-    let check = trends.iter().find(|t| t.command == "check").expect("check trend present");
-    let delta = check.delta_pct.expect("delta_pct should be present with 8 data points");
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend present");
+    let delta = check
+        .delta_pct
+        .expect("delta_pct should be present with 8 data points");
     assert!(
         (delta - (-50.0)).abs() < 1.0,
         "expected delta_pct ≈ -50, got {delta}"
@@ -305,11 +361,14 @@ async fn test_velocity_trend_detects_faster_builds() -> ::xtask::sandbox::TestRe
 #[sinex_test]
 async fn test_velocity_trend_detects_slower_builds() -> ::xtask::sandbox::TestResult<()> {
     let (_dir, db) = temp_db()?;
-    seed_check_invocations(&db, 4, 10.0)?;  // older by insertion order
-    seed_check_invocations(&db, 4, 20.0)?;  // newer → first in DESC
+    seed_check_invocations(&db, 4, 10.0)?; // older by insertion order
+    seed_check_invocations(&db, 4, 20.0)?; // newer → first in DESC
     let analysis = HistoryAnalysis::new(&db);
     let trends = analysis.velocity_trends()?;
-    let check = trends.iter().find(|t| t.command == "check").expect("check trend present");
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend present");
     let delta = check.delta_pct.expect("delta_pct should be present");
     assert!(
         (delta - 100.0).abs() < 1.0,
@@ -326,7 +385,10 @@ async fn test_velocity_trend_stable_when_constant() -> ::xtask::sandbox::TestRes
     seed_check_invocations(&db, 8, 15.0)?;
     let analysis = HistoryAnalysis::new(&db);
     let trends = analysis.velocity_trends()?;
-    let check = trends.iter().find(|t| t.command == "check").expect("check trend");
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend");
     assert_eq!(check.trend, "stable");
     let delta = check.delta_pct.expect("delta_pct present");
     assert!((delta).abs() < 0.01, "expected delta_pct ≈ 0, got {delta}");
@@ -340,9 +402,15 @@ async fn test_velocity_trend_no_data_with_few_invocations() -> ::xtask::sandbox:
     seed_check_invocations(&db, 3, 10.0)?;
     let analysis = HistoryAnalysis::new(&db);
     let trends = analysis.velocity_trends()?;
-    let check = trends.iter().find(|t| t.command == "check").expect("check trend");
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend");
     assert_eq!(check.trend, "no_data");
-    assert!(check.delta_pct.is_none(), "no delta_pct with insufficient data");
+    assert!(
+        check.delta_pct.is_none(),
+        "no delta_pct with insufficient data"
+    );
     Ok(())
 }
 
@@ -364,10 +432,19 @@ async fn test_reliability_stable_when_rates_identical() -> ::xtask::sandbox::Tes
 
     let analysis = HistoryAnalysis::new(&db);
     let reliability = analysis.package_reliability(10)?;
-    let pkg = reliability.iter().find(|r| r.package == "sinex-node-sdk")
+    let pkg = reliability
+        .iter()
+        .find(|r| r.package == "sinex-node-sdk")
         .expect("sinex-node-sdk should appear (registered via build_diagnostics)");
-    assert_eq!(pkg.trend, "stable", "same data in 7d and 30d windows → stable");
-    assert!((pkg.pass_rate - 0.8).abs() < f64::EPSILON, "pass rate {}", pkg.pass_rate);
+    assert_eq!(
+        pkg.trend, "stable",
+        "same data in 7d and 30d windows → stable"
+    );
+    assert!(
+        (pkg.pass_rate - 0.8).abs() < f64::EPSILON,
+        "pass rate {}",
+        pkg.pass_rate
+    );
     Ok(())
 }
 
@@ -380,8 +457,13 @@ async fn test_recommendations_critical_on_errors() -> ::xtask::sandbox::TestResu
     seed_check_with_diagnostics(&db, "sinex-primitives", 2, 0, 0, 10.0)?;
     let analysis = HistoryAnalysis::new(&db);
     let recs = analysis.recommendations()?;
-    let critical = recs.iter().find(|r| r.severity == "critical" && r.category == "build");
-    assert!(critical.is_some(), "should emit critical build recommendation on errors");
+    let critical = recs
+        .iter()
+        .find(|r| r.severity == "critical" && r.category == "build");
+    assert!(
+        critical.is_some(),
+        "should emit critical build recommendation on errors"
+    );
     assert_eq!(critical.unwrap().action, "xtask check --lint");
     Ok(())
 }
@@ -394,8 +476,13 @@ async fn test_recommendations_warning_on_fixable() -> ::xtask::sandbox::TestResu
     seed_check_with_diagnostics(&db, "sinex-db", 0, 3, 2, 5.0)?;
     let analysis = HistoryAnalysis::new(&db);
     let recs = analysis.recommendations()?;
-    let warn = recs.iter().find(|r| r.severity == "warning" && r.action == "xtask fix --smart");
-    assert!(warn.is_some(), "should emit fix --smart warning on fixable diagnostics");
+    let warn = recs
+        .iter()
+        .find(|r| r.severity == "warning" && r.action == "xtask fix --smart");
+    assert!(
+        warn.is_some(),
+        "should emit fix --smart warning on fixable diagnostics"
+    );
     Ok(())
 }
 
@@ -406,16 +493,22 @@ async fn test_recommendations_empty_on_clean_workspace() -> ::xtask::sandbox::Te
     let analysis = HistoryAnalysis::new(&db);
     let recs = analysis.recommendations()?;
     // Without errors, fixable diagnostics, or passing test packages, no recommendations
-    let critical_or_warning: Vec<_> = recs.iter()
-        .filter(|r| r.severity == "critical" || (r.severity == "warning" && r.action == "xtask fix --smart"))
+    let critical_or_warning: Vec<_> = recs
+        .iter()
+        .filter(|r| {
+            r.severity == "critical" || (r.severity == "warning" && r.action == "xtask fix --smart")
+        })
         .collect();
-    assert!(critical_or_warning.is_empty(), "clean workspace should emit no critical/fix recommendations");
+    assert!(
+        critical_or_warning.is_empty(),
+        "clean workspace should emit no critical/fix recommendations"
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn test_package_reliability_surfaces_flaky_query_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_package_reliability_surfaces_flaky_query_failures() -> ::xtask::sandbox::TestResult<()>
+{
     let (dir, db) = temp_db()?;
     seed_check_with_diagnostics(&db, "sinex-node-sdk", 0, 1, 0, 2.0)?;
     let conn = rusqlite::Connection::open(dir.path().join("test.db"))?;
@@ -430,8 +523,7 @@ async fn test_package_reliability_surfaces_flaky_query_failures()
 }
 
 #[sinex_test]
-async fn test_recommendations_surface_flaky_query_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_recommendations_surface_flaky_query_failures() -> ::xtask::sandbox::TestResult<()> {
     let (dir, db) = temp_db()?;
     let conn = rusqlite::Connection::open(dir.path().join("test.db"))?;
     conn.execute("DROP TABLE test_results", rusqlite::params![])?;

@@ -602,7 +602,8 @@ impl EphemeralNats {
         let addr = format!("127.0.0.1:{port}");
         let mut last_err = None;
         for _ in 0..50 {
-            if let Some(status) = Self::poll_child_exit_status(child.try_wait(), "startup readiness")?
+            if let Some(status) =
+                Self::poll_child_exit_status(child.try_wait(), "startup readiness")?
             {
                 return Err(eyre!(
                     "nats-server process exited before becoming ready (status: {status})"
@@ -845,7 +846,9 @@ mod tests {
             token: None,
         };
 
-        let err = nats.log_tail(20).expect_err("missing log should surface an error");
+        let err = nats
+            .log_tail(20)
+            .expect_err("missing log should surface an error");
         assert!(
             err.to_string().contains("failed to read NATS log"),
             "unexpected error: {err:#}"

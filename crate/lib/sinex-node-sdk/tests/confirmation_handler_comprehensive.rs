@@ -286,7 +286,10 @@ async fn timed_out_events_still_confirm_within_grace_period() -> TestResult<()> 
     assert_eq!(timed_out, vec![event_id.into()]);
 
     let confirmed = buffer.confirm(event_id.into()).await;
-    assert!(confirmed.is_some(), "late confirmation should still match within grace");
+    assert!(
+        confirmed.is_some(),
+        "late confirmation should still match within grace"
+    );
     assert!(buffer.is_empty().await);
 
     Ok(())

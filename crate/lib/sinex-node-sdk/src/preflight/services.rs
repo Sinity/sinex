@@ -129,10 +129,12 @@ impl SystemdServiceDetails {
 }
 
 fn require_systemd_show_field(field: &'static str, value: Option<String>) -> NodeResult<String> {
-    value.filter(|value| !value.trim().is_empty()).ok_or_else(|| {
-        SinexError::processing("systemd show output missing required field".to_string())
-            .with_context("field", field)
-    })
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            SinexError::processing("systemd show output missing required field".to_string())
+                .with_context("field", field)
+        })
 }
 
 impl fmt::Display for ServiceStatus {
@@ -917,7 +919,11 @@ mod tests {
             .await
             .expect_err("non-directory path should fail honestly");
 
-        assert!(error.to_string().contains("Failed to inspect systemd unit directory"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to inspect systemd unit directory")
+        );
         Ok(())
     }
 
@@ -929,7 +935,8 @@ mod tests {
         std::fs::write(temp.path().join("postgresql.service"), [])?;
         std::fs::create_dir(temp.path().join("sinex-dir.service"))?;
 
-        let mut found = discover_unit_files_in_path(temp.path().to_str().expect("utf8 path")).await?;
+        let mut found =
+            discover_unit_files_in_path(temp.path().to_str().expect("utf8 path")).await?;
         found.sort();
 
         assert_eq!(

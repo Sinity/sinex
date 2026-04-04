@@ -121,7 +121,10 @@ mod tests {
 
         let metrics = monitor.stop();
 
-        assert!(!metrics.cpu_samples.is_empty(), "expected at least one CPU sample");
+        assert!(
+            !metrics.cpu_samples.is_empty(),
+            "expected at least one CPU sample"
+        );
         assert_eq!(metrics.cpu_samples.len(), metrics.mem_samples.len());
     }
 }

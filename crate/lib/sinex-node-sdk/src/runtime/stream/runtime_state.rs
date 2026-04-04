@@ -125,8 +125,10 @@ impl NodeRuntimeState {
         rotation_policy: RotationPolicy,
         source_type: impl Into<String>,
     ) -> crate::NodeResult<AcquisitionManager> {
-        Ok(AcquisitionManager::from_handles(self.handles(), rotation_policy, source_type)?
-            .with_work_dir(self.work_dir()))
+        Ok(
+            AcquisitionManager::from_handles(self.handles(), rotation_policy, source_type)?
+                .with_work_dir(self.work_dir()),
+        )
     }
 
     #[must_use]

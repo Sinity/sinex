@@ -58,6 +58,8 @@ pub struct DlqRetryResult {
     pub retried: usize,
     /// Messages that exceeded `max_retries` and were permanently acked/discarded.
     pub permanently_failed: usize,
+    /// Messages where retry failed transiently (NAK'd for redelivery).
+    pub transient_failures: usize,
 }
 
 /// DLQ retry handler
@@ -135,10 +137,10 @@ impl DlqRetryHandler {
                 Ok(Some(Ok(msg))) => {
                     if self.handle_dlq_message(&js, &msg).await? {
                         result.retried += 1;
+                    } else if dlq_retry_attempts(&msg)? >= self.config.max_retries {
+                        result.permanently_failed += 1;
                     } else {
-                        if dlq_retry_attempts(&msg)? >= self.config.max_retries {
-                            result.permanently_failed += 1;
-                        }
+                        result.transient_failures += 1;
                     }
                     processed += 1;
 

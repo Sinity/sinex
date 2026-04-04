@@ -171,29 +171,28 @@ async fn restore_state_params(
         }
         has_non_empty_lines = true;
 
+        // Extract the raw "entry" field bytes from the line for CRC verification
+        // before parsing the full envelope. This avoids the round-trip serialization
+        // vulnerability where a serde_json version change could alter key ordering
+        // and invalidate all existing WAL entries.
+        let entry_crc_ok = match extract_raw_entry_bytes(line) {
+            Some(raw_bytes) => {
+                let parsed_envelope: Result<WalEntryEnvelope, _> = serde_json::from_str(line);
+                match parsed_envelope {
+                    Ok(ref env) => crc32fast::hash(raw_bytes.as_bytes()) == env.crc,
+                    Err(_) => false,
+                }
+            }
+            None => false,
+        };
         match parse_wal_envelope_line(line) {
             Ok(envelope) => {
-            // Verify CRC: re-serialize the entry and compare checksum
-            let entry_json = match serde_json::to_vec(&envelope.entry) {
-                Ok(json) => json,
-                Err(e) => {
-                    warn!(
-                        material_id = %material_id,
-                        line = line_num + 1,
-                        "WAL entry re-serialization failed (stopping replay): {e}"
-                    );
-                    replay_corrupted = true;
-                    break;
-                }
-            };
-            let computed_crc = crc32fast::hash(&entry_json);
-            if computed_crc != envelope.crc {
+            if !entry_crc_ok {
                 warn!(
                     material_id = %material_id,
                     line = line_num + 1,
                     seq = envelope.seq,
                     expected_crc = envelope.crc,
-                    computed_crc = computed_crc,
                     "WAL CRC mismatch — corruption detected, stopping replay"
                 );
                 replay_corrupted = true;
@@ -371,6 +370,46 @@ fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
     })
 }
 
+/// Extract the raw JSON bytes of the "entry" field from a WAL line without
+/// re-serializing. This preserves the original byte sequence for CRC verification,
+/// avoiding sensitivity to serde_json key-ordering changes across versions.
+fn extract_raw_entry_bytes(line: &str) -> Option<&str> {
+    // The envelope format is: {"seq":N,"crc":C,"entry":{...}}
+    // Find the "entry": key and extract everything from the opening { to the matching }.
+    let entry_key = "\"entry\":";
+    let key_pos = line.find(entry_key)?;
+    let value_start = key_pos + entry_key.len();
+    let rest = &line[value_start..];
+    // Find the start of the entry value (skip whitespace)
+    let trimmed = rest.trim_start();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    // Track brace depth to find the matching closing brace
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (i, ch) in trimmed.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth += 1,
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&trimmed[..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn wal_line_preview(line: &str) -> String {
     const MAX_PREVIEW_CHARS: usize = 160;
     let mut preview = line.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
@@ -528,15 +567,28 @@ fn checkpoint_snapshot(state: &AssemblerState) -> PersistedState {
 async fn rebuild_hasher(temp_path: &PathBuf) -> IngestdResult<Hasher> {
     let mut hasher = Hasher::new();
     if temp_path.exists() {
-        let contents = fs::read(&temp_path).await.map_err(|e| {
+        let mut file = fs::File::open(&temp_path).await.map_err(|e| {
             SinexError::io(format!(
-                "Failed to read temp file {}: {}",
+                "Failed to open temp file for hasher rebuild {}: {}",
                 temp_path.display(),
                 e
             ))
         })?;
-        if !contents.is_empty() {
-            hasher.update(&contents);
+        // Stream in 64 KiB chunks instead of reading the entire file into memory.
+        // A 512 MiB material would otherwise allocate a single 512 MiB buffer.
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buf).await.map_err(|e| {
+                SinexError::io(format!(
+                    "Failed to read temp file during hasher rebuild {}: {}",
+                    temp_path.display(),
+                    e
+                ))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
         }
     }
     Ok(hasher)
@@ -928,7 +980,7 @@ pub(super) async fn handle_slice(
                 }
 
                 let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
-                state.buffered_bytes += data.len() as i64;
+                state.buffered_bytes = state.buffered_bytes.saturating_add(data.len() as i64);
                 state.buffered_slices.insert(offset, buffer_path.clone());
 
                 // Log buffering event

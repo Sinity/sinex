@@ -45,13 +45,14 @@ fn history_db_path(state_dir: &Path) -> PathBuf {
 
 fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
     let pty_system = native_pty_system();
-    let pair = pty_system.openpty(PtySize {
-        rows: ROWS,
-        cols: COLS,
-        pixel_width: 0,
-        pixel_height: 0,
-    })
-    .map_err(|error| eyre!("failed to open PTY: {error}"))?;
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|error| eyre!("failed to open PTY: {error}"))?;
 
     let bin = xtask_bin()?;
     let mut cmd = CommandBuilder::new(bin);
@@ -192,7 +193,12 @@ async fn snapshot_history_progress_terminal_grid() -> ::xtask::sandbox::TestResu
 
     let screen = run_in_pty(
         dir.path(),
-        &["history", "progress", "--invocation-id", &invocation_id.to_string()],
+        &[
+            "history",
+            "progress",
+            "--invocation-id",
+            &invocation_id.to_string(),
+        ],
     )?
     .replace(
         &format!("Progress for invocation #{invocation_id}:"),

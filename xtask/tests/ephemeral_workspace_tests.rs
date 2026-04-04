@@ -1,4 +1,4 @@
-//! Integration tests for EphemeralWorkspace.
+//! Integration tests for `EphemeralWorkspace`.
 //!
 //! These tests spawn real `xtask check` subprocesses against a minimal ephemeral
 //! workspace, verifying that diagnostics are captured and written to the history DB.
@@ -52,7 +52,10 @@ fn test_check_fails_on_compile_error_and_records_history() -> Result<()> {
     // History DB should contain a failed invocation
     let db = HistoryDb::open(&ws.history_db_path())?;
     let invocations = db.get_recent(10, None)?;
-    let check_invocations: Vec<_> = invocations.iter().filter(|i| i.command == "check").collect();
+    let check_invocations: Vec<_> = invocations
+        .iter()
+        .filter(|i| i.command == "check")
+        .collect();
     assert!(
         !check_invocations.is_empty(),
         "expected at least one 'check' invocation in history DB"

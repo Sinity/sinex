@@ -30,11 +30,11 @@ pub mod stats;
 
 // ── Re-exports (preserve public API) ────────────────────────────────────────
 
+pub(crate) use config::replace_db_name;
 pub use health::{
     PoolHealthReport, acquire_admin_connection, check_pool_health, pool_slot_count, prime_pool,
     reset_pool,
 };
-pub(crate) use config::replace_db_name;
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
 pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
@@ -50,9 +50,8 @@ use provisioning::{
     ensure_pool_database_exists, grant_pool_database_permissions_checked,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
     mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
-    recreate_pool_database,
-    store_pool_meta, store_pool_meta_checked, url_with_db_name, wait_for_database_absence,
-    wait_for_database_absence_admin,
+    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
+    wait_for_database_absence, wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -352,10 +351,7 @@ fn format_lock_holder_row(row: &sqlx::postgres::PgRow) -> String {
         format_lock_holder_field("pid", row.try_get::<i32, _>("pid")),
         format_lock_holder_field("usename", row.try_get::<&str, _>("usename")),
         format_lock_holder_field("state", row.try_get::<&str, _>("state")),
-        format_lock_holder_field(
-            "query_preview",
-            row.try_get::<&str, _>("query_preview")
-        ),
+        format_lock_holder_field("query_preview", row.try_get::<&str, _>("query_preview")),
     )
 }
 
@@ -498,7 +494,9 @@ async fn prune_stale_lazy_slot_databases(
                     .max_connections(2)
                     .connect(&slot_url)
                     .await
-                    .map_err(|error| eyre!("failed to connect for lazy slot schema verification: {error}"))?;
+                    .map_err(|error| {
+                        eyre!("failed to connect for lazy slot schema verification: {error}")
+                    })?;
                 let schema_drift = reset::schema_mismatch_reason(&slot_pool).await?;
                 slot_pool.close().await;
                 schema_drift.map(|reason| format!("actual schema drift ({reason})"))
@@ -536,9 +534,11 @@ async fn prune_stale_lazy_slot_databases(
 
         if drop_result.is_err() {
             let quoted = quote_ident(slot_name);
-            let _ = sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"))
-                .execute(&mut admin_conn)
-                .await;
+            let _ = sqlx::query(&format!(
+                "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+            ))
+            .execute(&mut admin_conn)
+            .await;
         }
 
         drop_result?;
@@ -577,9 +577,11 @@ async fn try_lock_slot_database_for_drop(
         .await?;
 
     let quoted = quote_ident(slot_name);
-    sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"))
-        .execute(&mut *admin_conn)
-        .await?;
+    sqlx::query(&format!(
+        "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+    ))
+    .execute(&mut *admin_conn)
+    .await?;
     sqlx::query(
         "SELECT pg_terminate_backend(pid) \
          FROM pg_stat_activity \
@@ -666,8 +668,9 @@ impl DatabasePool {
             let expected_extensions = template_guard.info.extensions.clone();
             template_guard.release().await?;
             let expected_fingerprint = Some(schema_fingerprint()?);
-            let slot_names: Vec<String> =
-                (0..config.size).map(|i| format!("sinex_test_pool_{i}")).collect();
+            let slot_names: Vec<String> = (0..config.size)
+                .map(|i| format!("sinex_test_pool_{i}"))
+                .collect();
             let prune_summary = prune_stale_lazy_slot_databases(
                 &config.admin_url,
                 &slot_names,
@@ -1513,10 +1516,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_format_lock_holder_field_preserves_sqlx_errors() -> TestResult<()> {
-        let rendered = format_lock_holder_field::<i32>(
-            "pid",
-            Err(sqlx::Error::ColumnNotFound("pid".into())),
-        );
+        let rendered =
+            format_lock_holder_field::<i32>("pid", Err(sqlx::Error::ColumnNotFound("pid".into())));
         assert!(rendered.contains("<unavailable: pid"));
         assert!(rendered.contains("no column found"));
         Ok(())
@@ -1530,8 +1531,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_prune_stale_lazy_slot_databases_drops_mismatched_unlocked_db() -> TestResult<()>
-    {
+    async fn test_prune_stale_lazy_slot_databases_drops_mismatched_unlocked_db() -> TestResult<()> {
         let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_{}", std::process::id());
@@ -1639,8 +1639,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_clean_metadata(
-    ) -> TestResult<()> {
+    async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_clean_metadata()
+    -> TestResult<()> {
         let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_schema_{}", std::process::id());
@@ -1671,7 +1671,9 @@ mod tests {
         .await?;
         let drift = reset::schema_mismatch_reason(&slot_pool).await?;
         assert!(
-            drift.as_deref().is_some_and(|reason| reason.contains("source_material_registry_status_check")),
+            drift
+                .as_deref()
+                .is_some_and(|reason| reason.contains("source_material_registry_status_check")),
             "expected real schema drift before lazy prune, got {drift:?}"
         );
         slot_pool.close().await;
@@ -1683,7 +1685,10 @@ mod tests {
             &meta.extensions,
         )
         .await?;
-        assert_eq!(summary.pruned, 1, "schema-drifted lazy slot should be pruned");
+        assert_eq!(
+            summary.pruned, 1,
+            "schema-drifted lazy slot should be pruned"
+        );
         assert!(
             summary.locked_stale_slots.is_empty(),
             "pruned drifted slot should not be reported as deferred"

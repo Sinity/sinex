@@ -550,8 +550,7 @@ mod stress_tests {
         // Verify results
         let successful_updates = counter.load(Ordering::Relaxed);
         assert_eq!(
-            successful_updates,
-            EXPECTED_TOTAL,
+            successful_updates, EXPECTED_TOTAL,
             "threaded checkpoint revisions should allow every stress update to persist"
         );
 

@@ -4,10 +4,10 @@
 //! across nodes. These helpers provide consistent error context and conversion patterns.
 
 use crate::{SinexError, runtime::stream::NodeRuntimeState};
+use sinex_primitives::env as shared_env;
 use std::collections::HashMap;
 use std::io;
 use std::time::SystemTime;
-use sinex_primitives::env as shared_env;
 use tracing::warn;
 
 /// Convert IO errors to `SinexError` with context
@@ -83,15 +83,17 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
         return Ok(None);
     };
 
-    serde_json::from_value::<T>(json.clone()).map(Some).map_err(|error| {
-        json_error_with_context(
-            error,
-            &format!(
-                "Invalid configuration value for key `{key}` as {}",
-                std::any::type_name::<T>()
-            ),
-        )
-    })
+    serde_json::from_value::<T>(json.clone())
+        .map(Some)
+        .map_err(|error| {
+            json_error_with_context(
+                error,
+                &format!(
+                    "Invalid configuration value for key `{key}` as {}",
+                    std::any::type_name::<T>()
+                ),
+            )
+        })
 }
 
 /// Parse strongly-typed configuration from a specific key in the context
@@ -117,15 +119,17 @@ pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
         return Ok(None);
     };
 
-    serde_json::from_value::<T>(json.clone()).map(Some).map_err(|error| {
-        json_error_with_context(
-            error,
-            &format!(
-                "Invalid configuration section `{config_key}` as {}",
-                std::any::type_name::<T>()
-            ),
-        )
-    })
+    serde_json::from_value::<T>(json.clone())
+        .map(Some)
+        .map_err(|error| {
+            json_error_with_context(
+                error,
+                &format!(
+                    "Invalid configuration section `{config_key}` as {}",
+                    std::any::type_name::<T>()
+                ),
+            )
+        })
 }
 
 /// Construct a NATS message settlement error with consistent context.
@@ -189,8 +193,7 @@ pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> 
         if raw.trim().is_empty() {
             warn!(
                 variable = var,
-                context,
-                "Environment override is blank; ignoring value"
+                context, "Environment override is blank; ignoring value"
             );
             None
         } else {
@@ -334,10 +337,11 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::time::SystemTime;
-    use xtask::sandbox::{sinex_serial_test, sinex_test, EnvGuard};
+    use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
-    async fn env_bool_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()> {
+    async fn env_bool_with_default_uses_default_on_invalid_override()
+    -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_BOOL_OVERRIDE", "bogus");
 
@@ -347,7 +351,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn env_parse_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()> {
+    async fn env_parse_with_default_uses_default_on_invalid_override()
+    -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_U64_OVERRIDE", "bogus");
 
@@ -371,7 +376,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()> {
+    async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_STRING_OVERRIDE", "   ");
 
@@ -381,7 +387,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_elapsed_seconds_with_warning_uses_real_elapsed_time() -> xtask::sandbox::TestResult<()> {
+    async fn test_elapsed_seconds_with_warning_uses_real_elapsed_time()
+    -> xtask::sandbox::TestResult<()> {
         let start_time = SystemTime::now()
             .checked_sub(std::time::Duration::from_secs(5))
             .expect("past timestamp");
@@ -391,19 +398,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_elapsed_seconds_with_warning_clamps_clock_rollback() -> xtask::sandbox::TestResult<()> {
+    async fn test_elapsed_seconds_with_warning_clamps_clock_rollback()
+    -> xtask::sandbox::TestResult<()> {
         let start_time = SystemTime::now()
             .checked_add(std::time::Duration::from_secs(5))
             .expect("future timestamp");
-        assert_eq!(
-            elapsed_seconds_with_warning(start_time, "test elapsed"),
-            0
-        );
+        assert_eq!(elapsed_seconds_with_warning(start_time, "test elapsed"), 0);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_unix_timestamp_secs_with_warning_preserves_valid_timestamps() -> xtask::sandbox::TestResult<()> {
+    async fn test_unix_timestamp_secs_with_warning_preserves_valid_timestamps()
+    -> xtask::sandbox::TestResult<()> {
         let timestamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(42);
         assert_eq!(
             unix_timestamp_secs_with_warning(timestamp, "test timestamp"),
@@ -413,7 +419,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_unix_timestamp_secs_with_warning_clamps_pre_epoch_clock() -> xtask::sandbox::TestResult<()> {
+    async fn test_unix_timestamp_secs_with_warning_clamps_pre_epoch_clock()
+    -> xtask::sandbox::TestResult<()> {
         let timestamp = SystemTime::UNIX_EPOCH
             .checked_sub(std::time::Duration::from_secs(1))
             .expect("pre-epoch timestamp");

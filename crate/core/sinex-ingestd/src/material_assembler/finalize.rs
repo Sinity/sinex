@@ -173,25 +173,9 @@ impl MaterialAssembler {
     ) -> IngestdResult<Id<Blob>> {
         let repo = self.pool.blobs();
 
-        if let Some(existing) = repo
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
-            .await
-            .map_err(|e| {
-                error!(
-                    material_id = %state.material_id,
-                    backend = %annex_key.backend,
-                    hash = %annex_key.hash,
-                    size = annex_key.size,
-                    error = %e,
-                    error_debug = ?e,
-                    "Failed to query blob store"
-                );
-                SinexError::database("Failed to query blob store").with_source(e)
-            })?
-        {
-            return Ok(existing.id);
-        }
-
+        // No pre-check: insert_with_executor handles duplicates via unique-violation
+        // fallback. A separate pre-read outside the transaction would create a TOCTOU
+        // window where a concurrent delete could invalidate the returned blob ID.
         let metadata = serde_json::json!({
             "material_id": state.material_id.to_string(),
             "source_identifier": state.source_identifier,

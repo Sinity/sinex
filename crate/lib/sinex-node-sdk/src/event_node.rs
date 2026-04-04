@@ -249,9 +249,7 @@ impl EventBatcher {
     async fn store_dead_letter_events(events: &[Event<JsonValue>]) -> NodeResult<()> {
         let env = environment();
         let dead_letter_path = env
-            .work_directory(
-                dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")),
-            )
+            .work_directory(dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")))
             .join("sinex")
             .join("sinex_dead_letter_events.json");
         warn!(
@@ -419,9 +417,7 @@ mod tests {
 
         let env = sinex_primitives::environment();
         let dead_letter_path = env
-            .work_directory(
-                dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")),
-            )
+            .work_directory(dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")))
             .join("sinex")
             .join("sinex_dead_letter_events.json");
 

@@ -230,6 +230,13 @@ impl CoordinationPrimitive {
         self.state.load(Ordering::Acquire)
     }
 
+    /// Atomically read and reset to zero. Returns the value before reset.
+    /// Prevents the race window between separate `get()` + `reset()` calls
+    /// where increments between the two operations would be silently lost.
+    pub fn swap_reset(&self) -> usize {
+        self.state.swap(0, Ordering::AcqRel)
+    }
+
     /// Get threshold value
     #[must_use]
     pub fn threshold(&self) -> usize {

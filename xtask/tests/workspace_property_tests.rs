@@ -36,7 +36,7 @@ fn check_succeeded(output: &std::process::Output) -> bool {
 
 // ─── Invariant 1: HistoryDb consistency ──────────────────────────────────────
 
-/// **Invariant**: After any `xtask check` invocation completes, the HistoryDb
+/// **Invariant**: After any `xtask check` invocation completes, the `HistoryDb`
 /// contains exactly one new invocation record with `command = "check"`.
 ///
 /// This verifies the recording contract: no matter whether check passes or
@@ -154,7 +154,7 @@ fn workspace_property_fix_idempotency() -> Result<()> {
 
 // ─── Invariant 3: Compile error status propagation ───────────────────────────
 
-/// **Invariant**: The HistoryDb status always matches the actual exit code.
+/// **Invariant**: The `HistoryDb` status always matches the actual exit code.
 /// A failed `xtask check` (non-zero exit) must record `Failed`.
 /// A passing `xtask check` (exit 0) must record `Success`.
 ///
@@ -214,7 +214,7 @@ fn workspace_property_status_matches_exit_code() -> Result<()> {
 
 // ─── Invariant 4: Multiple invocations accumulate monotonically ───────────────
 
-/// **Invariant**: After N consecutive `xtask check` runs, the HistoryDb
+/// **Invariant**: After N consecutive `xtask check` runs, the `HistoryDb`
 /// contains exactly N invocation records.
 ///
 /// Verifies that history accumulates without data loss, deduplication, or

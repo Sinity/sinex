@@ -170,7 +170,7 @@ async fn run_complete_verification(
     output_format: OutputFormat,
 ) -> NodeResult<VerificationStatus> {
     let report = build_verification_report(timeout_secs, skip_phases).await?;
-    let overall_status = report.overall_status.clone();
+    let overall_status = report.overall_status;
     output_report(&report, output_format).await?;
     Ok(overall_status)
 }
@@ -437,7 +437,10 @@ async fn output_report_summary(
                 println!("Duration: {duration}ms");
             }
             for (phase, result) in &report.phases {
-                println!("  {:?}: {:?} ({}ms)", phase, result.status, result.duration_ms);
+                println!(
+                    "  {:?}: {:?} ({}ms)",
+                    phase, result.status, result.duration_ms
+                );
             }
             for warning in &report.warnings {
                 println!("  warning: {warning}");
@@ -542,7 +545,7 @@ async fn generate_verification_report(
     info!("Generating fresh verification report");
 
     let report = build_verification_report(REPORT_TIMEOUT, Vec::new()).await?;
-    let overall_status = report.overall_status.clone();
+    let overall_status = report.overall_status;
 
     if detailed {
         output_report(&report, output_format).await?;

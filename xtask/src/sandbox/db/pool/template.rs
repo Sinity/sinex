@@ -144,15 +144,21 @@ pub fn schema_fingerprint() -> TestResult<String> {
     for path in entries {
         if path.is_file() {
             // Hash filename first
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| eyre!("schema fingerprint source is not valid UTF-8: {}", path.display()))?;
+            let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                eyre!(
+                    "schema fingerprint source is not valid UTF-8: {}",
+                    path.display()
+                )
+            })?;
             hasher.update(name.as_bytes());
             hasher.update(b":"); // Separator between name and content
             // Then hash content
-            let bytes = std::fs::read(&path)
-                .wrap_err_with(|| format!("failed to read schema fingerprint source '{}'", path.display()))?;
+            let bytes = std::fs::read(&path).wrap_err_with(|| {
+                format!(
+                    "failed to read schema fingerprint source '{}'",
+                    path.display()
+                )
+            })?;
             hasher.update(bytes);
             hasher.update(b"|"); // Separator between files
         }
@@ -170,9 +176,9 @@ mod tests {
         run_template_schema_apply, schema_fingerprint, schema_fingerprint_sources,
         schema_fingerprint_sources_in, store_template_meta,
     };
-    use crate::sandbox::db::pool::{PoolConfig, acquire_pool_test_guard};
     use crate::sandbox::db::pool::config::replace_db_name;
     use crate::sandbox::db::pool::meta::TemplateMeta;
+    use crate::sandbox::db::pool::{PoolConfig, acquire_pool_test_guard};
     use std::fs;
     use xtask::sandbox::sinex_test;
 
@@ -618,9 +624,11 @@ async fn probe_template_schema_drift(
         .execute(&mut *admin_conn)
         .await?;
 
-    sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"))
-        .execute(&mut *admin_conn)
-        .await?;
+    sqlx::query(&format!(
+        "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+    ))
+    .execute(&mut *admin_conn)
+    .await?;
 
     let template_admin_url = replace_db_name(admin_url, template_name);
     let template_pool = sqlx::postgres::PgPoolOptions::new()
@@ -631,9 +639,11 @@ async fn probe_template_schema_drift(
     let drift_result = reset::schema_mismatch_reason(&template_pool).await;
     template_pool.close().await;
 
-    let _ = sqlx::query(&format!("ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"))
-        .execute(&mut *admin_conn)
-        .await;
+    let _ = sqlx::query(&format!(
+        "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+    ))
+    .execute(&mut *admin_conn)
+    .await;
     let _ = sqlx::query(
         "SELECT pg_terminate_backend(pid) \
          FROM pg_stat_activity \

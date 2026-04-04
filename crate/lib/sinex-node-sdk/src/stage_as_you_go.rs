@@ -68,8 +68,8 @@ mod tests {
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use std::sync::Arc;
-    use tokio::sync::watch;
     use tokio::sync::mpsc;
+    use tokio::sync::watch;
     use tokio::time::{Duration, timeout};
     use tokio_stream::StreamExt;
     use uuid::Uuid;
@@ -620,16 +620,17 @@ impl StageAsYouGoContext {
                 SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
 
-        let finalize_result = self.finalize_via_acquisition(
-            manager,
-            &mut handle,
-            material_info.as_ref(),
-            content,
-            mime_type,
-            encoding,
-            content_preview.clone(),
-        )
-        .await;
+        let finalize_result = self
+            .finalize_via_acquisition(
+                manager,
+                &mut handle,
+                material_info.as_ref(),
+                content,
+                mime_type,
+                encoding,
+                content_preview.clone(),
+            )
+            .await;
 
         if let Err(error) = finalize_result {
             self.acquisition_handles.lock().await.insert(id, handle);
@@ -690,7 +691,8 @@ impl StageAsYouGoContext {
             })?;
         let resume_offset = resumed_prefix_len(&handle, usize::MAX)?;
         if resume_offset > 0 {
-            skip_stream_prefix(reader, resume_offset, is_text.then_some(&mut preview_bytes)).await?;
+            skip_stream_prefix(reader, resume_offset, is_text.then_some(&mut preview_bytes))
+                .await?;
         }
         let mut total_bytes = resume_offset as i64;
 
@@ -790,11 +792,11 @@ fn resumed_prefix_len(handle: &SourceMaterialHandle, content_len: usize) -> Node
             .with_std_error(&error)
     })?;
     if content_len != usize::MAX && resume_offset > content_len {
-        return Err(
-            SinexError::processing("staged material progress exceeds supplied content length")
-                .with_context("bytes_written", resume_offset.to_string())
-                .with_context("content_len", content_len.to_string()),
-        );
+        return Err(SinexError::processing(
+            "staged material progress exceeds supplied content length",
+        )
+        .with_context("bytes_written", resume_offset.to_string())
+        .with_context("content_len", content_len.to_string()));
     }
     Ok(resume_offset)
 }
@@ -816,12 +818,12 @@ where
             .await
             .map_err(|e| SinexError::processing(e.to_string()))?;
         if read == 0 {
-            return Err(
-                SinexError::processing("reader ended before previously staged bytes were replayed")
-                    .with_context("bytes_to_skip", bytes_to_skip.to_string())
-                    .with_context("bytes_consumed", (bytes_to_skip - remaining).to_string())
-                    .with_context("kind", ErrorKind::UnexpectedEof.to_string()),
-            );
+            return Err(SinexError::processing(
+                "reader ended before previously staged bytes were replayed",
+            )
+            .with_context("bytes_to_skip", bytes_to_skip.to_string())
+            .with_context("bytes_consumed", (bytes_to_skip - remaining).to_string())
+            .with_context("kind", ErrorKind::UnexpectedEof.to_string()));
         }
 
         if let Some(preview_bytes) = preview.as_deref_mut()
@@ -983,9 +985,9 @@ impl LogFileStageNode {
 fn require_log_file_source_uri(source_uri: Option<&str>) -> NodeResult<&str> {
     match source_uri {
         Some(uri) if !uri.trim().is_empty() => Ok(uri),
-        _ => Err(
-            SinexError::processing("log-file staging requires a non-empty source URI".to_string()),
-        ),
+        _ => Err(SinexError::processing(
+            "log-file staging requires a non-empty source URI".to_string(),
+        )),
     }
 }
 
@@ -1070,11 +1072,17 @@ impl StageAsYouGoNode for LogFileStageNode {
             let mut event = payload
                 .from_material(source_material_id)
                 .with_offset_start(offset_start)
-                .map_err(|error| SinexError::processing("Failed to set log line offset start").with_source(error))?
+                .map_err(|error| {
+                    SinexError::processing("Failed to set log line offset start").with_source(error)
+                })?
                 .with_offset_end(offset_end)
-                .map_err(|error| SinexError::processing("Failed to set log line offset end").with_source(error))?
+                .map_err(|error| {
+                    SinexError::processing("Failed to set log line offset end").with_source(error)
+                })?
                 .build()
-                .map_err(|error| SinexError::processing("Failed to build log line event").with_source(error))?
+                .map_err(|error| {
+                    SinexError::processing("Failed to build log line event").with_source(error)
+                })?
                 .to_json_event()
                 .map_err(|error| {
                     SinexError::serialization("Failed to convert log line event to JSON")
@@ -1085,7 +1093,10 @@ impl StageAsYouGoNode for LogFileStageNode {
             // on replay. If the in-flight handle vanished, fail honestly instead
             // of fabricating wall-clock time.
             if event.ts_orig.is_none() {
-                let fallback_ts = self.context.require_material_started_at(source_material_id).await?;
+                let fallback_ts = self
+                    .context
+                    .require_material_started_at(source_material_id)
+                    .await?;
                 event.ts_orig = Some(fallback_ts);
             }
 

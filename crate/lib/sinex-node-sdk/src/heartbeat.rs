@@ -349,14 +349,10 @@ impl HeartbeatEmitter {
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
         let uptime = elapsed_seconds_with_warning(self.start_time, "heartbeat uptime");
-        let recent_errors = self.errors_count.get();
-
-        let events_processed = {
-            let old = self.events_processed.get();
-            self.events_processed.reset();
-            old
-        };
-        self.errors_count.reset();
+        // Atomically snapshot-and-reset both counters to prevent the race window
+        // between get() and reset() where increments could be silently lost.
+        let recent_errors = self.errors_count.swap_reset();
+        let events_processed = self.events_processed.swap_reset();
         let last_error = self.last_error.lock().take();
         let status = self.determine_status();
 
@@ -580,7 +576,11 @@ impl HeartbeatEmitter {
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({}))
+            .unwrap_or_else(|e| json!({
+                "_serialization_error": e.to_string(),
+                "process_name": metrics.service_name,
+                "errors_in_window": recent_errors_in_window,
+            }))
         } else {
             serde_json::to_value(ProcessDegradedPayload {
                 process_name: metrics.service_name.clone(),
@@ -589,7 +589,11 @@ impl HeartbeatEmitter {
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({}))
+            .unwrap_or_else(|e| json!({
+                "_serialization_error": e.to_string(),
+                "process_name": metrics.service_name,
+                "errors_in_window": recent_errors_in_window,
+            }))
         };
 
         let alert_entry = json!({

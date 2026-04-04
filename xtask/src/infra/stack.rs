@@ -464,7 +464,7 @@ pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Resul
             .await
             .map_err(|e| color_eyre::eyre::eyre!("{e}"))
     })
-        .context("Failed to apply declarative schema")?;
+    .context("Failed to apply declarative schema")?;
 
     if verbose {
         println!("Schema apply complete");
@@ -486,23 +486,23 @@ pub fn sync_event_payload_schemas_for_database_url(
 
     let database_url = database_url.to_string();
     let result = run_async_from_sync(async move {
-            let pool = PgPoolOptions::new()
-                .max_connections(1)
-                .connect(&database_url)
-                .await
-                .wrap_err("Failed to connect for event payload schema synchronization")?;
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&database_url)
+            .await
+            .wrap_err("Failed to connect for event payload schema synchronization")?;
 
-            let repo = SchemaManagementRepository::new(&pool);
-            let discovered_schemas = generate_all_schemas()
-                .map_err(|error| color_eyre::eyre::eyre!("{error}"))
-                .wrap_err("Failed to generate discovered event payload schemas")?;
-            let result = repo
-                .sync_discovered_schemas(discovered_schemas)
-                .await
-                .wrap_err("Failed to synchronize discovered event payload schemas")?;
-            pool.close().await;
-            Ok::<_, color_eyre::Report>(result)
-        })?;
+        let repo = SchemaManagementRepository::new(&pool);
+        let discovered_schemas = generate_all_schemas()
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))
+            .wrap_err("Failed to generate discovered event payload schemas")?;
+        let result = repo
+            .sync_discovered_schemas(discovered_schemas)
+            .await
+            .wrap_err("Failed to synchronize discovered event payload schemas")?;
+        pool.close().await;
+        Ok::<_, color_eyre::Report>(result)
+    })?;
 
     if verbose {
         println!(
@@ -718,8 +718,7 @@ mod tests {
     use super::StackConfig;
     use super::{
         collect_snapshot_names, dir_size, list_snapshots, probe_annex_available,
-        require_successful_command,
-        sync_event_payload_schemas_for_database_url,
+        require_successful_command, sync_event_payload_schemas_for_database_url,
     };
     use crate::sandbox::prelude::*;
     use std::ffi::OsString;
@@ -780,7 +779,10 @@ mod tests {
         let probe = list_snapshots(&not_a_dir);
         assert!(probe.snapshots.is_empty());
         assert!(
-            probe.issue.unwrap_or_default().contains("failed to read snapshots directory")
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("failed to read snapshots directory")
         );
     }
 
@@ -825,7 +827,9 @@ mod tests {
         let probe = collect_snapshot_names(
             Path::new("/tmp/snapshots"),
             [
-                Ok(OsString::from_vec(vec![b'b', 0xff, b'.', b't', b'a', b'r', b'.', b'z', b's', b't'])),
+                Ok(OsString::from_vec(vec![
+                    b'b', 0xff, b'.', b't', b'a', b'r', b'.', b'z', b's', b't',
+                ])),
                 Ok(OsString::from("a.sql.zst")),
             ],
         );
@@ -856,10 +860,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn sync_event_payload_schemas_uses_in_process_registry(ctx: TestContext) -> TestResult<()> {
+    async fn sync_event_payload_schemas_uses_in_process_registry(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let result = sync_event_payload_schemas_for_database_url(ctx.database_url(), false)?;
         assert!(result.discovered > 0);
-        assert_eq!(result.discovered, result.created + result.updated + result.unchanged);
+        assert_eq!(
+            result.discovered,
+            result.created + result.updated + result.unchanged
+        );
         Ok(())
     }
 }

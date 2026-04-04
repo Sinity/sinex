@@ -62,9 +62,18 @@ async fn json_envelope_shape_for_valid_commands() -> ::xtask::sandbox::TestResul
     // Instead verify the status command which is fast and always available.
     let (json, _exit_ok) = run_json(&["status", "--summary", "--json"])?;
 
-    assert!(json["command"].is_string(), "envelope must have command field");
-    assert_eq!(json["command"], "status", "command must match invoked command");
-    assert!(json["status"].is_string(), "envelope must have status field");
+    assert!(
+        json["command"].is_string(),
+        "envelope must have command field"
+    );
+    assert_eq!(
+        json["command"], "status",
+        "command must match invoked command"
+    );
+    assert!(
+        json["status"].is_string(),
+        "envelope must have status field"
+    );
     assert!(
         json["duration_secs"].is_number(),
         "envelope must have duration_secs"

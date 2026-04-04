@@ -1,6 +1,6 @@
+use sinex_db::DbPoolExt;
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-use sinex_db::DbPoolExt;
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{NodeName, NodeType},
@@ -60,7 +60,10 @@ async fn heartbeat_invalid_threshold_overrides_fall_back_to_defaults() -> TestRe
     }
 
     let metrics = emitter.create_heartbeat_metrics(None).await;
-    assert_eq!(metrics.status, sinex_primitives::events::payloads::process::ProcessStatus::Degraded);
+    assert_eq!(
+        metrics.status,
+        sinex_primitives::events::payloads::process::ProcessStatus::Degraded
+    );
     Ok(())
 }
 
@@ -69,7 +72,12 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
     let pool = ctx.pool();
     let node_name = NodeName::new("test-service");
     pool.state()
-        .register_node(&node_name, NodeType::Service, env!("CARGO_PKG_VERSION"), Some("test"))
+        .register_node(
+            &node_name,
+            NodeType::Service,
+            env!("CARGO_PKG_VERSION"),
+            Some("test"),
+        )
         .await?;
 
     let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30))
@@ -96,10 +104,11 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
 #[sinex_test]
 async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let emitter = HeartbeatEmitter::new("missing-heartbeat-rows".to_string(), Seconds::from_secs(30))
-        .with_node_name(NodeName::new("missing-heartbeat-rows"))
-        .with_node_run_id(Uuid::now_v7())
-        .with_db_pool(pool.clone());
+    let emitter =
+        HeartbeatEmitter::new("missing-heartbeat-rows".to_string(), Seconds::from_secs(30))
+            .with_node_name(NodeName::new("missing-heartbeat-rows"))
+            .with_node_run_id(Uuid::now_v7())
+            .with_db_pool(pool.clone());
 
     emitter.emit_heartbeat(None).await;
 
@@ -109,9 +118,10 @@ async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -
         "missing manifest and node-run rows should count as heartbeat persistence errors"
     );
     assert!(
-        metrics.last_error_message.as_deref().is_some_and(|message| {
-            message.contains("node run row is missing")
-        }),
+        metrics
+            .last_error_message
+            .as_deref()
+            .is_some_and(|message| { message.contains("node run row is missing") }),
         "latest heartbeat persistence error should be retained for operators: {:?}",
         metrics.last_error_message
     );

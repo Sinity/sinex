@@ -1890,13 +1890,13 @@ where
 
         self.signal_shutdown();
 
-        if let Err(e) = self
-            .node
+        self.node
             .on_shutdown_derived(&self.persisted_state.state)
             .await
-        {
-            warn!(node = %self.node.name(), error = %e, "Shutdown hook failed");
-        }
+            .map_err(|e| {
+                error!(node = %self.node.name(), error = %e, "Shutdown hook failed");
+                e
+            })?;
 
         let mut file_save_success = true;
         if let Err(e) = self.save_state_to_file().await {
@@ -1910,10 +1910,13 @@ where
             nats_save_success = false;
         }
 
-        if !file_save_success && !nats_save_success {
-            return Err(SinexError::checkpoint(
-                "Failed to save state to both file and NATS KV on shutdown".to_string(),
-            ));
+        if !nats_save_success {
+            return Err(SinexError::checkpoint(format!(
+                "Node {} failed to save final checkpoint to NATS KV during shutdown \
+                 (file save {})",
+                self.node.name(),
+                if file_save_success { "succeeded" } else { "also failed" }
+            )));
         }
 
         Ok(())

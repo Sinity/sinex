@@ -163,7 +163,11 @@ pub(crate) fn parse_one_shot_i64_env(var_name: &str, purpose: &str) -> Option<i6
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => {
-            tracing::warn!(env_var = var_name, purpose, "ignoring non-unicode one-shot environment value");
+            tracing::warn!(
+                env_var = var_name,
+                purpose,
+                "ignoring non-unicode one-shot environment value"
+            );
             None
         }
     };
@@ -387,8 +391,8 @@ pub async fn run_cli() -> Result<()> {
         Ok(m) => m,
         Err(e) => {
             // If --json appears anywhere in raw args, emit a structured error.
-            let want_json = std::env::args()
-                .any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
+            let want_json =
+                std::env::args().any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
             if want_json {
                 let json = serde_json::json!({
                     "command": "xtask",
@@ -462,29 +466,42 @@ pub async fn run_cli() -> Result<()> {
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata().timeout),
     };
 
-    // Track invocation in history
-    let history_db = open_history_db();
-    // Emit synthetic warning before start_invocation() clears the marker (T3).
-    // This must happen here — start_invocation() removes the metadata row, so any
-    // subsequent HistoryDb::open() would see is_synthetic=false.
-    if let Ok(db) = history_db.as_ref() {
-        db.warn_if_synthetic(&config().history_db_path());
-    }
+    let tracks_invocation = command_tracks_invocation(command_name);
+    let preopens_history_db = command_preopens_history_db(command_name) || tracks_invocation;
+    let (mut history_db, history_db_open_error) = if preopens_history_db {
+        match open_history_db() {
+            Ok(db) => {
+                // Emit synthetic warning before start_invocation() clears the marker (T3).
+                // This must happen here — start_invocation() removes the metadata row, so any
+                // subsequent HistoryDb::open() would see is_synthetic=false.
+                db.warn_if_synthetic(&config().history_db_path());
+                (Some(db), None)
+            }
+            Err(error) => (None, Some(error.to_string())),
+        }
+    } else {
+        (None, None)
+    };
     let claimed_bg_invocation =
         parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
-    let invocation_id = if command_name != "completions" && command_name != "status" {
+    let invocation_id = if tracks_invocation {
         if let Some(bg_id) = claimed_bg_invocation {
             match history_db.as_ref() {
-                Ok(db) => {
-                    if let Err(error) =
-                        db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
-                    {
-                        eprintln!(
-                            "⚠️  Failed to claim background invocation {bg_id}: {error}"
-                        );
+                Some(db) => {
+                    if let Err(error) = db.claim_background_invocation(
+                        bg_id,
+                        command_name,
+                        subcommand,
+                        profile,
+                        None,
+                    ) {
+                        eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
                     }
                 }
-                Err(error) => {
+                None => {
+                    let error = history_db_open_error
+                        .as_deref()
+                        .unwrap_or("unknown history DB open failure");
                     eprintln!(
                         "⚠️  Failed to open history DB for background invocation {bg_id}: {error}"
                     );
@@ -493,14 +510,17 @@ pub async fn run_cli() -> Result<()> {
             Some(bg_id)
         } else {
             match history_db.as_ref() {
-                Ok(db) => match db.start_invocation(command_name, subcommand, profile, None) {
+                Some(db) => match db.start_invocation(command_name, subcommand, profile, None) {
                     Ok(id) => Some(id),
                     Err(error) => {
                         eprintln!("⚠️  Failed to start invocation history row: {error}");
                         None
                     }
                 },
-                Err(error) => {
+                None => {
+                    let error = history_db_open_error
+                        .as_deref()
+                        .unwrap_or("unknown history DB open failure");
                     eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
                     None
                 }
@@ -527,7 +547,8 @@ pub async fn run_cli() -> Result<()> {
         cli.global.is_background(),
         invocation_id,
         command_name,
-    );
+    )
+    .with_preopened_history_db(history_db.take());
 
     // Fingerprint+scope recording moved to each command's execute() method
     // where it has access to the actual command args. See record_coordination_fingerprint().
@@ -598,15 +619,17 @@ pub async fn run_cli() -> Result<()> {
             Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
             Err(_) => ctx.elapsed().as_secs_f64(),
         };
-        match history_db.as_ref() {
-            Ok(db) => {
-                if let Err(error) =
-                    db.finish_invocation(id, status, Some(invocation_exit_code), duration)
-                {
-                    eprintln!("⚠️  Failed to record invocation result: {error}");
-                }
+        match ctx.try_with_history_db(|db| {
+            db.finish_invocation(id, status, Some(invocation_exit_code), duration)
+        }) {
+            Some(Ok(())) => {}
+            Some(Err(error)) => {
+                eprintln!("⚠️  Failed to record invocation result: {error}");
             }
-            Err(error) => {
+            None => {
+                let error = history_db_open_error
+                    .as_deref()
+                    .unwrap_or("history DB unavailable");
                 eprintln!("⚠️  Failed to open history DB to finish invocation {id}: {error}");
             }
         }
@@ -622,32 +645,35 @@ pub async fn run_cli() -> Result<()> {
     {
         let cfg = config();
         match jobs::JobManager::new(cfg.jobs_dir()) {
-            Ok(manager) => match manager.spawn_xtask(command_name, &queued.args, queued.output_format)
-            {
-                Ok(job) => {
-                    // Update coordinator state with real job_id + pid.
-                    // Critical for FIFO queue: handle_completion may have
-                    // left remaining items in the state file with sentinel values.
-                    if let Some(pid) = job.pid {
-                        if let Err(error) = coord.update_state(command_name, job.id, pid) {
+            Ok(manager) => {
+                match manager.spawn_xtask(command_name, &queued.args, queued.output_format) {
+                    Ok(job) => {
+                        // Update coordinator state with real job_id + pid.
+                        // Critical for FIFO queue: handle_completion may have
+                        // left remaining items in the state file with sentinel values.
+                        if let Some(pid) = job.pid {
+                            if let Err(error) = coord.update_state(command_name, job.id, pid) {
+                                eprintln!(
+                                    "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                    job.id
+                                );
+                            }
+                        } else {
                             eprintln!(
-                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
                                 job.id
                             );
                         }
-                    } else {
-                        eprintln!(
-                            "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
-                            job.id
-                        );
+                    }
+                    Err(error) => {
+                        eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
                     }
                 }
-                Err(error) => {
-                    eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
-                }
-            },
+            }
             Err(error) => {
-                eprintln!("Warning: failed to open jobs directory for queued {command_name} work: {error}");
+                eprintln!(
+                    "Warning: failed to open jobs directory for queued {command_name} work: {error}"
+                );
             }
         }
     }
@@ -664,9 +690,7 @@ pub async fn run_cli() -> Result<()> {
             );
         }
 
-        if let Some(job_id) = claimed_bg_job
-            && let Ok(db) = history_db.as_ref()
-        {
+        if let Some(job_id) = claimed_bg_job {
             let stdout_path = std::path::Path::new(&job_dir).join("stdout.log");
             let stderr_path = std::path::Path::new(&job_dir).join("stderr.log");
             let job_status = if invocation_exit_code == 0 {
@@ -676,15 +700,30 @@ pub async fn run_cli() -> Result<()> {
             } else {
                 crate::history::JobLifecycleStatus::Failed
             };
-            if let Err(error) = db.finish_background_job(
-                job_id,
-                job_status,
-                Some(invocation_exit_code),
-                ctx.elapsed().as_secs_f64(),
-                stdout_path.exists().then_some(stdout_path.as_path()),
-                stderr_path.exists().then_some(stderr_path.as_path()),
-            ) {
-                eprintln!("⚠️  Failed to record background job completion for {job_id}: {error}");
+            match ctx.try_with_history_db(|db| {
+                db.finish_background_job(
+                    job_id,
+                    job_status,
+                    Some(invocation_exit_code),
+                    ctx.elapsed().as_secs_f64(),
+                    stdout_path.exists().then_some(stdout_path.as_path()),
+                    stderr_path.exists().then_some(stderr_path.as_path()),
+                )
+            }) {
+                Some(Ok(())) => {}
+                Some(Err(error)) => {
+                    eprintln!(
+                        "⚠️  Failed to record background job completion for {job_id}: {error}"
+                    );
+                }
+                None => {
+                    let error = history_db_open_error
+                        .as_deref()
+                        .unwrap_or("history DB unavailable");
+                    eprintln!(
+                        "⚠️  Failed to open history DB to record background job completion for {job_id}: {error}"
+                    );
+                }
             }
         }
 
@@ -728,6 +767,14 @@ fn open_history_db() -> Result<HistoryDb> {
     cfg.ensure_state_dir()
         .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
+}
+
+fn command_tracks_invocation(command_name: &str) -> bool {
+    !matches!(command_name, "completions" | "status")
+}
+
+fn command_preopens_history_db(command_name: &str) -> bool {
+    matches!(command_name, "status")
 }
 
 fn init_tracing(verbosity: u8) {
@@ -929,6 +976,24 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn command_tracks_invocation_skips_status_and_completions() -> TestResult<()> {
+        assert!(!command_tracks_invocation("status"));
+        assert!(!command_tracks_invocation("completions"));
+        assert!(command_tracks_invocation("history"));
+        assert!(command_tracks_invocation("analytics"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_preopens_history_db_for_status_only() -> TestResult<()> {
+        assert!(command_preopens_history_db("status"));
+        assert!(!command_preopens_history_db("completions"));
+        assert!(!command_preopens_history_db("history"));
+        assert!(!command_preopens_history_db("analytics"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn parse_positive_u64_env_or_default_rejects_zero() -> TestResult<()> {
         let _guard = env_set("SINEX_TEST_TIMEOUT", Some("0".into()));
 
@@ -958,7 +1023,10 @@ mod tests {
     async fn parse_one_shot_i64_env_rejects_invalid_values_and_clears_env() -> TestResult<()> {
         let _guard = env_set("SINEX_TEST_CLAIM", Some("abc".into()));
 
-        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert_eq!(
+            parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
+            None
+        );
         assert!(
             std::env::var_os("SINEX_TEST_CLAIM").is_none(),
             "invalid one-shot env var must still be removed"
@@ -974,7 +1042,10 @@ mod tests {
 
         let _guard = env_set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
 
-        assert_eq!(parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"), None);
+        assert_eq!(
+            parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
+            None
+        );
         assert!(
             std::env::var_os("SINEX_TEST_CLAIM").is_none(),
             "non-unicode one-shot env var must still be removed"
