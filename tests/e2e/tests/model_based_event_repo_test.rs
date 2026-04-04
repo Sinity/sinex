@@ -55,7 +55,6 @@ impl ReferenceModel {
     fn delete_by_source(&mut self, source: &str) {
         self.events.retain(|_, (s, _)| s.as_str() != source);
     }
-
 }
 
 // ─── Operation vocabulary ─────────────────────────────────────────────────────
@@ -132,7 +131,10 @@ async fn prop_event_repo_model_matches_reference(
 
     for (step, op) in ops.iter().enumerate() {
         match op {
-            EventRepoOp::Insert { source_idx, type_idx } => {
+            EventRepoOp::Insert {
+                source_idx,
+                type_idx,
+            } => {
                 let source_str = prefixed_source(source_tag(*source_idx));
                 let type_str = type_tag(*type_idx);
 
@@ -191,7 +193,11 @@ async fn prop_event_repo_model_matches_reference(
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| format!("reinsert-{step}"));
 
-                    model.insert(id_str.clone(), source_str, "model.event.reinsertion".to_string());
+                    model.insert(
+                        id_str.clone(),
+                        source_str,
+                        "model.event.reinsertion".to_string(),
+                    );
                     inserted_ids.push(id_str);
                     let after = model.count_all();
                     prop_assert_eq!(
@@ -216,7 +222,10 @@ async fn prop_event_repo_model_matches_reference(
                     db_count,
                     model_count,
                     "step {}: count_by_source({}) mismatch: db={} model={}",
-                    step, source_str, db_count, model_count
+                    step,
+                    source_str,
+                    db_count,
+                    model_count
                 );
             }
 
@@ -234,13 +243,17 @@ async fn prop_event_repo_model_matches_reference(
                 let db_count_after = events
                     .count_by_source(&EventSource::from(source_str.clone()))
                     .await
-                    .map_err(|e| TestCaseError::fail(format!("db count after delete failed: {e}")))?;
+                    .map_err(|e| {
+                        TestCaseError::fail(format!("db count after delete failed: {e}"))
+                    })?;
 
                 prop_assert_eq!(
                     db_count_after,
                     0,
                     "step {}: after delete_by_source({}), count should be 0, got {}",
-                    step, source_str, db_count_after
+                    step,
+                    source_str,
+                    db_count_after
                 );
             }
 
@@ -256,7 +269,9 @@ async fn prop_event_repo_model_matches_reference(
                     db_count,
                     model_count,
                     "step {}: count_all mismatch: db={} model={}",
-                    step, db_count, model_count
+                    step,
+                    db_count,
+                    model_count
                 );
             }
         }
@@ -274,9 +289,9 @@ async fn prop_get_by_id_consistent_with_insert_and_delete(
     ctx: &TestContext,
     #[strategy(1u8..10)] count: u8,
 ) -> TestResult<()> {
-    use sinex_primitives::events::Event;
-    use sinex_primitives::Id;
     use serde_json::Value as JsonValue;
+    use sinex_primitives::Id;
+    use sinex_primitives::events::Event;
 
     let pool = ctx.pool();
     let events = pool.events();
