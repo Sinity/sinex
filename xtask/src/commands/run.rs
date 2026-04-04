@@ -81,7 +81,12 @@ fn target_binary_path(release: bool, binary: &str) -> PathBuf {
 fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
     dev_journal_path.map_or_else(
         || "Inspect the process output above".to_string(),
-        |path| format!("Inspect the process output above or the dev journal at {}", path.display()),
+        |path| {
+            format!(
+                "Inspect the process output above or the dev journal at {}",
+                path.display()
+            )
+        },
     )
 }
 
@@ -320,14 +325,14 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
                 .is_none()
             {
                 return Err(
-                    eyre!(error)
-                        .wrap_err(format!("failed to kill {name} during bundle shutdown"))
+                    eyre!(error).wrap_err(format!("failed to kill {name} during bundle shutdown"))
                 );
             }
         }
     }
 
-    child.wait()
+    child
+        .wait()
         .await
         .with_context(|| format!("failed to wait for {name} during bundle shutdown"))?;
     Ok(())
@@ -731,7 +736,9 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if ctx.is_background() {
-            return self.run_background(package, binary, &instance_id, ctx).await;
+            return self
+                .run_background(package, binary, &instance_id, ctx)
+                .await;
         }
 
         if self.dry_run {
@@ -1067,7 +1074,9 @@ impl RunCommand {
             .map(|(n, _, _)| *n)
             .unwrap_or(binary);
 
-        let journal_path = self.dev_journal.then(|| config().state_dir.join("dev-journal.log"));
+        let journal_path = self
+            .dev_journal
+            .then(|| config().state_dir.join("dev-journal.log"));
         let journal = if let Some(journal_path) = journal_path.as_ref() {
             if ctx.is_human() {
                 println!(
@@ -1356,7 +1365,12 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     fn test_context(background: bool) -> CommandContext {
-        CommandContext::new(OutputWriter::new(OutputFormat::Silent), background, None, "test")
+        CommandContext::new(
+            OutputWriter::new(OutputFormat::Silent),
+            background,
+            None,
+            "test",
+        )
     }
 
     fn base_command(subcommand: RunSubcommand) -> RunCommand {
@@ -1399,8 +1413,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_use_service_name_for_nodes()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_runtime_cli_args_use_service_name_for_nodes() -> ::xtask::sandbox::TestResult<()>
+    {
         assert_eq!(
             runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
             vec![
@@ -1412,8 +1426,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_use_rpc_server_for_gateway()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_runtime_cli_args_use_rpc_server_for_gateway() -> ::xtask::sandbox::TestResult<()>
+    {
         assert_eq!(
             runtime_cli_args("sinex-gateway", "gateway-123"),
             vec!["rpc-server".to_string()]
@@ -1492,7 +1506,10 @@ mod tests {
         let err = command
             .validate_flag_compatibility(&ctx)
             .expect_err("bundle watch must be rejected");
-        assert!(err.to_string().contains("--watch only supports single local binaries"));
+        assert!(
+            err.to_string()
+                .contains("--watch only supports single local binaries")
+        );
         Ok(())
     }
 
@@ -1508,7 +1525,10 @@ mod tests {
         let err = command
             .validate_flag_compatibility(&ctx)
             .expect_err("background logs must be rejected");
-        assert!(err.to_string().contains("--logs and --dev-journal are incompatible with --bg"));
+        assert!(
+            err.to_string()
+                .contains("--logs and --dev-journal are incompatible with --bg")
+        );
         Ok(())
     }
 
@@ -1522,7 +1542,10 @@ mod tests {
         let err = command
             .validate_flag_compatibility(&ctx)
             .expect_err("watch+journal must be rejected");
-        assert!(err.to_string().contains("--logs and --dev-journal are incompatible with --watch"));
+        assert!(
+            err.to_string()
+                .contains("--logs and --dev-journal are incompatible with --watch")
+        );
         Ok(())
     }
 
@@ -1535,13 +1558,17 @@ mod tests {
 
         let secs_error =
             unix_timestamp_secs(before_epoch, "boot timestamp").expect_err("pre-epoch secs");
-        assert!(format!("{secs_error:#}")
-            .contains("boot timestamp: system clock is before the unix epoch"));
+        assert!(
+            format!("{secs_error:#}")
+                .contains("boot timestamp: system clock is before the unix epoch")
+        );
 
         let micros_error =
             unix_timestamp_micros(before_epoch, "entry timestamp").expect_err("pre-epoch micros");
-        assert!(format!("{micros_error:#}")
-            .contains("entry timestamp: system clock is before the unix epoch"));
+        assert!(
+            format!("{micros_error:#}")
+                .contains("entry timestamp: system clock is before the unix epoch")
+        );
 
         Ok(())
     }
@@ -1560,7 +1587,10 @@ mod tests {
         let err = command
             .validate_flag_compatibility(&ctx)
             .expect_err("metrics on tether must be rejected");
-        assert!(err.to_string().contains("--metrics only supports local binary or bundle runs"));
+        assert!(
+            err.to_string()
+                .contains("--metrics only supports local binary or bundle runs")
+        );
         Ok(())
     }
 
@@ -1577,13 +1607,16 @@ mod tests {
         let err = command
             .validate_flag_compatibility(&ctx)
             .expect_err("conflicting tether start flags must be rejected");
-        assert!(err.to_string().contains("--from-beginning and --from-sequence are mutually exclusive"));
+        assert!(
+            err.to_string()
+                .contains("--from-beginning and --from-sequence are mutually exclusive")
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_local_run_failure_suggestion_without_journal()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_local_run_failure_suggestion_without_journal() -> ::xtask::sandbox::TestResult<()>
+    {
         assert_eq!(
             local_run_failure_suggestion(None),
             "Inspect the process output above"
@@ -1592,8 +1625,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_local_run_failure_suggestion_with_journal()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_local_run_failure_suggestion_with_journal() -> ::xtask::sandbox::TestResult<()> {
         let path = Path::new("/tmp/dev-journal.log");
         assert_eq!(
             local_run_failure_suggestion(Some(path)),
@@ -1603,8 +1635,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_stop_bundle_child_succeeds_for_exited_process()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbox::TestResult<()>
+    {
         let mut child = tokio::process::Command::new("sh")
             .arg("-c")
             .arg("exit 0")

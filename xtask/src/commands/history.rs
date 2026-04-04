@@ -352,210 +352,210 @@ impl XtaskCommand for HistoryCommand {
         ctx.try_with_history_db(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
-            HistorySubcommand::List {
-                limit,
-                command,
-                first,
-                no_limit,
-                offset,
-                sort_by,
-                since,
-                with_diagnostics,
-                with_stages,
-                with_tests,
-            } => {
-                if *first {
-                    execute_last(&db, command.as_deref().unwrap_or(""), ctx)
-                } else if *no_limit {
-                    execute_export(&db, usize::MAX, ctx)
-                } else {
-                    execute_list(
-                        &db,
-                        *limit,
-                        *offset,
-                        command.as_deref(),
-                        since.as_deref(),
-                        sort_by.as_str(),
-                        *with_diagnostics,
-                        *with_stages,
-                        *with_tests,
-                        ctx,
-                    )
+                HistorySubcommand::List {
+                    limit,
+                    command,
+                    first,
+                    no_limit,
+                    offset,
+                    sort_by,
+                    since,
+                    with_diagnostics,
+                    with_stages,
+                    with_tests,
+                } => {
+                    if *first {
+                        execute_last(&db, command.as_deref().unwrap_or(""), ctx)
+                    } else if *no_limit {
+                        execute_export(&db, usize::MAX, ctx)
+                    } else {
+                        execute_list(
+                            &db,
+                            *limit,
+                            *offset,
+                            command.as_deref(),
+                            since.as_deref(),
+                            sort_by.as_str(),
+                            *with_diagnostics,
+                            *with_stages,
+                            *with_tests,
+                            ctx,
+                        )
+                    }
                 }
-            }
-            HistorySubcommand::Stats {
-                command,
-                days,
-                package,
-                all_packages,
-                all_commands,
-            } => {
-                if *all_packages {
-                    execute_stats_all_packages(&db, ctx)
-                } else if *all_commands {
-                    execute_stats_all_commands(&db, *days, ctx)
-                } else {
-                    execute_stats(
-                        &db,
-                        command.as_deref().unwrap_or(""),
-                        *days,
-                        package.as_deref(),
-                        ctx,
-                    )
+                HistorySubcommand::Stats {
+                    command,
+                    days,
+                    package,
+                    all_packages,
+                    all_commands,
+                } => {
+                    if *all_packages {
+                        execute_stats_all_packages(&db, ctx)
+                    } else if *all_commands {
+                        execute_stats_all_commands(&db, *days, ctx)
+                    } else {
+                        execute_stats(
+                            &db,
+                            command.as_deref().unwrap_or(""),
+                            *days,
+                            package.as_deref(),
+                            ctx,
+                        )
+                    }
                 }
-            }
-            HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
-            HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
-            HistorySubcommand::Diagnostics {
-                level,
-                file,
-                command,
-                package,
-                scope,
-                limit,
-                fixable,
-                trend,
-                window,
-                emit,
-                delta,
-                delta_from,
-                delta_to,
-                code,
-                by_code,
-                lifecycle,
-                lifecycle_status,
-            } => {
-                if *trend {
-                    return execute_diagnostics_trend(&db, *window, ctx);
-                }
-                if *lifecycle {
-                    return execute_diagnostics_lifecycle(
-                        &db,
-                        package.as_deref(),
-                        code.as_deref(),
-                        level.as_deref(),
-                        lifecycle_status.as_deref(),
-                        ctx,
-                    );
-                }
-                if *delta {
-                    return execute_diagnostics_delta(
-                        &db,
-                        *delta_from,
-                        *delta_to,
-                        level.as_deref(),
-                        file.as_deref(),
-                        command.as_deref(),
-                        package.as_deref(),
-                        *fixable,
-                        code.as_deref(),
-                        emit,
-                        ctx,
-                    );
-                }
-                if *by_code {
-                    return execute_diagnostics_by_code(
-                        &db,
-                        level.as_deref(),
-                        file.as_deref(),
-                        command.as_deref(),
-                        package.as_deref(),
-                        *fixable,
-                        code.as_deref(),
-                        ctx,
-                    );
-                }
+                HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
+                HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
+                HistorySubcommand::Diagnostics {
+                    level,
+                    file,
+                    command,
+                    package,
+                    scope,
+                    limit,
+                    fixable,
+                    trend,
+                    window,
+                    emit,
+                    delta,
+                    delta_from,
+                    delta_to,
+                    code,
+                    by_code,
+                    lifecycle,
+                    lifecycle_status,
+                } => {
+                    if *trend {
+                        return execute_diagnostics_trend(&db, *window, ctx);
+                    }
+                    if *lifecycle {
+                        return execute_diagnostics_lifecycle(
+                            &db,
+                            package.as_deref(),
+                            code.as_deref(),
+                            level.as_deref(),
+                            lifecycle_status.as_deref(),
+                            ctx,
+                        );
+                    }
+                    if *delta {
+                        return execute_diagnostics_delta(
+                            &db,
+                            *delta_from,
+                            *delta_to,
+                            level.as_deref(),
+                            file.as_deref(),
+                            command.as_deref(),
+                            package.as_deref(),
+                            *fixable,
+                            code.as_deref(),
+                            emit,
+                            ctx,
+                        );
+                    }
+                    if *by_code {
+                        return execute_diagnostics_by_code(
+                            &db,
+                            level.as_deref(),
+                            file.as_deref(),
+                            command.as_deref(),
+                            package.as_deref(),
+                            *fixable,
+                            code.as_deref(),
+                            ctx,
+                        );
+                    }
 
-                match scope.as_deref() {
-                    Some("all") => execute_diagnostics_all(
-                        &db,
-                        *limit,
-                        level.as_deref(),
-                        file.as_deref(),
-                        command.as_deref(),
-                        package.as_deref(),
-                        *fixable,
-                        code.as_deref(),
-                        emit,
-                        ctx,
-                    ),
-                    Some(inv) => execute_diagnostics_invocation(
-                        &db,
-                        inv,
-                        command.as_deref(),
-                        level.as_deref(),
-                        file.as_deref(),
-                        package.as_deref(),
-                        *fixable,
-                        code.as_deref(),
-                        emit,
-                        ctx,
-                    ),
-                    None => execute_diagnostics_current(
-                        &db,
-                        level.as_deref(),
-                        file.as_deref(),
-                        command.as_deref(),
-                        package.as_deref(),
-                        *fixable,
-                        code.as_deref(),
-                        emit,
-                        ctx,
-                    ),
+                    match scope.as_deref() {
+                        Some("all") => execute_diagnostics_all(
+                            &db,
+                            *limit,
+                            level.as_deref(),
+                            file.as_deref(),
+                            command.as_deref(),
+                            package.as_deref(),
+                            *fixable,
+                            code.as_deref(),
+                            emit,
+                            ctx,
+                        ),
+                        Some(inv) => execute_diagnostics_invocation(
+                            &db,
+                            inv,
+                            command.as_deref(),
+                            level.as_deref(),
+                            file.as_deref(),
+                            package.as_deref(),
+                            *fixable,
+                            code.as_deref(),
+                            emit,
+                            ctx,
+                        ),
+                        None => execute_diagnostics_current(
+                            &db,
+                            level.as_deref(),
+                            file.as_deref(),
+                            command.as_deref(),
+                            package.as_deref(),
+                            *fixable,
+                            code.as_deref(),
+                            emit,
+                            ctx,
+                        ),
+                    }
+                }
+                HistorySubcommand::Stages {
+                    command,
+                    invocation,
+                    slowest,
+                    trend,
+                    window,
+                } => execute_stages(
+                    &db,
+                    command.as_deref(),
+                    *invocation,
+                    *slowest,
+                    trend.as_deref(),
+                    *window,
+                    ctx,
+                ),
+                HistorySubcommand::Fix {
+                    sessions,
+                    effectiveness,
+                } => execute_fix_sessions(&db, *sessions, *effectiveness, ctx),
+                HistorySubcommand::View { name } => execute_view(&db, name.as_deref(), ctx),
+                HistorySubcommand::Query { sql } => execute_query(&db, sql, ctx),
+                HistorySubcommand::Shell => execute_shell(&db, ctx),
+                HistorySubcommand::Schema => execute_schema(&db, ctx),
+                HistorySubcommand::Timeline {
+                    command,
+                    days,
+                    limit,
+                } => execute_timeline(&db, command.as_deref(), *days, *limit, ctx),
+                HistorySubcommand::Diff { from, to, command } => {
+                    execute_diff(&db, *from, *to, command.as_deref(), ctx)
+                }
+                HistorySubcommand::Sessions { limit, gap_minutes } => {
+                    execute_sessions(&db, *limit, *gap_minutes, ctx)
+                }
+                HistorySubcommand::Invocation { id, full, command } => {
+                    execute_invocation(&db, id, *full, command.as_deref(), ctx)
+                }
+                HistorySubcommand::Seed { days, invocations } => {
+                    execute_seed(&db, *days, *invocations, ctx)
+                }
+                HistorySubcommand::Progress { invocation_id } => {
+                    execute_progress(&db, *invocation_id, ctx)
+                }
+                HistorySubcommand::Eta {
+                    command,
+                    phase,
+                    window,
+                } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
+                HistorySubcommand::Exercise { limit, verbose } => {
+                    execute_exercise_history(&db, *limit, *verbose, ctx)
                 }
             }
-            HistorySubcommand::Stages {
-                command,
-                invocation,
-                slowest,
-                trend,
-                window,
-            } => execute_stages(
-                &db,
-                command.as_deref(),
-                *invocation,
-                *slowest,
-                trend.as_deref(),
-                *window,
-                ctx,
-            ),
-            HistorySubcommand::Fix {
-                sessions,
-                effectiveness,
-            } => execute_fix_sessions(&db, *sessions, *effectiveness, ctx),
-            HistorySubcommand::View { name } => execute_view(&db, name.as_deref(), ctx),
-            HistorySubcommand::Query { sql } => execute_query(&db, sql, ctx),
-            HistorySubcommand::Shell => execute_shell(&db, ctx),
-            HistorySubcommand::Schema => execute_schema(&db, ctx),
-            HistorySubcommand::Timeline {
-                command,
-                days,
-                limit,
-            } => execute_timeline(&db, command.as_deref(), *days, *limit, ctx),
-            HistorySubcommand::Diff { from, to, command } => {
-                execute_diff(&db, *from, *to, command.as_deref(), ctx)
-            }
-            HistorySubcommand::Sessions { limit, gap_minutes } => {
-                execute_sessions(&db, *limit, *gap_minutes, ctx)
-            }
-            HistorySubcommand::Invocation { id, full, command } => {
-                execute_invocation(&db, id, *full, command.as_deref(), ctx)
-            }
-            HistorySubcommand::Seed { days, invocations } => {
-                execute_seed(&db, *days, *invocations, ctx)
-            }
-            HistorySubcommand::Progress { invocation_id } => {
-                execute_progress(&db, *invocation_id, ctx)
-            }
-            HistorySubcommand::Eta {
-                command,
-                phase,
-                window,
-            } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
-            HistorySubcommand::Exercise { limit, verbose } => {
-                execute_exercise_history(&db, *limit, *verbose, ctx)
-            }
-        }
         })
         .ok_or_else(|| eyre!("history DB unavailable"))?
     }
@@ -655,16 +655,20 @@ fn execute_list(
                         parts.push(probe.fragment);
                     }
                     if with_stages {
-                        let probe =
-                            stage_summary_probe_from_result(inv.id, db.get_stage_timings_for_invocation(inv.id));
+                        let probe = stage_summary_probe_from_result(
+                            inv.id,
+                            db.get_stage_timings_for_invocation(inv.id),
+                        );
                         if let Some(issue) = probe.issue {
                             warnings.push(issue);
                         }
                         parts.push(probe.fragment);
                     }
                     if with_tests {
-                        let probe =
-                            test_summary_probe_from_result(inv.id, db.get_test_counts_for_invocation(inv.id));
+                        let probe = test_summary_probe_from_result(
+                            inv.id,
+                            db.get_test_counts_for_invocation(inv.id),
+                        );
                         if let Some(issue) = probe.issue {
                             warnings.push(issue);
                         }
@@ -3411,8 +3415,10 @@ fn execute_exercise_history(
                 "git_commit": row.git_commit,
             });
             if verbose {
-                let results_probe =
-                    exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                let results_probe = exercise_results_probe_from_result(
+                    row.run_id,
+                    db.get_exercise_results_for_run(row.run_id),
+                );
                 if let Some(issue) = &results_probe.issue {
                     warnings.push(issue.clone());
                     run["results_issue"] = serde_json::Value::String(issue.clone());
@@ -3435,7 +3441,10 @@ fn execute_exercise_history(
             }
             json_runs.push(run);
         }
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "runs": json_runs }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "runs": json_runs }))?
+        );
     } else {
         if rows.is_empty() {
             println!("No exercise runs recorded yet. Run `xtask exercise` first.");
@@ -3478,8 +3487,10 @@ fn execute_exercise_history(
             for row in &rows {
                 if row.failed > 0 {
                     println!("\nFailed exercises in run {}:", row.recorded_at);
-                    let results_probe =
-                        exercise_results_probe_from_result(row.run_id, db.get_exercise_results_for_run(row.run_id));
+                    let results_probe = exercise_results_probe_from_result(
+                        row.run_id,
+                        db.get_exercise_results_for_run(row.run_id),
+                    );
                     if let Some(issue) = &results_probe.issue {
                         warnings.push(issue.clone());
                         println!("  {}", style(issue).yellow());
@@ -3584,10 +3595,7 @@ fn test_summary_probe_from_result(
 
 fn infra_timing_probe_from_result<T>(result: Result<Option<T>>) -> OptionalProbe<T> {
     match result {
-        Ok(value) => OptionalProbe {
-            value,
-            issue: None,
-        },
+        Ok(value) => OptionalProbe { value, issue: None },
         Err(error) => OptionalProbe {
             value: None,
             issue: Some(format!(
@@ -3641,8 +3649,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_infra_timing_probe_from_result_reports_errors()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_infra_timing_probe_from_result_reports_errors() -> ::xtask::sandbox::TestResult<()>
+    {
         let probe = infra_timing_probe_from_result::<()>(Err(eyre!("infra exploded")));
         assert!(probe.value.is_none());
         assert!(probe.issue.unwrap_or_default().contains("infra exploded"));
@@ -3677,8 +3685,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_test_summary_probe_from_result_reports_errors()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_test_summary_probe_from_result_reports_errors() -> ::xtask::sandbox::TestResult<()>
+    {
         let probe = test_summary_probe_from_result(7, Err(eyre!("tests exploded")));
         assert_eq!(probe.fragment, "tests:ERR");
         assert!(probe.issue.unwrap_or_default().contains("tests exploded"));
@@ -3701,7 +3709,11 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let error = ensure_sqlite3_available(Err(std::io::Error::other("probe exploded")))
             .expect_err("probe failure should surface");
-        assert!(error.to_string().contains("failed to probe sqlite3 availability"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to probe sqlite3 availability")
+        );
         assert!(error.to_string().contains("probe exploded"));
         Ok(())
     }

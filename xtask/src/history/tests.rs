@@ -279,6 +279,32 @@ impl HistoryDb {
             .context("failed to collect flaky tests")
     }
 
+    /// Count flaky tests (tests that failed then passed on retry) up to `limit`.
+    pub fn get_flaky_test_count(&self, limit: usize) -> Result<usize> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT COUNT(*)
+            FROM (
+                SELECT DISTINCT t1.test_name, t1.package, t1.invocation_id
+                FROM test_results t1
+                WHERE t1.status = 'fail'
+                  AND EXISTS (
+                    SELECT 1 FROM test_results t2
+                    WHERE t2.invocation_id = t1.invocation_id
+                      AND t2.test_name = t1.test_name
+                      AND t2.attempt > t1.attempt
+                      AND t2.status = 'pass'
+                  )
+                ORDER BY t1.invocation_id DESC
+                LIMIT ?1
+            )
+            ",
+        )?;
+
+        stmt.query_row([limit], |row| row.get(0))
+            .context("failed to count flaky tests")
+    }
+
     /// Get frequently failing tests.
     pub fn get_failing_tests(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self.conn.prepare(
@@ -1385,6 +1411,51 @@ mod tests {
         assert_eq!(flaky[0].0, "test_flaky");
         assert_eq!(flaky[0].1, "pkg-a");
         assert_eq!(flaky[0].2, inv_id);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_flaky_test_count_matches_limited_row_query() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_flaky_a".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.3),
+                attempt: 1,
+                output: Some("timeout".into()),
+            },
+            TestResult {
+                test_name: "test_flaky_a".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 2,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_flaky_b".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.4),
+                attempt: 1,
+                output: Some("panic".into()),
+            },
+            TestResult {
+                test_name: "test_flaky_b".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 2,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        assert_eq!(db.get_flaky_tests(1)?.len(), db.get_flaky_test_count(1)?);
+        assert_eq!(db.get_flaky_tests(10)?.len(), db.get_flaky_test_count(10)?);
         Ok(())
     }
 

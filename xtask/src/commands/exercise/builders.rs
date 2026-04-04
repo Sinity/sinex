@@ -1,4 +1,4 @@
-use super::types::{ExpectedExit, ExerciseDef, ExerciseKind, ExerciseStep, InfraReq, Validation};
+use super::types::{ExerciseDef, ExerciseKind, ExerciseStep, ExpectedExit, InfraReq, Validation};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JSON path helpers

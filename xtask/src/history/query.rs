@@ -36,7 +36,9 @@ use color_eyre::eyre::Result;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::db::{HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation};
+use super::db::{
+    DiagnosticCounts, HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation,
+};
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
@@ -545,6 +547,16 @@ impl<'db> HistoryAnalysis<'db> {
         Ok(Some(durations.iter().sum::<f64>() / durations.len() as f64))
     }
 
+    fn compute_global_test_pass_rate(&self) -> Result<Option<f64>> {
+        let total = TestResultQuery::new().days(7).count(self.db)?;
+        if total == 0 {
+            return Ok(None);
+        }
+
+        let passed = TestResultQuery::new().passing().days(7).count(self.db)?;
+        Ok(Some(passed as f64 / total as f64))
+    }
+
     // ── Group J: Analytics Subsystem ─────────────────────────────────────────
 
     /// J1: Composite workspace health report (score 0-100).
@@ -556,45 +568,57 @@ impl<'db> HistoryAnalysis<'db> {
     pub fn workspace_health_report(&self) -> Result<WorkspaceHealthReport> {
         let packages = self.all_packages_health()?;
         let counts = self.db.get_current_diagnostic_counts()?;
-        let error_count = counts.errors;
-        let warning_count = counts.warnings;
+        let velocity_trends = self.velocity_trends()?;
+        Ok(self.build_workspace_health_report(packages, counts, &velocity_trends))
+    }
 
-        let build_score = ((100i32 - (error_count as i32 * 10) - (warning_count as i32 / 5))
-            .clamp(0, 100)) as u32;
+    pub fn analytics_snapshot(
+        &self,
+    ) -> Result<(
+        WorkspaceHealthReport,
+        Vec<VelocityTrend>,
+        Vec<Recommendation>,
+    )> {
+        let packages = self.all_packages_health()?;
+        let counts = self.db.get_current_diagnostic_counts()?;
+        let velocity_trends = self.velocity_trends()?;
+        let health = self.build_workspace_health_report(packages, counts, &velocity_trends);
+        let recommendations = self.build_recommendations(&health, &velocity_trends)?;
+        Ok((health, velocity_trends, recommendations))
+    }
 
+    pub fn status_summary_snapshot(
+        &self,
+    ) -> Result<(
+        WorkspaceHealthReport,
+        Vec<VelocityTrend>,
+        Vec<Recommendation>,
+    )> {
+        let counts = self.db.get_current_diagnostic_counts()?;
+        let velocity_trends = self.velocity_trends()?;
+        let avg_test_pass_rate = self.compute_global_test_pass_rate()?;
+        let health = self.build_workspace_health_report_from_scalars(
+            counts,
+            &velocity_trends,
+            avg_test_pass_rate,
+            0,
+            0,
+            Vec::new(),
+        );
+        let recommendations = self.build_status_recommendations(&health, &velocity_trends);
+        Ok((health, velocity_trends, recommendations))
+    }
+
+    fn build_workspace_health_report(
+        &self,
+        packages: Vec<PackageHealth>,
+        counts: DiagnosticCounts,
+        velocity_trends: &[VelocityTrend],
+    ) -> WorkspaceHealthReport {
         let packages_with_tests: Vec<_> = packages
             .iter()
             .filter(|p| p.test_pass_rate.is_some())
             .collect();
-        let test_score = if packages_with_tests.is_empty() {
-            75u32
-        } else {
-            let avg = packages_with_tests
-                .iter()
-                .filter_map(|p| p.test_pass_rate)
-                .sum::<f64>()
-                / packages_with_tests.len() as f64;
-            (avg * 100.0).round() as u32
-        };
-
-        let velocity_trends = self.velocity_trends()?;
-        let velocity_score = if velocity_trends.is_empty() {
-            75u32
-        } else {
-            let measurable: Vec<f64> = velocity_trends.iter().filter_map(|v| v.delta_pct).collect();
-            if measurable.is_empty() {
-                75u32
-            } else {
-                let avg_delta = measurable.iter().sum::<f64>() / measurable.len() as f64;
-                ((75.0 - avg_delta * 0.5).clamp(0.0, 100.0)) as u32
-            }
-        };
-
-        let score =
-            (build_score as f64 * 0.5 + test_score as f64 * 0.3 + velocity_score as f64 * 0.2)
-                .round() as u32;
-
-        let packages_with_errors = packages.iter().filter(|p| p.diagnostic_count > 0).count();
         let avg_test_pass_rate = if packages_with_tests.is_empty() {
             None
         } else {
@@ -607,18 +631,66 @@ impl<'db> HistoryAnalysis<'db> {
             )
         };
 
-        Ok(WorkspaceHealthReport {
+        self.build_workspace_health_report_from_scalars(
+            counts,
+            velocity_trends,
+            avg_test_pass_rate,
+            packages.iter().filter(|p| p.diagnostic_count > 0).count(),
+            packages_with_tests.len(),
+            packages,
+        )
+    }
+
+    fn build_workspace_health_report_from_scalars(
+        &self,
+        counts: DiagnosticCounts,
+        velocity_trends: &[VelocityTrend],
+        avg_test_pass_rate: Option<f64>,
+        packages_with_errors: usize,
+        test_packages: usize,
+        packages: Vec<PackageHealth>,
+    ) -> WorkspaceHealthReport {
+        let error_count = counts.errors;
+        let warning_count = counts.warnings;
+        let fixable_count = counts.fixable;
+
+        let build_score = ((100i32 - (error_count as i32 * 10) - (warning_count as i32 / 5))
+            .clamp(0, 100)) as u32;
+        let test_score = avg_test_pass_rate
+            .map(|avg| (avg * 100.0).round() as u32)
+            .unwrap_or(75);
+        let velocity_score = Self::compute_velocity_score(velocity_trends);
+        let score =
+            (build_score as f64 * 0.5 + test_score as f64 * 0.3 + velocity_score as f64 * 0.2)
+                .round() as u32;
+
+        WorkspaceHealthReport {
             score,
             build_score,
             test_score,
             velocity_score,
             error_count,
             warning_count,
+            fixable_count,
             packages_with_errors,
-            test_packages: packages_with_tests.len(),
+            test_packages,
             avg_test_pass_rate,
             packages,
-        })
+        }
+    }
+
+    fn compute_velocity_score(velocity_trends: &[VelocityTrend]) -> u32 {
+        if velocity_trends.is_empty() {
+            return 75;
+        }
+
+        let measurable: Vec<f64> = velocity_trends.iter().filter_map(|v| v.delta_pct).collect();
+        if measurable.is_empty() {
+            return 75;
+        }
+
+        let avg_delta = measurable.iter().sum::<f64>() / measurable.len() as f64;
+        ((75.0 - avg_delta * 0.5).clamp(0.0, 100.0)) as u32
     }
 
     /// J2: Diagnostic hotspots — most active (churning) diagnostics.
@@ -780,9 +852,16 @@ impl<'db> HistoryAnalysis<'db> {
     /// Each recommendation includes the exact `xtask` command to run next.
     /// Sorted: critical → warning → info.
     pub fn recommendations(&self) -> Result<Vec<Recommendation>> {
-        let mut recs = Vec::new();
+        let (_, _, recommendations) = self.analytics_snapshot()?;
+        Ok(recommendations)
+    }
 
-        let health = self.workspace_health_report()?;
+    fn build_recommendations(
+        &self,
+        health: &WorkspaceHealthReport,
+        velocity_trends: &[VelocityTrend],
+    ) -> Result<Vec<Recommendation>> {
+        let mut recs = Vec::new();
 
         if health.error_count > 0 {
             recs.push(Recommendation {
@@ -796,12 +875,11 @@ impl<'db> HistoryAnalysis<'db> {
             });
         }
 
-        let fixable = self.db.get_fixable_diagnostic_count()?;
-        if fixable > 0 {
+        if health.fixable_count > 0 {
             recs.push(Recommendation {
                 severity: "warning".to_string(),
                 category: "build".to_string(),
-                description: format!("{fixable} diagnostic(s) can be auto-fixed"),
+                description: format!("{} diagnostic(s) can be auto-fixed", health.fixable_count),
                 action: "xtask fix --smart".to_string(),
             });
         }
@@ -867,9 +945,8 @@ impl<'db> HistoryAnalysis<'db> {
             });
         }
 
-        for trend in self
-            .velocity_trends()?
-            .into_iter()
+        for trend in velocity_trends
+            .iter()
             .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
         {
             recs.push(Recommendation {
@@ -916,6 +993,76 @@ impl<'db> HistoryAnalysis<'db> {
         });
         Ok(recs)
     }
+
+    fn build_status_recommendations(
+        &self,
+        health: &WorkspaceHealthReport,
+        velocity_trends: &[VelocityTrend],
+    ) -> Vec<Recommendation> {
+        let mut recs = Vec::new();
+
+        if health.error_count > 0 {
+            recs.push(Recommendation {
+                severity: "critical".to_string(),
+                category: "build".to_string(),
+                description: format!(
+                    "{} compiler error(s) in current workspace",
+                    health.error_count
+                ),
+                action: "xtask check --lint".to_string(),
+            });
+        }
+
+        if health.fixable_count > 0 {
+            recs.push(Recommendation {
+                severity: "warning".to_string(),
+                category: "build".to_string(),
+                description: format!("{} diagnostic(s) can be auto-fixed", health.fixable_count),
+                action: "xtask fix --smart".to_string(),
+            });
+        }
+
+        if let Some(pass_rate) = health.avg_test_pass_rate
+            && pass_rate < 0.9
+        {
+            recs.push(Recommendation {
+                severity: if pass_rate < 0.75 {
+                    "critical".to_string()
+                } else {
+                    "warning".to_string()
+                },
+                category: "tests".to_string(),
+                description: format!(
+                    "Workspace tests are {:.1}% green over the last 7 days",
+                    pass_rate * 100.0
+                ),
+                action: "xtask history tests analyze".to_string(),
+            });
+        }
+
+        for trend in velocity_trends
+            .iter()
+            .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
+        {
+            recs.push(Recommendation {
+                severity: "warning".to_string(),
+                category: "performance".to_string(),
+                description: format!(
+                    "`{}` is {:.0}% slower than the prior week",
+                    trend.command,
+                    trend.delta_pct.unwrap_or(0.0)
+                ),
+                action: "xtask history timeline".to_string(),
+            });
+        }
+
+        recs.sort_by_key(|r| match r.severity.as_str() {
+            "critical" => 0u8,
+            "warning" => 1,
+            _ => 2,
+        });
+        recs
+    }
 }
 
 // ─── Group J analytics output types ──────────────────────────────────────────
@@ -929,6 +1076,7 @@ pub struct WorkspaceHealthReport {
     pub velocity_score: u32,
     pub error_count: usize,
     pub warning_count: usize,
+    pub fixable_count: usize,
     pub packages_with_errors: usize,
     pub test_packages: usize,
     pub avg_test_pass_rate: Option<f64>,
@@ -1285,6 +1433,7 @@ impl HistoryDb {
 mod tests {
     // Inline because these regressions exercise the private query execution path directly.
     use super::*;
+    use crate::history::{TestResult, TestStatus};
     use crate::sandbox::prelude::*;
     use rusqlite::params;
     use tempfile::tempdir;
@@ -1328,6 +1477,40 @@ mod tests {
             .run(&db)
             .expect_err("invalid finished_at should surface from invocation queries");
         assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_status_summary_snapshot_uses_global_test_rate_without_package_fanout()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-status-summary-snapshot.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let check_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(check_id, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let test_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(test_id, InvocationStatus::Success, Some(0), 2.0)?;
+        db.store_test_results(
+            test_id,
+            &[TestResult {
+                test_name: "status_summary_smoke".into(),
+                package: "sinex-status".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let analysis = HistoryAnalysis::new(&db);
+        let (health, _velocity, recommendations) = analysis.status_summary_snapshot()?;
+
+        assert!(health.packages.is_empty());
+        assert_eq!(health.avg_test_pass_rate, Some(1.0));
+        assert!(health.score > 0);
+        assert!(recommendations.is_empty());
         Ok(())
     }
 }

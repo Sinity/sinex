@@ -41,7 +41,9 @@ fn list_workspace_packages() -> Result<Vec<String>> {
 
     match out {
         Ok(output) => workspace_packages_from_metadata_output(&output),
-        Err(error) => Err(color_eyre::eyre::eyre!("failed to invoke cargo metadata: {error}")),
+        Err(error) => Err(color_eyre::eyre::eyre!(
+            "failed to invoke cargo metadata: {error}"
+        )),
     }
 }
 
@@ -51,7 +53,9 @@ fn workspace_packages_from_metadata_output(output: &std::process::Output) -> Res
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return match output.status.code() {
-            Some(code) if stderr.is_empty() => Err(eyre!("cargo metadata failed with exit code {code}")),
+            Some(code) if stderr.is_empty() => {
+                Err(eyre!("cargo metadata failed with exit code {code}"))
+            }
             Some(code) => Err(eyre!(
                 "cargo metadata failed with exit code {code}: {stderr}"
             )),

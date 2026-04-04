@@ -111,15 +111,19 @@ fn resolve_tls_artifact(dir: &Path, candidates: &[&str]) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
+fn workspace_tls_dir() -> PathBuf {
+    crate::config::workspace_root().join(".sinex/tls")
+}
+
 fn detect_tls_check() -> Option<TlsCheck> {
-    let default_tls_dir = Path::new(".sinex/tls");
+    let default_tls_dir = workspace_tls_dir();
     let env_dir = std::env::var("SINEX_GATEWAY_TLS_CERT")
         .ok()
         .and_then(|p| Path::new(&p).parent().map(Path::to_path_buf));
-    let active_dir = if let Some(ref dir) = env_dir {
-        dir.exists().then_some(dir.as_path())
+    let active_dir = if let Some(dir) = env_dir.as_deref() {
+        dir.exists().then_some(dir)
     } else if default_tls_dir.exists() {
-        Some(default_tls_dir)
+        Some(default_tls_dir.as_path())
     } else {
         None
     }?;
@@ -320,7 +324,8 @@ impl XtaskCommand for DoctorCommand {
             let remediation_warnings = remediate_stack_services(
                 pg_probe.ready(),
                 nats_probe.ready(),
-                crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+                crate::infra::stack::StackConfig::for_current_checkout()
+                    .map_err(|error| error.to_string()),
                 ctx.is_human(),
                 crate::infra::stack::pg_start,
                 crate::infra::stack::nats_start,
@@ -992,14 +997,13 @@ struct GatewayProbeTlsPaths {
 fn resolve_gateway_probe_tls_paths(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> GatewayProbeTlsPaths {
-    let default_tls_dir = Path::new(".sinex/tls");
+    let default_tls_dir = workspace_tls_dir();
     GatewayProbeTlsPaths {
-        trust_anchor: descriptor_secret_path(
-            descriptor,
-            |value| value.secrets.gateway_tls_trust_anchor_file.clone(),
-            "SINEX_RPC_CA_CERT",
-            default_tls_dir.join("ca.pem"),
-        ),
+        trust_anchor: descriptor
+            .and_then(|value| value.secrets.gateway_tls_trust_anchor_file.clone())
+            .or_else(|| {
+                path_from_env_or_default("SINEX_RPC_CA_CERT", default_tls_dir.join("ca.pem"))
+            }),
         client_cert: path_from_env_or_default(
             "SINEX_RPC_CLIENT_CERT",
             default_tls_dir.join("client.pem"),
@@ -1386,8 +1390,8 @@ fn runtime_dir_for_target(
         return Ok(runtime_dir);
     }
 
-    let current_uid =
-        current_process_uid().wrap_err("failed to resolve current principal for Hyprland runtime selection")?;
+    let current_uid = current_process_uid()
+        .wrap_err("failed to resolve current principal for Hyprland runtime selection")?;
     if current_uid == target.uid
         && let Some(runtime_dir) = std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from)
     {
@@ -2129,7 +2133,7 @@ async fn check_nats_streams(
 fn check_secret_materials(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let default_tls_dir = Path::new(".sinex/tls");
+    let default_tls_dir = workspace_tls_dir();
     let descriptor_present = descriptor.is_some();
     let admin_token = descriptor_secret_path(
         descriptor,
@@ -2453,7 +2457,7 @@ async fn build_gateway_probe_client(
 }
 
 /// Check 9: gateway readiness endpoint responds and reports serving=true.
-async fn check_gateway_ready(
+pub(crate) async fn check_gateway_ready(
     gateway_url: Option<&str>,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
@@ -2515,7 +2519,6 @@ async fn check_gateway_ready(
 
     interpret_gateway_ready_response(&ready_url, status, &body_text)
 }
-
 fn interpret_gateway_ready_response(
     ready_url: &str,
     status: reqwest::StatusCode,
@@ -2620,7 +2623,10 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     let cfg = crate::config::config();
     let (descriptor, descriptor_item) = load_deployment_descriptor();
 
-    let mut items = vec![descriptor_item, check_node_entrypoints(descriptor.as_ref()).await];
+    let mut items = vec![
+        descriptor_item,
+        check_node_entrypoints(descriptor.as_ref()).await,
+    ];
 
     match resolve_target_identity(descriptor.as_ref()) {
         Ok(target) => {
@@ -2861,7 +2867,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_pipeline_smoke_invocation_uses_xtask_test_harness() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_pipeline_smoke_invocation_uses_xtask_test_harness()
+    -> ::xtask::sandbox::TestResult<()> {
         let (program, args, filter) = pipeline_smoke_invocation("/tmp/fake-xtask");
         assert_eq!(program, "/tmp/fake-xtask");
         assert_eq!(args, ["test", "--debug", "-p", "sinex-ingestd", "-E"]);
@@ -2919,13 +2926,10 @@ mod tests {
             }
         );
 
-        let probe = probe_postgres_extensions(
-            true,
-            Err("missing stack config".to_string()),
-            |_: &&str| {
+        let probe =
+            probe_postgres_extensions(true, Err("missing stack config".to_string()), |_: &&str| {
                 panic!("probe should not run when stack config resolution already failed")
-            },
-        );
+            });
         assert!(probe.extensions.is_none());
         assert!(
             probe
@@ -3010,8 +3014,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_detect_tls_check_prefers_rcgen_cert_names() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn test_detect_tls_check_prefers_rcgen_cert_names() -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let cert = temp.path().join("server.pem");
         let key = temp.path().join("server-key.pem");
@@ -3152,7 +3155,11 @@ mod tests {
 
         assert_eq!(warnings.len(), 2);
         assert!(warnings.iter().any(|warning| warning.contains("pg failed")));
-        assert!(warnings.iter().any(|warning| warning.contains("nats failed")));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("nats failed"))
+        );
         Ok(())
     }
 
@@ -3527,8 +3534,14 @@ mod tests {
             }),
         );
         assert_eq!(item.status, "fail");
-        assert!(item.description.contains("native Fish YAML history is unsupported"));
-        assert!(item.description.contains(&fish_history.display().to_string()));
+        assert!(
+            item.description
+                .contains("native Fish YAML history is unsupported")
+        );
+        assert!(
+            item.description
+                .contains(&fish_history.display().to_string())
+        );
         Ok(())
     }
 
@@ -3563,7 +3576,10 @@ mod tests {
             }),
         );
         assert_eq!(item.status, "fail");
-        assert!(item.description.contains("native Elvish history database is unsupported"));
+        assert!(
+            item.description
+                .contains("native Elvish history database is unsupported")
+        );
         assert!(item.description.contains(&elvish_db.display().to_string()));
         Ok(())
     }
@@ -3854,10 +3870,8 @@ mod tests {
         std::fs::create_dir_all(&ignored)?;
         std::fs::write(matching.join(".socket2.sock"), "")?;
 
-        let candidates = collect_hyprland_socket_candidates(vec![
-            Ok(matching.clone()),
-            Ok(ignored.clone()),
-        ])?;
+        let candidates =
+            collect_hyprland_socket_candidates(vec![Ok(matching.clone()), Ok(ignored.clone())])?;
 
         assert_eq!(candidates, vec![matching]);
         Ok(())
@@ -3931,7 +3945,9 @@ mod tests {
         .expect_err("invalid UID should fail honestly");
 
         let detail = format!("{error:#}");
-        assert!(detail.contains("failed to resolve current principal for Hyprland runtime selection"));
+        assert!(
+            detail.contains("failed to resolve current principal for Hyprland runtime selection")
+        );
         assert!(detail.contains("failed to parse UID environment variable"));
         Ok(())
     }
@@ -3950,10 +3966,14 @@ mod tests {
 
         assert_eq!(item.status, "skip");
         assert!(item.blocking);
-        assert!(item.description.contains("Could not determine the current principal:"));
-        assert!(item
-            .description
-            .contains("failed to parse UID environment variable"));
+        assert!(
+            item.description
+                .contains("Could not determine the current principal:")
+        );
+        assert!(
+            item.description
+                .contains("failed to parse UID environment variable")
+        );
         Ok(())
     }
 
@@ -4115,6 +4135,23 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_resolve_gateway_probe_tls_paths_falls_back_when_descriptor_omits_trust_anchor()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let env_ca = temp.path().join("env-ca.pem");
+        std::fs::write(&env_ca, "env")?;
+
+        let mut env = EnvGuard::new();
+        env.set("SINEX_RPC_CA_CERT", env_ca.display().to_string());
+
+        let descriptor = DeploymentReadinessDescriptor::default();
+
+        let paths = resolve_gateway_probe_tls_paths(Some(&descriptor));
+        assert_eq!(paths.trust_anchor, Some(env_ca));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_required_nats_stream_names_follow_environment() -> ::xtask::sandbox::TestResult<()>
     {
         let mut env = EnvGuard::new();
@@ -4160,7 +4197,10 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set(
             "SINEX_GATEWAY_TLS_CLIENT_CA",
-            temp.path().join("ambient-client-ca.pem").display().to_string(),
+            temp.path()
+                .join("ambient-client-ca.pem")
+                .display()
+                .to_string(),
         );
         env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
 
@@ -4220,7 +4260,10 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set(
             "SINEX_GATEWAY_TLS_CLIENT_CA",
-            temp.path().join("ambient-client-ca.pem").display().to_string(),
+            temp.path()
+                .join("ambient-client-ca.pem")
+                .display()
+                .to_string(),
         );
         env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
 
