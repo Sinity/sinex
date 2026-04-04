@@ -83,6 +83,17 @@ enum FailureCleanupClaim {
 }
 
 impl MaterialAssembler {
+    fn is_duplicate_temporal_ledger_entry(error: &SinexError) -> bool {
+        const TEMPORAL_LEDGER_UNIQUE_CONSTRAINT: &str =
+            "uk_temporal_ledger_material_offset_source_type";
+
+        matches!(error, SinexError::AlreadyExists(_))
+            && error
+                .context_map()
+                .get("constraint")
+                .is_some_and(|value| value == TEMPORAL_LEDGER_UNIQUE_CONSTRAINT)
+    }
+
     async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> FailureCleanupClaim {
         if let Some(state_handle) = self.get_state_handle(&material_id).await {
             let mut state = state_handle.lock().await;
@@ -196,17 +207,17 @@ impl MaterialAssembler {
             .insert_with_executor(&mut **tx, blob)
             .await
             .map_err(|e| {
-            error!(
-                material_id = %state.material_id,
-                backend = %annex_key.backend,
-                hash = %annex_key.hash,
-                size = annex_key.size,
-                error = %e,
-                error_debug = ?e,
-                "Failed to insert blob metadata"
-            );
-            SinexError::database("Failed to insert blob metadata").with_source(e)
-        })?;
+                error!(
+                    material_id = %state.material_id,
+                    backend = %annex_key.backend,
+                    hash = %annex_key.hash,
+                    size = annex_key.size,
+                    error = %e,
+                    error_debug = ?e,
+                    "Failed to insert blob metadata"
+                );
+                SinexError::database("Failed to insert blob metadata").with_source(e)
+            })?;
 
         Ok(stored.id)
     }
@@ -383,14 +394,12 @@ impl MaterialAssembler {
             })?
         {
             if existing.source_identifier != final_state.source_identifier {
-                return Err(
-                    SinexError::invalid_state(
-                        "Source material source_identifier changed before finalization",
-                    )
-                    .with_context("material_id", final_state.material_id.to_string())
-                    .with_context("expected_source_identifier", &final_state.source_identifier)
-                    .with_context("actual_source_identifier", &existing.source_identifier),
-                );
+                return Err(SinexError::invalid_state(
+                    "Source material source_identifier changed before finalization",
+                )
+                .with_context("material_id", final_state.material_id.to_string())
+                .with_context("expected_source_identifier", &final_state.source_identifier)
+                .with_context("actual_source_identifier", &existing.source_identifier));
             }
             return Ok(());
         }
@@ -443,8 +452,7 @@ impl MaterialAssembler {
         }
 
         let mut tx = self.pool.begin().await.map_err(|e| {
-            SinexError::database("Failed to begin material finalization transaction")
-                .with_source(e)
+            SinexError::database("Failed to begin material finalization transaction").with_source(e)
         })?;
 
         if let Err(error) = self
@@ -493,17 +501,18 @@ impl MaterialAssembler {
         {
             let error = match tx.rollback().await {
                 Ok(()) => error,
-                Err(rollback_error) => rollback_finalization_failure(
-                    error,
-                    rollback_error,
-                    "finalize_material_record",
-                ),
+                Err(rollback_error) => {
+                    rollback_finalization_failure(error, rollback_error, "finalize_material_record")
+                }
             };
             self.cleanup_annex_import_failure(annex_key).await;
             return Err(error);
         }
 
-        if let Err(error) = self.record_ledger_entry_with_executor(&mut tx, final_state).await {
+        if let Err(error) = self
+            .record_ledger_entry_with_executor(&mut tx, final_state)
+            .await
+        {
             let error = match tx.rollback().await {
                 Ok(()) => error,
                 Err(rollback_error) => {
@@ -517,10 +526,9 @@ impl MaterialAssembler {
         match tx.commit().await {
             Ok(()) => Ok(()),
             Err(error) => {
-                let commit_error = SinexError::database(
-                    "Failed to commit material finalization transaction",
-                )
-                .with_source(error);
+                let commit_error =
+                    SinexError::database("Failed to commit material finalization transaction")
+                        .with_source(error);
 
                 match self
                     .finalization_commit_outcome(final_state, annex_key, final_status)
@@ -571,17 +579,28 @@ impl MaterialAssembler {
     ) -> IngestdResult<()> {
         let entry = TemporalLedgerEntry::staged_at(material_id, i64::MAX, started_at);
 
-        self.pool
+        match self
+            .pool
             .source_materials()
             .append_temporal_ledger(entry)
             .await
-            .map_err(|e| {
+        {
+            Ok(()) => {
+                debug!(material_id = %material_id, "Wrote staged_at ledger entry at begin time");
+                Ok(())
+            }
+            Err(error) if Self::is_duplicate_temporal_ledger_entry(&error) => {
+                debug!(
+                    material_id = %material_id,
+                    "Reused existing staged_at ledger entry at begin time"
+                );
+                Ok(())
+            }
+            Err(e) => Err({
                 SinexError::database("Failed to append staged_at temporal ledger entry")
                     .with_source(e)
-            })?;
-
-        debug!(material_id = %material_id, "Wrote staged_at ledger entry at begin time");
-        Ok(())
+            }),
+        }
     }
 
     /// Route material failure to DLQ
@@ -703,9 +722,14 @@ impl MaterialAssembler {
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
     ) -> IngestdResult<()> {
-        self.route_material_error(material_id, reason, context).await;
+        self.route_material_error(material_id, reason, context)
+            .await;
         if let Err(error) = self
-            .finalize_failed_material_claimed_checked(material_id, reason, AssemblyPhase::Accumulating)
+            .finalize_failed_material_claimed_checked(
+                material_id,
+                reason,
+                AssemblyPhase::Accumulating,
+            )
             .await
         {
             Self::revert_finalization_start(state_handle, end).await;
@@ -1376,7 +1400,10 @@ mod tests {
             assembler.assembler_state.contains_key(&material_id),
             "retry state must be preserved until the failure mark lands durably"
         );
-        assert!(temp_path.exists(), "staged material should remain on disk for retry");
+        assert!(
+            temp_path.exists(),
+            "staged material should remain on disk for retry"
+        );
         assert_eq!(state_handle.lock().await.phase, AssemblyPhase::Accumulating);
         Ok(())
     }
@@ -1497,7 +1524,10 @@ mod tests {
         let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
         assert_eq!(payload["error"], "material_stat_failed");
         assert_eq!(payload["material_id"], material_id.to_string());
-        assert_eq!(payload["context"]["path"], missing_path.display().to_string());
+        assert_eq!(
+            payload["context"]["path"],
+            missing_path.display().to_string()
+        );
 
         let material = ctx
             .pool
@@ -1820,6 +1850,152 @@ mod tests {
             ledger_count_after, ledger_count_before,
             "retrying finalization after a landed commit should not duplicate ledger entries"
         );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn record_staged_at_ledger_entry_is_idempotent(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let started_at = Timestamp::now();
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://staged-at-idempotent"),
+                json!({}),
+                started_at,
+            )
+            .await?;
+
+        assembler
+            .record_staged_at_ledger_entry(material_id, started_at)
+            .await?;
+        assembler
+            .record_staged_at_ledger_entry(material_id, started_at)
+            .await?;
+
+        let staged_at_count = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as "count!: i64"
+            FROM raw.temporal_ledger
+            WHERE source_material_id = $1
+              AND source_type = 'staged_at'
+            "#,
+            material_id
+        )
+        .fetch_one(&ctx.pool)
+        .await?;
+
+        assert_eq!(
+            staged_at_count, 1,
+            "duplicate begin-time staged_at writes must collapse to one ledger row"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn persist_finalized_material_reuses_existing_blob_inside_transaction(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
+        let annex_key = AnnexKey {
+            backend: "SHA256E".to_string(),
+            hash: "existing-blob-hash".to_string(),
+            size: 32,
+            key: "SHA256E-s32--existing-blob-hash".to_string(),
+        };
+
+        let existing_blob = ctx
+            .pool
+            .blobs()
+            .insert(
+                Blob::builder()
+                    .annex_backend(annex_key.backend.clone())
+                    .content_hash(annex_key.hash.clone())
+                    .original_filename("existing-material.bin".to_string())
+                    .size_bytes(annex_key.size as i64)
+                    .checksum_blake3("existing-blob-blake3".to_string())
+                    .metadata(json!({ "seeded": true }))
+                    .build(),
+            )
+            .await?;
+        let started_at = Timestamp::now();
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://existing-blob-finalize"),
+                json!({}),
+                started_at,
+            )
+            .await?;
+        assembler
+            .record_staged_at_ledger_entry(material_id, started_at)
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("existing-material.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://existing-blob-finalize".to_string(),
+            started_at,
+        };
+
+        let end = MaterialEndMessage {
+            material_id: material_id.to_string(),
+            total_slices: 1,
+            total_size_bytes: annex_key.size as i64,
+            content_hash: "existing-blob-blake3".to_string(),
+            metadata: json!({}),
+            ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+        };
+
+        assembler
+            .persist_finalized_material(
+                &final_state,
+                &annex_key,
+                &end,
+                json!({}),
+                status::COMPLETED,
+            )
+            .await?;
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+
+        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.optional_blob_id, Some(*existing_blob.id.as_uuid()));
+
+        let ledger_entries = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as "count!: i64"
+            FROM raw.temporal_ledger
+            WHERE source_material_id = $1
+            "#,
+            material_id
+        )
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(ledger_entries, 2, "staged_at + realtime_capture should both persist");
 
         Ok(())
     }

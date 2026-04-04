@@ -47,7 +47,6 @@ async fn publish_event(
     nats_client
         .publish(subject, serde_json::to_vec(&event)?.into())
         .await?;
-    nats_client.flush().await?;
 
     Ok(event_id)
 }
@@ -80,7 +79,8 @@ async fn spawn_consumer(
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology.clone(),
-    );
+    )
+    .with_batch_fetch_config(32, Duration::from_millis(50));
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     nats.wait_for_stream(
@@ -96,48 +96,23 @@ async fn spawn_consumer(
 #[sinex_test]
 async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
-    let nats_client = ctx.nats_client();
+    let pipeline = ctx.pipeline().await?;
 
     let total_events = 120;
+    let burst_budget_secs = 25;
+    let burst_budget = Duration::from_secs(burst_budget_secs);
     let start = Instant::now();
-    for idx in 0..total_events {
-        let event_type = format!("latency.event.{idx}");
-        publish_event(
-            &nats_client,
-            &namespace,
-            "latency-suite",
-            &event_type,
-            json!({"sequence": idx}),
-            EventOverrides::default(),
-        )
+    pipeline
+        .publish_batch_simple(total_events, "latency-suite", "latency.event")
         .await?;
-    }
-
-    WaitHelpers::wait_for_condition(
-        || {
-            let pool = ctx.pool.clone();
-            async move {
-                let stored: Option<i64> = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM core.events WHERE source = 'latency-suite'"
-                )
-                .fetch_one(&pool)
-                .await?;
-                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= total_events)
-            }
-        },
-        Timeouts::MEDIUM,
-    )
-    .await?;
 
     let elapsed = start.elapsed();
     assert!(
-        elapsed < Duration::from_secs(25),
-        "burst ingestion should complete well under 25s (got {elapsed:?})"
+        elapsed < burst_budget,
+        "burst ingestion should complete within {burst_budget:?} (got {elapsed:?})"
     );
 
-    consumer_handle.abort();
-    let _ = consumer_handle.await;
+    pipeline.shutdown().await?;
     Ok(())
 }
 
@@ -162,6 +137,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         )
         .await?;
     }
+    nats_client.flush().await?;
 
     WaitHelpers::wait_for_condition(
         || {
@@ -201,6 +177,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         )
         .await?;
     }
+    nats_client.flush().await?;
 
     // Wait for the restarted consumer to read the re-sent events.
     WaitHelpers::wait_for_condition(

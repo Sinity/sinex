@@ -6,8 +6,8 @@ use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
-    environment::environment,
     env as shared_env,
+    environment::environment,
     units::{Bytes, Milliseconds},
     validation::deserialize_validated_utf8_path,
 };
@@ -260,21 +260,17 @@ impl IngestdConfig {
         let gitops_enabled = env_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
         let consumer_fetch_max_messages_env =
             env_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
-        let consumer_fetch_timeout_ms_env =
-            env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
-        let consumer_max_ack_pending_env =
-            env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
+        let consumer_fetch_timeout_ms_env = env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
+        let consumer_max_ack_pending_env = env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
         let material_slices_max_ack_pending_env =
             env_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
         let schema_reload_interval_secs: u64 =
             env_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
-        let stats_log_interval_secs: u64 =
-            env_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
-                .unwrap_or_else(default_stats_log_interval_secs);
-        let pool_acquire_timeout_secs: u64 =
-            env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
-                .unwrap_or_else(default_pool_acquire_timeout_secs);
+        let stats_log_interval_secs: u64 = env_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
+            .unwrap_or_else(default_stats_log_interval_secs);
+        let pool_acquire_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
+            .unwrap_or_else(default_pool_acquire_timeout_secs);
         let pool_idle_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_idle_timeout_secs);
 
@@ -995,7 +991,10 @@ mod tests {
             OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x70, 0x80]),
         );
 
-        assert_eq!(env_validated_path("SINEX_CONFIG_PATH_OVERRIDE", "test"), None);
+        assert_eq!(
+            env_validated_path("SINEX_CONFIG_PATH_OVERRIDE", "test"),
+            None
+        );
         Ok(())
     }
 

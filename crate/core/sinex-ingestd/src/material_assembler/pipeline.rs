@@ -37,7 +37,10 @@ async fn ack_with_warning(
         SinexError::network("failed to ack material assembler message")
             .with_context("subject", message.subject.to_string())
             .with_context("reason", reason)
-            .with_context("material_id", material_id.map(Uuid::to_string).unwrap_or_default())
+            .with_context(
+                "material_id",
+                material_id.map(Uuid::to_string).unwrap_or_default(),
+            )
             .with_source(error.to_string())
     })
 }
@@ -63,7 +66,10 @@ async fn nak_with_warning(
             SinexError::network("failed to NAK material assembler message")
                 .with_context("subject", message.subject.to_string())
                 .with_context("reason", reason)
-                .with_context("material_id", material_id.map(Uuid::to_string).unwrap_or_default())
+                .with_context(
+                    "material_id",
+                    material_id.map(Uuid::to_string).unwrap_or_default(),
+                )
                 .with_source(error.to_string())
         })
 }
@@ -316,37 +322,34 @@ pub(super) fn spawn_slices_consumer(
                     }
                 };
 
-                let offset = match parse_slice_offset(message.subject.as_str(), message.headers.as_ref()) {
-                    Ok(offset) => offset,
-                    Err(error) => {
-                        warn!(
-                            material_id = %material_id,
-                            subject = %message.subject,
-                            error = %error,
-                            "Rejecting malformed slice message"
-                        );
-                        assembler
-                            .route_material_error(
-                                material_id,
-                                "slice_offset_invalid",
-                                json!({
-                                    "error": error,
-                                    "subject": message.subject.as_str(),
-                                }),
-                            )
-                            .await;
-                        assembler
-                            .finalize_failed_material(material_id, "slice_offset_invalid")
-                            .await;
-                        ack_with_warning(
-                            &message,
-                            "slice_offset_invalid",
-                            Some(&material_id),
-                        )
-                        .await?;
-                        continue;
-                    }
-                };
+                let offset =
+                    match parse_slice_offset(message.subject.as_str(), message.headers.as_ref()) {
+                        Ok(offset) => offset,
+                        Err(error) => {
+                            warn!(
+                                material_id = %material_id,
+                                subject = %message.subject,
+                                error = %error,
+                                "Rejecting malformed slice message"
+                            );
+                            assembler
+                                .route_material_error(
+                                    material_id,
+                                    "slice_offset_invalid",
+                                    json!({
+                                        "error": error,
+                                        "subject": message.subject.as_str(),
+                                    }),
+                                )
+                                .await;
+                            assembler
+                                .finalize_failed_material(material_id, "slice_offset_invalid")
+                                .await;
+                            ack_with_warning(&message, "slice_offset_invalid", Some(&material_id))
+                                .await?;
+                            continue;
+                        }
+                    };
 
                 let result = std::panic::AssertUnwindSafe(async {
                     assembler
@@ -480,7 +483,8 @@ pub(super) fn spawn_end_consumer(
                     }
                 };
 
-                let material_id = parse_material_id(&end_message.material_id, "end message material_id");
+                let material_id =
+                    parse_material_id(&end_message.material_id, "end message material_id");
 
                 let result =
                     std::panic::AssertUnwindSafe(async { assembler.handle_end(end_message).await })
@@ -612,7 +616,10 @@ fn parse_slice_offset(
         .parse::<i64>()
         .map_err(|error| format!("invalid Offset header '{}': {error}", raw_offset.as_str()))?;
     if offset < 0 {
-        return Err(format!("negative Offset header '{}' is invalid", raw_offset.as_str()));
+        return Err(format!(
+            "negative Offset header '{}' is invalid",
+            raw_offset.as_str()
+        ));
     }
     if !subject.contains(".source_material.slices.") {
         return Err(format!("unexpected slice subject '{subject}'"));
@@ -645,8 +652,8 @@ mod tests {
 
     #[sinex_test]
     async fn parse_slice_offset_rejects_missing_header() -> TestResult<()> {
-        let error = parse_slice_offset(SUBJECT, None)
-            .expect_err("missing offset header should fail");
+        let error =
+            parse_slice_offset(SUBJECT, None).expect_err("missing offset header should fail");
         assert!(error.contains("missing Offset header"));
         Ok(())
     }
@@ -665,8 +672,8 @@ mod tests {
     async fn parse_slice_offset_rejects_negative_header() -> TestResult<()> {
         let mut headers = HeaderMap::new();
         headers.insert("Offset", "-1");
-        let error = parse_slice_offset(SUBJECT, Some(&headers))
-            .expect_err("negative offset should fail");
+        let error =
+            parse_slice_offset(SUBJECT, Some(&headers)).expect_err("negative offset should fail");
         assert!(error.contains("negative Offset header"));
         Ok(())
     }
@@ -682,10 +689,8 @@ mod tests {
 
     #[sinex_test]
     async fn decode_begin_message_rejects_invalid_payload() -> TestResult<()> {
-        let error = decode_begin_message(
-            br#"{"material_id":"oops""#,
-        )
-        .expect_err("invalid begin payload should fail");
+        let error = decode_begin_message(br#"{"material_id":"oops""#)
+            .expect_err("invalid begin payload should fail");
         assert!(error.contains("invalid begin payload"));
         Ok(())
     }
@@ -718,7 +723,7 @@ mod tests {
                 "metadata": {},
                 "started_at": "2026-03-28T08:00:00Z"
             }))?
-                .as_slice(),
+            .as_slice(),
         )
         .map_err(|error| color_eyre::eyre::eyre!(error))?;
         assert_eq!(begin.material_kind, "shell-history");

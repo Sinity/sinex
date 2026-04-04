@@ -111,7 +111,10 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     env.set("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS", "654");
     env.set("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING", "987");
     env.set("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING", "1234");
-    env.set("SINEX_ASSEMBLER_STATE_DIR", "/tmp/sinex-ingestd-assembler-state");
+    env.set(
+        "SINEX_ASSEMBLER_STATE_DIR",
+        "/tmp/sinex-ingestd-assembler-state",
+    );
 
     let config = IngestdConfig::from_args(
         Some("postgresql://custom/db".to_string()),

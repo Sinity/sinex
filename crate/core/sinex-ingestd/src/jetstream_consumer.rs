@@ -2151,8 +2151,7 @@ mod tests {
     #[sinex_test]
     async fn implausibly_old_ts_orig_threshold_is_year_2000() -> TestResult<()> {
         // Just before the lower bound → implausibly old
-        let before_2000 =
-            Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
+        let before_2000 = Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
         assert!(
             is_implausibly_old_ts_orig(before_2000),
             "1999-12-31 should be implausibly old"
@@ -2165,8 +2164,7 @@ mod tests {
         );
 
         // Well after the lower bound → fine
-        let after_2000 =
-            Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
+        let after_2000 = Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
         assert!(
             !is_implausibly_old_ts_orig(after_2000),
             "2000-01-02 should not be flagged"
