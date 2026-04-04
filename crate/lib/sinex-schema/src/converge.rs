@@ -162,7 +162,11 @@ fn extract_column_names(stmt: &TableCreateStatement) -> Vec<String> {
 
 // ─── Database introspection ───────────────────────────────────────────────────
 
-async fn actual_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<String>, ApplyError> {
+async fn actual_columns(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, ApplyError> {
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT column_name
          FROM information_schema.columns
@@ -226,8 +230,10 @@ async fn add_missing_columns(
     table: &str,
     declared: &[(String, String)],
 ) -> Result<(), ApplyError> {
-    let existing: HashSet<String> =
-        actual_columns(pool, schema, table).await?.into_iter().collect();
+    let existing: HashSet<String> = actual_columns(pool, schema, table)
+        .await?
+        .into_iter()
+        .collect();
 
     for (name, sql) in declared {
         if !existing.contains(name) {
@@ -297,7 +303,10 @@ async fn converge_named_constraints(
         .flat_map(|nc| {
             [
                 format!("DROP CONSTRAINT IF EXISTS {}", nc.name),
-                format!("ADD CONSTRAINT {} CHECK ({}) NOT VALID", nc.name, nc.expression),
+                format!(
+                    "ADD CONSTRAINT {} CHECK ({}) NOT VALID",
+                    nc.name, nc.expression
+                ),
             ]
         })
         .collect();
@@ -306,7 +315,10 @@ async fn converge_named_constraints(
 
     // Validate each constraint separately — allows per-constraint error isolation.
     for nc in &missing {
-        let sql = format!("ALTER TABLE {schema}.{table} VALIDATE CONSTRAINT {}", nc.name);
+        let sql = format!(
+            "ALTER TABLE {schema}.{table} VALIDATE CONSTRAINT {}",
+            nc.name
+        );
         pool.execute(sql.as_str()).await?;
     }
 
@@ -366,7 +378,10 @@ async fn drop_obsolete_indexes(pool: &PgPool) -> Result<(), ApplyError> {
 ///
 /// Panics if `qualified_name` is not registered — this is a programmer error,
 /// not a runtime condition.
-fn find_meta_in<'a>(tables: &'a [TableMeta], qualified_name: &str) -> Result<&'a TableMeta, ApplyError> {
+fn find_meta_in<'a>(
+    tables: &'a [TableMeta],
+    qualified_name: &str,
+) -> Result<&'a TableMeta, ApplyError> {
     tables
         .iter()
         .find(|m| m.qualified_name == qualified_name)
@@ -510,10 +525,7 @@ mod tests {
 ///
 /// All sea-query statement data is extracted into `Vec<(String, String)>` before
 /// the first `.await`. No `Rc`-based sea-query types cross async boundaries.
-pub async fn converge_tables(
-    pool: &PgPool,
-    tables: &[ConvergibleTable],
-) -> Result<(), ApplyError> {
+pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Result<(), ApplyError> {
     for ct in tables {
         // Phase 1 (sync): materialize column SQL from the sea-query statement.
         // `TableCreateStatement` is !Send (contains Rc<dyn Iden>), so we must
@@ -541,20 +553,14 @@ pub async fn converge_tables(
 
         // Phase 2 (async): apply DDL using only Send-safe String data.
         // One existence check per table — helpers skip the check since we gate here.
-        let primary_exists =
-            crate::apply::relation_exists(pool, ct.meta.qualified_name).await?;
+        let primary_exists = crate::apply::relation_exists(pool, ct.meta.qualified_name).await?;
         if primary_exists {
             add_missing_columns(pool, ct.meta.schema, ct.meta.name, &primary_cols).await?;
             drop_legacy_columns(pool, ct.meta.schema, ct.meta.name, ct.columns_to_drop).await?;
             converge_named_constraints(pool, ct.meta.schema, ct.meta.name, &ct.named_constraints)
                 .await?;
-            converge_named_foreign_keys(
-                pool,
-                ct.meta.schema,
-                ct.meta.name,
-                &declared_foreign_keys,
-            )
-            .await?;
+            converge_named_foreign_keys(pool, ct.meta.schema, ct.meta.name, &declared_foreign_keys)
+                .await?;
         }
 
         if let Some((mirror, mirror_col_sqls)) = mirror_cols {
@@ -597,11 +603,10 @@ pub async fn report_column_gaps(
             extract_column_names(&stmt)
         };
 
-        let existing: HashSet<String> =
-            actual_columns(pool, ct.meta.schema, ct.meta.name)
-                .await?
-                .into_iter()
-                .collect();
+        let existing: HashSet<String> = actual_columns(pool, ct.meta.schema, ct.meta.name)
+            .await?
+            .into_iter()
+            .collect();
 
         for name in &declared_cols {
             if !existing.contains(name) {

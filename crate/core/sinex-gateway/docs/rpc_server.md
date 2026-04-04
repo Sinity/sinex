@@ -49,6 +49,7 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 - `replay.create_operation` – create a new replay operation.
 - `replay.preview_operation` – preview replay cascades for a scope.
 - `replay.approve_operation` – mark a replay operation approved.
+- `replay.submit_operation` – atomically approve and execute a previewed replay.
 - `replay.execute_operation` – start executing a replay operation.
 - `replay.cancel_operation` – cancel a replay operation.
 - `replay.operation_status` – fetch replay status.

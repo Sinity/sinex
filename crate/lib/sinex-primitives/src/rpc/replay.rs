@@ -174,6 +174,22 @@ pub struct ReplayApproveResponse {
 }
 
 // ─────────────────────────────────────────────────────────────
+// replay.submit_operation
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `replay.submit_operation`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplaySubmitRequest {
+    pub operation_id: String,
+}
+
+/// Response: `replay.submit_operation`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplaySubmitResponse {
+    pub operation: ReplayOperation,
+}
+
+// ─────────────────────────────────────────────────────────────
 // replay.execute_operation
 // ─────────────────────────────────────────────────────────────
 

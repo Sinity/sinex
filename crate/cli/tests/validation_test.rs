@@ -6,8 +6,14 @@ use xtask::sandbox::prelude::*;
 async fn parse_time_input_with_now_handles_relative_and_absolute_inputs() -> TestResult<()> {
     let now = Timestamp::parse_rfc3339("2026-03-24T10:00:00Z")?;
 
-    assert_eq!(parse_time_input_with_now("1h", now)?, now - Duration::hours(1));
-    assert_eq!(parse_time_input_with_now("30m", now)?, now - Duration::minutes(30));
+    assert_eq!(
+        parse_time_input_with_now("1h", now)?,
+        now - Duration::hours(1)
+    );
+    assert_eq!(
+        parse_time_input_with_now("30m", now)?,
+        now - Duration::minutes(30)
+    );
     assert_eq!(
         parse_time_input_with_now("2026-03-24T09:15:00Z", now)?,
         Timestamp::parse_rfc3339("2026-03-24T09:15:00Z")?

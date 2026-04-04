@@ -151,8 +151,7 @@ fn env_var_usize(var: &str, default: usize) -> usize {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                default,
-                "Cascade analyzer override is not valid UTF-8; using default"
+                default, "Cascade analyzer override is not valid UTF-8; using default"
             );
             default
         }
@@ -187,8 +186,7 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                default,
-                "Cascade analyzer override is not valid UTF-8; using default"
+                default, "Cascade analyzer override is not valid UTF-8; using default"
             );
             default
         }
@@ -214,8 +212,7 @@ fn env_var_bool(var: &str, default: bool) -> bool {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                default,
-                "Cascade analyzer boolean override is not valid UTF-8; using default"
+                default, "Cascade analyzer boolean override is not valid UTF-8; using default"
             );
             default
         }
@@ -795,8 +792,14 @@ mod tests {
         assert_eq!(config.batch_size, DEFAULT_CASCADE_BATCH_SIZE);
         assert_eq!(config.max_depth, DEFAULT_CASCADE_MAX_DEPTH);
         assert!(!config.include_weak_dependencies);
-        assert_eq!(config.memory_limit_bytes, Some(DEFAULT_CASCADE_MEMORY_LIMIT));
-        assert_eq!(config.timeout, Duration::from_secs(DEFAULT_CASCADE_TIMEOUT_SECS));
+        assert_eq!(
+            config.memory_limit_bytes,
+            Some(DEFAULT_CASCADE_MEMORY_LIMIT)
+        );
+        assert_eq!(
+            config.timeout,
+            Duration::from_secs(DEFAULT_CASCADE_TIMEOUT_SECS)
+        );
         Ok(())
     }
 

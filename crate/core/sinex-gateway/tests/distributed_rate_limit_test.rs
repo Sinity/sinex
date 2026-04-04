@@ -245,7 +245,9 @@ async fn rate_limit_concurrent_tokens(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn rate_limit_same_token_first_request_race_respects_limit(ctx: TestContext) -> TestResult<()> {
+async fn rate_limit_same_token_first_request_race_respects_limit(
+    ctx: TestContext,
+) -> TestResult<()> {
     let (_ctx, limiter) = start_limiter(ctx, config_with_limit(5)).await?;
     let limiter = Arc::new(limiter);
     let barrier = Arc::new(Barrier::new(10));

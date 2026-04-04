@@ -19,7 +19,10 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     require_git_annex()?;
     let mut env_guard = EnvGuard::new();
-    env_guard.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
+    env_guard.set(
+        "SINEX_NATS_URL",
+        &ctx.nats_handle()?.client_url().to_string(),
+    );
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;

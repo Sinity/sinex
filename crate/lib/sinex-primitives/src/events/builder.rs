@@ -498,8 +498,12 @@ static HOST_IDENTITY: std::sync::LazyLock<HostName> = std::sync::LazyLock::new(|
 });
 
 fn resolve_host_identity(machine_id: Option<&str>, hostname: Option<&str>) -> HostName {
-    let machine_id = machine_id.map(str::trim).filter(|candidate| !candidate.is_empty());
-    let hostname = hostname.map(str::trim).filter(|candidate| !candidate.is_empty());
+    let machine_id = machine_id
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty());
+    let hostname = hostname
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty());
 
     if let Some(candidate) = machine_id.and_then(validated_host_candidate) {
         return candidate;

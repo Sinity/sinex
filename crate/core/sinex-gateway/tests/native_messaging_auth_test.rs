@@ -322,9 +322,7 @@ async fn native_messaging_surfaces_invalid_capabilities_config(ctx: TestContext)
 }
 
 #[sinex_test]
-async fn native_messaging_surfaces_invalid_extension_role_config(
-    ctx: TestContext,
-) -> Result<()> {
+async fn native_messaging_surfaces_invalid_extension_role_config(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", ctx.nats_url().unwrap());

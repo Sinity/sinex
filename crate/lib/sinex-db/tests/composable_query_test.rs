@@ -12,8 +12,8 @@
 //! - Edge cases (empty results, estimates, defaults)
 
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
 use sinex_db::DynamicPayload;
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
@@ -667,8 +667,12 @@ async fn test_payload_filter_path_gt(ctx: TestContext) -> TestResult<()> {
 
 /// Test: numeric payload-path comparisons ignore non-numeric JSON instead of erroring.
 #[sinex_test]
-async fn test_payload_filter_path_gt_ignores_non_numeric_values(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("path-gt-mixed-types")).await?;
+async fn test_payload_filter_path_gt_ignores_non_numeric_values(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("path-gt-mixed-types"))
+        .await?;
 
     let _string_value = ctx
         .pool
@@ -1032,8 +1036,12 @@ async fn test_aggregation_count_by_payload_path(ctx: TestContext) -> TestResult<
 
 /// Test: CountBy PayloadPath binds odd JSON keys instead of formatting SQL.
 #[sinex_test]
-async fn test_aggregation_count_by_payload_path_with_quote_in_key(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("countby-path-quoted")).await?;
+async fn test_aggregation_count_by_payload_path_with_quote_in_key(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("countby-path-quoted"))
+        .await?;
     let quoted_key = "category' weird";
 
     for _ in 0..2 {

@@ -4,8 +4,8 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
@@ -274,6 +274,34 @@ async fn test_gateway_client_with_explicit_token() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_gateway_client_creation_with_mtls_material() -> TestResult<()> {
+    use xtask::tls::{CertConfig, generate_dev_certs};
+
+    let dir = TestDir::new();
+    let certs = CertConfig {
+        output_dir: dir.path().to_path_buf(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Gateway Client TLS Test CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    generate_dev_certs(&certs)?;
+
+    let result = GatewayClient::new(ClientConfig {
+        url: "https://localhost:9999".to_string(),
+        token: Some("explicit-token".to_string()),
+        ca_cert: Some(dir.path().join("ca.pem").display().to_string()),
+        client_cert: Some(dir.path().join("client.pem").display().to_string()),
+        client_key: Some(dir.path().join("client-key.pem").display().to_string()),
+        insecure: false,
+        ..Default::default()
+    });
+
+    assert!(result.is_ok(), "mTLS client configuration should build");
+    Ok(())
+}
+
 // ============================================================================
 // HTTP Error Handling Tests (with wiremock)
 // ============================================================================
@@ -478,7 +506,12 @@ async fn test_gateway_client_rejects_jsonrpc_version_mismatch() -> TestResult<()
     let result = client.ping().await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("expected jsonrpc=2.0"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("expected jsonrpc=2.0")
+    );
     Ok(())
 }
 
@@ -508,7 +541,12 @@ async fn test_gateway_client_rejects_jsonrpc_id_mismatch() -> TestResult<()> {
     let result = client.ping().await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("expected response id 1, got 99"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("expected response id 1, got 99")
+    );
     Ok(())
 }
 
@@ -538,7 +576,12 @@ async fn test_gateway_client_rejects_non_string_ping_result() -> TestResult<()> 
     let result = client.ping().await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("ping returned non-string result"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("ping returned non-string result")
+    );
     Ok(())
 }
 
@@ -904,7 +947,10 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResult<()> {
-    fn replay_operation_json(state: &str, preview_summary: Option<serde_json::Value>) -> serde_json::Value {
+    fn replay_operation_json(
+        state: &str,
+        preview_summary: Option<serde_json::Value>,
+    ) -> serde_json::Value {
         json!({
             "operation_id": "00000000-0000-0000-0000-000000000123",
             "state": state,
@@ -942,22 +988,19 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
     Mock::given(method("POST"))
         .and(path("/"))
         .respond_with(move |req: &wiremock::Request| {
-            let body: serde_json::Value = serde_json::from_slice(&req.body).expect("valid rpc body");
+            let body: serde_json::Value =
+                serde_json::from_slice(&req.body).expect("valid rpc body");
             let method = body["method"].as_str().unwrap_or_default().to_string();
-            seen_methods_clone.lock().expect("record methods").push(method.clone());
+            seen_methods_clone
+                .lock()
+                .expect("record methods")
+                .push(method.clone());
 
             let response = match method.as_str() {
                 "replay.operation_status" => json!({
                     "jsonrpc": "2.0",
                     "result": {
                         "operation": replay_operation_json("Planning", None)
-                    },
-                    "id": 1
-                }),
-                "replay.approve_operation" => json!({
-                    "jsonrpc": "2.0",
-                    "result": {
-                        "operation": replay_operation_json("Approved", None)
                     },
                     "id": 1
                 }),
@@ -981,7 +1024,7 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
                     },
                     "id": 1
                 }),
-                "replay.execute_operation" => json!({
+                "replay.submit_operation" => json!({
                     "jsonrpc": "2.0",
                     "result": {
                         "operation": replay_operation_json("Executing", Some(json!({
@@ -1011,16 +1054,20 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
     };
 
     let client = GatewayClient::new(config).unwrap();
-    let operation = client.replay_submit("00000000-0000-0000-0000-000000000123").await?;
+    let operation = client
+        .replay_submit("00000000-0000-0000-0000-000000000123")
+        .await?;
 
-    assert_eq!(operation.state, sinex_primitives::rpc::replay::ReplayState::Executing);
+    assert_eq!(
+        operation.state,
+        sinex_primitives::rpc::replay::ReplayState::Executing
+    );
     assert_eq!(
         seen_methods.lock().expect("read methods").as_slice(),
         &[
             "replay.operation_status".to_string(),
             "replay.preview_operation".to_string(),
-            "replay.approve_operation".to_string(),
-            "replay.execute_operation".to_string()
+            "replay.submit_operation".to_string()
         ]
     );
     Ok(())

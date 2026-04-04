@@ -354,11 +354,8 @@ mod tests {
 
     #[test]
     fn env_parse_with_default_keeps_default_without_override() {
-        let parsed = env_parse_with_default(
-            "SINEX_UNUSED",
-            DEFAULT_POOL_ACQUIRE_WARN_MS,
-            "test context",
-        );
+        let parsed =
+            env_parse_with_default("SINEX_UNUSED", DEFAULT_POOL_ACQUIRE_WARN_MS, "test context");
         assert_eq!(parsed, DEFAULT_POOL_ACQUIRE_WARN_MS);
     }
 
@@ -371,8 +368,14 @@ mod tests {
 
         let config = PoolConfig::from_env();
 
-        assert_eq!(config.max_connections, PoolConfig::default().max_connections);
-        assert_eq!(config.min_connections, PoolConfig::default().min_connections);
+        assert_eq!(
+            config.max_connections,
+            PoolConfig::default().max_connections
+        );
+        assert_eq!(
+            config.min_connections,
+            PoolConfig::default().min_connections
+        );
         assert_eq!(
             config.acquire_timeout_secs.as_secs(),
             PoolConfig::default().acquire_timeout_secs.as_secs()

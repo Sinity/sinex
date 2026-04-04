@@ -1,14 +1,16 @@
 use base64::Engine;
+use sinex_db::DbPoolExt;
+use sinex_db::repositories::knowledge_graph::CreateEntity;
 use sinex_gateway::{
     auth::Role,
     handlers::{handle_create_entities, handle_create_note, handle_link_entities},
     rpc_server::RpcAuthContext,
 };
-use sinex_db::DbPoolExt;
-use sinex_db::repositories::knowledge_graph::CreateEntity;
-use sinex_services::PkmService;
-use sinex_primitives::rpc::pkm::{CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse};
+use sinex_primitives::rpc::pkm::{
+    CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse,
+};
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
+use sinex_services::PkmService;
 use xtask::sandbox::prelude::*;
 
 fn write_auth() -> RpcAuthContext {
@@ -162,7 +164,10 @@ async fn pkm_create_entities_uses_authenticated_actor_over_payload_created_by(
         .await?
         .ok_or_else(|| color_eyre::eyre::eyre!("created entity missing from database"))?;
 
-    assert_eq!(entity.properties["created_by"].as_str(), Some(auth.actor_id()));
+    assert_eq!(
+        entity.properties["created_by"].as_str(),
+        Some(auth.actor_id())
+    );
     Ok(())
 }
 
@@ -171,7 +176,9 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
     ctx: TestContext,
 ) -> TestResult<()> {
     let service = PkmService::new(ctx.pool().clone());
-    let material_id = ctx.create_source_material(Some("pkm-link-source-material")).await?;
+    let material_id = ctx
+        .create_source_material(Some("pkm-link-source-material"))
+        .await?;
     let from = ctx
         .pool()
         .knowledge_graph()
@@ -206,7 +213,10 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
         .find(|relation| relation.id == response.relation_id)
         .ok_or_else(|| color_eyre::eyre::eyre!("created relation missing from database"))?;
 
-    assert_eq!(relation.properties["note"].as_str(), Some("operator supplied"));
+    assert_eq!(
+        relation.properties["note"].as_str(),
+        Some("operator supplied")
+    );
     let expected_source_material_id = material_id.to_string();
     assert_eq!(
         relation.properties["_system_metadata"]["source_material_id"].as_str(),

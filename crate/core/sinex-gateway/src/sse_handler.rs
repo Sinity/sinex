@@ -7,17 +7,16 @@ use crate::auth::Role;
 use crate::rpc_server::{AccessOutcome, RpcAuthContext, log_access_audit};
 use crate::sse_bus::{
     HEARTBEAT_INTERVAL, SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload,
-    SseMessage,
-    SubscriptionBus,
+    SseMessage, SubscriptionBus,
 };
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
 use axum::http::header::HeaderName;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::events::Event;
 use sinex_primitives::Timestamp;
+use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::{Id, JsonValue};
 use std::convert::Infallible;
@@ -234,10 +233,9 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>
         return Ok(None);
     }
 
-    value
-        .parse()
-        .map(Some)
-        .map_err(|error| format!("Last-Event-ID must be a persisted event UUID, got '{value}': {error}"))
+    value.parse().map(Some).map_err(|error| {
+        format!("Last-Event-ID must be a persisted event UUID, got '{value}': {error}")
+    })
 }
 
 /// Format an [`SseMessage`] into an axum SSE event.
@@ -287,8 +285,7 @@ fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> Strin
             match serde_json::to_string(&SseErrorPayload {
                 code: "serialization_error".to_string(),
                 message: format!("failed to serialize SSE {payload_kind} payload: {error}"),
-            })
-            {
+            }) {
                 Ok(error_payload) => error_payload,
                 Err(fallback_error) => {
                     tracing::error!(
@@ -341,10 +338,13 @@ mod tests {
     async fn parse_last_event_id_accepts_persisted_event_uuid() -> TestResult<()> {
         let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
         let mut headers = HeaderMap::new();
-        headers.insert(LAST_EVENT_ID_HEADER, HeaderValue::from_str(&event_id.to_string())?);
+        headers.insert(
+            LAST_EVENT_ID_HEADER,
+            HeaderValue::from_str(&event_id.to_string())?,
+        );
 
-        let parsed = parse_last_event_id(&headers)
-            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        let parsed =
+            parse_last_event_id(&headers).map_err(|error| color_eyre::eyre::eyre!(error))?;
         assert_eq!(parsed, Some(event_id));
         Ok(())
     }

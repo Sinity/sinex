@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_primitives::{EventQuery, TimeRange};
 use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::{EventQuery, TimeRange};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -22,7 +22,9 @@ async fn test_event_query_validate_rejects_deserialized_inverted_time_range() ->
         }
     }))?;
 
-    let error = query.validate().expect_err("invalid deserialized time range should fail");
+    let error = query
+        .validate()
+        .expect_err("invalid deserialized time range should fail");
     assert!(error.to_string().contains("strictly earlier"));
     Ok(())
 }

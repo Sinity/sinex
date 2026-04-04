@@ -11,9 +11,9 @@ use common::{NatsHarness, admin_auth, ensure_dlq_stream};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
+use sinex_primitives::Timestamp;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse, DlqRequeueResponse};
-use sinex_primitives::Timestamp;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
@@ -350,7 +350,9 @@ async fn dlq_requeue_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> Tes
     .await?;
 
     let event_id = uuid::Uuid::now_v7().to_string();
-    let original_subject = harness.env.nats_subject("events.raw.test_source.test_input");
+    let original_subject = harness
+        .env
+        .nats_subject("events.raw.test_source.test_input");
     js.get_or_create_stream(jetstream::stream::Config {
         name: harness.env.nats_stream_name("EVENTS"),
         subjects: vec![original_subject.clone()],

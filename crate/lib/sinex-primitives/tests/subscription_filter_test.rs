@@ -423,7 +423,9 @@ async fn validate_rejects_payload_text_search() -> ::xtask::sandbox::TestResult<
         ..Default::default()
     };
 
-    let error = filter.validate().expect_err("text search should be rejected for SSE filters");
+    let error = filter
+        .validate()
+        .expect_err("text search should be rejected for SSE filters");
     assert!(
         error
             .to_string()

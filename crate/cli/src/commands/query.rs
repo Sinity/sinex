@@ -188,7 +188,10 @@ fn render_event_query_result(
     }
 }
 
-fn render_non_event_query_result(result: &EventQueryResult, format: OutputFormat) -> Result<String> {
+fn render_non_event_query_result(
+    result: &EventQueryResult,
+    format: OutputFormat,
+) -> Result<String> {
     match format {
         OutputFormat::Table => Ok(format_non_event_query_result_table(result)),
         OutputFormat::Json | OutputFormat::Dot => format_json(result),
@@ -262,7 +265,10 @@ fn format_time_series_table(buckets: &[sinex_primitives::query::TimeBucketEntry]
     builder.push_record(["Bucket", "Count"]);
 
     for bucket in buckets {
-        builder.push_record([format_query_timestamp(&bucket.bucket), bucket.count.to_string()]);
+        builder.push_record([
+            format_query_timestamp(&bucket.bucket),
+            bucket.count.to_string(),
+        ]);
     }
 
     let mut table = builder.build();
@@ -380,8 +386,8 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 
     // Limit
     let limit_str = Text::new("Maximum results:").with_default("100").prompt()?;
-    let limit = parse_query_limit_arg(&limit_str)
-        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+    let limit =
+        parse_query_limit_arg(&limit_str).map_err(|error| color_eyre::eyre::eyre!(error))?;
 
     // Build query
     let time_range = make_time_range(Some(since), until)?;
@@ -559,12 +565,12 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use sinex_primitives::testing::event_fixture;
     use sinex_primitives::temporal::Duration;
-    use sinex_primitives::{Event, Id, JsonValue, Uuid};
+    use sinex_primitives::testing::event_fixture;
     use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
-    use xtask::sandbox::{sinex_proptest, sinex_test};
+    use sinex_primitives::{Event, Id, JsonValue, Uuid};
     use xtask::TestResult;
+    use xtask::sandbox::{sinex_proptest, sinex_test};
 
     fn render_count_result(format: OutputFormat) -> TestResult<String> {
         render_non_event_query_result(&EventQueryResult::Count { count: 7 }, format)

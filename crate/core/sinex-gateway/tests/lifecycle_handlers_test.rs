@@ -80,7 +80,10 @@ async fn archive_and_restore_operations_are_persisted_and_auditable(
         handle_audit_get(ctx.pool(), json!({ "operation_id": archive.operation_id })).await?,
     )?;
     assert_eq!(archive_audit.event_count, 1);
-    assert_eq!(archive_audit.audit_trail.operation.operator, auth.actor_id());
+    assert_eq!(
+        archive_audit.audit_trail.operation.operator,
+        auth.actor_id()
+    );
     assert_eq!(
         archive_audit.audit_trail.affected_events[0].id.to_string(),
         event_id
@@ -103,7 +106,10 @@ async fn archive_and_restore_operations_are_persisted_and_auditable(
         handle_audit_get(ctx.pool(), json!({ "operation_id": restore.operation_id })).await?,
     )?;
     assert_eq!(restore_audit.event_count, 1);
-    assert_eq!(restore_audit.audit_trail.operation.operator, auth.actor_id());
+    assert_eq!(
+        restore_audit.audit_trail.operation.operator,
+        auth.actor_id()
+    );
     assert_eq!(
         restore_audit.audit_trail.affected_events[0].id.to_string(),
         event_id
@@ -184,7 +190,10 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
     )?;
     assert_eq!(approve.operation.tombstoned_count, Some(1));
     assert_eq!(approve.operation.created_by, auth.actor_id());
-    assert_eq!(approve.operation.approved_by.as_deref(), Some(auth.actor_id()));
+    assert_eq!(
+        approve.operation.approved_by.as_deref(),
+        Some(auth.actor_id())
+    );
 
     let audit: AuditGetResponse = serde_json::from_value(
         handle_audit_get(
@@ -502,7 +511,9 @@ async fn tombstone_cancel_rejects_invalid_created_at_metadata(ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn tombstone_status_rejects_invalid_created_at_during_expiry(ctx: TestContext) -> TestResult<()> {
+async fn tombstone_status_rejects_invalid_created_at_during_expiry(
+    ctx: TestContext,
+) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let source = "test.lifecycle.tombstone.expiry-invalid-created-at";
     let event = publish_event(&ctx, source, 1).await?;

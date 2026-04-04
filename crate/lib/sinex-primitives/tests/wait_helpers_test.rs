@@ -37,7 +37,11 @@ async fn wait_for_condition_adaptive_preserves_last_error_context() -> TestResul
     .await
     .expect_err("adaptive wait timeouts must retain the last condition failure");
 
-    assert!(error.to_string().contains("adaptive wait helper test timeout"));
+    assert!(
+        error
+            .to_string()
+            .contains("adaptive wait helper test timeout")
+    );
     assert!(format!("{error:?}").contains("synthetic adaptive wait failure"));
     Ok(())
 }

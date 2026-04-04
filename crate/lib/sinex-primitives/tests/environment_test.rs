@@ -22,6 +22,9 @@ async fn raw_event_subject_encoding_keeps_namespace_shape() -> TestResult<()> {
     let subject =
         env.nats_raw_event_subject_with_namespace(Some("suite-a"), "gateway.test", "inline.event");
 
-    assert_eq!(subject, "dev.suite-a.events.raw.gateway_d_test.inline_d_event");
+    assert_eq!(
+        subject,
+        "dev.suite-a.events.raw.gateway_d_test.inline_d_event"
+    );
     Ok(())
 }

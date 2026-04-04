@@ -40,7 +40,10 @@ struct AffectedEventRow {
 }
 
 fn uses_lifecycle_audit_summary(operation_type: &str) -> bool {
-    matches!(operation_type, "archive" | "restore" | "purge" | "tombstone")
+    matches!(
+        operation_type,
+        "archive" | "restore" | "purge" | "tombstone"
+    )
 }
 
 fn explicit_lifecycle_summary(
@@ -230,7 +233,9 @@ async fn query_affected_events_by_ids(
     .bind(fetch_limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| SinexError::service("failed to query explicit affected events").with_std_error(&e))?;
+    .map_err(|e| {
+        SinexError::service("failed to query explicit affected events").with_std_error(&e)
+    })?;
 
     let has_more = rows.len() as i64 > page_size;
     if has_more {

@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod blob;
 pub mod completions;
 pub mod config;
 pub mod context;
@@ -19,6 +20,7 @@ pub mod trace;
 pub mod tui;
 
 pub use audit::AuditCommand;
+pub use blob::BlobCommands;
 pub use completions::CompletionsCommand;
 pub use config::ConfigCommands;
 pub use context::ContextCommand;

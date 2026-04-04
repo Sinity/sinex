@@ -172,7 +172,13 @@ async fn test_register_source_material_blob_text_requires_source_uri(
     let pkm = PkmService::new(pool.clone());
 
     let error = pkm
-        .register_source_material("blob.text", Some("   "), b"hello world", Some("text/plain"), json!({}))
+        .register_source_material(
+            "blob.text",
+            Some("   "),
+            b"hello world",
+            Some("text/plain"),
+            json!({}),
+        )
         .await
         .expect_err("blob.text source material without filename must fail honestly");
 

@@ -30,8 +30,9 @@ mod help_tests {
             .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("ops"))
             .stdout(predicate::str::contains("audit"))
+            .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("config"))
-            .stdout(predicate::str::contains("import").not())
+            .stdout(predicate::str::contains("import"))
             .stdout(predicate::str::contains("completions"));
         Ok(())
     }
@@ -131,6 +132,29 @@ mod help_tests {
             .stdout(predicate::str::contains("show"))
             .stdout(predicate::str::contains("path"))
             .stdout(predicate::str::contains("edit"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_blob_help() -> TestResult<()> {
+        sinexctl()
+            .args(["blob", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Blob maintenance commands"))
+            .stdout(predicate::str::contains("sweep-orphans"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_blob_sweep_orphans_help() -> TestResult<()> {
+        sinexctl()
+            .args(["blob", "sweep-orphans", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Reclaim unused git-annex keys"))
+            .stdout(predicate::str::contains("--repo-path"))
+            .stdout(predicate::str::contains("--apply"));
         Ok(())
     }
 }

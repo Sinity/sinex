@@ -162,7 +162,10 @@ impl PkmService {
         Self { pool }
     }
 
-    fn required_source_uri<'a>(material_type: &str, source_uri: Option<&'a str>) -> Result<&'a str> {
+    fn required_source_uri<'a>(
+        material_type: &str,
+        source_uri: Option<&'a str>,
+    ) -> Result<&'a str> {
         source_uri
             .map(str::trim)
             .filter(|uri| !uri.is_empty())

@@ -647,6 +647,9 @@ impl ReplayStateMachine {
     /// Generate a preview summary for a given scope
     pub async fn generate_preview_summary(&self, scope: &ReplayScope) -> Result<serde_json::Value> {
         let window = Self::resolve_time_window(scope);
+        let mut root_event_ids = self.collect_scope_root_ids(scope).await?;
+        root_event_ids.sort_unstable();
+        root_event_ids.dedup();
 
         let mut count_query = Self::build_filter_query(
             scope,
@@ -703,6 +706,7 @@ impl ReplayStateMachine {
                 "end": window.1,
             },
             "total_events": total,
+            "root_event_ids": root_event_ids,
             "top_event_types": top_types
                 .into_iter()
                 .map(|row| serde_json::json!({
@@ -830,8 +834,7 @@ impl ReplayStateMachine {
 
             // Phase 2: query metadata for derived events
             let affected_nodes = Self::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
-            let affected_scopes =
-                Self::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
+            let affected_scopes = Self::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
             // Roll back — this is preview only, no persistent state change
             tx.rollback()
@@ -910,6 +913,120 @@ impl ReplayStateMachine {
 
         info!("Operation {} approved by {}", operation_id, approver);
         Ok(())
+    }
+
+    /// Atomically approve a previewed operation and transition it into execution.
+    pub async fn submit_previewed_for_execution(
+        &self,
+        operation_id: Uuid,
+        approver: String,
+        executor_node: NodeName,
+    ) -> Result<ReplayOperation> {
+        let now = sinex_primitives::temporal::now();
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT operator, scope, preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
+            "#,
+            operation_id
+        )
+        .fetch_one(tx.as_mut())
+        .await?;
+
+        let scope_val = row.scope.ok_or_else(|| {
+            SinexError::processing("Replay operation is missing scope")
+                .with_operation("submit_replay_operation")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        if meta.state != ReplayState::Previewed {
+            return Err(SinexError::invalid_state(
+                "Operation must be in Previewed state to submit",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("submit_replay_operation"));
+        }
+
+        let preview = meta.preview.clone().ok_or_else(|| {
+            SinexError::invalid_state(
+                "Operation is missing preview summary; run preview before submit",
+            )
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("submit_replay_operation")
+        })?;
+        let preview_summary: StoredReplayPreviewSummary =
+            serde_json::from_value(preview).map_err(|error| {
+                SinexError::invalid_state("Replay preview summary is invalid")
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("submit_replay_operation")
+                    .with_std_error(&error)
+            })?;
+        if preview_summary.total_events == 0 {
+            return Err(SinexError::invalid_state(
+                "Operation preview matches zero events; refresh preview before submit",
+            )
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("submit_replay_operation"));
+        }
+        if preview_summary.root_event_ids.is_empty() {
+            return Err(SinexError::invalid_state(
+                "Operation preview is missing root_event_ids; refresh preview before submit",
+            )
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("submit_replay_operation"));
+        }
+        if preview_summary.root_event_ids.len() as u64 != preview_summary.total_events {
+            return Err(SinexError::invalid_state(
+                "Operation preview summary is inconsistent with total_events",
+            )
+            .with_context("total_events", preview_summary.total_events.to_string())
+            .with_context(
+                "root_event_ids",
+                preview_summary.root_event_ids.len().to_string(),
+            )
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("submit_replay_operation"));
+        }
+
+        meta.state = ReplayState::Executing;
+        meta.approved_by = Some(approver.clone());
+        meta.approved_at = Some(now);
+        meta.started_at = Some(now);
+        meta.finished_at = None;
+        meta.outcome = None;
+        meta.error_details = None;
+        meta.executor_node = Some(executor_node.clone());
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            status,
+            msg,
+            meta_json
+        )
+        .execute(tx.as_mut())
+        .await?;
+        tx.commit().await?;
+
+        info!(
+            operation_id = %operation_id,
+            approver = %approver,
+            executor_node = %executor_node,
+            "Atomically submitted replay operation for execution"
+        );
+
+        Self::decode_meta_to_operation(operation_id, row.operator, scope_val, meta_json)
     }
 
     /// Update checkpoint
@@ -1497,4 +1614,11 @@ struct MetaJson {
     outcome: Option<ReplayOutcome>,
     error_details: Option<String>,
     preview: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredReplayPreviewSummary {
+    total_events: u64,
+    #[serde(default)]
+    root_event_ids: Vec<Uuid>,
 }

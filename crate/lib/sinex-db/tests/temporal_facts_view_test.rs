@@ -113,7 +113,10 @@ async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult
     .fetch_one(&ctx.pool)
     .await?
     .unwrap_or_default();
-    assert_eq!(projected_count, 1, "material event should project only once");
+    assert_eq!(
+        projected_count, 1,
+        "material event should project only once"
+    );
 
     Ok(())
 }

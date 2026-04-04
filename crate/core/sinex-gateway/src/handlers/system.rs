@@ -1,14 +1,23 @@
 //! System RPC handlers.
 
-use crate::service_container::{
-    GatewayHealthReport, GatewayHealthStatus, ServiceContainer,
-};
+use crate::service_container::{GatewayHealthReport, GatewayHealthStatus, ServiceContainer};
 use color_eyre::eyre::{Context, Result};
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
+
+pub async fn handle_system_ping(_services: &ServiceContainer, _params: Value) -> Result<Value> {
+    Ok(system_ping_response())
+}
+
+pub async fn handle_system_version(
+    _services: &ServiceContainer,
+    _params: Value,
+) -> Result<Value> {
+    Ok(system_version_response())
+}
 
 pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let response = system_health_response(services.health_report().await);
@@ -63,6 +72,14 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
     }
 }
 
+fn system_ping_response() -> Value {
+    Value::String("pong".to_string())
+}
+
+fn system_version_response() -> Value {
+    Value::String(env!("CARGO_PKG_VERSION").to_string())
+}
+
 fn system_component_health(
     connected: bool,
     latency_ms: Option<f64>,
@@ -93,6 +110,20 @@ mod tests {
     use super::*;
     use crate::service_container::{NatsHealthProbe, ReplayControlStatus};
     use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn system_ping_returns_pong_string() -> TestResult<()> {
+        let response = system_ping_response();
+        assert_eq!(response, Value::String("pong".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_version_returns_gateway_package_version() -> TestResult<()> {
+        let response = system_version_response();
+        assert_eq!(response, Value::String(env!("CARGO_PKG_VERSION").to_string()));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn system_health_response_uses_typed_contract() -> TestResult<()> {

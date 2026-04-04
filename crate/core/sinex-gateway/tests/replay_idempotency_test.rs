@@ -34,8 +34,14 @@ impl LiveGateway {
         tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
         tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
-        env_guard.set("SINEX_GATEWAY_TLS_CERT", cert_file.path().to_string_lossy().to_string());
-        env_guard.set("SINEX_GATEWAY_TLS_KEY", key_file.path().to_string_lossy().to_string());
+        env_guard.set(
+            "SINEX_GATEWAY_TLS_CERT",
+            cert_file.path().to_string_lossy().to_string(),
+        );
+        env_guard.set(
+            "SINEX_GATEWAY_TLS_KEY",
+            key_file.path().to_string_lossy().to_string(),
+        );
         env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
         env_guard.set("DATABASE_URL", database_url);
@@ -126,7 +132,10 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
 
     // First creation: succeeds
     let first = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-node"))
+        .rpc(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_node("idem-node"),
+        )
         .await?;
     assert!(
         first.get("result").is_some(),
@@ -135,7 +144,10 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
 
     // Second creation for same node: should fail
     let second = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-node"))
+        .rpc(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_node("idem-node"),
+        )
         .await?;
     let error_msg = second
         .get("error")
@@ -159,8 +171,14 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
 
     let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
 
-    let first = gw.rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-race-node"));
-    let second = gw.rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("idem-race-node"));
+    let first = gw.rpc(
+        methods::REPLAY_CREATE_OPERATION,
+        scope_for_node("idem-race-node"),
+    );
+    let second = gw.rpc(
+        methods::REPLAY_CREATE_OPERATION,
+        scope_for_node("idem-race-node"),
+    );
     let (first, second) = tokio::join!(first, second);
     let first = first?;
     let second = second?;
@@ -179,9 +197,14 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
         })
         .collect();
 
-    assert_eq!(successes, 1, "exactly one concurrent create should succeed: first={first}, second={second}");
+    assert_eq!(
+        successes, 1,
+        "exactly one concurrent create should succeed: first={first}, second={second}"
+    );
     assert!(
-        errors.iter().any(|message| message.contains("already active")),
+        errors
+            .iter()
+            .any(|message| message.contains("already active")),
         "one concurrent create should be rejected as already active: first={first}, second={second}"
     );
 
@@ -200,7 +223,10 @@ async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> 
     let first = gw
         .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-a"))
         .await?;
-    assert!(first.get("result").is_some(), "First node create should succeed: {first}");
+    assert!(
+        first.get("result").is_some(),
+        "First node create should succeed: {first}"
+    );
 
     let second = gw
         .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-b"))
@@ -224,7 +250,10 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
 
     // Create and cancel
     let create_resp = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("cancel-node"))
+        .rpc(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_node("cancel-node"),
+        )
         .await?;
     let op_id = create_resp["result"]["operation"]["operation_id"]
         .as_str()
@@ -237,11 +266,17 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
             json!({ "operation_id": op_id, "reason": "testing idempotency" }),
         )
         .await?;
-    assert!(cancel_resp.get("result").is_some(), "Cancel should succeed: {cancel_resp}");
+    assert!(
+        cancel_resp.get("result").is_some(),
+        "Cancel should succeed: {cancel_resp}"
+    );
 
     // New operation for same node after cancel: should succeed
     let new_resp = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("cancel-node"))
+        .rpc(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_node("cancel-node"),
+        )
         .await?;
     assert!(
         new_resp.get("result").is_some(),
