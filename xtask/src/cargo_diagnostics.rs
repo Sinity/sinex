@@ -309,17 +309,17 @@ fn progress_target_packages(package_args: &[&str]) -> Option<std::collections::H
         };
         return Some(
             json["packages"]
-            .as_array()
-            .map(|pkgs| {
-                pkgs.iter()
-                    .filter_map(|pkg| {
-                        pkg.get("name")
-                            .and_then(serde_json::Value::as_str)
-                            .map(std::string::ToString::to_string)
-                    })
-                    .collect::<std::collections::HashSet<_>>()
-            })
-            .unwrap_or_default(),
+                .as_array()
+                .map(|pkgs| {
+                    pkgs.iter()
+                        .filter_map(|pkg| {
+                            pkg.get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(std::string::ToString::to_string)
+                        })
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .unwrap_or_default(),
         );
     }
 

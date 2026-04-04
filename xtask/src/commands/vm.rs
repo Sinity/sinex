@@ -848,40 +848,6 @@ fn execute_start(
     )
 }
 
-fn run_vm(
-    script: &PathBuf,
-    persistent: bool,
-    snapshot: Option<&str>,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    let mut cmd = Command::new(script);
-
-    if persistent {
-        let state_dir = config::workspace_root().join(".vm-state");
-        std::fs::create_dir_all(&state_dir)?;
-        cmd.env(
-            "QEMU_OPTS",
-            format!("-drive file={}/vm.qcow2,if=virtio", state_dir.display()),
-        );
-    }
-
-    if let Some(snap) = snapshot {
-        cmd.arg("-loadvm").arg(snap);
-    }
-
-    if ctx.is_human() {
-        println!("Starting VM (press Ctrl+A X to exit)...");
-    }
-
-    let status = cmd.status().context("Failed to start VM")?;
-
-    if status.success() {
-        Ok(CommandResult::success().with_message("VM exited normally"))
-    } else {
-        bail!("VM exited with error: {:?}", status.code())
-    }
-}
-
 fn execute_ssh(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("vm ssh");
 

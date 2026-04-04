@@ -186,9 +186,7 @@ impl Drop for NamespaceReaper {
                 }
             });
 
-            CLEANUP_HANDLES
-                .lock()
-                .push(handle);
+            CLEANUP_HANDLES.lock().push(handle);
         }
     }
 }
@@ -677,8 +675,7 @@ impl Sandbox {
         let cfg = crate::config::config();
         match crate::history::HistoryDb::open(&cfg.history_db_path()) {
             Ok(db) => {
-                if let Err(error) = db.record_test_nats_context(inv_id, &self.test_name, snapshot)
-                {
+                if let Err(error) = db.record_test_nats_context(inv_id, &self.test_name, snapshot) {
                     eprintln!(
                         "⚠️ failed to record NATS context for test '{}' (invocation {inv_id}): {error:#}",
                         self.test_name
@@ -1084,7 +1081,11 @@ mod tests {
 
         let error = load_env_filter("info").expect_err("invalid directive should fail");
 
-        assert!(error.to_string().contains("Invalid RUST_LOG directive `[broken`"));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid RUST_LOG directive `[broken`")
+        );
     }
 
     #[cfg(unix)]
@@ -1119,9 +1120,11 @@ mod tests {
         let error =
             background_invocation_id().expect_err("invalid invocation ID should not be ignored");
 
-        assert!(error
-            .to_string()
-            .contains("Invalid XTASK_BG_INVOCATION_ID `not-a-number`"));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid XTASK_BG_INVOCATION_ID `not-a-number`")
+        );
     }
 
     #[cfg(unix)]
@@ -1137,9 +1140,11 @@ mod tests {
         let error =
             background_invocation_id().expect_err("non-utf8 invocation ID should not be ignored");
 
-        assert!(error
-            .to_string()
-            .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8"));
+        assert!(
+            error
+                .to_string()
+                .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8")
+        );
     }
 
     #[test]
@@ -1274,9 +1279,7 @@ impl Drop for Sandbox {
                 });
 
                 // Uses a synchronous mutex, so cleanup registration does not depend on a runtime.
-                CLEANUP_HANDLES
-                    .lock()
-                    .push(join_handle);
+                CLEANUP_HANDLES.lock().push(join_handle);
             } else {
                 // Issue 116: No runtime available, spawn blocking thread with its own runtime
                 let (tx, rx) = mpsc::channel();

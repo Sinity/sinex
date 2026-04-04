@@ -758,7 +758,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_add_output_for_key_reports_invalid_json_without_key() -> ::xtask::sandbox::TestResult<()> {
+    async fn parse_add_output_for_key_reports_invalid_json_without_key()
+    -> ::xtask::sandbox::TestResult<()> {
         let error =
             parse_add_output_for_key(b"not-json\n").expect_err("invalid json must be reported");
         assert!(error.contains("invalid JSON line"));
@@ -766,7 +767,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_add_output_for_key_prefers_valid_key_when_present() -> ::xtask::sandbox::TestResult<()> {
+    async fn parse_add_output_for_key_prefers_valid_key_when_present()
+    -> ::xtask::sandbox::TestResult<()> {
         let key = parse_add_output_for_key(
             br#"{"note":"noise"}
 {"key":"SHA256E-s42--deadbeef.txt"}"#,

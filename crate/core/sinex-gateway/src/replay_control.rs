@@ -233,6 +233,19 @@ fn summarize_uuid_set(ids: &HashSet<Uuid>) -> String {
     }
 }
 
+fn stale_preview_missing_root_ids_error(
+    operation_id: Uuid,
+    expected_total_events: u64,
+) -> color_eyre::eyre::Report {
+    eyre!(
+        "Operation {} preview is stale: preview covered {} material-root events but \
+         root_event_ids is absent. ID-level staleness detection is not possible; \
+         refresh preview before execution",
+        operation_id,
+        expected_total_events,
+    )
+}
+
 fn replay_scope_drift_error(
     operation_id: Uuid,
     expected_total_events: u64,
@@ -1045,8 +1058,12 @@ impl ReplayExecutionEngine {
                     mark_error = %mark_err,
                     execution_error = %err,
                     "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
-                     Run: sinexctl replay recover --operation {operation_id}"
+                     Run: sinexctl replay cancel {operation_id} --reason 'stuck after mark_failed failure'"
                 );
+                return Err(eyre!(
+                    "Replay execution failed ({err:#}) and marking operation as failed also failed ({mark_err}); \
+                     operation {operation_id} is stuck in Executing state"
+                ));
             }
         }
 
@@ -1133,7 +1150,12 @@ impl ReplayExecutionEngine {
         let mut preview_root_ids = preview_summary.root_event_ids;
         preview_root_ids.sort_unstable();
         preview_root_ids.dedup();
-        if !preview_root_ids.is_empty() && preview_root_ids.len() as u64 != total_events {
+        if preview_root_ids.is_empty() {
+            // Stale preview: root_event_ids not available. Require a fresh preview
+            // to enable ID-level staleness detection.
+            return Err(stale_preview_missing_root_ids_error(operation_id, total_events));
+        }
+        if preview_root_ids.len() as u64 != total_events {
             return Err(eyre!(
                 "Operation {} preview summary is inconsistent: total_events={} but root_event_ids contains {} ids",
                 operation_id,
@@ -1851,9 +1873,15 @@ impl ReplayExecutionEngine {
         root_ids.sort_unstable();
         root_ids.dedup();
 
-        if (!preview_root_ids.is_empty() && root_ids.as_slice() != preview_root_ids)
-            || (preview_root_ids.is_empty() && root_ids.len() as u64 != expected_total_events)
-        {
+        if preview_root_ids.is_empty() {
+            // Stale preview: root_event_ids not available. Require a fresh preview
+            // to enable ID-level staleness detection.
+            return Err(stale_preview_missing_root_ids_error(
+                operation_id,
+                expected_total_events,
+            ));
+        }
+        if root_ids.as_slice() != preview_root_ids {
             return Err(replay_scope_drift_error(
                 operation_id,
                 expected_total_events,
@@ -2065,7 +2093,7 @@ impl ReplayExecutionEngine {
                                     target_node_name
                                 ),
                                 emitted_count: events_emitted,
-                                restore_archived_cascade: false,
+                                restore_archived_cascade: events_emitted == 0,
                             });
                         };
 
@@ -2212,19 +2240,26 @@ impl ReplayExecutionEngine {
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
                         )));
                     }
+                }
+                // Publish compensating scope invalidations when either:
+                // - we restored the cascade (so automata reconcile against restored events)
+                // - events were emitted before failure (so automata reconcile the mixed state)
+                if failure.restore_archived_cascade || failure.emitted_count > 0 {
                     if let Err(invalidation_error) = self
                         .publish_scope_invalidations(&scope_metadata, operation_id)
                         .await
                     {
                         return Err(failure.error.wrap_err(format!(
-                            "Replay scan failed before emitting replacement events, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
+                            "Replay scan failed and compensating scope invalidation also failed: {invalidation_error}"
                         )));
                     }
                 }
                 Err(failure.error).wrap_err(if failure.restore_archived_cascade {
                     "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
+                } else if failure.emitted_count > 0 {
+                    "Replay scan failed after partial event emission; published compensating scope invalidations for automata reconciliation"
                 } else {
-                    "Replay scan failed after the dispatch left coordinator certainty; archived cascade was left untouched to avoid reintroducing stale rows beside late or partial replacements"
+                    "Replay scan failed before emitting any replacement events; archived cascade left untouched"
                 })
             }
         }

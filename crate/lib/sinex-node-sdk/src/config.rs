@@ -240,7 +240,8 @@ impl NodeConfig {
             },
             work_dir: service_or_global_env_validated_path(&env_prefix, "WORK_DIR")?
                 .unwrap_or(defaults.work_dir),
-            dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?.unwrap_or(defaults.dry_run),
+            dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?
+                .unwrap_or(defaults.dry_run),
         };
         config.validate_config()?;
         Ok(config)
@@ -519,7 +520,10 @@ fn service_or_global_env_validated_path(
         .map_err(|error| ConfigError::Validation(error.to_string()))
 }
 
-fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Result<Option<T>, ConfigError>
+fn service_or_global_env_parse<T>(
+    service_prefix: &str,
+    suffix: &str,
+) -> Result<Option<T>, ConfigError>
 where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
@@ -557,14 +561,16 @@ fn service_or_global_env_list(
     service_prefix: &str,
     suffix: &str,
 ) -> Result<Option<Vec<String>>, ConfigError> {
-    Ok(service_or_global_env_string(service_prefix, suffix)?.map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    }))
+    Ok(
+        service_or_global_env_string(service_prefix, suffix)?.map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        }),
+    )
 }
 
 #[cfg(feature = "messaging")]

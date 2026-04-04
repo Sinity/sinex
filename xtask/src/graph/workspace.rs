@@ -292,10 +292,11 @@ impl WorkspaceGraph {
         // Check if target is reachable
         let mut is_reachable = false;
         for id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
-            let metadata = self
-                .graph
-                .metadata(id)
-                .with_context(|| format!("Failed to resolve package metadata while checking path from '{from}' to '{to}'"))?;
+            let metadata = self.graph.metadata(id).with_context(|| {
+                format!(
+                    "Failed to resolve package metadata while checking path from '{from}' to '{to}'"
+                )
+            })?;
             if metadata.name() == to {
                 is_reachable = true;
                 break;
@@ -340,9 +341,9 @@ impl WorkspaceGraph {
             .workspace()
             .member_ids()
             .map(|id| {
-                self.graph
-                    .metadata(id)
-                    .with_context(|| format!("Failed to resolve metadata for workspace member '{id}'"))
+                self.graph.metadata(id).with_context(|| {
+                    format!("Failed to resolve metadata for workspace member '{id}'")
+                })
             })
             .collect()
     }

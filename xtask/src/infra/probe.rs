@@ -57,14 +57,18 @@ pub fn probe_postgres() -> PostgresProbe {
         Ok(accepting_connections) => (accepting_connections, None),
         Err(error) => (
             false,
-            Some(format!("failed to verify PostgreSQL readiness with pg_isready: {error:#}")),
+            Some(format!(
+                "failed to verify PostgreSQL readiness with pg_isready: {error:#}"
+            )),
         ),
     };
     let latency_ms = start.elapsed().as_millis() as u64;
     let message = accepting_issue.or_else(|| match (running, accepting_connections) {
         (true, true) => None,
         (true, false) => Some("postmaster is running but not accepting connections".to_string()),
-        (false, true) => Some("Postgres socket responds but no managed postmaster is tracked".to_string()),
+        (false, true) => {
+            Some("Postgres socket responds but no managed postmaster is tracked".to_string())
+        }
         (false, false) => Some("Postgres is not running for this checkout".to_string()),
     });
 
@@ -125,7 +129,9 @@ fn nats_probe_message(
             Some(issue) => format!(
                 "nats-server PID is tracked but port {port} is not accepting connections: {issue}"
             ),
-            None => format!("nats-server PID is tracked but port {port} is not accepting connections"),
+            None => {
+                format!("nats-server PID is tracked but port {port} is not accepting connections")
+            }
         }),
         (false, true) => Some(format!(
             "NATS is reachable on port {port}, but no managed nats-server PID is tracked"
@@ -144,8 +150,12 @@ mod tests {
 
     #[sinex_test]
     async fn nats_probe_message_includes_connect_error_for_unreachable_port() -> TestResult<()> {
-        let message =
-            nats_probe_message(false, false, 4222, Some("Connection refused (os error 111)"));
+        let message = nats_probe_message(
+            false,
+            false,
+            4222,
+            Some("Connection refused (os error 111)"),
+        );
 
         assert_eq!(
             message.as_deref(),

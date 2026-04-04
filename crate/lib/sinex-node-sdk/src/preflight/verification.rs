@@ -472,7 +472,9 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     let js = async_nats::jetstream::new(client);
     let bucket = crate::checkpoint::checkpoint_bucket_name(None);
     js.get_key_value(&bucket).await.map_err(|e| {
-        SinexError::processing(format!("Failed to open checkpoint KV bucket '{bucket}': {e}"))
+        SinexError::processing(format!(
+            "Failed to open checkpoint KV bucket '{bucket}': {e}"
+        ))
     })?;
 
     let required_streams = vec![

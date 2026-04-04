@@ -1,5 +1,5 @@
-use crate::sandbox::prelude::*;
 use crate::sandbox::db::pool::replace_db_name;
+use crate::sandbox::prelude::*;
 use sinex_schema::schema_registry;
 
 pub struct PermissionGranter {
@@ -49,7 +49,11 @@ impl PermissionGranter {
 
 pub fn granted_schema_names() -> Vec<&'static str> {
     let mut schemas = vec!["public"];
-    schemas.extend(schema_registry::SINEX_SCHEMAS.iter().map(|schema| schema.name));
+    schemas.extend(
+        schema_registry::SINEX_SCHEMAS
+            .iter()
+            .map(|schema| schema.name),
+    );
     schemas
 }
 

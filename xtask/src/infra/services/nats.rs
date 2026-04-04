@@ -87,9 +87,9 @@ fn parse_nats_pid_lines(stdout: &str) -> Result<Vec<u32>> {
         if trimmed.is_empty() {
             continue;
         }
-        let pid = trimmed
-            .parse::<u32>()
-            .wrap_err_with(|| format!("pgrep -f nats-server produced invalid PID line {trimmed:?}"))?;
+        let pid = trimmed.parse::<u32>().wrap_err_with(|| {
+            format!("pgrep -f nats-server produced invalid PID line {trimmed:?}")
+        })?;
         pids.push(pid);
     }
     Ok(pids)
@@ -148,10 +148,9 @@ fn parse_listener_port(listener: &str) -> Result<u16> {
     if !listener.contains(':') {
         bail!("missing port separator in listener {listener:?}");
     }
-    let raw_port = listener
-        .rsplit(':')
-        .next()
-        .ok_or_else(|| color_eyre::eyre::eyre!("missing port separator in listener {listener:?}"))?;
+    let raw_port = listener.rsplit(':').next().ok_or_else(|| {
+        color_eyre::eyre::eyre!("missing port separator in listener {listener:?}")
+    })?;
     raw_port
         .parse::<u16>()
         .wrap_err_with(|| format!("failed to parse NATS listener port from {listener:?}"))
@@ -215,8 +214,9 @@ fn remove_service_file(path: &Path, label: &str) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .wrap_err_with(|| format!("failed to remove {label} {}", path.display())),
+        Err(error) => {
+            Err(error).wrap_err_with(|| format!("failed to remove {label} {}", path.display()))
+        }
     }
 }
 
@@ -243,9 +243,7 @@ fn wait_for_nats_startup_probe(
         }
     }
 
-    bail!(
-        "NATS process {pid} did not bind port {expected_port} within 15 seconds"
-    )
+    bail!("NATS process {pid} did not bind port {expected_port} within 15 seconds")
 }
 
 impl NatsManager {
@@ -368,9 +366,9 @@ jetstream {{
             if let Err(cleanup_error) =
                 self.remove_pid_file_if_present("NATS pid file after failed startup")
             {
-                return Err(cleanup_error.wrap_err(format!(
-                    "NATS startup failed: {startup_error:#}"
-                )));
+                return Err(
+                    cleanup_error.wrap_err(format!("NATS startup failed: {startup_error:#}"))
+                );
             }
             return Err(startup_error);
         }
@@ -484,10 +482,7 @@ jetstream {{
 
     fn nats_server_command(&self) -> Command {
         let mut command = self.nats_command();
-        command
-            .arg("-js")
-            .arg("-c")
-            .arg(&self.config.config_file);
+        command.arg("-js").arg("-c").arg(&self.config.config_file);
         command
     }
 
@@ -497,7 +492,10 @@ jetstream {{
         }
 
         let content = fs::read_to_string(&self.config.pid_file).wrap_err_with(|| {
-            format!("failed to read NATS pid file {}", self.config.pid_file.display())
+            format!(
+                "failed to read NATS pid file {}",
+                self.config.pid_file.display()
+            )
         })?;
         let pid_str = content.trim();
         if pid_str.is_empty() {
@@ -505,7 +503,10 @@ jetstream {{
         }
 
         let pid = pid_str.parse::<u32>().wrap_err_with(|| {
-            format!("failed to parse NATS pid from {}", self.config.pid_file.display())
+            format!(
+                "failed to parse NATS pid from {}",
+                self.config.pid_file.display()
+            )
         })?;
         Ok(Some(pid))
     }
@@ -555,12 +556,11 @@ fn listener_port_for_pid_probe(
         return Ok(None);
     };
 
-    let listener = matching_line
-        .split_whitespace()
-        .nth(3)
-        .ok_or_else(|| color_eyre::eyre::eyre!(
+    let listener = matching_line.split_whitespace().nth(3).ok_or_else(|| {
+        color_eyre::eyre::eyre!(
             "ss -ltnp produced malformed listener row for NATS pid {pid}: {matching_line}"
-        ))?;
+        )
+    })?;
     Ok(Some(parse_listener_port(listener)?))
 }
 
@@ -603,8 +603,8 @@ mod tests {
 
     #[sinex_test]
     async fn listener_port_for_pid_probe_reports_ss_spawn_failures() -> TestResult<()> {
-        let error =
-            listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded"))).unwrap_err();
+        let error = listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded")))
+            .unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("failed to inspect NATS listeners with ss"));
         assert!(message.contains("ss exploded"));
@@ -672,13 +672,7 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
 
     #[sinex_test]
     async fn wait_for_nats_startup_probe_accepts_expected_listener() -> TestResult<()> {
-        wait_for_nats_startup_probe(
-            123,
-            4222,
-            || Ok(None),
-            |_pid| true,
-            |_pid| Ok(Some(4222)),
-        )?;
+        wait_for_nats_startup_probe(123, 4222, || Ok(None), |_pid| true, |_pid| Ok(Some(4222)))?;
         Ok(())
     }
 
@@ -700,14 +694,9 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
 
     #[sinex_test]
     async fn wait_for_nats_startup_probe_rejects_unexpected_listener_port() -> TestResult<()> {
-        let error = wait_for_nats_startup_probe(
-            123,
-            4222,
-            || Ok(None),
-            |_pid| true,
-            |_pid| Ok(Some(4333)),
-        )
-        .unwrap_err();
+        let error =
+            wait_for_nats_startup_probe(123, 4222, || Ok(None), |_pid| true, |_pid| Ok(Some(4333)))
+                .unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("unexpected port 4333"));
         assert!(message.contains("expected 4222"));
@@ -716,7 +705,8 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
 
     #[sinex_test]
     async fn parse_nats_pgrep_output_reports_spawn_failures() -> TestResult<()> {
-        let error = parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
+        let error =
+            parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("failed to inspect running nats-server processes with pgrep"));
         assert!(message.contains("pgrep exploded"));

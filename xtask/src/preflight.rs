@@ -100,8 +100,12 @@ fn schema_apply_lock_path(state_dir: &Path) -> std::path::PathBuf {
 }
 
 fn open_schema_apply_lock_file(state_dir: &Path) -> Result<std::fs::File> {
-    std::fs::create_dir_all(state_dir)
-        .wrap_err_with(|| format!("failed to create preflight state dir {}", state_dir.display()))?;
+    std::fs::create_dir_all(state_dir).wrap_err_with(|| {
+        format!(
+            "failed to create preflight state dir {}",
+            state_dir.display()
+        )
+    })?;
     let lock_path = schema_apply_lock_path(state_dir);
     std::fs::OpenOptions::new()
         .create(true)
@@ -159,7 +163,12 @@ fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| eyre!("preflight state path is not valid UTF-8: {}", path.display()))?;
+        .ok_or_else(|| {
+            eyre!(
+                "preflight state path is not valid UTF-8: {}",
+                path.display()
+            )
+        })?;
     let unique_suffix = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -440,10 +449,7 @@ fn collect_rust_sources_from_dir(
     for entry in entries {
         let entry = entry.wrap_err_with(|| format!("failed to enumerate {}", dir.display()))?;
         let name = entry.file_name().into_string().map_err(|_| {
-            color_eyre::eyre::eyre!(
-                "source file entry in {} is not valid UTF-8",
-                dir.display()
-            )
+            color_eyre::eyre::eyre!("source file entry in {} is not valid UTF-8", dir.display())
         })?;
         if !name.ends_with(".rs") {
             continue;
@@ -709,7 +715,9 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
         }
 
         if start.elapsed() >= timeout {
-            eprintln!("✗ Stack start timed out after {timeout_secs}s — terminating subprocess tree");
+            eprintln!(
+                "✗ Stack start timed out after {timeout_secs}s — terminating subprocess tree"
+            );
             terminate_child_process_tree(&mut child)?;
             break Err(eyre!("infra start timed out after {timeout_secs}s"));
         }
@@ -734,7 +742,9 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
     }
 }
 
-fn spawn_process_group_leader(command: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+fn spawn_process_group_leader(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -762,7 +772,9 @@ fn terminate_child_process_tree(child: &mut std::process::Child) -> Result<()> {
         match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM) {
             Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
             Err(error) => {
-                return Err(eyre!("failed to send SIGTERM to infra start process group: {error}"));
+                return Err(eyre!(
+                    "failed to send SIGTERM to infra start process group: {error}"
+                ));
             }
         }
 
@@ -784,7 +796,9 @@ fn terminate_child_process_tree(child: &mut std::process::Child) -> Result<()> {
         match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL) {
             Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
             Err(error) => {
-                return Err(eyre!("failed to send SIGKILL to infra start process group: {error}"));
+                return Err(eyre!(
+                    "failed to send SIGKILL to infra start process group: {error}"
+                ));
             }
         }
 
@@ -1081,9 +1095,7 @@ impl ContractsDeployOutcome {
     }
 }
 
-fn ensure_running_binary_contracts_inventory_current(
-    current_hash: &str,
-) -> Result<()> {
+fn ensure_running_binary_contracts_inventory_current(current_hash: &str) -> Result<()> {
     ensure_compiled_contracts_inventory_current(current_hash, compiled_contracts_hash())
 }
 
@@ -1181,7 +1193,8 @@ fn auto_deploy_contracts(verbose: bool) -> ContractsDeployOutcome {
     let current_hash = match hash_contracts_dir() {
         Ok(hash) => hash,
         Err(error) => {
-            let message = format!("failed to hash event payload contracts before deployment: {error:#}");
+            let message =
+                format!("failed to hash event payload contracts before deployment: {error:#}");
             eprintln!("⚠️  {message}");
             return ContractsDeployOutcome::SkippedProbeFailed(message);
         }
@@ -1245,8 +1258,9 @@ fn read_optional_state_file(path: &Path, label: &str) -> Result<Option<String>> 
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error)
-            .wrap_err_with(|| format!("failed to read {label} file {}", path.display())),
+        Err(error) => {
+            Err(error).wrap_err_with(|| format!("failed to read {label} file {}", path.display()))
+        }
     }
 }
 
@@ -1440,7 +1454,6 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use tempfile::tempdir;
 
-
     #[sinex_test]
     async fn test_infra_status_capture() -> TestResult<()> {
         // This test just verifies the capture doesn't panic
@@ -1488,7 +1501,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_open_schema_apply_lock_file_surfaces_state_dir_creation_failure() -> TestResult<()> {
+    async fn test_open_schema_apply_lock_file_surfaces_state_dir_creation_failure() -> TestResult<()>
+    {
         let dir = tempdir()?;
         let blocking_file = dir.path().join("not-a-directory");
         std::fs::write(&blocking_file, "occupied")?;
@@ -1573,7 +1587,8 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
 
         let dir = tempdir()?;
-        let invalid_name = OsString::from_vec(vec![b'a', b'l', b'p', b'h', b'a', 0xff, b'.', b'r', b's']);
+        let invalid_name =
+            OsString::from_vec(vec![b'a', b'l', b'p', b'h', b'a', 0xff, b'.', b'r', b's']);
         std::fs::write(dir.path().join(invalid_name), "pub struct Alpha;")?;
 
         let error = hash_contracts_dir_from(dir.path()).unwrap_err();
@@ -1584,13 +1599,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ensure_compiled_contracts_inventory_current_accepts_matching_hash() -> TestResult<()> {
+    async fn test_ensure_compiled_contracts_inventory_current_accepts_matching_hash()
+    -> TestResult<()> {
         ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "deadbeefcafebabe")?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_ensure_compiled_contracts_inventory_current_rejects_stale_hash() -> TestResult<()> {
+    async fn test_ensure_compiled_contracts_inventory_current_rejects_stale_hash() -> TestResult<()>
+    {
         let error =
             ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "feedface00000000")
                 .unwrap_err();
@@ -1599,16 +1616,22 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ensure_compiled_contracts_inventory_current_rejects_missing_hash() -> TestResult<()> {
+    async fn test_ensure_compiled_contracts_inventory_current_rejects_missing_hash()
+    -> TestResult<()> {
         let error =
             ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "unknown").unwrap_err();
-        assert!(format!("{error:#}").contains("does not carry a compiled event payload inventory hash"));
+        assert!(
+            format!("{error:#}").contains("does not carry a compiled event payload inventory hash")
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn test_pending_cache_blockers_reports_unconverged_setup() -> TestResult<()> {
-        assert_eq!(pending_cache_blockers(false, false), Vec::<&'static str>::new());
+        assert_eq!(
+            pending_cache_blockers(false, false),
+            Vec::<&'static str>::new()
+        );
         assert_eq!(
             pending_cache_blockers(true, false),
             vec!["schema apply still pending"]
@@ -1651,7 +1674,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix() -> TestResult<()> {
+    async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix()
+    -> TestResult<()> {
         let pending = parse_schema_apply_probe_output(&std::process::Output {
             status: std::process::ExitStatus::from_raw(0),
             stdout: b"SET\n0\n".to_vec(),
@@ -1664,21 +1688,25 @@ mod tests {
 
     #[sinex_test]
     async fn test_infra_status_all_ready_requires_tls() -> TestResult<()> {
-        assert!(InfraStatus {
-            postgres: true,
-            nats: true,
-            tls: true,
-            schema_apply_pending: false,
-        }
-        .all_ready());
+        assert!(
+            InfraStatus {
+                postgres: true,
+                nats: true,
+                tls: true,
+                schema_apply_pending: false,
+            }
+            .all_ready()
+        );
 
-        assert!(!InfraStatus {
-            postgres: true,
-            nats: true,
-            tls: false,
-            schema_apply_pending: false,
-        }
-        .all_ready());
+        assert!(
+            !InfraStatus {
+                postgres: true,
+                nats: true,
+                tls: false,
+                schema_apply_pending: false,
+            }
+            .all_ready()
+        );
         Ok(())
     }
 
@@ -1695,7 +1723,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears() -> TestResult<()> {
+    async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears()
+    -> TestResult<()> {
         let error = wait_for_schema_apply_completion_with(
             std::time::Duration::from_millis(1),
             std::time::Duration::ZERO,
@@ -1781,8 +1810,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_check_required_tools_with_surfaces_missing_and_broken_tools() -> TestResult<()> {
-        let error = check_required_tools_with(&["pg_isready", "psql", "createdb"], |tool| {
-            match tool {
+        let error =
+            check_required_tools_with(&["pg_isready", "psql", "createdb"], |tool| match tool {
                 "pg_isready" => Ok(ToolInfo {
                     path: "/nix/store/pg_isready".into(),
                     version: "pg_isready 16".to_string(),
@@ -1795,9 +1824,8 @@ mod tests {
                     probe_issue: Some("Failed to run 'createdb --version'".to_string()),
                 }),
                 _ => unreachable!(),
-            }
-        })
-        .unwrap_err();
+            })
+            .unwrap_err();
 
         let message = format!("{error:#}");
         assert!(message.contains("psql"));

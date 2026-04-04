@@ -19,7 +19,10 @@ use std::process::Command;
 
 use color_eyre::eyre::eyre;
 use serde_json::{Value, json};
-use xtask::history::{HistoryDb, seed::{SeedOptions, seed_history}};
+use xtask::history::{
+    HistoryDb,
+    seed::{SeedOptions, seed_history},
+};
 use xtask::sandbox::sinex_test;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -29,17 +32,17 @@ fn scrub(json: &mut Value, path: &[&str], placeholder: Value) {
     match path {
         [] => {}
         [key] => {
-            if let Some(obj) = json.as_object_mut() {
-                if obj.contains_key(*key) {
-                    obj.insert((*key).to_string(), placeholder);
-                }
+            if let Some(obj) = json.as_object_mut()
+                && obj.contains_key(*key)
+            {
+                obj.insert((*key).to_string(), placeholder);
             }
         }
         [key, rest @ ..] => {
-            if let Some(obj) = json.as_object_mut() {
-                if let Some(nested) = obj.get_mut(*key) {
-                    scrub(nested, rest, placeholder);
-                }
+            if let Some(obj) = json.as_object_mut()
+                && let Some(nested) = obj.get_mut(*key)
+            {
+                scrub(nested, rest, placeholder);
             }
         }
     }
@@ -52,7 +55,7 @@ fn scrub_envelope(json: &mut Value) {
 }
 
 /// Some commands (history list, analytics) emit data JSON first, then the
-/// CommandResult envelope as a second value. This returns the *first* value.
+/// `CommandResult` envelope as a second value. This returns the *first* value.
 fn parse_first_json(stdout: &str) -> color_eyre::eyre::Result<Value> {
     let mut de = serde_json::Deserializer::from_str(stdout).into_iter::<Value>();
     de.next()
@@ -64,7 +67,13 @@ fn parse_first_json(stdout: &str) -> color_eyre::eyre::Result<Value> {
 fn seed_history_db(state_dir: &std::path::Path) -> color_eyre::eyre::Result<()> {
     let db_path = state_dir.join("xtask-history.db");
     let db = HistoryDb::open(&db_path)?;
-    seed_history(&db, &SeedOptions { days: 7, invocations: 20 })?;
+    seed_history(
+        &db,
+        &SeedOptions {
+            days: 7,
+            invocations: 20,
+        },
+    )?;
     Ok(())
 }
 

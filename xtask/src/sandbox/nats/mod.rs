@@ -61,7 +61,9 @@ mod tests {
         )
         .await?;
 
-        first.put("probe".to_string(), b"ok".to_vec().into()).await?;
+        first
+            .put("probe".to_string(), b"ok".to_vec().into())
+            .await?;
         assert!(
             second.entry("probe").await?.is_some(),
             "second handle should see entries written through the first"

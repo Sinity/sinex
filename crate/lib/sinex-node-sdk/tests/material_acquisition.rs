@@ -232,7 +232,8 @@ async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestCont
     let work_dir = tempfile::tempdir()?;
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
-    let dlq_subject = sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
+    let dlq_subject =
+        sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject).await?;
 
     let manager = AcquisitionManager::with_defaults(nats_client.clone(), "empty-source");
@@ -261,7 +262,9 @@ async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestCont
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
-        if let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(500), dlq_sub.next()).await {
+        if let Ok(Some(msg)) =
+            tokio::time::timeout(Duration::from_millis(500), dlq_sub.next()).await
+        {
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
             if payload["error"] == "empty_material"
                 && payload["material_id"] == material_id.to_string()
@@ -319,12 +322,11 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                     };
                     Ok::<bool, SinexError>(
                         material.status == material_status::CANCELLED
-                            &&
-                        material
-                            .metadata
-                            .get("cancelled")
-                            .and_then(sinex_primitives::JsonValue::as_bool)
-                            .unwrap_or(false),
+                            && material
+                                .metadata
+                                .get("cancelled")
+                                .and_then(sinex_primitives::JsonValue::as_bool)
+                                .unwrap_or(false),
                     )
                 }
             },
@@ -574,7 +576,9 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
                         return Ok::<bool, SinexError>(false);
                     }
                     let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id).await?;
-                    return Ok::<bool, SinexError>(ledger_bytes.unwrap_or_default() >= expected_size);
+                    return Ok::<bool, SinexError>(
+                        ledger_bytes.unwrap_or_default() >= expected_size,
+                    );
                 }
                 Ok::<bool, SinexError>(false)
             }
@@ -690,15 +694,16 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
                     .source_materials()
                     .get_by_id(Id::from_uuid(material_id))
                     .await?
-                    && material.status.as_str() == "completed" {
-                        let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id)
-                            .await
-                            .map_err(|e| SinexError::database(e.to_string()))?;
+                    && material.status.as_str() == "completed"
+                {
+                    let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id)
+                        .await
+                        .map_err(|e| SinexError::database(e.to_string()))?;
 
-                        return Ok::<bool, SinexError>(
-                            ledger_bytes.unwrap_or_default() >= expected_size,
-                        );
-                    }
+                    return Ok::<bool, SinexError>(
+                        ledger_bytes.unwrap_or_default() >= expected_size,
+                    );
+                }
                 Ok::<bool, SinexError>(false)
             }
         },

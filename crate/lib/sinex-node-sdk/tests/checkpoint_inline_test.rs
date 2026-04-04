@@ -86,7 +86,7 @@ async fn load_checkpoint_surfaces_corrupt_kv_state(
 
     let mut keys = kv.keys().await?;
     let key = keys.try_next().await?.expect("checkpoint key should exist");
-    kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+    kv.put(&key, br"{ definitely not valid json".as_slice().into())
         .await?;
 
     let error = manager
@@ -116,7 +116,7 @@ async fn checkpoint_stats_surface_corrupt_kv_state(
 
     let mut keys = kv.keys().await?;
     let key = keys.try_next().await?.expect("checkpoint key should exist");
-    kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+    kv.put(&key, br"{ definitely not valid json".as_slice().into())
         .await?;
 
     let error = manager

@@ -29,11 +29,9 @@ fn pipeline_concurrency_from_env() -> TestResult<usize> {
 }
 
 fn parse_pipeline_concurrency(raw: &str) -> TestResult<usize> {
-    let permits = raw.parse::<usize>().map_err(|error| {
-        eyre!(
-            "invalid SINEX_TEST_PIPELINE_CONCURRENCY value '{raw}': {error}"
-        )
-    })?;
+    let permits = raw
+        .parse::<usize>()
+        .map_err(|error| eyre!("invalid SINEX_TEST_PIPELINE_CONCURRENCY value '{raw}': {error}"))?;
     if permits == 0 {
         return Err(eyre!(
             "invalid SINEX_TEST_PIPELINE_CONCURRENCY value '{raw}': must be greater than zero"

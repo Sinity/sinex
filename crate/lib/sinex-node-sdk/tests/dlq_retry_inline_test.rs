@@ -100,11 +100,16 @@ async fn dlq_retry_by_id_requeues_node_sdk_entry(ctx: TestContext) -> TestResult
     event.id = Some(Id::new());
     let event_id = event.id.expect("event id").to_string();
 
-    let original_subject =
-        env.nats_raw_event_subject_with_namespace(None, event.source.as_str(), event.event_type.as_str());
+    let original_subject = env.nats_raw_event_subject_with_namespace(
+        None,
+        event.source.as_str(),
+        event.event_type.as_str(),
+    );
     let mut original_sub = client.subscribe(original_subject.clone()).await?;
 
-    publisher.publish_to_dlq(&event, "boom", "test.node").await?;
+    publisher
+        .publish_to_dlq(&event, "boom", "test.node")
+        .await?;
 
     let handler = DlqRetryHandler::new(client.clone(), env, DlqRetryConfig::default());
     handler.retry_by_id(&event_id).await?;
@@ -121,7 +126,10 @@ async fn dlq_retry_by_id_requeues_node_sdk_entry(ctx: TestContext) -> TestResult
     );
 
     let stats = handler.get_stats().await?;
-    assert_eq!(stats.total_messages, 0, "DLQ entry should be removed after requeue");
+    assert_eq!(
+        stats.total_messages, 0,
+        "DLQ entry should be removed after requeue"
+    );
 
     Ok(())
 }
@@ -181,7 +189,10 @@ async fn dlq_retry_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> TestR
     );
 
     let stats = handler.get_stats().await?;
-    assert_eq!(stats.total_messages, 0, "DLQ entry should be removed after requeue");
+    assert_eq!(
+        stats.total_messages, 0,
+        "DLQ entry should be removed after requeue"
+    );
 
     Ok(())
 }

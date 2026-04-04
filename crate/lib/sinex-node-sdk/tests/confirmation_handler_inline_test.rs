@@ -52,7 +52,10 @@ async fn test_confirmation_buffer_timeout() -> TestResult<()> {
     assert_eq!(timed_out[0], event_id);
 
     let confirmed = buffer.confirm(event_id).await;
-    assert!(confirmed.is_some(), "late confirmations should still match within grace");
+    assert!(
+        confirmed.is_some(),
+        "late confirmations should still match within grace"
+    );
     assert_eq!(buffer.len().await, 0);
     Ok(())
 }

@@ -299,9 +299,7 @@ async fn stage_as_you_go_reconciliation_ignores_unrepresentable_stale_ttl(
 }
 
 #[sinex_test]
-async fn stage_as_you_go_stream_failure_retains_reconcilable_state(
-    ctx: TestContext,
-) -> Result<()> {
+async fn stage_as_you_go_stream_failure_retains_reconcilable_state(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     AcquisitionManager::bootstrap_streams(&nats_client).await?;

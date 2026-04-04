@@ -550,12 +550,15 @@ async fn force_event_material_cleanup_with_tables(
                 }
 
                 // Hypertable cleanup via drop_chunks for events.
-                sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
+                sqlx::query(
+                    "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
+                )
                 .execute(&pool_for_chunks)
                 .await
                 .map_err(|error| eyre!("forced cleanup drop_chunks failed: {error}"))?;
 
-                (last_events, last_materials) = inspect_force_cleanup_counts(&pool_for_chunks).await?;
+                (last_events, last_materials) =
+                    inspect_force_cleanup_counts(&pool_for_chunks).await?;
                 if last_events == 0 && last_materials <= 1 {
                     break;
                 }
@@ -576,7 +579,8 @@ async fn force_event_material_cleanup_with_tables(
                 )
                 .await?;
 
-                (last_events, last_materials) = inspect_force_cleanup_counts(&pool_for_chunks).await?;
+                (last_events, last_materials) =
+                    inspect_force_cleanup_counts(&pool_for_chunks).await?;
             }
 
             if last_events != 0 || last_materials > 1 {
@@ -633,9 +637,11 @@ mod tests {
 
         let residuals = log_remaining_rows(ctx.pool()).await?;
 
-        assert!(residuals
-            .iter()
-            .any(|(table, count)| table == "raw.source_material_registry" && *count >= 2));
+        assert!(
+            residuals
+                .iter()
+                .any(|(table, count)| table == "raw.source_material_registry" && *count >= 2)
+        );
         Ok(())
     }
 
@@ -658,11 +664,13 @@ mod tests {
 
         let counts = crate::sandbox::db::common::get_row_counts(ctx.pool()).await?;
         assert_eq!(counts.get("core.events").copied().unwrap_or_default(), 0);
-        assert!(counts
-            .get("raw.source_material_registry")
-            .copied()
-            .unwrap_or_default()
-            <= 1);
+        assert!(
+            counts
+                .get("raw.source_material_registry")
+                .copied()
+                .unwrap_or_default()
+                <= 1
+        );
 
         seed_test_fixtures(ctx.pool()).await?;
         Ok(())

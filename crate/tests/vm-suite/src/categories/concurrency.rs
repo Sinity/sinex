@@ -171,7 +171,11 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     let name = "zombie reaping: orphaned jobs become terminal after SIGKILL";
 
     // Start a background job
-    let jid = if let Some(id) = xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64()) { id } else {
+    let jid = if let Some(id) =
+        xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64())
+    {
+        id
+    } else {
         runner.fail(name, "failed to start background check job");
         return;
     };
@@ -219,7 +223,11 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     let name = "PID reuse safety: cancel reads /proc/{pid}/cmdline before killing";
 
     // Start a background job and get its PID
-    let jid: u64 = if let Some(id) = xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64()) { id } else {
+    let jid: u64 = if let Some(id) =
+        xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64())
+    {
+        id
+    } else {
         runner.fail(name, "failed to start background check job");
         return;
     };

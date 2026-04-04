@@ -127,9 +127,7 @@ mod tests {
 
         let _guard = ENV_LOCK.lock().await;
         let previous = std::env::var_os("SINEX_NATS_URL");
-        unsafe {
-            std::env::set_var("SINEX_NATS_URL", OsString::from_vec(vec![0x66, 0x6f, 0x80]))
-        };
+        unsafe { std::env::set_var("SINEX_NATS_URL", OsString::from_vec(vec![0x66, 0x6f, 0x80])) };
 
         let error = resolve_nats_url().expect_err("non-unicode NATS URL should surface");
 

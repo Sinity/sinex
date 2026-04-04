@@ -108,13 +108,12 @@ async fn kill_child_if_running(child: &mut Child, label: &str, context: &str) ->
         Ok(()) => {}
         Err(error) => {
             if child_running(child, label)? {
-                return Err(
-                    eyre!(error).wrap_err(format!("failed to kill {label} {context}"))
-                );
+                return Err(eyre!(error).wrap_err(format!("failed to kill {label} {context}")));
             }
         }
     }
-    child.wait()
+    child
+        .wait()
         .await
         .with_context(|| format!("failed to wait for {label} after kill {context}"))?;
     Ok(())
@@ -232,11 +231,10 @@ impl DevOrchestrator {
         if let Some(stdout) = child.stdout.take() {
             let tag = label.to_owned();
             tokio::spawn(async move {
-                if let Err(error) =
-                    stream_reader_lines(stdout, &format!("{tag} stdout"), |line| {
-                        println!("[{tag}] {line}");
-                    })
-                    .await
+                if let Err(error) = stream_reader_lines(stdout, &format!("{tag} stdout"), |line| {
+                    println!("[{tag}] {line}");
+                })
+                .await
                 {
                     eprintln!("[run] {error}");
                 }
@@ -247,11 +245,10 @@ impl DevOrchestrator {
         if let Some(stderr) = child.stderr.take() {
             let tag = label.to_owned();
             tokio::spawn(async move {
-                if let Err(error) =
-                    stream_reader_lines(stderr, &format!("{tag} stderr"), |line| {
-                        eprintln!("[{tag}] {line}");
-                    })
-                    .await
+                if let Err(error) = stream_reader_lines(stderr, &format!("{tag} stderr"), |line| {
+                    eprintln!("[{tag}] {line}");
+                })
+                .await
                 {
                     eprintln!("[run] {error}");
                 }
@@ -499,7 +496,10 @@ mod tests {
         })
         .await?;
 
-        assert_eq!(*collected.lock(), vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(
+            *collected.lock(),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
         Ok(())
     }
 

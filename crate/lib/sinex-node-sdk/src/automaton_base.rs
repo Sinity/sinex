@@ -1,8 +1,8 @@
 //! Shared exploration-history and provenance helpers for node implementations.
 
+use crate::runtime::stream::ScanReport;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
-use crate::runtime::stream::ScanReport;
 
 // ============================================================================
 // Activity tracking types shared with node CLI exploration flows.

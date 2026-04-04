@@ -266,9 +266,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         scope_key: &str,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> impl std::future::Future<
-        Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>,
-    > + Send;
+    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send;
 
     /// Recompute a scope from its full working set after invalidation.
     ///
@@ -598,9 +596,9 @@ where
 
         match scope_keys.as_slice() {
             [] => Ok(Vec::new()),
-            [scope_key] => serialize_outputs(
-                self.0.reconcile(state, scope_key, input, context).await?,
-            ),
+            [scope_key] => {
+                serialize_outputs(self.0.reconcile(state, scope_key, input, context).await?)
+            }
             _ => Err(NodeLogicError::Processing(format!(
                 "ScopeReconcilerNode '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
                 self.0.name(),

@@ -309,9 +309,9 @@ fn format_http_failure_body<E: std::fmt::Display>(
             format!("RPC request failed with status {status}: {body}")
         }
         Ok(_) => format!("RPC request failed with status {status}"),
-        Err(error) => format!(
-            "RPC request failed with status {status}: <failed to read error body: {error}>"
-        ),
+        Err(error) => {
+            format!("RPC request failed with status {status}: <failed to read error body: {error}>")
+        }
     }
 }
 
@@ -580,8 +580,8 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn test_format_http_failure_body_includes_non_empty_body(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_format_http_failure_body_includes_non_empty_body()
+    -> ::xtask::sandbox::TestResult<()> {
         let message = format_http_failure_body(
             reqwest::StatusCode::BAD_REQUEST,
             Ok::<String, &str>("bad request details".to_string()),
@@ -594,12 +594,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_format_http_failure_body_surfaces_body_read_failures(
-    ) -> ::xtask::sandbox::TestResult<()> {
-        let message = format_http_failure_body(
-            reqwest::StatusCode::BAD_GATEWAY,
-            Err("boom"),
-        );
+    async fn test_format_http_failure_body_surfaces_body_read_failures()
+    -> ::xtask::sandbox::TestResult<()> {
+        let message = format_http_failure_body(reqwest::StatusCode::BAD_GATEWAY, Err("boom"));
         assert!(message.contains("RPC request failed with status 502 Bad Gateway"));
         assert!(message.contains("failed to read error body"));
         assert!(message.contains("boom"));
@@ -634,8 +631,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_shadow_create_params_include_from_sequence()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_shadow_create_params_include_from_sequence() -> ::xtask::sandbox::TestResult<()> {
         let config = TetherConfig {
             target: "prod".to_string(),
             gateway_url: "https://localhost:9999".to_string(),
@@ -653,7 +649,10 @@ mod tests {
         let client = TetherClient::new(config)?;
 
         let params = client.shadow_create_params("dev-testuser-20260329T094800");
-        assert_eq!(params["consumer_name"], serde_json::json!("dev-testuser-20260329T094800"));
+        assert_eq!(
+            params["consumer_name"],
+            serde_json::json!("dev-testuser-20260329T094800")
+        );
         assert_eq!(params["subject_filter"], serde_json::json!("events.>"));
         assert_eq!(params["from_beginning"], serde_json::json!(false));
         assert_eq!(params["from_sequence"], serde_json::json!(42));
@@ -661,12 +660,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_invalid_gateway_certs_only_allowed_for_loopback(
-    ) -> ::xtask::sandbox::TestResult<()> {
-        assert!(should_accept_invalid_gateway_certs("https://localhost:9999"));
-        assert!(should_accept_invalid_gateway_certs("https://127.0.0.1:9999"));
+    async fn test_invalid_gateway_certs_only_allowed_for_loopback()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert!(should_accept_invalid_gateway_certs(
+            "https://localhost:9999"
+        ));
+        assert!(should_accept_invalid_gateway_certs(
+            "https://127.0.0.1:9999"
+        ));
         assert!(should_accept_invalid_gateway_certs("https://[::1]:9999"));
-        assert!(!should_accept_invalid_gateway_certs("https://gateway.prod.sinex.io:9999"));
+        assert!(!should_accept_invalid_gateway_certs(
+            "https://gateway.prod.sinex.io:9999"
+        ));
         assert!(!should_accept_invalid_gateway_certs("not-a-url"));
         Ok(())
     }

@@ -213,9 +213,7 @@ impl<'a> TestRunner<'a> {
             let exit_code = exit_status
                 .code()
                 .map_or_else(|| "signal".to_string(), |code| code.to_string());
-            bail!(
-                "nextest exited with status {exit_code} without recording failed tests"
-            );
+            bail!("nextest exited with status {exit_code} without recording failed tests");
         }
 
         Ok(stats)

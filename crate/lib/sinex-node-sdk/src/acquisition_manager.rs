@@ -4,8 +4,8 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
-use crate::runtime::stream::NodeHandles;
 use crate::error_helpers::env_nonempty_string_optional;
+use crate::runtime::stream::NodeHandles;
 use crate::{NodeResult, SinexError};
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
@@ -443,19 +443,19 @@ impl AcquisitionManager {
         };
 
         if pending.offset != handle.bytes_written || pending.slice_index != handle.slice_count {
-            return Err(
-                SinexError::invalid_state(
-                    "pending published slice is inconsistent with local acquisition progress",
-                )
-                .with_context("material_id", handle.material_id.to_string())
-                .with_context("pending_offset", pending.offset.to_string())
-                .with_context("pending_slice_index", pending.slice_index.to_string())
-                .with_context("bytes_written", handle.bytes_written.to_string())
-                .with_context("slice_count", handle.slice_count.to_string()),
-            );
+            return Err(SinexError::invalid_state(
+                "pending published slice is inconsistent with local acquisition progress",
+            )
+            .with_context("material_id", handle.material_id.to_string())
+            .with_context("pending_offset", pending.offset.to_string())
+            .with_context("pending_slice_index", pending.slice_index.to_string())
+            .with_context("bytes_written", handle.bytes_written.to_string())
+            .with_context("slice_count", handle.slice_count.to_string()));
         }
 
-        if let Err(error) = Self::mirror_slice_to_local_stage(handle, &pending.data, pending.offset).await {
+        if let Err(error) =
+            Self::mirror_slice_to_local_stage(handle, &pending.data, pending.offset).await
+        {
             handle.pending_published_slice = Some(pending);
             return Err(error);
         }
@@ -486,14 +486,12 @@ impl AcquisitionManager {
                 slice_index,
                 data: data.to_vec(),
             });
-            return Err(
-                error
-                    .with_context("pending_local_mirror", "true")
-                    .with_context(
-                        "recovery",
-                        "retry the acquisition operation before finalizing",
-                    ),
-            );
+            return Err(error
+                .with_context("pending_local_mirror", "true")
+                .with_context(
+                    "recovery",
+                    "retry the acquisition operation before finalizing",
+                ));
         }
 
         debug!(
@@ -843,8 +841,10 @@ mod tests {
     #[sinex_test]
     async fn concurrent_stream_bootstrap_waits_for_completion(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let manager =
-            Arc::new(AcquisitionManager::with_defaults(ctx.nats_client(), "bootstrap-test"));
+        let manager = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "bootstrap-test",
+        ));
         let attempts = Arc::new(AtomicUsize::new(0));
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -939,7 +939,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext) -> TestResult<()> {
+    async fn oversized_slice_rejection_does_not_mutate_local_stage(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
         let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
@@ -963,7 +965,11 @@ mod tests {
         );
 
         let metadata = tokio::fs::metadata(handle.temp_path()).await?;
-        assert_eq!(metadata.len(), 0, "oversized rejection must not stage bytes locally");
+        assert_eq!(
+            metadata.len(),
+            0,
+            "oversized rejection must not stage bytes locally"
+        );
         Ok(())
     }
 }

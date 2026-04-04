@@ -30,9 +30,7 @@ struct RawMessage {
 
 impl RawMessage {
     fn require_name(name: Option<String>, msg_kind: &'static str) -> Result<String> {
-        name.ok_or_else(|| {
-            eyre!("nextest {msg_kind} message is missing required field 'name'")
-        })
+        name.ok_or_else(|| eyre!("nextest {msg_kind} message is missing required field 'name'"))
     }
 
     fn require_test_count(test_count: Option<usize>) -> Result<usize> {
@@ -319,12 +317,8 @@ impl TestReporter {
                             self.pb.inc(1);
                             // Show slow tests (>5s) even in normal mode
                             if duration > 5.0 {
-                                let msg = format!(
-                                    "  {} {} ({:.1}s)",
-                                    Emoji("⚡", "~"),
-                                    t.name,
-                                    duration
-                                );
+                                let msg =
+                                    format!("  {} {} ({:.1}s)", Emoji("⚡", "~"), t.name, duration);
                                 self.emit_line(&msg);
                             }
                         }

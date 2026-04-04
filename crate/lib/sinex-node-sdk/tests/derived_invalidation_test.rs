@@ -22,8 +22,8 @@ use sinex_node_sdk::{
 use sinex_primitives::domain::{
     EventSource, EventType, HostName, InvalidationAction, ProcessingMode, TriggerKind,
 };
-use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::testing::event_stub;
@@ -1038,7 +1038,11 @@ async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
     .with_scope_keys(vec![scope_key.to_string()]);
 
     let outputs = adapter.process_invalidation(&invalidation).await?;
-    assert_eq!(outputs.len(), 1, "scope should recompute a single aggregate");
+    assert_eq!(
+        outputs.len(),
+        1,
+        "scope should recompute a single aggregate"
+    );
 
     match &outputs[0].provenance {
         Provenance::Synthesis {

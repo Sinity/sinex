@@ -88,10 +88,10 @@ pub mod jetstream_consumer;
 pub mod nats_publisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub mod node_cli;
-pub mod processing;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
+pub mod processing;
 #[cfg(feature = "messaging")]
 pub mod runtime;
 #[cfg(feature = "messaging")]
@@ -127,7 +127,15 @@ pub use confirmation_handler::{
 #[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 #[cfg(feature = "messaging")]
+pub use derived_node::{
+    DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,
+    DerivedTriggerContext, INVALIDATION_SUBJECT, ScopeReconcilerNode, ScopeReconcilerNodeAdapter,
+    TransducerNode, TransducerNodeAdapter, WindowedNode, WindowedNodeAdapter,
+};
+#[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
+#[cfg(feature = "messaging")]
+pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 #[cfg(feature = "messaging")]
 pub use exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
@@ -137,23 +145,14 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
-pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
-#[cfg(feature = "messaging")]
-pub use derived_node::{
-    DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,
-    DerivedTriggerContext, INVALIDATION_SUBJECT, ScopeReconcilerNode, ScopeReconcilerNodeAdapter,
-    TransducerNode, TransducerNodeAdapter, WindowedNode, WindowedNodeAdapter,
-};
-#[cfg(feature = "messaging")]
-pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
-#[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
+#[cfg(feature = "messaging")]
+pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 #[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
-pub use node_cli::{
-    NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon,
-};
+pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
+pub use processing::{ErrorAction, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{
     Checkpoint, EventSender, EventStream, MaterialReplayContext, Node, NodeCapabilities,
@@ -164,21 +163,19 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
-pub use processing::{ErrorAction, NodeLogicError};
-#[cfg(feature = "messaging")]
-pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
-pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use shutdown::wait_for_shutdown_signal;
+pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use sqlite_source::stage_material;
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
-    SqliteHistoryWarningDisposition,
-    SqliteTableCheckError,
-    ensure_sqlite_with_tables, import_sqlite_history_lenient, import_sqlite_history_strict,
-    max_row_id_for_query, read_rows_after, read_rows_with_params,
+    SqliteHistoryWarningDisposition, SqliteTableCheckError, ensure_sqlite_with_tables,
+    import_sqlite_history_lenient, import_sqlite_history_strict, max_row_id_for_query,
+    read_rows_after, read_rows_with_params,
 };
+#[cfg(feature = "messaging")]
+pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
