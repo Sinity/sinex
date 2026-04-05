@@ -90,9 +90,7 @@ fn record_activity_timestamp(
     now
 }
 
-fn activity_elapsed(
-    activity_tracker: &Arc<Mutex<std::time::Instant>>,
-) -> std::time::Duration {
+fn activity_elapsed(activity_tracker: &Arc<Mutex<std::time::Instant>>) -> std::time::Duration {
     let last_activity = activity_tracker.lock();
     last_activity.elapsed()
 }
@@ -179,12 +177,12 @@ impl DbusWatcher {
             Ok(Err(error)) => error
                 .with_context("task_index", index.to_string())
                 .with_operation("dbus_start_streaming"),
-            Err(error) => sinex_node_sdk::SinexError::processing(
-                "D-Bus monitoring task panicked".to_string(),
-            )
-            .with_source(error.to_string())
-            .with_context("task_index", index.to_string())
-            .with_operation("dbus_start_streaming"),
+            Err(error) => {
+                sinex_node_sdk::SinexError::processing("D-Bus monitoring task panicked".to_string())
+                    .with_source(error.to_string())
+                    .with_context("task_index", index.to_string())
+                    .with_operation("dbus_start_streaming")
+            }
         }
     }
 
@@ -958,8 +956,7 @@ impl DbusWatcher {
             .get(5)
             .ok_or_else(|| {
                 sinex_node_sdk::SinexError::validation(
-                    "notification D-Bus arguments are missing required field 'actions'"
-                        .to_string(),
+                    "notification D-Bus arguments are missing required field 'actions'".to_string(),
                 )
             })?
             .as_array()
@@ -970,11 +967,14 @@ impl DbusWatcher {
             })?
             .iter()
             .map(|value| {
-                value.as_str().map(std::string::ToString::to_string).ok_or_else(|| {
-                    sinex_node_sdk::SinexError::validation(
-                        "notification actions must contain only strings".to_string(),
-                    )
-                })
+                value
+                    .as_str()
+                    .map(std::string::ToString::to_string)
+                    .ok_or_else(|| {
+                        sinex_node_sdk::SinexError::validation(
+                            "notification actions must contain only strings".to_string(),
+                        )
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -1287,7 +1287,11 @@ mod tests {
     async fn require_message_field_rejects_missing_values() -> TestResult<()> {
         let error = DbusWatcher::require_message_field(None, "interface")
             .expect_err("missing required fields should fail honestly");
-        assert!(error.to_string().contains("missing required field 'interface'"));
+        assert!(
+            error
+                .to_string()
+                .contains("missing required field 'interface'")
+        );
         Ok(())
     }
 
@@ -1295,7 +1299,11 @@ mod tests {
     async fn require_message_field_rejects_empty_values() -> TestResult<()> {
         let error = DbusWatcher::require_message_field(Some("  ".to_string()), "member")
             .expect_err("empty required fields should fail honestly");
-        assert!(error.to_string().contains("field 'member' must not be empty"));
+        assert!(
+            error
+                .to_string()
+                .contains("field 'member' must not be empty")
+        );
         Ok(())
     }
 
@@ -1359,7 +1367,11 @@ mod tests {
             Timestamp::now(),
         )
         .expect_err("invalid playback statuses should fail honestly");
-        assert!(error.to_string().contains("PlaybackStatus has invalid value"));
+        assert!(
+            error
+                .to_string()
+                .contains("PlaybackStatus has invalid value")
+        );
         Ok(())
     }
 
@@ -1391,9 +1403,7 @@ mod tests {
     async fn monitoring_task_exit_error_rejects_normal_completion() -> TestResult<()> {
         let error = DbusWatcher::monitoring_task_exit_error(2, Ok(Ok(())));
         assert!(
-            error
-                .to_string()
-                .contains("completed unexpectedly"),
+            error.to_string().contains("completed unexpectedly"),
             "normal completion must not be treated as success"
         );
         assert!(error.to_string().contains("task_index"));
@@ -1415,13 +1425,14 @@ mod tests {
 
     #[sinex_test]
     async fn monitoring_task_exit_error_rejects_panics() -> TestResult<()> {
-        let join_error = tokio::spawn(async { panic!("dbus watcher panic"); })
-            .await
-            .expect_err("panicing task must produce join error");
+        let join_error = tokio::spawn(async {
+            panic!("dbus watcher panic");
+        })
+        .await
+        .expect_err("panicing task must produce join error");
         let error = DbusWatcher::monitoring_task_exit_error(0, Err(join_error));
         assert!(error.to_string().contains("panicked"));
         assert!(error.to_string().contains("task_index"));
         Ok(())
     }
-
 }

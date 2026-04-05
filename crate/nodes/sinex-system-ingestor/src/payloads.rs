@@ -17,8 +17,13 @@ fn optional_utf8_env(var: &'static str) -> Option<String> {
 
 fn default_journal_cursor_path() -> String {
     optional_utf8_env("SINEX_JOURNAL_CURSOR_FILE")
-        .or_else(|| optional_utf8_env("SINEX_STATE_DIR").map(|state_dir| format!("{state_dir}/journal.cursor")))
-        .or_else(|| optional_utf8_env("XDG_STATE_HOME").map(|d| format!("{d}/sinex/journal.cursor")))
+        .or_else(|| {
+            optional_utf8_env("SINEX_STATE_DIR")
+                .map(|state_dir| format!("{state_dir}/journal.cursor"))
+        })
+        .or_else(|| {
+            optional_utf8_env("XDG_STATE_HOME").map(|d| format!("{d}/sinex/journal.cursor"))
+        })
         .unwrap_or_else(|| "/var/lib/sinex/journal.cursor".to_string())
 }
 
@@ -458,10 +463,8 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::{EnvGuard, sinex_test};
 
-
     #[sinex_test]
-    async fn default_journal_cursor_path_prefers_explicit_env()
-    -> xtask::sandbox::TestResult<()> {
+    async fn default_journal_cursor_path_prefers_explicit_env() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_JOURNAL_CURSOR_FILE", "/tmp/custom.cursor");
         env.set("SINEX_STATE_DIR", "/tmp/state");
@@ -502,7 +505,10 @@ mod tests {
         env.set("SINEX_STATE_DIR", OsString::from_vec(vec![0xff]));
         env.clear("XDG_STATE_HOME");
 
-        assert_eq!(default_journal_cursor_path(), "/var/lib/sinex/journal.cursor");
+        assert_eq!(
+            default_journal_cursor_path(),
+            "/var/lib/sinex/journal.cursor"
+        );
         Ok(())
     }
 }
