@@ -123,7 +123,10 @@ impl<'a> SchemaManagementRepository<'a> {
         for candidate in candidates {
             let key = candidate.key();
             if let Some(record) = existing.get(&key) {
-                if record.content_hash.as_ref().is_some_and(|hash| hash == &candidate.content_hash)
+                if record
+                    .content_hash
+                    .as_ref()
+                    .is_some_and(|hash| hash == &candidate.content_hash)
                     && record.is_active
                 {
                     unchanged += 1;

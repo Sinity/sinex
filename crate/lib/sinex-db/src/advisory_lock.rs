@@ -24,7 +24,10 @@ impl std::fmt::Debug for AdvisoryLock {
 }
 
 impl AdvisoryLock {
-    fn guard_from_connection(lock_id: i64, connection: PoolConnection<Postgres>) -> ResourceGuard<Self> {
+    fn guard_from_connection(
+        lock_id: i64,
+        connection: PoolConnection<Postgres>,
+    ) -> ResourceGuard<Self> {
         let lock = AdvisoryLock {
             lock_id,
             connection: Some(connection),
@@ -32,12 +35,8 @@ impl AdvisoryLock {
 
         let cleanup = |mut lock: AdvisoryLock| async move {
             if let Some(mut connection) = lock.connection.take()
-                && let Err(error) = unlock_or_close_connection(
-                    &mut connection,
-                    lock.lock_id,
-                    "guard cleanup",
-                )
-                .await
+                && let Err(error) =
+                    unlock_or_close_connection(&mut connection, lock.lock_id, "guard cleanup").await
             {
                 tracing::warn!(
                     lock_id = lock.lock_id,

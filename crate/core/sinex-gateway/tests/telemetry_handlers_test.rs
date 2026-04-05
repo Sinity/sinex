@@ -31,10 +31,7 @@ async fn insert_event(
             None => builder.build()?,
         }
     };
-    ctx.pool()
-        .events()
-        .insert(event)
-        .await?;
+    ctx.pool().events().insert(event).await?;
     Ok(())
 }
 
@@ -61,13 +58,19 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     .await?;
     insert_event(
         &ctx,
-        "terminal.zsh",
-        "shell.command",
+        "shell.atuin",
+        "command.executed",
         json!({
-            "command": "cargo test",
-            "shell": "zsh",
+            "command_string": "cargo test",
+            "cwd": "/tmp",
             "exit_code": 0,
-            "duration_ms": 123.0,
+            "duration_ns": 123_000_000u64,
+            "atuin_history_id": "hist-1",
+            "atuin_session_id": "sess-1",
+            "timestamp": 1_775_263_628_752_798_659i64,
+            "ts_start_orig": "2026-04-04T00:47:08.752798659Z",
+            "ts_end_orig": "2026-04-04T00:47:08.875798659Z",
+            "hostname": "sinnix-prime",
         }),
         None,
     )
@@ -110,15 +113,13 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 
-    let window_focus: TelemetryWindowFocusResponse = serde_json::from_value(
-        handle_telemetry_window_focus(ctx.pool(), params.clone()).await?,
-    )?;
+    let window_focus: TelemetryWindowFocusResponse =
+        serde_json::from_value(handle_telemetry_window_focus(ctx.pool(), params.clone()).await?)?;
     let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
         handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
     )?;
-    let file_activity: TelemetryFileActivityResponse = serde_json::from_value(
-        handle_telemetry_file_activity(ctx.pool(), params.clone()).await?,
-    )?;
+    let file_activity: TelemetryFileActivityResponse =
+        serde_json::from_value(handle_telemetry_file_activity(ctx.pool(), params.clone()).await?)?;
     let recent_activity: TelemetryRecentActivityResponse = serde_json::from_value(
         handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 10 })).await?,
     )?;
@@ -138,7 +139,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     assert_eq!(command_frequency.entries.len(), 1);
     let command = &command_frequency.entries[0];
     assert_eq!(command.command, "cargo test");
-    assert_eq!(command.shell.as_deref(), Some("zsh"));
+    assert_eq!(command.shell.as_deref(), Some("atuin"));
     assert_eq!(command.total_executions, 1);
     assert_eq!(command.successful_executions, 1);
     assert_eq!(command.failed_executions, 0);
@@ -159,19 +160,15 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
                 && entry.context.as_deref() == Some("code")
                 && entry.detail.as_deref() == Some("foot"))
     );
-    assert!(
-        recent_activity
-            .entries
-            .iter()
-            .any(|entry| entry.activity_type == "system_load"
-                && entry.context.as_deref() == Some("cpu"))
-    );
+    assert!(recent_activity.entries.iter().any(
+        |entry| entry.activity_type == "system_load" && entry.context.as_deref() == Some("cpu")
+    ));
     assert!(
         recent_activity
             .entries
             .iter()
             .any(|entry| entry.activity_type == "command_execution"
-                && entry.context.as_deref() == Some("zsh")
+                && entry.context.as_deref() == Some("atuin")
                 && entry.detail.as_deref() == Some("cargo test"))
     );
 
@@ -209,11 +206,10 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
     .await?;
     insert_event(
         &ctx,
-        "terminal.zsh",
-        "shell.command",
+        "shell.history.zsh",
+        "command.executed",
         json!({
             "command": "git status",
-            "shell": "zsh",
             "exit_code": 0,
             "duration_ms": 15.0,
         }),
@@ -262,29 +258,32 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
         "limit": 10
     });
 
-    let window_focus: TelemetryWindowFocusResponse = serde_json::from_value(
-        handle_telemetry_window_focus(ctx.pool(), params.clone()).await?,
-    )?;
+    let window_focus: TelemetryWindowFocusResponse =
+        serde_json::from_value(handle_telemetry_window_focus(ctx.pool(), params.clone()).await?)?;
     let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
         handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
     )?;
-    let file_activity: TelemetryFileActivityResponse = serde_json::from_value(
-        handle_telemetry_file_activity(ctx.pool(), params.clone()).await?,
-    )?;
-    let system_state: TelemetrySystemStateResponse = serde_json::from_value(
-        handle_telemetry_system_state(ctx.pool(), params).await?,
-    )?;
+    let file_activity: TelemetryFileActivityResponse =
+        serde_json::from_value(handle_telemetry_file_activity(ctx.pool(), params.clone()).await?)?;
+    let system_state: TelemetrySystemStateResponse =
+        serde_json::from_value(handle_telemetry_system_state(ctx.pool(), params).await?)?;
 
     assert_eq!(window_focus.buckets.len(), 1);
     assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("retro"));
-    assert_eq!(window_focus.buckets[0].window_class.as_deref(), Some("kitty"));
+    assert_eq!(
+        window_focus.buckets[0].window_class.as_deref(),
+        Some("kitty")
+    );
 
     assert_eq!(command_frequency.entries.len(), 1);
     assert_eq!(command_frequency.entries[0].command, "git status");
     assert_eq!(command_frequency.entries[0].total_executions, 1);
 
     assert_eq!(file_activity.entries.len(), 1);
-    assert_eq!(file_activity.entries[0].directory.as_deref(), Some("/tmp/imported"));
+    assert_eq!(
+        file_activity.entries[0].directory.as_deref(),
+        Some("/tmp/imported")
+    );
     assert_eq!(file_activity.entries[0].event_type, "file.modified");
 
     assert_eq!(system_state.buckets.len(), 1);
@@ -299,7 +298,11 @@ async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> Test
     let error = handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 0 }))
         .await
         .expect_err("non-positive telemetry limits must be rejected");
-    assert!(error.to_string().contains("telemetry limit must be positive"));
+    assert!(
+        error
+            .to_string()
+            .contains("telemetry limit must be positive")
+    );
     Ok(())
 }
 
@@ -346,7 +349,9 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
 
     let response: TelemetryIngestdValidationResponse =
         serde_json::from_value(handle_telemetry_ingestd_validation(ctx.pool(), json!({})).await?)?;
-    let snapshot = response.snapshot.expect("expected latest validation snapshot");
+    let snapshot = response
+        .snapshot
+        .expect("expected latest validation snapshot");
     assert_eq!(snapshot.batch_size, 8);
     assert_eq!(snapshot.fetch_to_ack_ms, 42);
     assert_eq!(snapshot.events_deferred, 1);

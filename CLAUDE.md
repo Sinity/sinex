@@ -1,7 +1,7 @@
 # Sinex Agent Memory
 
 > Personal event-driven capture platform. Rust, NATS JetStream, PostgreSQL (TimescaleDB + pgvector).
-> 163K lines, 22 crates, zero production events. Pre-release software for a single AuDHD user.
+> 163K lines, 22 crates, no trusted production dataset yet. Pre-release software for a single AuDHD user.
 
 ---
 

@@ -48,6 +48,38 @@ impl EventRepository<'_> {
             .collect()
     }
 
+    /// Get material-root events by source and time range.
+    #[instrument(skip(self), fields(source = %source.as_str()))]
+    pub async fn get_material_root_events_in_range(
+        &self,
+        source: &EventSource,
+        start: Timestamp,
+        end: Timestamp,
+        pagination: Pagination,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        let (limit, offset) = pagination.as_tuple();
+
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
+             AND source_event_ids IS NULL ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
+        ))
+        .bind(source.as_str())
+        .bind(start)
+        .bind(end)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| db_error(e, "get material-root events by source and time range"))?;
+
+        records
+            .into_iter()
+            .map(super::events::conversions::EventRecordExt::try_to_event)
+            .collect()
+    }
+
     /// Count events by source and time range
     #[instrument(skip(self), fields(source = %source.as_str()))]
     pub async fn count_by_source_and_time_range(

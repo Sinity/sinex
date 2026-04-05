@@ -10,6 +10,7 @@ use crate::service_container::ServiceContainer;
 use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::error::SinexError;
+use sinex_primitives::rpc::methods;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -355,23 +356,22 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_coordination_list_instances, handle_create_entities, handle_create_note,
         handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
         handle_events_ingest, handle_events_lineage, handle_events_query,
-        handle_gitops_create_source,
-        handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
-        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
-        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
+        handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
+        handle_gitops_trigger_sync, handle_lifecycle_archive, handle_lifecycle_restore,
+        handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_health,
+        handle_nodes_list, handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
         handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_replay_approve_operation,
-        handle_replay_cancel_operation, handle_replay_create_operation,
-        handle_replay_execute_operation, handle_replay_list_operations,
-        handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
-        handle_system_health, handle_telemetry_command_frequency, handle_telemetry_file_activity,
+        handle_system_health, handle_system_ping, handle_system_version,
+        handle_telemetry_command_frequency, handle_telemetry_file_activity,
         handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
-        handle_telemetry_system_state,
-        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
-        handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
-        handle_tombstone_status,
+        handle_telemetry_system_state, handle_telemetry_window_focus,
+        handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
+        handle_tombstone_list, handle_tombstone_preview, handle_tombstone_status,
     };
 
     RpcRegistry::new()
@@ -379,7 +379,21 @@ pub(crate) fn build_registry() -> RpcRegistry {
         // ReadOnly methods (all authenticated users can access)
         // ─────────────────────────────────────────────────────────────
         .register(
-            "system.health",
+            methods::SYSTEM_PING,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move { handle_system_ping(services, params).await })
+            },
+        )
+        .register(
+            methods::SYSTEM_VERSION,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move { handle_system_version(services, params).await })
+            },
+        )
+        .register(
+            methods::SYSTEM_HEALTH,
             Role::ReadOnly,
             |params, services, _auth| {
                 Box::pin(async move { handle_system_health(services, params).await })
@@ -511,9 +525,13 @@ pub(crate) fn build_registry() -> RpcRegistry {
             },
         )
         // Content methods (Write)
-        .register("content.store_blob", Role::Write, |params, services, auth| {
-            Box::pin(async move { handle_store_blob(services, params, auth).await })
-        })
+        .register(
+            "content.store_blob",
+            Role::Write,
+            |params, services, auth| {
+                Box::pin(async move { handle_store_blob(services, params, auth).await })
+            },
+        )
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,
@@ -550,6 +568,11 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "replay.approve_operation",
             Role::Admin,
             boxed!(handle_replay_approve_operation, 3),
+        )
+        .replay_rpc(
+            "replay.submit_operation",
+            Role::Admin,
+            boxed!(handle_replay_submit_operation, 3),
         )
         .replay_rpc(
             "replay.execute_operation",

@@ -200,11 +200,13 @@ impl UdevWatcher {
         let mut properties = std::collections::HashMap::new();
         let uevent_path = std::path::Path::new(device_path).join("uevent");
 
-        let content = tokio::fs::read_to_string(&uevent_path).await.map_err(|error| {
-            sinex_node_sdk::SinexError::processing("Failed to read uevent properties")
-                .with_context("uevent_path", uevent_path.display().to_string())
-                .with_source(error)
-        })?;
+        let content = tokio::fs::read_to_string(&uevent_path)
+            .await
+            .map_err(|error| {
+                sinex_node_sdk::SinexError::processing("Failed to read uevent properties")
+                    .with_context("uevent_path", uevent_path.display().to_string())
+                    .with_source(error)
+            })?;
 
         for line in content.lines() {
             if let Some((key, value)) = line.split_once('=') {
@@ -385,8 +387,7 @@ mod tests {
     use crate::{WatcherMaterialContext, material_context::MaterialContext};
     use async_trait::async_trait;
     use notify::{
-        Event as NotifyEvent,
-        EventKind,
+        Event as NotifyEvent, EventKind,
         event::{CreateKind, ModifyKind},
     };
     use serde_json::json;
@@ -456,7 +457,10 @@ mod tests {
             UdevWatcher::get_device_properties(device_dir.to_str().expect("utf-8 temp path"))
                 .await?;
 
-        assert_eq!(properties.get("DEVNAME").map(String::as_str), Some("/dev/test0"));
+        assert_eq!(
+            properties.get("DEVNAME").map(String::as_str),
+            Some("/dev/test0")
+        );
         assert_eq!(properties.get("SUBSYSTEM").map(String::as_str), Some("net"));
         std::fs::remove_dir_all(&device_dir)?;
         Ok(())
@@ -475,7 +479,11 @@ mod tests {
                 .await
                 .expect_err("missing uevent file must fail honestly");
 
-        assert!(error.to_string().contains("Failed to read uevent properties"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read uevent properties")
+        );
         assert!(error.to_string().contains("uevent"));
         std::fs::remove_dir_all(&device_dir)?;
         Ok(())
@@ -511,22 +519,8 @@ mod tests {
         let material = test_material();
         let (tx, _rx) = mpsc::channel(1);
         let invalid_path = PathBuf::from(OsString::from_vec(vec![
-            b'/',
-            b's',
-            b'y',
-            b's',
-            b'/',
-            b'c',
-            b'l',
-            b'a',
-            b's',
-            b's',
-            b'/',
-            b'n',
-            b'e',
-            b't',
-            b'/',
-            0xff,
+            b'/', b's', b'y', b's', b'/', b'c', b'l', b'a', b's', b's', b'/', b'n', b'e', b't',
+            b'/', 0xff,
         ]));
 
         let error = watcher
@@ -538,9 +532,11 @@ mod tests {
             .await
             .expect_err("non-utf8 udev paths must fail honestly");
 
-        assert!(error
-            .to_string()
-            .contains("udev watcher received non-utf8 device path"));
+        assert!(
+            error
+                .to_string()
+                .contains("udev watcher received non-utf8 device path")
+        );
         Ok(())
     }
 
@@ -554,16 +550,21 @@ mod tests {
 
         let error = watcher
             .handle_inotify_event(
-                notify_event(EventKind::Create(CreateKind::Any), PathBuf::from("/ttyUSB0")),
+                notify_event(
+                    EventKind::Create(CreateKind::Any),
+                    PathBuf::from("/ttyUSB0"),
+                ),
                 &tx,
                 &material,
             )
             .await
             .expect_err("root-level device paths must fail honestly");
 
-        assert!(error
-            .to_string()
-            .contains("udev watcher path has invalid class directory name"));
+        assert!(
+            error
+                .to_string()
+                .contains("udev watcher path has invalid class directory name")
+        );
         Ok(())
     }
 }

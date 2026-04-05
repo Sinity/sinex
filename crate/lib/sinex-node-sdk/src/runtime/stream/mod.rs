@@ -1212,11 +1212,12 @@ impl<T: Node + 'static> NodeRunner<T> {
             .to_string();
 
         // Initialize checkpoint manager with KV
-        let checkpoint_manager = Arc::new(CheckpointManager::new(
+        let checkpoint_manager = Arc::new(CheckpointManager::with_missing_checkpoint_warning(
             kv_store,
             service_name.clone(),
             consumer_group,
             consumer_name.clone(),
+            matches!(self.node.node_type(), NodeType::Automaton),
         ));
 
         // NATS is the only transport
@@ -2115,6 +2116,8 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
     async fn run_ingestor_startup_sequence(&mut self) -> NodeResult<()> {
+        let preexisting_checkpoint = self.node.current_checkpoint().await?;
+
         // Phase 1: Snapshot (if supported)
         if self.node.capabilities().supports_snapshot {
             info!("Phase 1: Taking initial snapshot");
@@ -2131,15 +2134,13 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         // Phase 2: Gap-filling (if supported and needed)
         if self.node.capabilities().supports_historical {
-            let current_checkpoint = self.node.current_checkpoint().await?;
-
-            // Only gap-fill if we have a previous checkpoint
-            if !matches!(current_checkpoint, Checkpoint::None) {
+            // Only gap-fill from a checkpoint that existed before startup began.
+            if !matches!(preexisting_checkpoint, Checkpoint::None) {
                 info!("Phase 2: Gap-filling from last checkpoint");
                 let gap_fill_report = self
                     .node
                     .scan(
-                        current_checkpoint,
+                        preexisting_checkpoint.clone(),
                         TimeHorizon::Historical {
                             end_time: sinex_primitives::temporal::Timestamp::now(),
                         },
@@ -2196,14 +2197,14 @@ impl<T: Node + 'static> NodeRunner<T> {
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
 
-            // Acquire leadership if running in LeaderStandby mode
-            if self.processing_model == ProcessingModel::LeaderStandby
-                && !self.acquire_leader_standby().await?
-            {
-                return Ok(());
-            }
-
+            // A standby automaton is still a healthy, ready service. Satisfy
+            // the systemd notify contract before waiting on lease handoff or
+            // expiry so host activation does not fail on a legitimate standby.
             systemd_notify::notify_ready("sinex-node");
+
+            if self.processing_model == ProcessingModel::LeaderStandby {
+                self.acquire_leader_standby().await?;
+            }
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self
@@ -2246,8 +2247,10 @@ impl<T: Node + 'static> NodeRunner<T> {
     }
 
     /// Acquire leadership for `LeaderStandby` processing model.
-    /// Returns `true` if this instance is the leader and should proceed.
-    async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
+    ///
+    /// If another instance currently holds the lease, remain in standby and
+    /// retry until the lease is handed off or expires.
+    async fn acquire_leader_standby(&mut self) -> NodeResult<()> {
         let rs = self
             .runtime_state()
             .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
@@ -2265,17 +2268,31 @@ impl<T: Node + 'static> NodeRunner<T> {
             let js = async_nats::jetstream::new(nc);
             let kv_client =
                 sinex_primitives::coordination::CoordinationKvClient::new(js, service.clone());
+            let heartbeat_interval = kv_client.heartbeat_interval();
+            let mut announced_standby = false;
 
-            let is_leader = kv_client
-                .acquire_leadership(&instance_id)
-                .await
-                .map_err(|e| {
-                    SinexError::processing(format!("Failed to acquire leadership: {e}"))
-                })?;
+            loop {
+                let is_leader = kv_client
+                    .acquire_leadership(&instance_id)
+                    .await
+                    .map_err(|e| {
+                        SinexError::processing(format!("Failed to acquire leadership: {e}"))
+                    })?;
 
-            if !is_leader {
-                info!("Not leader, skipping processing");
-                return Ok(false);
+                if is_leader {
+                    break;
+                }
+
+                if !announced_standby {
+                    info!(
+                        service = %service,
+                        heartbeat_interval_ms = heartbeat_interval.as_millis(),
+                        "Not leader; entering standby and waiting for lease handoff or expiry"
+                    );
+                    announced_standby = true;
+                }
+
+                tokio::time::sleep(heartbeat_interval).await;
             }
 
             info!("Confirmed as leader, proceeding with processing");
@@ -2284,7 +2301,6 @@ impl<T: Node + 'static> NodeRunner<T> {
             // leader/standby timing matches the main coordination runtime.
             let kv_clone = kv_client.clone();
             let instance_id_clone = instance_id.clone();
-            let heartbeat_interval = kv_client.heartbeat_interval();
             let (heartbeat_shutdown, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
             let heartbeat_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(heartbeat_interval);
@@ -2317,7 +2333,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
         }
 
-        Ok(true)
+        Ok(())
     }
 
     #[cfg(feature = "messaging")]
@@ -3034,6 +3050,35 @@ mod tests {
     #[derive(Default)]
     struct FailingBatchNode;
 
+    #[derive(Debug, Clone, PartialEq)]
+    struct RecordedScan {
+        from: Checkpoint,
+        until: &'static str,
+    }
+
+    struct StartupSequenceTestNode {
+        checkpoint: std::sync::Arc<tokio::sync::Mutex<Checkpoint>>,
+        scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
+        snapshot_checkpoint: Checkpoint,
+        capabilities: NodeCapabilities,
+    }
+
+    impl StartupSequenceTestNode {
+        fn new(initial_checkpoint: Checkpoint, snapshot_checkpoint: Checkpoint) -> Self {
+            Self {
+                checkpoint: std::sync::Arc::new(tokio::sync::Mutex::new(initial_checkpoint)),
+                scans: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
+                snapshot_checkpoint,
+                capabilities: NodeCapabilities {
+                    supports_continuous: false,
+                    supports_historical: true,
+                    supports_snapshot: true,
+                    ..NodeCapabilities::default()
+                },
+            }
+        }
+    }
+
     impl Node for RuntimeTestNode {
         type Config = ();
 
@@ -3156,6 +3201,61 @@ mod tests {
             _events: Vec<Event<JsonValue>>,
         ) -> NodeResult<ProcessingStats> {
             Err(SinexError::processing("batch processing boom"))
+        }
+    }
+
+    impl Node for StartupSequenceTestNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            from: Checkpoint,
+            until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            let phase = match until {
+                TimeHorizon::Snapshot => {
+                    *self.checkpoint.lock().await = self.snapshot_checkpoint.clone();
+                    "snapshot"
+                }
+                TimeHorizon::Historical { .. } => "historical",
+                TimeHorizon::Continuous => "continuous",
+            };
+            self.scans
+                .lock()
+                .await
+                .push(RecordedScan { from, until: phase });
+
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &str {
+            "startup-sequence-test-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Ingestor
+        }
+
+        fn capabilities(&self) -> NodeCapabilities {
+            self.capabilities.clone()
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(self.checkpoint.lock().await.clone())
         }
     }
 
@@ -3371,6 +3471,56 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
+    ) -> TestResult<()> {
+        let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+        let node = StartupSequenceTestNode::new(Checkpoint::None, snapshot_checkpoint);
+        let scans = node.scans.clone();
+        let mut runner = NodeRunner::new(node);
+
+        runner.run_ingestor_startup_sequence().await?;
+
+        let recorded = scans.lock().await.clone();
+        assert_eq!(
+            recorded,
+            vec![RecordedScan {
+                from: Checkpoint::None,
+                until: "snapshot",
+            }]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint() -> TestResult<()> {
+        let preexisting_checkpoint =
+            Checkpoint::timestamp(Timestamp::now() - time::Duration::minutes(15), None);
+        let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+        let node =
+            StartupSequenceTestNode::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
+        let scans = node.scans.clone();
+        let mut runner = NodeRunner::new(node);
+
+        runner.run_ingestor_startup_sequence().await?;
+
+        let recorded = scans.lock().await.clone();
+        assert_eq!(
+            recorded,
+            vec![
+                RecordedScan {
+                    from: Checkpoint::None,
+                    until: "snapshot",
+                },
+                RecordedScan {
+                    from: preexisting_checkpoint,
+                    until: "historical",
+                },
+            ]
+        );
+        Ok(())
+    }
+
     #[cfg(feature = "messaging")]
     #[sinex_test]
     async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() -> TestResult<()>
@@ -3537,6 +3687,69 @@ mod tests {
         ));
         rx.changed().await?;
         assert!(*rx.borrow());
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn acquire_leader_standby_waits_for_existing_leader_release(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let transport =
+            EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+        let mut runner = NodeRunner::new(RuntimeTestNode);
+        runner
+            .initialize_with_transport(
+                "runtime-standby-test".to_string(),
+                HashMap::new(),
+                Some(ctx.pool().clone()),
+                transport,
+                std::env::temp_dir(),
+                false,
+            )
+            .await?;
+
+        let runtime = runner
+            .runtime_state()
+            .ok_or_else(|| color_eyre::eyre::eyre!("runtime state missing after init"))?;
+        let nats_client = runtime
+            .nats_client()
+            .ok_or_else(|| color_eyre::eyre::eyre!("nats client missing after init"))?;
+        let js = async_nats::jetstream::new(nats_client.clone());
+        let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
+            js,
+            runtime.service_info().service_name().to_string(),
+        );
+
+        kv_client.acquire_leadership("existing-leader").await?;
+
+        let runner = Arc::new(tokio::sync::Mutex::new(runner));
+        let acquired = Arc::new(AtomicBool::new(false));
+        let runner_task = runner.clone();
+        let acquired_task = acquired.clone();
+
+        let wait_handle = tokio::spawn(async move {
+            let mut guard = runner_task.lock().await;
+            guard.acquire_leader_standby().await?;
+            acquired_task.store(true, Ordering::SeqCst);
+            Ok::<(), SinexError>(())
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !acquired.load(Ordering::SeqCst),
+            "standby runner should wait while another instance holds leadership"
+        );
+
+        kv_client.release_leadership("existing-leader").await?;
+        let _ = tokio::time::timeout(Duration::from_secs(6), wait_handle).await??;
+        assert!(
+            acquired.load(Ordering::SeqCst),
+            "runner should acquire leadership after the prior leader releases it"
+        );
+
+        runner.lock().await.shutdown_leader_state().await?;
         Ok(())
     }
 

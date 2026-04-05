@@ -10,8 +10,8 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{
     DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SyntheticTemporalPolicy,
 };
-use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
+use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
 use xtask::sandbox::sinex_test;
 
 fn stream_batch_material_row(
@@ -135,8 +135,11 @@ async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> Test
         RecordedPath::from_observed("/tmp/node-run-integrity.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None))
-        .with_node_run_id(Uuid::now_v7());
+    let event = Event::new(
+        payload,
+        Provenance::from_material(material_id, 0, None, None),
+    )
+    .with_node_run_id(Uuid::now_v7());
 
     let error = ctx
         .pool
@@ -236,7 +239,11 @@ async fn lifecycle_id_queries_order_same_timestamp_rows_by_id(ctx: TestContext) 
         .insert_stream_batch(&[higher_row, lower_row])
         .await?;
 
-    let live_ids = ctx.pool().events().get_live_event_ids(Some(&source), None, 10).await?;
+    let live_ids = ctx
+        .pool()
+        .events()
+        .get_live_event_ids(Some(&source), None, 10)
+        .await?;
     assert_eq!(live_ids, vec![lower_id, higher_id]);
 
     let archive_operation_id = Uuid::now_v7().to_string();
@@ -285,29 +292,91 @@ async fn delete_by_source_archives_events(ctx: TestContext) -> TestResult<()> {
     let inserted_id = inserted.id.expect("inserted event must have an id");
 
     let deleted = ctx.pool.events().delete_by_source(&source).await?;
-    assert_eq!(deleted, 1, "delete_by_source should delete the matching event");
+    assert_eq!(
+        deleted, 1,
+        "delete_by_source should delete the matching event"
+    );
 
-    let live_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
-    )
-    .bind(inserted_id.to_uuid())
-    .fetch_one(ctx.pool())
-    .await?;
-    assert_eq!(live_count.0, 0, "deleted event should not remain in core.events");
+    let live_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(inserted_id.to_uuid())
+            .fetch_one(ctx.pool())
+            .await?;
+    assert_eq!(
+        live_count.0, 0,
+        "deleted event should not remain in core.events"
+    );
 
-    let archived_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
-    )
-    .bind(inserted_id.to_uuid())
-    .fetch_one(ctx.pool())
-    .await?;
-    assert_eq!(archived_count.0, 1, "deleted event should be archived by the trigger");
+    let archived_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid")
+            .bind(inserted_id.to_uuid())
+            .fetch_one(ctx.pool())
+            .await?;
+    assert_eq!(
+        archived_count.0, 1,
+        "deleted event should be archived by the trigger"
+    );
 
     Ok(())
 }
 
 #[sinex_test]
-async fn stream_batch_insert_rejects_self_referential_synthesis_rows(ctx: TestContext) -> TestResult<()> {
+async fn get_material_root_events_in_range_excludes_synthesis_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("material-root-range-filter"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let source = EventSource::new("test.repo.range.filter")?;
+    let start = Timestamp::now() - time::Duration::seconds(1);
+
+    let material_event = DynamicPayload::new(
+        source.as_str(),
+        "test.repo.range.material",
+        json!({ "kind": "material" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted_material = ctx.pool.events().insert(material_event).await?;
+    let material_event_id = inserted_material.id.expect("material event must have an id");
+
+    let derived_event = DynamicPayload::new(
+        source.as_str(),
+        "test.repo.range.derived",
+        json!({ "kind": "derived" }),
+    )
+    .from_parents(vec![material_event_id])?
+    .build()?;
+    ctx.pool.events().insert(derived_event).await?;
+
+    let end = Timestamp::now() + time::Duration::seconds(1);
+    let stored = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range(&source, start, end, Pagination::new(Some(10), None))
+        .await?;
+
+    assert_eq!(stored.len(), 1, "only material-provenance rows should be returned");
+    assert_eq!(stored[0].event_type.as_str(), "test.repo.range.material");
+    assert!(
+        matches!(stored[0].provenance(), Provenance::Material { .. }),
+        "material-root query must not return synthesis rows"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
     let _ = ctx;
     let event_id = Uuid::now_v7();
     let batch = vec![StreamBatchRow {
@@ -419,7 +488,6 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
     );
     Ok(())
 }
-
 
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
@@ -955,9 +1023,13 @@ async fn batch_insert_rejects_cross_chunk_intra_batch_synthesis_cycles(
     first.id = Some(first_id);
     events.push(first);
 
-    let mut second = DynamicPayload::new(source.clone(), event_type.clone(), json!({ "cycle": "second" }))
-        .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
-        .build()?;
+    let mut second = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "second" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
+    .build()?;
     second.id = Some(second_id);
     events.push(second);
 

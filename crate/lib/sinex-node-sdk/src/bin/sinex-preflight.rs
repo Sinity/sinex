@@ -19,6 +19,13 @@ use sinex_node_sdk::preflight::{
     VerificationStatus, configuration, database, resources, services, verification,
 };
 
+fn exit_code_for_status(status: VerificationStatus) -> i32 {
+    match status {
+        VerificationStatus::Pass | VerificationStatus::Warning => 0,
+        VerificationStatus::Fail => 1,
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "sinex-preflight")]
 #[command(about = "Sinex Pre-Flight Verification System")]
@@ -149,13 +156,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     match result {
         Ok(status) => {
-            if matches!(status, VerificationStatus::Pass) {
-                info!("✓ Pre-flight verification PASSED");
-                std::process::exit(0);
-            } else {
-                error!("✗ Pre-flight verification FAILED");
-                std::process::exit(1);
+            match status {
+                VerificationStatus::Pass => info!("✓ Pre-flight verification PASSED"),
+                VerificationStatus::Warning => {
+                    info!("⚠ Pre-flight verification completed with warnings")
+                }
+                VerificationStatus::Fail => error!("✗ Pre-flight verification FAILED"),
             }
+            std::process::exit(exit_code_for_status(status));
         }
         Err(e) => {
             error!("Pre-flight verification error: {}", e);
@@ -554,4 +562,25 @@ async fn generate_verification_report(
     }
 
     Ok(overall_status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exit_code_for_status;
+    use sinex_node_sdk::preflight::VerificationStatus;
+
+    #[test]
+    fn pass_status_exits_successfully() {
+        assert_eq!(exit_code_for_status(VerificationStatus::Pass), 0);
+    }
+
+    #[test]
+    fn warning_status_exits_successfully() {
+        assert_eq!(exit_code_for_status(VerificationStatus::Warning), 0);
+    }
+
+    #[test]
+    fn fail_status_exits_with_error() {
+        assert_eq!(exit_code_for_status(VerificationStatus::Fail), 1);
+    }
 }

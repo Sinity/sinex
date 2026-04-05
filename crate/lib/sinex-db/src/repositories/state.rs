@@ -246,7 +246,9 @@ impl StateRepository<'_> {
             .enumerate()
             .all(|(index, ch)| match index {
                 0 => ch.is_ascii_lowercase(),
-                _ => ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-'),
+                _ => {
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-')
+                }
             });
 
         if is_valid {
@@ -603,8 +605,7 @@ impl StateRepository<'_> {
                 AVG(duration_ms) as "avg_duration_ms?"
             FROM core.operations_log
             WHERE ($1::timestamptz IS NULL OR uuid_extract_timestamp(id) >= $1)
-            "#
-            ,
+            "#,
             since.map(|timestamp| *timestamp)
         )
         .fetch_one(self.pool)
@@ -723,7 +724,9 @@ impl StateRepository<'_> {
                     .ok_or_else(|| SinexError::database("operation disappeared after cancel"));
             }
             "tombstone" => {
-                return self.cancel_tombstone_operation(&id.to_string(), Some(reason)).await;
+                return self
+                    .cancel_tombstone_operation(&id.to_string(), Some(reason))
+                    .await;
             }
             _ => {}
         }
@@ -1287,13 +1290,14 @@ impl StateRepository<'_> {
         let stale_after = node_heartbeat_stale_after()?;
 
         // Check database connectivity
-        let (db_connected, db_connect_error) = match sqlx::query!("SELECT 1 as one")
-            .fetch_one(self.pool)
-            .await
-        {
-            Ok(_) => (true, None),
-            Err(error) => (false, Some(db_error(error, "check database connectivity").to_string())),
-        };
+        let (db_connected, db_connect_error) =
+            match sqlx::query!("SELECT 1 as one").fetch_one(self.pool).await {
+                Ok(_) => (true, None),
+                Err(error) => (
+                    false,
+                    Some(db_error(error, "check database connectivity").to_string()),
+                ),
+            };
 
         // Check extensions
         let (timescaledb_version, timescaledb_error) =
@@ -1308,7 +1312,8 @@ impl StateRepository<'_> {
             probe_health_bool(self.table_exists("core", "events").await);
 
         // Get node health
-        let (node_health, node_health_error) = probe_health(self.get_node_health(stale_after).await);
+        let (node_health, node_health_error) =
+            probe_health(self.get_node_health(stale_after).await);
 
         Ok(SystemHealthReport {
             db_connected,
@@ -1421,7 +1426,8 @@ mod tests {
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
-    async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()> {
+    async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "bogus");
 
@@ -1450,16 +1456,14 @@ mod tests {
 
     #[sinex_test]
     async fn probe_health_preserves_error_text() -> xtask::sandbox::TestResult<()> {
-        let (_value, error) =
-            probe_health::<()>(Err(SinexError::configuration("probe failed")));
+        let (_value, error) = probe_health::<()>(Err(SinexError::configuration("probe failed")));
         assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
         Ok(())
     }
 
     #[sinex_test]
     async fn probe_health_bool_preserves_error_text() -> xtask::sandbox::TestResult<()> {
-        let (value, error) =
-            probe_health_bool(Err(SinexError::configuration("probe failed")));
+        let (value, error) = probe_health_bool(Err(SinexError::configuration("probe failed")));
         assert!(!value);
         assert_eq!(error.as_deref(), Some("Configuration error: probe failed"));
         Ok(())
@@ -1522,7 +1526,10 @@ impl StateRepository<'_> {
     ) -> Option<JsonValue> {
         let mut preview_summary = preview_summary?;
         if let Some(object) = preview_summary.as_object_mut() {
-            object.insert("message".to_string(), JsonValue::String(message.to_string()));
+            object.insert(
+                "message".to_string(),
+                JsonValue::String(message.to_string()),
+            );
         }
         Some(preview_summary)
     }
@@ -1736,7 +1743,8 @@ impl StateRepository<'_> {
         state: Option<TombstoneOperationState>,
         limit: i64,
     ) -> DbResult<Vec<OperationRecord>> {
-        let phase = state.map(|state| serde_json::to_value(state))
+        let phase = state
+            .map(|state| serde_json::to_value(state))
             .transpose()?
             .and_then(|value| value.as_str().map(str::to_string));
 

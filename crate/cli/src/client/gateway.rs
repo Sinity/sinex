@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
     JsonRpcError,
-    ingest::{EventIngestRequest, EventIngestResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -21,6 +20,7 @@ use sinex_primitives::rpc::{
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
     },
+    ingest::{EventIngestRequest, EventIngestResponse},
     lifecycle::{
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
@@ -38,23 +38,23 @@ use sinex_primitives::rpc::{
         ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
         ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
         ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
+        ReplaySubmitRequest, ReplaySubmitResponse,
     },
     system::{SystemHealthRequest, SystemHealthResponse},
     telemetry::{
-        CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot,
-        RecentActivityEntry, SystemStateBucket, TelemetryCommandFrequencyRequest,
-        TelemetryCommandFrequencyResponse, TelemetryFileActivityRequest,
-        TelemetryFileActivityResponse, TelemetryIngestdValidationRequest,
-        TelemetryIngestdValidationResponse, TelemetryRecentActivityRequest,
-        TelemetryRecentActivityResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
-        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
-        WindowFocusBucket,
+        CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot, RecentActivityEntry,
+        SystemStateBucket, TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
+        TelemetryFileActivityRequest, TelemetryFileActivityResponse,
+        TelemetryIngestdValidationRequest, TelemetryIngestdValidationResponse,
+        TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
+        TelemetrySystemStateRequest, TelemetrySystemStateResponse, TelemetryTimeRange,
+        TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, WindowFocusBucket,
     },
 };
 use sinex_primitives::temporal::Timestamp;
 
 use crate::Result;
-use crate::auth::{load_client_cert, load_root_ca, load_token};
+use crate::auth::load_token;
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
 use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
@@ -174,36 +174,26 @@ impl GatewayClient {
         // Build HTTP client
         let mut client_builder = ClientBuilder::new()
             .user_agent("sinexctl/1.0")
-            .timeout(Duration::from_secs(config.timeout));
+            .timeout(Duration::from_secs(config.timeout))
+            .use_rustls_tls();
 
         // Configure TLS
         if let Some(ca_path) = &config.ca_cert {
-            let root_store = load_root_ca(Path::new(ca_path))?;
-            let tls_config = rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
-            client_builder = client_builder.use_preconfigured_tls(tls_config);
+            let certs = reqwest::Certificate::from_pem_bundle(&std::fs::read(Path::new(ca_path))?)?;
+            for cert in certs {
+                client_builder = client_builder.add_root_certificate(cert);
+            }
         }
 
         // Configure mTLS client certificate
         if let (Some(cert_path), Some(key_path)) = (&config.client_cert, &config.client_key) {
-            let (certs, key) = load_client_cert(Path::new(cert_path), Path::new(key_path))?;
-            let mut root_store = rustls::RootCertStore::empty();
-
-            // Add system roots if no custom CA specified
-            if config.ca_cert.is_none() {
-                let native_certs = rustls_native_certs::load_native_certs();
-                for cert in native_certs.certs {
-                    if let Err(error) = root_store.add(cert) {
-                        tracing::debug!(error = %error, "Skipped invalid system root certificate");
-                    }
-                }
+            let mut identity_pem = std::fs::read(Path::new(cert_path))?;
+            if !identity_pem.ends_with(b"\n") {
+                identity_pem.push(b'\n');
             }
-
-            let tls_config = rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_client_auth_cert(certs, key)?;
-            client_builder = client_builder.use_preconfigured_tls(tls_config);
+            identity_pem.extend(std::fs::read(Path::new(key_path))?);
+            let identity = reqwest::Identity::from_pem(&identity_pem)?;
+            client_builder = client_builder.identity(identity);
         }
 
         // Dev mode: accept invalid certs
@@ -425,14 +415,14 @@ impl GatewayClient {
 
     /// Ping the gateway
     pub async fn ping(&self) -> Result<String> {
-        let result = self.call_rpc("ping", json!({})).await?;
-        Self::expect_string_result("ping", result)
+        let result = self.call_rpc(methods::SYSTEM_PING, json!({})).await?;
+        Self::expect_string_result(methods::SYSTEM_PING, result)
     }
 
     /// Get gateway version
     pub async fn version(&self) -> Result<String> {
-        let result = self.call_rpc("version", json!({})).await?;
-        Self::expect_string_result("version", result)
+        let result = self.call_rpc(methods::SYSTEM_VERSION, json!({})).await?;
+        Self::expect_string_result(methods::SYSTEM_VERSION, result)
     }
 
     /// Publish a single event through the gateway's events.ingest RPC endpoint.
@@ -601,12 +591,9 @@ impl GatewayClient {
         match self.replay_status(operation_id).await?.state {
             ReplayState::Planning => {
                 self.replay_preview(operation_id).await?;
-                self.replay_approve(operation_id).await?;
             }
-            ReplayState::Previewed => {
-                self.replay_approve(operation_id).await?;
-            }
-            ReplayState::Approved => {}
+            ReplayState::Previewed => {}
+            ReplayState::Approved => return self.replay_execute(operation_id).await,
             ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => {
                 return Err(color_eyre::eyre::eyre!(
                     "Replay operation {operation_id} is already in progress"
@@ -619,7 +606,17 @@ impl GatewayClient {
             }
         }
 
-        self.replay_execute(operation_id).await
+        let req = ReplaySubmitRequest {
+            operation_id: operation_id.to_string(),
+        };
+        let result = self
+            .call_rpc(
+                methods::REPLAY_SUBMIT_OPERATION,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ReplaySubmitResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     /// Get replay operation status
@@ -1041,10 +1038,7 @@ impl GatewayClient {
             limit,
         };
         let result = self
-            .call_rpc(
-                methods::TELEMETRY_WINDOW_FOCUS,
-                serde_json::to_value(&req)?,
-            )
+            .call_rpc(methods::TELEMETRY_WINDOW_FOCUS, serde_json::to_value(&req)?)
             .await?;
         let response: TelemetryWindowFocusResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
@@ -1120,10 +1114,7 @@ impl GatewayClient {
             limit,
         };
         let result = self
-            .call_rpc(
-                methods::TELEMETRY_SYSTEM_STATE,
-                serde_json::to_value(&req)?,
-            )
+            .call_rpc(methods::TELEMETRY_SYSTEM_STATE, serde_json::to_value(&req)?)
             .await?;
         let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
@@ -1211,12 +1202,9 @@ mod tests {
     #[sinex_test]
     async fn test_build_replay_time_window_defaults_since_from_until() -> TestResult<()> {
         let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
-        let window = GatewayClient::build_replay_time_window(
-            None,
-            Some("2025-01-10T08:30:00Z"),
-            now,
-        )?
-        .expect("window");
+        let window =
+            GatewayClient::build_replay_time_window(None, Some("2025-01-10T08:30:00Z"), now)?
+                .expect("window");
 
         assert_eq!(window.0.format_rfc3339(), "2025-01-09T08:30:00Z");
         assert_eq!(window.1.format_rfc3339(), "2025-01-10T08:30:00Z");

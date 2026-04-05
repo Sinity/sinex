@@ -7,8 +7,8 @@
 use crate::common::{
     ActivityEntry, Checkpoint, ConfigAccessor, CoverageAnalysis, Deserialize, HashMap,
     IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport,
-    Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument,
-    parse_config_value, parse_typed_config, warn,
+    Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument, parse_config_value,
+    parse_typed_config, warn,
 };
 
 use crate::{
@@ -22,20 +22,17 @@ use crate::{
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_node_sdk::{
-    EventTransport,
+    EventTransport, SqliteHistoryImportError, SqliteHistoryRowOutcome,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     import_sqlite_history_strict,
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
-    stage_material,
-    wait_for_shutdown_signal,
-    SqliteHistoryImportError, SqliteHistoryRowOutcome,
+    stage_material, wait_for_shutdown_signal,
     watcher_handle::WatcherHandle,
 };
 use sinex_primitives::{
-    HostName, Seconds, Timestamp, Uuid,
-    env as shared_env,
+    HostName, Seconds, Timestamp, Uuid, env as shared_env,
     events::{
         payload::PayloadExt,
         payloads::{
@@ -67,9 +64,7 @@ pub struct DesktopConfig {
     pub activitywatch_db_path: Option<Utf8PathBuf>,
 }
 
-fn default_activitywatch_db_path_from(
-    data_dir: Option<std::path::PathBuf>,
-) -> Option<Utf8PathBuf> {
+fn default_activitywatch_db_path_from(data_dir: Option<std::path::PathBuf>) -> Option<Utf8PathBuf> {
     let data_dir = data_dir?;
     match Utf8PathBuf::from_path_buf(data_dir.clone()) {
         Ok(data_dir) => Some(data_dir.join("activitywatch/aw-server-rust/sqlite.db")),
@@ -313,20 +308,16 @@ impl DesktopNode {
                     }
                     Ok(Some(row_id))
                 }
-                Some(other) => Err(
-                    SinexError::validation(
-                        "desktop ActivityWatch checkpoint row id must be an integer",
-                    )
-                    .with_context("activitywatch_row_id", other.to_string()),
-                ),
+                Some(other) => Err(SinexError::validation(
+                    "desktop ActivityWatch checkpoint row id must be an integer",
+                )
+                .with_context("activitywatch_row_id", other.to_string())),
                 None => Ok(None),
             },
-            _ => Err(
-                SinexError::checkpoint(
-                    "desktop ActivityWatch history requires an external checkpoint",
-                )
-                .with_context("checkpoint", checkpoint.description()),
-            ),
+            _ => Err(SinexError::checkpoint(
+                "desktop ActivityWatch history requires an external checkpoint",
+            )
+            .with_context("checkpoint", checkpoint.description())),
         }
     }
 
@@ -334,10 +325,27 @@ impl DesktopNode {
         state: &DesktopPersistentState,
         from: &Checkpoint,
     ) -> NodeResult<i64> {
-        Ok(
-            Self::checkpoint_activitywatch_row_id(from)?
-                .unwrap_or(state.activitywatch_last_row_id),
-        )
+        Ok(Self::checkpoint_activitywatch_row_id(from)?.unwrap_or(state.activitywatch_last_row_id))
+    }
+
+    fn historical_activitywatch_start_row_for_scan(
+        state: &DesktopPersistentState,
+        from: &Checkpoint,
+        replaying: bool,
+    ) -> NodeResult<i64> {
+        match Self::historical_activitywatch_start_row(state, from) {
+            Ok(row_id) => Ok(row_id),
+            Err(error) if !replaying && !matches!(from, Checkpoint::External { .. }) => {
+                warn!(
+                    checkpoint = ?from,
+                    fallback_row_id = state.activitywatch_last_row_id,
+                    error = %error,
+                    "Desktop historical scan received a non-ActivityWatch checkpoint during normal startup; falling back to persisted ActivityWatch row state"
+                );
+                Ok(state.activitywatch_last_row_id)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn activitywatch_runtime_handles(
@@ -355,29 +363,25 @@ impl DesktopNode {
     }
 
     fn redact_window_title(value: &str) -> NodeResult<String> {
-        Ok(
-            privacy::process(value, ProcessingContext::WindowTitle)
-                .map_err(|error| {
-                    SinexError::configuration("failed to initialize privacy engine".to_string())
-                        .with_context("component", "desktop_window_title_redaction")
-                        .with_std_error(error)
-                })?
-                .text
-                .into_owned(),
-        )
+        Ok(privacy::process(value, ProcessingContext::WindowTitle)
+            .map_err(|error| {
+                SinexError::configuration("failed to initialize privacy engine".to_string())
+                    .with_context("component", "desktop_window_title_redaction")
+                    .with_std_error(error)
+            })?
+            .text
+            .into_owned())
     }
 
     fn redact_document(value: &str) -> NodeResult<String> {
-        Ok(
-            privacy::process(value, ProcessingContext::Document)
-                .map_err(|error| {
-                    SinexError::configuration("failed to initialize privacy engine".to_string())
-                        .with_context("component", "desktop_document_redaction")
-                        .with_std_error(error)
-                })?
-                .text
-                .into_owned(),
-        )
+        Ok(privacy::process(value, ProcessingContext::Document)
+            .map_err(|error| {
+                SinexError::configuration("failed to initialize privacy engine".to_string())
+                    .with_context("component", "desktop_document_redaction")
+                    .with_std_error(error)
+            })?
+            .text
+            .into_owned())
     }
 
     fn require_activitywatch_string_field(
@@ -720,10 +724,8 @@ impl IngestorNode for DesktopNode {
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
-        let acquisition = Arc::new(runtime.acquisition_manager(
-            RotationPolicy::default(),
-            "desktop",
-        )?);
+        let acquisition =
+            Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "desktop")?);
         let stage_context = StageAsYouGoContext::from_runtime(runtime)
             .with_acquisition_manager(Arc::clone(&acquisition))
             .with_default_reconciliation();
@@ -803,7 +805,8 @@ impl IngestorNode for DesktopNode {
             ))
         })?;
 
-        let start_row_id = Self::historical_activitywatch_start_row(state, &from)?;
+        let start_row_id =
+            Self::historical_activitywatch_start_row_for_scan(state, &from, args.replay.is_some())?;
         let mut first_ts = None;
         let mut last_ts = None;
         let node = &*self;
@@ -1021,21 +1024,16 @@ impl IngestorNode for DesktopNode {
         .iter()
         .filter(|&&enabled| enabled)
         .count() as u64;
-        let connected_sources = [
-            self.clipboard_connected(),
-            self.window_manager_connected(),
-        ]
-        .iter()
-        .filter(|&&active| active)
-        .count() as u64;
+        let connected_sources = [self.clipboard_connected(), self.window_manager_connected()]
+            .iter()
+            .filter(|&&active| active)
+            .count() as u64;
         let healthy = active_sources > 0 && connected_sources == active_sources;
         let is_connected = active_sources > 0 && connected_sources > 0;
-        let clipboard_error =
-            Self::live_watcher_error(self.clipboard_watcher.as_ref())
-                .or_else(|| state.health.clipboard_last_error.clone());
-        let window_manager_error =
-            Self::live_watcher_error(self.window_manager_watcher.as_ref())
-                .or_else(|| state.health.window_manager_last_error.clone());
+        let clipboard_error = Self::live_watcher_error(self.clipboard_watcher.as_ref())
+            .or_else(|| state.health.clipboard_last_error.clone());
+        let window_manager_error = Self::live_watcher_error(self.window_manager_watcher.as_ref())
+            .or_else(|| state.health.window_manager_last_error.clone());
         let mut metadata = HashMap::new();
         metadata.insert("enabled_sources".to_string(), json!(active_sources));
         metadata.insert("connected_sources".to_string(), json!(connected_sources));
@@ -1057,9 +1055,7 @@ impl IngestorNode for DesktopNode {
                 "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
             )
         } else {
-            format!(
-                "Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)"
-            )
+            format!("Desktop Source ({connected_sources}/{active_sources} watcher(s) connected)")
         };
 
         Ok(SourceState {
@@ -1097,14 +1093,15 @@ impl IngestorNode for DesktopNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-    use serde_json::json;
     use std::time::Duration;
-    use xtask::sandbox::{EnvGuard, node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test};
-
+    use xtask::sandbox::{
+        EnvGuard, node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test,
+    };
 
     fn sample_activitywatch_entry(
         kind: ActivityWatchEntryKind,
@@ -1147,7 +1144,9 @@ mod tests {
 
         assert_eq!(
             config.activitywatch_db_path,
-            Some(Utf8PathBuf::from("/tmp/xdg-data/activitywatch/aw-server-rust/sqlite.db"))
+            Some(Utf8PathBuf::from(
+                "/tmp/xdg-data/activitywatch/aw-server-rust/sqlite.db"
+            ))
         );
         Ok(())
     }
@@ -1156,9 +1155,8 @@ mod tests {
     #[sinex_test]
     async fn desktop_default_activitywatch_db_path_rejects_non_utf8_data_dir()
     -> xtask::sandbox::TestResult<()> {
-        let invalid_dir = std::path::PathBuf::from(OsString::from_vec(vec![
-            b'/', b't', b'm', b'p', b'/', 0xff,
-        ]));
+        let invalid_dir =
+            std::path::PathBuf::from(OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff]));
 
         assert_eq!(default_activitywatch_db_path_from(Some(invalid_dir)), None);
         Ok(())
@@ -1212,7 +1210,11 @@ mod tests {
 
         let error = DesktopNode::historical_activitywatch_start_row(&state, &checkpoint)
             .expect_err("negative ActivityWatch checkpoint row ids must fail honestly");
-        assert!(error.to_string().contains("invalid negative activitywatch_row_id"));
+        assert!(
+            error
+                .to_string()
+                .contains("invalid negative activitywatch_row_id")
+        );
         Ok(())
     }
 
@@ -1248,6 +1250,41 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("requires an external checkpoint"));
         assert!(message.contains("timestamp"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_for_normal_scan_falls_back_to_state()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+
+        assert_eq!(
+            DesktopNode::historical_activitywatch_start_row_for_scan(&state, &checkpoint, false)?,
+            42
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_historical_start_row_for_replay_keeps_external_checkpoint_requirement()
+    -> xtask::sandbox::TestResult<()> {
+        let state = DesktopPersistentState {
+            activitywatch_last_row_id: 42,
+            ..DesktopPersistentState::default()
+        };
+        let checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+
+        let error = DesktopNode::historical_activitywatch_start_row_for_scan(
+            &state,
+            &checkpoint,
+            true,
+        )
+        .expect_err("replay scans must still require an external ActivityWatch checkpoint");
+        assert!(error.to_string().contains("requires an external checkpoint"));
         Ok(())
     }
 
@@ -1400,8 +1437,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn desktop_source_state_surfaces_live_watcher_errors()
-    -> xtask::sandbox::TestResult<()> {
+    async fn desktop_source_state_surfaces_live_watcher_errors() -> xtask::sandbox::TestResult<()> {
         let mut node = DesktopNode::new();
         let handle = WatcherHandle::initialized("clipboard");
         handle.record_error("clipboard watcher crashed".to_string());
@@ -1465,7 +1501,8 @@ mod tests {
         config.window_manager_enabled = false;
         config.activitywatch_db_path = None;
         let mut state = DesktopPersistentState::default();
-        node.initialize(config, &runtime.runtime, &mut state).await?;
+        node.initialize(config, &runtime.runtime, &mut state)
+            .await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
@@ -1480,7 +1517,10 @@ mod tests {
 
         let report = task.await??;
         assert!(
-            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("shutdown channel dropped")),
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
         );
@@ -1502,7 +1542,8 @@ mod tests {
         config.window_manager_enabled = false;
         config.activitywatch_db_path = None;
         let mut state = DesktopPersistentState::default();
-        node.initialize(config, &runtime.runtime, &mut state).await?;
+        node.initialize(config, &runtime.runtime, &mut state)
+            .await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let _ = shutdown_tx.send(true);
@@ -1537,7 +1578,8 @@ mod tests {
         config.window_manager_enabled = false;
         config.activitywatch_db_path = None;
         let mut state = DesktopPersistentState::default();
-        node.initialize(config, &runtime.runtime, &mut state).await?;
+        node.initialize(config, &runtime.runtime, &mut state)
+            .await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
@@ -1563,10 +1605,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_window_event_rejects_missing_app_field()
-    -> xtask::sandbox::TestResult<()> {
-        let entry =
-            sample_activitywatch_entry(ActivityWatchEntryKind::Window, json!({ "title": "main.rs" }))?;
+    async fn activitywatch_window_event_rejects_missing_app_field() -> xtask::sandbox::TestResult<()>
+    {
+        let entry = sample_activitywatch_entry(
+            ActivityWatchEntryKind::Window,
+            json!({ "title": "main.rs" }),
+        )?;
 
         let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
             .expect_err("missing ActivityWatch app should fail honestly");
@@ -1590,8 +1634,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_web_event_rejects_non_string_url_field()
-    -> xtask::sandbox::TestResult<()> {
+    async fn activitywatch_web_event_rejects_non_string_url_field() -> xtask::sandbox::TestResult<()>
+    {
         let entry = sample_activitywatch_entry(
             ActivityWatchEntryKind::Web,
             json!({ "app": "Firefox", "title": "Docs", "url": 42 }),
@@ -1605,8 +1649,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_web_event_keeps_nonempty_redacted_url()
-    -> xtask::sandbox::TestResult<()> {
+    async fn activitywatch_web_event_keeps_nonempty_redacted_url() -> xtask::sandbox::TestResult<()>
+    {
         let entry = sample_activitywatch_entry(
             ActivityWatchEntryKind::Web,
             json!({ "app": "Firefox", "title": "Docs", "url": "https://example.com/docs" }),
@@ -1619,15 +1663,19 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_afk_event_rejects_empty_status_field()
-    -> xtask::sandbox::TestResult<()> {
+    async fn activitywatch_afk_event_rejects_empty_status_field() -> xtask::sandbox::TestResult<()>
+    {
         let entry =
             sample_activitywatch_entry(ActivityWatchEntryKind::Afk, json!({ "status": "   " }))?;
 
         let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
             .expect_err("empty ActivityWatch status should fail honestly");
 
-        assert!(error.to_string().contains("field 'status' must not be empty"));
+        assert!(
+            error
+                .to_string()
+                .contains("field 'status' must not be empty")
+        );
         Ok(())
     }
 }

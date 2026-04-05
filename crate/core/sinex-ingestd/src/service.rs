@@ -1341,7 +1341,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("background task failed during shutdown")
+                .contains("background task join failed during shutdown")
         );
         Ok(())
     }
@@ -1361,7 +1361,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("background task failed during shutdown")
+                .contains("background task join failed during shutdown")
         );
         Ok(())
     }
@@ -1381,7 +1381,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("background task failed during shutdown")
+                .contains("background task join failed during shutdown")
         );
         Ok(())
     }
@@ -1598,7 +1598,7 @@ mod tests {
             .context_map()
             .get("background_shutdown_error")
             .expect("background cleanup failure should stay attached");
-        assert!(cleanup_context.contains("background task failed during shutdown"));
+        assert!(cleanup_context.contains("background task join failed during shutdown"));
         Ok(())
     }
 

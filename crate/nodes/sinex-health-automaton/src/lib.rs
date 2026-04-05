@@ -137,7 +137,8 @@ where
     T: FromStr,
     T::Err: std::fmt::Display,
 {
-    if let Some(parsed) = sinex_primitives::env::parse_optional::<T>(key, "health automaton config") {
+    if let Some(parsed) = sinex_primitives::env::parse_optional::<T>(key, "health automaton config")
+    {
         *target = parsed;
     }
 }
@@ -201,9 +202,7 @@ impl ComponentHealthStatus {
             ))
         })?;
         let status = value.as_str().ok_or_else(|| {
-            NodeLogicError::InputParsing(format!(
-                "health status field '{field}' must be a string"
-            ))
+            NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
         })?;
         Self::from_str(status).map_err(|()| {
             NodeLogicError::InputParsing(format!(
@@ -324,7 +323,9 @@ impl ScopeReconcilerNode for HealthAggregator {
             // Prune events outside aggregation window
             let window_start =
                 now - Duration::seconds(state.config.aggregation_window_seconds as i64);
-            component_health.events.retain(|e| e.timestamp >= window_start);
+            component_health
+                .events
+                .retain(|e| e.timestamp >= window_start);
 
             let window_event_ids =
                 Self::collect_event_ids(&component_health.events, &component, "component report")?;
@@ -409,7 +410,8 @@ impl ScopeReconcilerNode for HealthAggregator {
             periodic_reports.push(report);
         }
 
-        let mut outputs = Vec::with_capacity(periodic_reports.len() + usize::from(immediate_alert.is_some()));
+        let mut outputs =
+            Vec::with_capacity(periodic_reports.len() + usize::from(immediate_alert.is_some()));
         if let Some(alert) = immediate_alert {
             outputs.push(alert);
         }

@@ -19,8 +19,8 @@ use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
@@ -49,16 +49,16 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
     }
 }
 
-type MaterialTaskOutcome = (&'static str, Result<IngestdResult<()>, tokio::task::JoinError>);
+type MaterialTaskOutcome = (
+    &'static str,
+    Result<IngestdResult<()>, tokio::task::JoinError>,
+);
 
 fn material_task_cleanup_failure(name: &'static str, error: &SinexError) -> SinexError {
     crate::service::task_shutdown_error("material", name, error)
 }
 
-fn material_task_join_failure(
-    name: &'static str,
-    error: &tokio::task::JoinError,
-) -> SinexError {
+fn material_task_join_failure(name: &'static str, error: &tokio::task::JoinError) -> SinexError {
     crate::service::task_shutdown_error("material", name, error)
 }
 
@@ -335,10 +335,11 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_started_total",
-                async move { observer.emit_counter("sinex_assembly_started_total", 1, None).await },
-            );
+            self.spawn_observer_emit("sinex_assembly_started_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_started_total", 1, None)
+                    .await
+            });
         }
     }
 
@@ -354,42 +355,37 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_completed_total",
-                async move {
-                    observer
-                        .emit_counter("sinex_assembly_completed_total", 1, None)
-                        .await
-                },
-            );
+            self.spawn_observer_emit("sinex_assembly_completed_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_completed_total", 1, None)
+                    .await
+            });
         }
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_bytes_total",
-                async move { observer.emit_counter("sinex_assembly_bytes_total", bytes, None).await },
-            );
+            self.spawn_observer_emit("sinex_assembly_bytes_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_bytes_total", bytes, None)
+                    .await
+            });
         }
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_duration_seconds",
-                async move {
-                    observer
-                        .emit_histogram(
-                            "sinex_assembly_duration_seconds",
-                            1,
-                            duration_secs,
-                            duration_secs,
-                            duration_secs,
-                            None,
-                            None,
-                        )
-                        .await
-                },
-            );
+            self.spawn_observer_emit("sinex_assembly_duration_seconds", async move {
+                observer
+                    .emit_histogram(
+                        "sinex_assembly_duration_seconds",
+                        1,
+                        duration_secs,
+                        duration_secs,
+                        duration_secs,
+                        None,
+                        None,
+                    )
+                    .await
+            });
         }
     }
 
@@ -405,42 +401,37 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_cancelled_total",
-                async move {
-                    observer
-                        .emit_counter("sinex_assembly_cancelled_total", 1, None)
-                        .await
-                },
-            );
+            self.spawn_observer_emit("sinex_assembly_cancelled_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_cancelled_total", 1, None)
+                    .await
+            });
         }
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_bytes_total",
-                async move { observer.emit_counter("sinex_assembly_bytes_total", bytes, None).await },
-            );
+            self.spawn_observer_emit("sinex_assembly_bytes_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_bytes_total", bytes, None)
+                    .await
+            });
         }
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_duration_seconds",
-                async move {
-                    observer
-                        .emit_histogram(
-                            "sinex_assembly_duration_seconds",
-                            1,
-                            duration_secs,
-                            duration_secs,
-                            duration_secs,
-                            None,
-                            None,
-                        )
-                        .await
-                },
-            );
+            self.spawn_observer_emit("sinex_assembly_duration_seconds", async move {
+                observer
+                    .emit_histogram(
+                        "sinex_assembly_duration_seconds",
+                        1,
+                        duration_secs,
+                        duration_secs,
+                        duration_secs,
+                        None,
+                        None,
+                    )
+                    .await
+            });
         }
     }
 
@@ -456,10 +447,11 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_failed_total",
-                async move { observer.emit_counter("sinex_assembly_failed_total", 1, None).await },
-            );
+            self.spawn_observer_emit("sinex_assembly_failed_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_failed_total", 1, None)
+                    .await
+            });
         }
     }
 
@@ -474,10 +466,11 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_timed_out_total",
-                async move { observer.emit_counter("sinex_assembly_timed_out_total", 1, None).await },
-            );
+            self.spawn_observer_emit("sinex_assembly_timed_out_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_timed_out_total", 1, None)
+                    .await
+            });
         }
     }
 
@@ -533,14 +526,11 @@ impl MaterialAssembler {
 
             if let Some(ref observer) = self.observer {
                 let observer = observer.clone();
-                self.spawn_observer_emit(
-                    "sinex_assembly_disk_backpressure_total",
-                    async move {
-                        observer
-                            .emit_counter("sinex_assembly_disk_backpressure_total", 1, None)
-                            .await
-                    },
-                );
+                self.spawn_observer_emit("sinex_assembly_disk_backpressure_total", async move {
+                    observer
+                        .emit_counter("sinex_assembly_disk_backpressure_total", 1, None)
+                        .await
+                });
             }
 
             return Err(SinexError::service(format!(
@@ -931,9 +921,14 @@ impl MaterialAssembler {
         let now = Timestamp::now();
         let mut stale = Vec::new();
 
-        for entry in self.assembler_state.iter() {
-            let material_id = *entry.key();
-            let state = entry.value().lock().await;
+        let state_handles: Vec<_> = self
+            .assembler_state
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+
+        for (material_id, state_handle) in state_handles {
+            let state = state_handle.lock().await;
 
             if state.phase == AssemblyPhase::Finalizing {
                 continue;
@@ -1010,10 +1005,7 @@ impl MaterialAssembler {
     }
 
     async fn check_orphaned_folder(&self, path: std::path::PathBuf) -> IngestdResult<()> {
-        let Some(folder_name) = path
-            .file_name()
-            .and_then(|n| n.to_str())
-        else {
+        let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) else {
             return Err(SinexError::invalid_state(format!(
                 "Assembler state folder name is not valid UTF-8: {}",
                 path.display()
@@ -1093,7 +1085,10 @@ impl MaterialAssembler {
 fn encode_max_material_size_bytes(max_material_size_bytes: u64) -> IngestdResult<i64> {
     i64::try_from(max_material_size_bytes).map_err(|error| {
         SinexError::validation("max_material_size_bytes exceeds i64 range")
-            .with_context("max_material_size_bytes", max_material_size_bytes.to_string())
+            .with_context(
+                "max_material_size_bytes",
+                max_material_size_bytes.to_string(),
+            )
             .with_std_error(&error)
     })
 }
@@ -1190,8 +1185,8 @@ mod tests {
         let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
         tasks.spawn(async { ("material begin consumer", Ok(Ok(()))) });
 
-        let error = MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1))
-            .await;
+        let error =
+            MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1)).await;
 
         assert!(error.is_none(), "clean shutdown should not report an error");
         assert!(tasks.is_empty(), "all tracked tasks should be drained");
@@ -1234,12 +1229,10 @@ mod tests {
             ("material stale cleanup task", Ok(Ok(())))
         });
 
-        let error = MaterialAssembler::wait_for_material_tasks(
-            &mut tasks,
-            Duration::from_millis(10),
-        )
-        .await
-        .expect("hung task should time out");
+        let error =
+            MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_millis(10))
+                .await
+                .expect("hung task should time out");
 
         assert!(error.to_string().contains("timed out waiting"));
         assert!(
@@ -1251,7 +1244,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn assembler_rejects_unrepresentable_max_material_size(ctx: TestContext) -> TestResult<()> {
+    async fn assembler_rejects_unrepresentable_max_material_size(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let annex_dir = tempfile::tempdir()?;
         let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
@@ -1282,9 +1277,42 @@ mod tests {
             Err(error) => error,
         };
 
-        assert!(error
-            .to_string()
-            .contains("max_material_size_bytes exceeds i64 range"));
+        assert!(
+            error
+                .to_string()
+                .contains("max_material_size_bytes exceeds i64 range")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn find_stale_materials_does_not_hold_dashmap_refs_across_await(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::new_v4();
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.last_slice_received = Timestamp::now() - time::Duration::minutes(10);
+        let state_handle = assembler.insert_state_handle(material_id, state).await;
+
+        let locked_state = state_handle.lock().await;
+        let scan_assembler = assembler.clone_for_task();
+        let scan_task = tokio::spawn(async move { scan_assembler.find_stale_materials().await });
+        tokio::task::yield_now().await;
+
+        let replacement_state = assembler.create_placeholder_state(material_id).await?;
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            assembler.insert_state_handle(material_id, replacement_state),
+        )
+        .await
+        .expect("stale scan should not block insert_state_handle on dashmap shard locks");
+
+        drop(locked_state);
+        let stale_materials = scan_task.await?;
+        assert_eq!(stale_materials, vec![(material_id, 600)]);
         Ok(())
     }
 }

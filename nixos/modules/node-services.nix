@@ -135,11 +135,11 @@ let
     ]
     ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ]
   );
-  readableUnitAssertions = paths:
+  existingPathAssertions = paths:
     let
-      readablePaths = collectReadablePaths paths;
+      existingPaths = collectReadablePaths paths;
     in
-    optionalAttrs (readablePaths != []) { AssertPathIsReadable = readablePaths; };
+    optionalAttrs (existingPaths != []) { AssertPathExists = existingPaths; };
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
   renderBindReadOnlyPaths = mounts:
@@ -190,6 +190,8 @@ let
     MemoryMax = resources.memoryMax;
     CPUQuota = resources.cpuQuota;
     TimeoutStopSec = resources.shutdownTimeoutSec;
+  } // optionalAttrs (resources.openFilesLimit != null) {
+    LimitNOFILE = "${toString resources.openFilesLimit}:${toString resources.openFilesLimit}";
   };
 
   readWritePaths = [
@@ -211,6 +213,9 @@ let
   targetHome =
     if targetUser == null then null
     else lib.attrByPath [ "users" "users" targetUser "home" ] "/home/${targetUser}" config;
+  targetUid =
+    if targetUser == null then null
+    else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
 
   mkBaseServiceConfig = resources: env: extra:
     {
@@ -261,6 +266,83 @@ let
         # TLS is mandatory for gateway RPC; cert/key must be provided via env vars.
       ] ++ coreCfg.gateway.extraArgs);
       gatewayLimits = coreCfg.gateway.limits;
+      gatewayAdminTokenRuntimeFile = "${runtimeDir}/gateway-admin-token";
+      gatewayTlsCertRuntimeFile = "${runtimeDir}/gateway-server.pem";
+      gatewayTlsKeyRuntimeFile = "${runtimeDir}/gateway-server-key.pem";
+      gatewayTlsClientCaRuntimeFile = "${runtimeDir}/gateway-client-ca.pem";
+      gatewayTlsTrustAnchorRuntimeFile = "${runtimeDir}/gateway-ca.pem";
+      gatewayTlsTrustAnchorSourceFile =
+        if cfg.core.gateway.autoGenerateTls then
+          "${tlsDir}/ca.pem"
+        else
+          null;
+      gatewayRuntimeInputStageScript =
+        if gatewayAdminTokenFile == null
+          && cfg.core.gateway.tlsCertFile == null
+          && cfg.core.gateway.tlsKeyFile == null
+          && gatewayTlsTrustAnchorSourceFile == null
+          && cfg.core.gateway.tlsClientCAFile == null
+        then null else pkgs.writeShellScript "sinex-gateway-stage-runtime-inputs" ''
+          set -euo pipefail
+
+          INSTALL=${pkgs.coreutils}/bin/install
+          runtime_dir=${escapeShellArg runtimeDir}
+
+          stage_file() {
+            local source_path="$1"
+            local dest_path="$2"
+            local mode="$3"
+
+            if [ -z "$source_path" ]; then
+              return 0
+            fi
+
+            if [ ! -r "$source_path" ]; then
+              echo "[sinex] runtime input $source_path is not readable" >&2
+              exit 1
+            fi
+
+            "$INSTALL" -m "$mode" -o ${serviceUser} -g ${serviceUser} "$source_path" "$dest_path"
+          }
+
+          stage_gateway_admin_token() {
+            local source_path="$1"
+            local dest_path="$2"
+            local tmp_path
+            local raw_token
+
+            if [ -z "$source_path" ]; then
+              return 0
+            fi
+
+            if [ ! -r "$source_path" ]; then
+              echo "[sinex] gateway admin token $source_path is not readable" >&2
+              exit 1
+            fi
+
+            raw_token="$(${pkgs.coreutils}/bin/cat "$source_path")"
+            raw_token="$(${pkgs.coreutils}/bin/printf '%s' "$raw_token" | ${pkgs.gnused}/bin/sed -e 's/[[:space:]]*$//')"
+            if [ -z "$raw_token" ]; then
+              echo "[sinex] gateway admin token $source_path is empty" >&2
+              exit 1
+            fi
+
+            tmp_path="$(mktemp "$runtime_dir/gateway-admin-token.XXXXXX")"
+            ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
+            ${pkgs.coreutils}/bin/printf '%s:admin\n' "$raw_token" > "$tmp_path"
+            ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
+            ${pkgs.coreutils}/bin/chmod 0400 "$tmp_path"
+            ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
+          }
+
+          "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
+
+          stage_gateway_admin_token ${escapeShellArg (if gatewayAdminTokenFile == null then "" else toString gatewayAdminTokenFile)} ${escapeShellArg gatewayAdminTokenRuntimeFile}
+          stage_file ${escapeShellArg (if cfg.core.gateway.tlsCertFile == null then "" else toString cfg.core.gateway.tlsCertFile)} ${escapeShellArg gatewayTlsCertRuntimeFile} 0440
+          stage_file ${escapeShellArg (if cfg.core.gateway.tlsKeyFile == null then "" else toString cfg.core.gateway.tlsKeyFile)} ${escapeShellArg gatewayTlsKeyRuntimeFile} 0400
+          stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
+          stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
+        '';
       gatewayEnv = mkServiceEnv (
         [
           "RUST_LOG=${coreCfg.gateway.logLevel}"
@@ -274,10 +356,10 @@ let
           "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
           "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
         ]
-        ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
-        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
-        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${cfg.core.gateway.tlsKeyFile}"
-        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${cfg.core.gateway.tlsClientCAFile}"
+        ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
+        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${gatewayTlsCertRuntimeFile}"
+        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
+        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
         ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1"
         # Rate limiting
         ++ [
@@ -312,7 +394,7 @@ let
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
-        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
@@ -354,7 +436,7 @@ let
         wants = coreWants;
         unitConfig =
           restartRateLimits
-          // readableUnitAssertions (
+          // existingPathAssertions (
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
@@ -367,6 +449,9 @@ let
               command = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
               passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
             };
+          }
+          // optionalAttrs (gatewayRuntimeInputStageScript != null) {
+            ExecStartPre = lib.mkBefore [ "+${gatewayRuntimeInputStageScript}" ];
           }
         );
       };
@@ -384,6 +469,12 @@ let
           group = "root";
           remainAfterExit = true;
           readWritePaths = [ tlsDir ];
+          extra = {
+            # TLS bootstrap must hand the generated certs off to the sinex service
+            # user, so it needs the privileged chown syscall available.
+            NoNewPrivileges = mkForce false;
+            SystemCallFilter = mkForce [ "@system-service" "@privileged" ];
+          };
         };
       };
     };
@@ -399,6 +490,8 @@ let
         max_depth = 10;
         follow_symlinks = false;
         max_capture_bytes = 10485760;
+        max_watches = sat.maxWatches;
+        poll_interval_secs = sat.pollIntervalSec;
       };
       derivedArgs = [ "--node-config ${escapeShellArg nodeConfig}" ];
       extraArgs = derivedArgs ++ sat.extraArgs;
@@ -449,13 +542,29 @@ let
           path = source.path;
           shell = source.shell;
         }) effectiveHistorySources;
+        polling_interval_secs = 5;
+        max_capture_bytes = 32768;
       };
       derivedArgs =
         optional (effectiveHistorySources != []) "--node-config ${escapeShellArg nodeConfig}";
+      sqliteHistoryPaths =
+        unique (
+          map (source: source.path) (filter (source: source.shell == "atuin") effectiveHistorySources)
+        );
+      sqliteHistoryDirs = unique (map builtins.dirOf sqliteHistoryPaths);
       accessAclPaths =
         unique (
           (map (source: source.path) effectiveHistorySources)
           ++ optionals (targetHome != null) [ "${targetHome}/.local/share/atuin/history.db" ]
+        );
+      accessWritePaths =
+        unique (
+          optionals (targetHome != null) [
+            targetHome
+            "${targetHome}/.local"
+            "${targetHome}/.local/share"
+            "${targetHome}/.local/share/atuin"
+          ]
         );
       accessSetupScript =
         if accessAclPaths == [] then null else pkgs.writeShellScript "sinex-terminal-target-access" ''
@@ -472,29 +581,88 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
+          set_access_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          set_default_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
           grant_parent_dirs() {
             local path="$1"
             local dir
-            dir="$("$DIRNAME" "$path")"
+            dir="$path"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
+                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
           }
 
+          grant_dir_read() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:r-x" "r-x"
+            fi
+          }
+
+          grant_dir_read_defaults() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_default_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
+            fi
+          }
+
           grant_file_read() {
             local path="$1"
             if [ -f "$path" ]; then
-              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
+              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
             fi
+          }
+
+          grant_sqlite_sidecars() {
+            local path="$1"
+            grant_file_read "$path-wal"
+            grant_file_read "$path-shm"
           }
 
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
             grant_file_read ${escapeShellArg path}
           '') accessAclPaths)}
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+            grant_dir_read ${escapeShellArg path}
+            grant_dir_read_defaults ${escapeShellArg path}
+          '') sqliteHistoryDirs)}
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+            grant_sqlite_sidecars ${escapeShellArg path}
+          '') sqliteHistoryPaths)}
 
           if [ "$acl_failures" -ne 0 ]; then
             exit 1
@@ -513,7 +681,8 @@ let
         # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
         # so we use read-only mode to allow reading history files without write access.
         ProtectHome = lib.mkForce "read-only";
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != []) {
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
@@ -528,6 +697,10 @@ let
       resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then [ "SINEX_CLIPBOARD=1" ] else [ "SINEX_CLIPBOARD=0" ];
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
+      runtimeRoot =
+        if sat.session.runtimeDir != null then sat.session.runtimeDir
+        else if targetUid != null then "/run/user/${toString targetUid}"
+        else null;
       sessionEnv =
         optional (sat.session.runtimeDir != null) "SINEX_HYPRLAND_RUNTIME_DIR=${sat.session.runtimeDir}"
         ++ optional (sat.session.runtimeDir != null) "XDG_RUNTIME_DIR=${sat.session.runtimeDir}"
@@ -536,6 +709,21 @@ let
         ++ optional (sat.session.hyprlandEventSocket != null) "SINEX_HYPRLAND_EVENT_SOCKET=${sat.session.hyprlandEventSocket}"
         ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}"
         ++ optional (sat.history.activitywatchDbPath != null) "SINEX_ACTIVITYWATCH_DB_PATH=${sat.history.activitywatchDbPath}";
+      accessWritePaths =
+        unique (
+          optionals (runtimeRoot != null) [
+            runtimeRoot
+            "${runtimeRoot}/hypr"
+          ]
+          ++ optionals (targetHome != null) [
+            targetHome
+            "${targetHome}/.local"
+            "${targetHome}/.local/share"
+          ]
+          ++ optionals (sat.history.activitywatchDbPath != null) [
+            (builtins.dirOf sat.history.activitywatchDbPath)
+          ]
+        );
       accessSetupScript =
         if targetUser == null then null else pkgs.writeShellScript "sinex-desktop-target-access" ''
           set -euo pipefail
@@ -565,13 +753,41 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
+          set_access_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          set_default_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
           grant_parent_dirs() {
             local path="$1"
             local dir
             dir="$path"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
+                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -580,7 +796,7 @@ let
           grant_dir_defaults() {
             local path="$1"
             if [ -d "$path" ]; then
-              "$SETFACL" -d -m "u:$SERVICE_USER:rwX" "$path" || record_acl_failure "$path"
+              set_default_acl "$path" "u:$SERVICE_USER:rwX" "rwX"
             fi
           }
 
@@ -588,7 +804,7 @@ let
             local path="$1"
             if [ -S "$path" ]; then
               grant_parent_dirs "$("$DIRNAME" "$path")"
-              "$SETFACL" -m "u:$SERVICE_USER:rw-" "$path" || record_acl_failure "$path"
+              set_access_acl "$path" "u:$SERVICE_USER:rw-" "rw-"
             fi
           }
 
@@ -596,7 +812,7 @@ let
             local path="$1"
             if [ -f "$path" ]; then
               grant_parent_dirs "$path"
-              "$SETFACL" -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
+              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
             fi
           }
 
@@ -703,7 +919,8 @@ let
       env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
       serviceConfig = {
         ProtectHome = lib.mkForce "read-only";
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != []) {
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         EnvironmentFile = [ "-${bridgeEnvFile}" ];
@@ -740,10 +957,9 @@ let
       # Use `wants` so that ingestd going down doesn't cascade-stop all nodes;
       # NATS will buffer events until ingestd recovers.
       wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
-      execArgs = concatStringsSep " " ([
-        "--service-name sinex-${params.name}"
-        "--nats-url ${natsUrl}"
-      ] ++ optional cfg.database.enable "--database-url ${databaseUrl}" ++ extraArgs ++ [ "service" ]);
+      execArgs = concatStringsSep " " (
+        [ "--service-name sinex-${params.name}" ] ++ extraArgs ++ [ "service" ]
+      );
       env = mkServiceEnv envExtras;
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
@@ -751,7 +967,7 @@ let
         after = afterUnits;
         requires = requireUnits;
         wants = wantsUnits;
-        unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
@@ -776,13 +992,10 @@ let
     let
       profile = mkAutomataProfile params.profile;
       resources = profile.resources;
-      subjectArgs = map (s: "--subject ${escapeShellArg s}") params.subjects;
       extraArgs = params.extraArgs or [];
-      execArgs = concatStringsSep " " ([
-        "--service-name sinex-${params.binary}"
-        "--nats-url ${natsUrl}"
-        "--database-url ${databaseUrl}"
-      ] ++ extraArgs ++ subjectArgs ++ [ "service" ]);
+      execArgs = concatStringsSep " " (
+        [ "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
+      );
       env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList params.env);
     in
     {
@@ -790,7 +1003,7 @@ let
       wantedBy = [ "multi-user.target" ];
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits // readableUnitAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+      unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
           name = params.binary;

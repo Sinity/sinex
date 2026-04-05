@@ -428,8 +428,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_open_report_in_browser_reports_missing_openers(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_open_report_in_browser_reports_missing_openers()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let report = temp.path().join("index.html");
         std::fs::write(&report, "<html></html>")?;
@@ -452,8 +452,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_open_report_in_browser_accepts_xdg_open(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_open_report_in_browser_accepts_xdg_open() -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let report = temp.path().join("index.html");
         let opener = temp.path().join("xdg-open");

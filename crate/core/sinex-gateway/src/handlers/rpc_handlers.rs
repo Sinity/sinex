@@ -1,7 +1,7 @@
 //! Shared RPC helpers and replay method handlers.
 
-use crate::rpc_server::RpcAuthContext;
 use crate::replay_control::ReplayControlClient;
+use crate::rpc_server::RpcAuthContext;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use color_eyre::eyre::{Context, Result, eyre};
@@ -13,6 +13,7 @@ use sinex_primitives::rpc::content::RetrieveBlobResponse;
 use sinex_primitives::rpc::replay::{
     ReplayApproveResponse, ReplayCancelResponse, ReplayCreateResponse, ReplayExecuteResponse,
     ReplayListResponse, ReplayOperation, ReplayPreviewResponse, ReplayStatusResponse,
+    ReplaySubmitResponse,
 };
 use sinex_primitives::{Id, Uuid, domain::Entity};
 
@@ -187,7 +188,7 @@ pub async fn handle_replay_create_operation(
     serde_json::to_value(ReplayCreateResponse {
         operation: into_replay_operation(operation)?,
     })
-        .wrap_err("failed to serialize replay.create_operation response")
+    .wrap_err("failed to serialize replay.create_operation response")
 }
 
 pub async fn handle_replay_preview_operation(
@@ -202,7 +203,7 @@ pub async fn handle_replay_preview_operation(
         operation: into_replay_operation(operation)?,
         preview,
     })
-        .wrap_err("failed to serialize replay.preview_operation response")
+    .wrap_err("failed to serialize replay.preview_operation response")
 }
 
 pub async fn handle_replay_approve_operation(
@@ -216,7 +217,7 @@ pub async fn handle_replay_approve_operation(
     serde_json::to_value(ReplayApproveResponse {
         operation: into_replay_operation(operation)?,
     })
-        .wrap_err("failed to serialize replay.approve_operation response")
+    .wrap_err("failed to serialize replay.approve_operation response")
 }
 
 pub async fn handle_replay_execute_operation(
@@ -233,7 +234,21 @@ pub async fn handle_replay_execute_operation(
     serde_json::to_value(ReplayExecuteResponse {
         operation: into_replay_operation(operation)?,
     })
-        .wrap_err("failed to serialize replay.execute_operation response")
+    .wrap_err("failed to serialize replay.execute_operation response")
+}
+
+pub async fn handle_replay_submit_operation(
+    client: &ReplayControlClient,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
+    let params = RpcParams::new(&params);
+    let operation_id = params.require_uuid("operation_id")?;
+    let operation = client.submit(operation_id, auth.replay_actor()).await?;
+    serde_json::to_value(ReplaySubmitResponse {
+        operation: into_replay_operation(operation)?,
+    })
+    .wrap_err("failed to serialize replay.submit_operation response")
 }
 
 pub async fn handle_replay_cancel_operation(
@@ -244,10 +259,11 @@ pub async fn handle_replay_cancel_operation(
     let params = RpcParams::new(&params);
     let operation_id = params.require_uuid("operation_id")?;
     let reason = params
-        .optional_str("reason")
-        ?
+        .optional_str("reason")?
         .map(std::string::ToString::to_string);
-    let operation = client.cancel(operation_id, auth.replay_actor(), reason).await?;
+    let operation = client
+        .cancel(operation_id, auth.replay_actor(), reason)
+        .await?;
     serde_json::to_value(ReplayCancelResponse {
         cancelled: true,
         operation: into_replay_operation(operation)?,
@@ -266,7 +282,7 @@ pub async fn handle_replay_operation_status(
     serde_json::to_value(ReplayStatusResponse {
         operation: into_replay_operation(operation)?,
     })
-        .wrap_err("failed to serialize replay.operation_status response")
+    .wrap_err("failed to serialize replay.operation_status response")
 }
 
 pub async fn handle_replay_list_operations(
@@ -276,8 +292,7 @@ pub async fn handle_replay_list_operations(
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let state = params
-        .optional_str("state")
-        ?
+        .optional_str("state")?
         .map(parse_replay_state)
         .transpose()?;
     let node = params.optional_str("node")?.map(String::from);
@@ -319,8 +334,12 @@ pub(crate) fn blob_response_payload(
     content: &[u8],
     metadata: &sinex_node_sdk::annex::BlobMetadata,
 ) -> Result<RetrieveBlobResponse> {
-    let size = u64::try_from(metadata.size_bytes)
-        .map_err(|_| eyre!("blob metadata reported negative size: {}", metadata.size_bytes))?;
+    let size = u64::try_from(metadata.size_bytes).map_err(|_| {
+        eyre!(
+            "blob metadata reported negative size: {}",
+            metadata.size_bytes
+        )
+    })?;
     Ok(RetrieveBlobResponse {
         content: BASE64_STANDARD.encode(content),
         content_type: metadata.mime_type.clone(),
@@ -351,7 +370,10 @@ mod tests {
 
         let response = blob_response_payload(b"hi", &blob)?;
         assert_eq!(response.content, "aGk=");
-        assert_eq!(response.content_type.as_deref(), Some("application/octet-stream"));
+        assert_eq!(
+            response.content_type.as_deref(),
+            Some("application/octet-stream")
+        );
         assert_eq!(response.size, 2);
         Ok(())
     }

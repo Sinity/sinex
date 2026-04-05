@@ -207,8 +207,10 @@ fn select_hyprland_base_path(
         )
     })?;
 
-    let candidates =
-        collect_hyprland_candidates(entries.map(|entry| entry.map(|value| value.path())), &hypr_dir)?;
+    let candidates = collect_hyprland_candidates(
+        entries.map(|entry| entry.map(|value| value.path())),
+        &hypr_dir,
+    )?;
 
     match candidates.as_slice() {
         [candidate] => Ok(candidate.clone()),
@@ -608,7 +610,8 @@ impl WindowManagerWatcher {
                     self.handle_window_moved(event_data).await?;
                 }
                 "workspace" | "workspacev2" => {
-                    self.handle_workspace_changed(event_type, event_data).await?;
+                    self.handle_workspace_changed(event_type, event_data)
+                        .await?;
                 }
                 "focusedmon" | "focusedmonv2" => {
                     self.handle_monitor_focused(event_type, event_data).await?;
@@ -703,9 +706,7 @@ impl WindowManagerWatcher {
                 "previous_window_id": self.current_focused_window,
                 "workspace_id": workspace_id,
             });
-            let material_id = self
-                .register_material(event_type, metadata.clone())
-                .await?;
+            let material_id = self.register_material(event_type, metadata.clone()).await?;
             let material_payload = self.build_material_payload(event_type, data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
@@ -770,9 +771,7 @@ impl WindowManagerWatcher {
                 "previous_window_id": self.current_focused_window,
                 "workspace_id": workspace_id,
             });
-            let material_id = self
-                .register_material(event_type, metadata.clone())
-                .await?;
+            let material_id = self.register_material(event_type, metadata.clone()).await?;
             let material_payload = self.build_material_payload(event_type, data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
@@ -911,12 +910,7 @@ impl WindowManagerWatcher {
                 },
             );
             let current_monitor = self.current_monitor.clone();
-            self.adjust_workspace_window_count(
-                &workspace_id,
-                None,
-                current_monitor.as_deref(),
-                1,
-            );
+            self.adjust_workspace_window_count(&workspace_id, None, current_monitor.as_deref(), 1);
         }
 
         Ok(())
@@ -975,7 +969,7 @@ impl WindowManagerWatcher {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window closed payload: {e}"
                 ))
-        })?;
+            })?;
         self.emit_material_event(material_id, payload_bytes, event)
             .await?;
 
@@ -1069,7 +1063,6 @@ impl WindowManagerWatcher {
                     1,
                 );
             }
-
         }
 
         Ok(())
@@ -1087,10 +1080,8 @@ impl WindowManagerWatcher {
             return Ok(());
         }
 
-        let from_workspace_id = self.parse_optional_id_or_zero(
-            self.current_workspace.as_deref(),
-            "current_workspace_id",
-        )?;
+        let from_workspace_id = self
+            .parse_optional_id_or_zero(self.current_workspace.as_deref(), "current_workspace_id")?;
         let to_workspace_id = parse_hyprland_numeric_id(workspace_id_raw, "workspace_id")?;
         let monitor_id =
             self.parse_optional_id_or_zero(self.current_monitor.as_deref(), "monitor_id")?;
@@ -1100,9 +1091,7 @@ impl WindowManagerWatcher {
             "to_workspace_id": to_workspace_id,
             "workspace_name": workspace_name,
         });
-        let material_id = self
-            .register_material(event_type, metadata.clone())
-            .await?;
+        let material_id = self.register_material(event_type, metadata.clone()).await?;
         let material_payload = self.build_material_payload(event_type, data, metadata);
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
             sinex_node_sdk::SinexError::processing(format!(
@@ -1134,7 +1123,7 @@ impl WindowManagerWatcher {
                 sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize workspace switched payload: {e}"
                 ))
-        })?;
+            })?;
         self.emit_material_event(material_id, payload_bytes, event)
             .await?;
 
@@ -1163,9 +1152,7 @@ impl WindowManagerWatcher {
                 "workspace_id": workspace_id,
                 "previous_monitor": self.current_monitor,
             });
-            let material_id = self
-                .register_material(event_type, metadata.clone())
-                .await?;
+            let material_id = self.register_material(event_type, metadata.clone()).await?;
             let material_payload = self.build_material_payload(event_type, data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
@@ -1204,11 +1191,7 @@ impl WindowManagerWatcher {
                 .await?;
 
             let workspace_id_str = workspace_id.to_string();
-            self.mark_workspace_active(
-                &workspace_id_str,
-                None,
-                Some(monitor.trim()),
-            );
+            self.mark_workspace_active(&workspace_id_str, None, Some(monitor.trim()));
             self.current_monitor = Some(monitor_id.to_string());
             self.current_workspace = Some(workspace_id_str);
         }
@@ -1459,13 +1442,12 @@ impl WindowManagerWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-    use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
-
 
     #[sinex_test]
     async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
@@ -1566,9 +1548,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("Cannot inspect Hyprland runtime entry"));
+        assert!(
+            error
+                .to_string()
+                .contains("Cannot inspect Hyprland runtime entry")
+        );
 
         let _ = std::fs::remove_dir_all(&runtime_dir);
         Ok(())
@@ -1613,8 +1597,8 @@ mod tests {
 
     #[cfg(unix)]
     #[sinex_serial_test]
-    async fn resolve_hyprland_socket_paths_rejects_non_utf8_event_socket_override()
-    -> TestResult<()> {
+    async fn resolve_hyprland_socket_paths_rejects_non_utf8_event_socket_override() -> TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set(
             "SINEX_HYPRLAND_EVENT_SOCKET",

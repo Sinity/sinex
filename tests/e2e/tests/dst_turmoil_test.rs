@@ -236,11 +236,7 @@ fn dst_turmoil_connection_timeout_fires_at_correct_virtual_time() {
         let timeout = Duration::from_secs(10);
         let start = tokio::time::Instant::now();
 
-        let result = tokio::time::timeout(
-            timeout,
-            TcpStream::connect("unreachable:9999"),
-        )
-        .await;
+        let result = tokio::time::timeout(timeout, TcpStream::connect("unreachable:9999")).await;
 
         let elapsed = start.elapsed();
 
@@ -309,10 +305,7 @@ fn dst_turmoil_same_seed_produces_identical_outcomes() {
             for _ in 0..4 {
                 let delay = backoff.next();
                 tokio::time::sleep(delay).await;
-                delays_clone
-                    .lock()
-                    .unwrap()
-                    .push(start.elapsed());
+                delays_clone.lock().unwrap().push(start.elapsed());
             }
             Ok(())
         });
@@ -327,6 +320,9 @@ fn dst_turmoil_same_seed_produces_identical_outcomes() {
     let run1 = run_sim();
     let run2 = run_sim();
 
-    assert_eq!(run1, run2, "same seed must produce identical virtual time traces");
+    assert_eq!(
+        run1, run2,
+        "same seed must produce identical virtual time traces"
+    );
     assert_eq!(run1.len(), 4, "must have 4 recorded timestamps");
 }

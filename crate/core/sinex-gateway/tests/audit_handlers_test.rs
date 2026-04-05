@@ -5,15 +5,15 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_gateway::handlers::handle_audit_get;
 use sinex_primitives::Id;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::Event;
-use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, OperationRecord,
 };
+use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::rpc::ops::Operation;
-use sinex_primitives::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -81,7 +81,9 @@ async fn missing_operation_returns_not_found(ctx: TestContext) -> TestResult<()>
 }
 
 #[sinex_test]
-async fn audit_get_uses_explicit_lifecycle_summary_across_tiers(ctx: TestContext) -> TestResult<()> {
+async fn audit_get_uses_explicit_lifecycle_summary_across_tiers(
+    ctx: TestContext,
+) -> TestResult<()> {
     let pool = ctx.pool();
     let material_id = ctx.create_source_material(Some("audit-test")).await?;
 
@@ -119,7 +121,12 @@ async fn audit_get_uses_explicit_lifecycle_summary_across_tiers(ctx: TestContext
 
     let archive_op = Uuid::now_v7().to_string();
     pool.events()
-        .execute_cascade_archive(&[*archived_id.as_uuid()], "archive test row", &archive_op, "test")
+        .execute_cascade_archive(
+            &[*archived_id.as_uuid()],
+            "archive test row",
+            &archive_op,
+            "test",
+        )
         .await?;
 
     let tombstone_archive_op = Uuid::now_v7().to_string();
@@ -165,8 +172,7 @@ async fn audit_get_uses_explicit_lifecycle_summary_across_tiers(ctx: TestContext
         )
         .await?;
 
-    let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation.id }))
-        .await?;
+    let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation.id })).await?;
     let response: AuditGetResponse = serde_json::from_value(response)?;
     assert_eq!(response.event_count, 3);
 
@@ -227,7 +233,9 @@ async fn audit_get_rejects_malformed_lifecycle_preview_summary(ctx: TestContext)
 }
 
 #[sinex_test]
-async fn audit_get_ignores_non_lifecycle_preview_summary_shapes(ctx: TestContext) -> TestResult<()> {
+async fn audit_get_ignores_non_lifecycle_preview_summary_shapes(
+    ctx: TestContext,
+) -> TestResult<()> {
     let record = ctx
         .pool()
         .state()
@@ -246,7 +254,10 @@ async fn audit_get_ignores_non_lifecycle_preview_summary_shapes(ctx: TestContext
 
     let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
     let response: AuditGetResponse = serde_json::from_value(response)?;
-    assert_eq!(response.audit_trail.operation.operation_type, "content.store");
+    assert_eq!(
+        response.audit_trail.operation.operation_type,
+        "content.store"
+    );
     assert_eq!(response.event_count, 0);
     assert!(!response.has_more);
     Ok(())

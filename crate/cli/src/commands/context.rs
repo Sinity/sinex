@@ -80,7 +80,9 @@ impl ContextCommand {
 
         println!(
             "{} {}",
-            style(format!("Context (last {}):", self.since)).bold().cyan(),
+            style(format!("Context (last {}):", self.since))
+                .bold()
+                .cyan(),
             style(format!("{} sources", sources.len())).dim()
         );
         println!("{}", style("─".repeat(60)).dim());
@@ -170,14 +172,7 @@ fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> Str
     if let Some(obj) = payload.as_object() {
         // Priority order of fields to use as the summary
         for key in &[
-            "command",
-            "path",
-            "title",
-            "app_name",
-            "unit",
-            "message",
-            "url",
-            "name",
+            "command", "path", "title", "app_name", "unit", "message", "url", "name",
         ] {
             if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
                 let event_type = result_event.event.event_type.as_str();
@@ -193,10 +188,7 @@ fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> Str
 
 /// Reduce "file.created" → "created", "shell.command" → "command", etc.
 fn short_event_type(event_type: &str) -> &str {
-    event_type
-        .rsplit('.')
-        .next()
-        .unwrap_or(event_type)
+    event_type.rsplit('.').next().unwrap_or(event_type)
 }
 
 /// Format a Duration into a compact "XmYs ago" / "Xs ago" / "Xh ago" string.

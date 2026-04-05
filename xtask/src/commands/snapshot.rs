@@ -407,10 +407,7 @@ fn format_recent_runs(ctx: &CommandContext) -> SnapshotContextField {
             .collect();
         Ok(format!("[{}]", items.join(", ")))
     }) {
-        Some(Ok(value)) => SnapshotContextField {
-            value,
-            issue: None,
-        },
+        Some(Ok(value)) => SnapshotContextField { value, issue: None },
         Some(Err(error)) => SnapshotContextField {
             value: "[]".to_string(),
             issue: Some(format!(
@@ -448,10 +445,7 @@ fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
             .collect();
         Ok(format!("[{}]", items.join(", ")))
     }) {
-        Some(Ok(value)) => SnapshotContextField {
-            value,
-            issue: None,
-        },
+        Some(Ok(value)) => SnapshotContextField { value, issue: None },
         Some(Err(error)) => SnapshotContextField {
             value: "[]".to_string(),
             issue: Some(format!(
@@ -694,7 +688,9 @@ fn collect_transitive_workspace_deps(
     let root_id = workspace_id_by_name
         .get(root_name)
         .copied()
-        .ok_or_else(|| eyre!("scope '{root_name}' was missing from workspace dependency metadata"))?;
+        .ok_or_else(|| {
+            eyre!("scope '{root_name}' was missing from workspace dependency metadata")
+        })?;
 
     // BFS over dep graph — only follow workspace members
     let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
@@ -857,8 +853,7 @@ exit 128
             blocked_parent.join("history.db"),
         );
 
-        let error =
-            collect_diagnostic_files(&ctx).expect_err("history DB failure should surface");
+        let error = collect_diagnostic_files(&ctx).expect_err("history DB failure should surface");
         assert!(error.to_string().contains("history DB unavailable"));
         Ok(())
     }
@@ -900,8 +895,8 @@ exit 1
     }
 
     #[sinex_test]
-    async fn test_collect_crate_scope_reports_metadata_failures()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_collect_crate_scope_reports_metadata_failures() -> ::xtask::sandbox::TestResult<()>
+    {
         let temp = tempfile::tempdir()?;
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir)?;
@@ -963,8 +958,7 @@ printf '%s\n' '{"packages":[{"name":"sinex-db"}],"workspace_members":[]}'
         let mut env = EnvGuard::new();
         env.set("PATH", bin_dir.display().to_string());
 
-        let error =
-            collect_crate_scope("sinex-db").expect_err("malformed metadata should surface");
+        let error = collect_crate_scope("sinex-db").expect_err("malformed metadata should surface");
         let message = format!("{error:#}");
         assert!(message.contains("workspace package metadata"));
         assert!(message.contains("cargo metadata JSON"));
@@ -987,8 +981,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         let mut env = EnvGuard::new();
         env.set("PATH", bin_dir.display().to_string());
 
-        let error = collect_crate_scope("sinex-db")
-            .expect_err("workspace path drift should surface");
+        let error =
+            collect_crate_scope("sinex-db").expect_err("workspace path drift should surface");
         let message = error.to_string();
         assert!(message.contains("outside workspace root"));
         assert!(message.contains("/tmp/outside/Cargo.toml"));

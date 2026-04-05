@@ -80,18 +80,30 @@ let
     natsTlsCfg.requireTls
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
   preflightEnvironment =
-    optional cfg.database.enable "DATABASE_URL=${databaseUrl}"
-    ++ [
-      "SINEX_ENVIRONMENT=${cfg.nats.environment}"
-      "SINEX_NATS_URL=${natsUrl}"
-    ]
-    ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
-    ++ optional (effectiveNatsCaCertFile != null) "SINEX_NATS_CA_CERT=${toString effectiveNatsCaCertFile}"
-    ++ optional (effectiveNatsClientCertFile != null) "SINEX_NATS_CLIENT_CERT=${toString effectiveNatsClientCertFile}"
-    ++ optional (effectiveNatsClientKeyFile != null) "SINEX_NATS_CLIENT_KEY=${toString effectiveNatsClientKeyFile}"
-    ++ optional (effectiveNatsTokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString effectiveNatsTokenFile}"
-    ++ optional (effectiveNatsCredsFile != null) "SINEX_NATS_CREDS_FILE=${toString effectiveNatsCredsFile}"
-    ++ optional (effectiveNatsNkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString effectiveNatsNkeySeedFile}";
+    optionalAttrs cfg.database.enable { DATABASE_URL = databaseUrl; }
+    // {
+      SINEX_ENVIRONMENT = cfg.nats.environment;
+      SINEX_NATS_URL = natsUrl;
+    }
+    // optionalAttrs inferredNatsTls { SINEX_NATS_REQUIRE_TLS = "1"; }
+    // optionalAttrs (effectiveNatsCaCertFile != null) {
+      SINEX_NATS_CA_CERT = toString effectiveNatsCaCertFile;
+    }
+    // optionalAttrs (effectiveNatsClientCertFile != null) {
+      SINEX_NATS_CLIENT_CERT = toString effectiveNatsClientCertFile;
+    }
+    // optionalAttrs (effectiveNatsClientKeyFile != null) {
+      SINEX_NATS_CLIENT_KEY = toString effectiveNatsClientKeyFile;
+    }
+    // optionalAttrs (effectiveNatsTokenFile != null) {
+      SINEX_NATS_TOKEN_FILE = toString effectiveNatsTokenFile;
+    }
+    // optionalAttrs (effectiveNatsCredsFile != null) {
+      SINEX_NATS_CREDS_FILE = toString effectiveNatsCredsFile;
+    }
+    // optionalAttrs (effectiveNatsNkeySeedFile != null) {
+      SINEX_NATS_NKEY_SEED_FILE = toString effectiveNatsNkeySeedFile;
+    };
   sanitizeName = lib.strings.sanitizeDerivationName;
 
   skipArgs = concatMapStringsSep " " (phase: "--skip ${phase}") preflight.skip;
@@ -129,6 +141,11 @@ let
         ;;
     esac
   '';
+  preflightExec = mkDatabasePasswordExec {
+    name = "preflight";
+    command = runPreflightScript;
+    passwordFile = cfg.database.passwordFile;
+  };
 
   schemaApplyScript = pkgs.writeShellScript "sinex-schema-apply" ''
     set -euo pipefail
@@ -247,7 +264,8 @@ let
     serviceConfig.ExecStartPre = mkAfter [ (pkgs.writeShellScript "sinex-preflight-guard-${sanitizeName unit}" ''
       set -euo pipefail
       UNIT="${unit}.service"
-      if ! systemctl start --wait sinex-preflight.service; then
+      export PATH=${lib.makeBinPath [ pkgs.postgresql pkgs.systemd ]}:"$PATH"
+      if ! ${preflightExec}; then
         echo "ERROR: sinex-preflight verification failed; refusing to start $UNIT" >&2
         exit 1
       fi
@@ -297,6 +315,8 @@ in
             requires = schemaApplyUnits
               ++ localPostgresUnits
               ++ optionals natsEnabled [ "nats.service" ];
+            path = [ pkgs.postgresql ];
+            environment = preflightEnvironment;
             serviceConfig = {
               Type = "oneshot";
               TimeoutStartSec = preflight.timeoutSec;
@@ -314,12 +334,7 @@ in
               LockPersonality = true;
               SystemCallFilter = [ "@system-service" "~@privileged" ];
               ReadOnlyPaths = [ stateRoot logDir ingestSpool nodeSpool ];
-              Environment = preflightEnvironment;
-              ExecStart = mkDatabasePasswordExec {
-                name = "preflight";
-                command = runPreflightScript;
-                passwordFile = cfg.database.passwordFile;
-              };
+              ExecStart = preflightExec;
             };
           };
         };

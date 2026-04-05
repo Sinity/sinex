@@ -114,9 +114,29 @@
     # Verify resource limits
     with subtest("Resource limits applied"):
         limits = sinex.succeed(
-            "systemctl show -p MemoryMax sinex-ingestd.service"
+            "systemctl show -p MemoryMax -p LimitNOFILE sinex-ingestd.service"
         )
         assert "MemoryMax=" in limits, "Memory limits not set"
+        assert "LimitNOFILE=524288" in limits, f"Unexpected ingestd LimitNOFILE: {limits}"
+
+        live_limits = sinex.succeed(
+            "python - <<'PY'\n"
+            "import subprocess\n"
+            "pid = int(subprocess.check_output([\n"
+            "    'systemctl', 'show', '-p', 'MainPID', '--value', 'sinex-ingestd.service'\n"
+            "], text=True).strip())\n"
+            "if pid <= 0:\n"
+            "    raise SystemExit(f'invalid ingestd pid: {pid}')\n"
+            "with open(f'/proc/{pid}/limits') as fh:\n"
+            "    for line in fh:\n"
+            "        if line.startswith('Max open files'):\n"
+            "            print(line.strip())\n"
+            "            break\n"
+            "    else:\n"
+            "        raise SystemExit('missing Max open files limit')\n"
+            "PY"
+        )
+        assert "524288" in live_limits, f"Unexpected live ingestd fd limit: {live_limits}"
     
     # Test graceful shutdown
     with subtest("Graceful shutdown"):

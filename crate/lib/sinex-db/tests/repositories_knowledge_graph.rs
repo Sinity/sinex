@@ -3,10 +3,16 @@ use sinex_primitives::Timestamp;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn merge_entities_preserves_earliest_created_at_precision(ctx: TestContext) -> TestResult<()> {
+async fn merge_entities_preserves_earliest_created_at_precision(
+    ctx: TestContext,
+) -> TestResult<()> {
     let repo = ctx.pool.knowledge_graph();
-    let source = repo.create_entity(CreateEntity::person("source-person")).await?;
-    let target = repo.create_entity(CreateEntity::person("target-person")).await?;
+    let source = repo
+        .create_entity(CreateEntity::person("source-person"))
+        .await?;
+    let target = repo
+        .create_entity(CreateEntity::person("target-person"))
+        .await?;
 
     let source_created_at = Timestamp::from_unix_timestamp_nanos(1_700_000_000_123_456_000)
         .expect("test timestamp should be valid");

@@ -181,7 +181,11 @@ mod tests {
     async fn require_stream_sequence_rejects_missing_metadata() -> TestResult<()> {
         let error = require_stream_sequence(Err("missing reply metadata".to_string()))
             .expect_err("missing message metadata must fail honestly");
-        assert!(error.to_string().contains("Failed to inspect DLQ message sequence"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to inspect DLQ message sequence")
+        );
         assert!(error.to_string().contains("missing reply metadata"));
         Ok(())
     }

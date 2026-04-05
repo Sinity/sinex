@@ -20,7 +20,8 @@ async fn gateway_config_load_requires_database_url() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.clear("DATABASE_URL");
 
-    let error = GatewayConfig::load().expect_err("missing database url should fail gateway config load");
+    let error =
+        GatewayConfig::load().expect_err("missing database url should fail gateway config load");
     let message = error.to_string();
 
     assert!(message.contains("Database URL not provided"));
@@ -32,7 +33,8 @@ async fn gateway_config_load_rejects_malformed_database_url() -> TestResult<()> 
     let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "not-a-database-url");
 
-    let error = GatewayConfig::load().expect_err("malformed database url should fail gateway config load");
+    let error =
+        GatewayConfig::load().expect_err("malformed database url should fail gateway config load");
     let message = error.to_string();
 
     assert!(message.contains("failed to parse DATABASE_URL"));

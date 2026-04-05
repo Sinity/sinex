@@ -1,6 +1,8 @@
 //! RPC method name constants
 
 // System
+pub const SYSTEM_PING: &str = "system.ping";
+pub const SYSTEM_VERSION: &str = "system.version";
 pub const SYSTEM_HEALTH: &str = "system.health";
 
 // Events (composable query engine)
@@ -21,6 +23,7 @@ pub const CONTENT_RETRIEVE_BLOB: &str = "content.retrieve_blob";
 pub const REPLAY_CREATE_OPERATION: &str = "replay.create_operation";
 pub const REPLAY_PREVIEW_OPERATION: &str = "replay.preview_operation";
 pub const REPLAY_APPROVE_OPERATION: &str = "replay.approve_operation";
+pub const REPLAY_SUBMIT_OPERATION: &str = "replay.submit_operation";
 pub const REPLAY_EXECUTE_OPERATION: &str = "replay.execute_operation";
 pub const REPLAY_CANCEL_OPERATION: &str = "replay.cancel_operation";
 pub const REPLAY_OPERATION_STATUS: &str = "replay.operation_status";

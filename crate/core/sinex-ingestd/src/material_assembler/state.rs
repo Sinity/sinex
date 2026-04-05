@@ -34,12 +34,10 @@ pub(super) fn parse_material_started_at(
     source: &str,
 ) -> IngestdResult<Timestamp> {
     Timestamp::parse_rfc3339(started_at).map_err(|error| {
-        SinexError::invalid_state(format!(
-            "Invalid started_at in material assembler {source}"
-        ))
-        .with_context("material_id", material_id.to_string())
-        .with_context("started_at", started_at)
-        .with_std_error(&error)
+        SinexError::invalid_state(format!("Invalid started_at in material assembler {source}"))
+            .with_context("material_id", material_id.to_string())
+            .with_context("started_at", started_at)
+            .with_std_error(&error)
     })
 }
 
@@ -49,12 +47,10 @@ pub(super) fn parse_material_ended_at(
     source: &str,
 ) -> IngestdResult<Timestamp> {
     Timestamp::parse_rfc3339(ended_at).map_err(|error| {
-        SinexError::invalid_state(format!(
-            "Invalid ended_at in material assembler {source}"
-        ))
-        .with_context("material_id", material_id.to_string())
-        .with_context("ended_at", ended_at)
-        .with_std_error(&error)
+        SinexError::invalid_state(format!("Invalid ended_at in material assembler {source}"))
+            .with_context("material_id", material_id.to_string())
+            .with_context("ended_at", ended_at)
+            .with_std_error(&error)
     })
 }
 
@@ -119,6 +115,8 @@ pub(super) struct PersistedState {
     pub expected_offset: i64,
     pub slice_count: usize,
     pub started_at: String,
+    #[serde(default)]
+    pub last_slice_received: Option<String>,
     pub material_kind: String,
     pub source_identifier: String,
     pub metadata: JsonValue,
@@ -442,7 +440,7 @@ pub(super) async fn handle_begin(
 mod tests {
     use super::*;
     use blake3::Hasher;
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::collections::BTreeMap;
     use tempfile::tempdir;
     use xtask::sandbox::prelude::*;
 
@@ -473,7 +471,7 @@ mod tests {
 
     #[sinex_test]
     async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
-        let material_id = Uuid::from_str("01J00000000000000000000000").unwrap();
+        let material_id = Uuid::now_v7();
         let mut state = test_state(material_id);
 
         let result = take_buffered_slice(&mut state, material_id, 42);
@@ -484,7 +482,7 @@ mod tests {
 
     #[sinex_test]
     async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
-        let material_id = Uuid::from_str("01J00000000000000000000000").unwrap();
+        let material_id = Uuid::now_v7();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");
         state.buffered_slices.insert(42, buffer_path.clone());

@@ -45,9 +45,8 @@ use std::{
     fs::Metadata as StdMetadata,
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
-        Mutex as StdMutex,
     },
 };
 use tokio::{
@@ -75,6 +74,12 @@ const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
 const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct WatchTreeEstimate {
+    watch_count: usize,
+    unreadable_directories: usize,
+}
 
 /// Filesystem monitoring configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,22 +377,24 @@ impl FilesystemNode {
     ) -> NodeResult<()> {
         match result {
             Ok(()) => {
-                debug!(watcher_index = index, "Filesystem watcher task finished before shutdown");
+                debug!(
+                    watcher_index = index,
+                    "Filesystem watcher task finished before shutdown"
+                );
                 Ok(())
             }
             Err(error) if error.is_cancelled() => {
-                debug!(watcher_index = index, "Filesystem watcher task cancelled during shutdown");
+                debug!(
+                    watcher_index = index,
+                    "Filesystem watcher task cancelled during shutdown"
+                );
                 Ok(())
             }
-            Err(error) => {
-                Err(
-                    SinexError::processing(
-                        "filesystem watcher task exited unexpectedly during shutdown",
-                    )
-                    .with_context("watcher_index", index.to_string())
-                    .with_source(error),
-                )
-            }
+            Err(error) => Err(SinexError::processing(
+                "filesystem watcher task exited unexpectedly during shutdown",
+            )
+            .with_context("watcher_index", index.to_string())
+            .with_source(error)),
         }
     }
 
@@ -703,10 +710,19 @@ impl ExplorationProvider for FilesystemNode {
         };
 
         let mut metadata = self.metrics.metadata();
-        metadata.insert("watched_paths".to_string(), serde_json::json!(watched_paths));
-        metadata.insert("dropped_events".to_string(), serde_json::json!(dropped_events));
+        metadata.insert(
+            "watched_paths".to_string(),
+            serde_json::json!(watched_paths),
+        );
+        metadata.insert(
+            "dropped_events".to_string(),
+            serde_json::json!(dropped_events),
+        );
         if let Some(active_watchers) = active_watchers {
-            metadata.insert("active_watchers".to_string(), serde_json::json!(active_watchers));
+            metadata.insert(
+                "active_watchers".to_string(),
+                serde_json::json!(active_watchers),
+            );
         }
         if watcher_registry_busy {
             metadata.insert("watcher_registry_busy".to_string(), serde_json::json!(true));
@@ -746,39 +762,98 @@ impl ExplorationProvider for FilesystemNode {
 
 /// Estimate the number of inotify watches needed for a directory tree.
 /// Each subdirectory requires one watch when using `RecursiveMode::Recursive`.
-fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> NodeResult<usize> {
-    fn count_dirs(dir: &Path, depth: usize, max_depth: Option<usize>) -> NodeResult<usize> {
-        if max_depth.is_some_and(|m| depth >= m) {
-            return Ok(0);
-        }
-
-        let entries = std::fs::read_dir(dir).map_err(|error| {
-            SinexError::io("Failed to enumerate watch directory while estimating watch budget")
-                .with_std_error(&error)
-                .with_path(dir.display())
-        })?;
-
-        let mut count = 0;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                SinexError::io("Failed to read watch directory entry while estimating watch budget")
-                    .with_std_error(&error)
-                    .with_path(dir.display())
-            })?;
-            let entry_path = entry.path();
-            let file_type = entry.file_type().map_err(|error| {
-                SinexError::io("Failed to inspect watch directory entry while estimating watch budget")
-                    .with_std_error(&error)
-                    .with_path(entry_path.display())
-            })?;
-            if file_type.is_dir() {
-                count += 1 + count_dirs(&entry_path, depth + 1, max_depth)?;
-            }
-        }
-        Ok(count)
+fn inspect_watch_tree(path: &Path, max_depth: Option<usize>) -> NodeResult<WatchTreeEstimate> {
+    fn is_permission_denied(error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::PermissionDenied
     }
 
-    Ok(1 + count_dirs(path, 0, max_depth)?)
+    fn inspect_dirs(
+        dir: &Path,
+        depth: usize,
+        max_depth: Option<usize>,
+    ) -> NodeResult<WatchTreeEstimate> {
+        if max_depth.is_some_and(|m| depth >= m) {
+            return Ok(WatchTreeEstimate::default());
+        }
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if depth > 0 && is_permission_denied(&error) => {
+                warn!(
+                    path = %dir.display(),
+                    "Skipping unreadable directory while estimating watch budget"
+                );
+                return Ok(WatchTreeEstimate {
+                    unreadable_directories: 1,
+                    ..WatchTreeEstimate::default()
+                });
+            }
+            Err(error) => {
+                return Err(
+                    SinexError::io(
+                        "Failed to enumerate watch directory while estimating watch budget",
+                    )
+                    .with_std_error(&error)
+                    .with_path(dir.display()),
+                );
+            }
+        };
+
+        let mut estimate = WatchTreeEstimate::default();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if depth > 0 && is_permission_denied(&error) => {
+                    warn!(
+                        path = %dir.display(),
+                        "Skipping unreadable directory entry while estimating watch budget"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(
+                        SinexError::io(
+                            "Failed to read watch directory entry while estimating watch budget",
+                        )
+                        .with_std_error(&error)
+                        .with_path(dir.display()),
+                    );
+                }
+            };
+            let entry_path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) if depth > 0 && is_permission_denied(&error) => {
+                    warn!(
+                        path = %entry_path.display(),
+                        "Skipping unreadable watch directory entry while estimating watch budget"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(
+                        SinexError::io(
+                            "Failed to inspect watch directory entry while estimating watch budget",
+                        )
+                        .with_std_error(&error)
+                        .with_path(entry_path.display()),
+                    );
+                }
+            };
+            if file_type.is_dir() {
+                let child_estimate = inspect_dirs(&entry_path, depth + 1, max_depth)?;
+                estimate.watch_count += 1 + child_estimate.watch_count;
+                estimate.unreadable_directories += child_estimate.unreadable_directories;
+            }
+        }
+        Ok(estimate)
+    }
+
+    let child_estimate = inspect_dirs(path, 0, max_depth)?;
+    Ok(WatchTreeEstimate {
+        watch_count: 1 + child_estimate.watch_count,
+        unreadable_directories: child_estimate.unreadable_directories,
+    })
 }
 
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
@@ -791,16 +866,26 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     })?;
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
-    let estimated = estimate_watch_count(&canonical, ctx.max_depth)?;
-    let use_poll_watcher = estimated > ctx.max_watches;
+    let tree_estimate = inspect_watch_tree(&canonical, ctx.max_depth)?;
+    let estimated = tree_estimate.watch_count;
+    let use_poll_watcher =
+        estimated > ctx.max_watches || tree_estimate.unreadable_directories > 0;
     let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
-    if use_poll_watcher {
+    if estimated > ctx.max_watches {
         warn!(
             path = %canonical.display(),
             estimated_watches = estimated,
             max_watches = ctx.max_watches,
             poll_interval_secs = ctx.poll_interval.as_secs(),
             "Watch budget exceeded; falling back to poll watcher"
+        );
+    }
+    if tree_estimate.unreadable_directories > 0 {
+        warn!(
+            path = %canonical.display(),
+            unreadable_directories = tree_estimate.unreadable_directories,
+            poll_interval_secs = ctx.poll_interval.as_secs_f64(),
+            "Unreadable descendants detected; falling back to poll watcher"
         );
     }
     info!(
@@ -812,6 +897,8 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
+    let watcher_error_counter = Arc::new(AtomicU64::new(0));
+    let error_counter = Arc::clone(&watcher_error_counter);
     let event_handler = move |res: Result<Event, notify::Error>| match res {
         Ok(event) => match tx.try_send(event) {
             Ok(()) => {}
@@ -826,14 +913,28 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
             }
             Err(TrySendError::Closed(_)) => {
                 let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                error!(
-                    dropped_events = dropped,
-                    "Filesystem watcher channel closed; dropping events"
-                );
+                if dropped == 1 || dropped.is_multiple_of(100) {
+                    warn!(
+                        dropped_events = dropped,
+                        "Filesystem watcher channel closed; dropping events"
+                    );
+                }
             }
         },
         Err(err) => {
-            error!(error = %err, watcher_mode, "Filesystem watcher reported error");
+            if watcher_mode == "poll" {
+                let error_count = error_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if error_count == 1 || error_count.is_multiple_of(100) {
+                    warn!(
+                        watcher_errors = error_count,
+                        error = %err,
+                        watcher_mode,
+                        "Filesystem poll watcher reported transient error"
+                    );
+                }
+            } else {
+                error!(error = %err, watcher_mode, "Filesystem watcher reported error");
+            }
         }
     };
     enum ActiveWatcher {
@@ -883,6 +984,12 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
                 info!(path = %root, "Filesystem watcher received shutdown signal");
                 break;
             }
+        }
+
+        // Keep the watcher live across the select! await points. Dropping the watcher
+        // tears down the kernel watch registrations even if the task itself remains alive.
+        match &watcher {
+            ActiveWatcher::Native(_) | ActiveWatcher::Poll(_) => {}
         }
     }
 
@@ -1331,7 +1438,11 @@ fn file_created_at(
     metadata: &StdMetadata,
     path: &Path,
 ) -> NodeResult<sinex_primitives::temporal::Timestamp> {
-    filesystem_timestamp(metadata.created().or_else(|_| metadata.modified()), "created_at", path)
+    filesystem_timestamp(
+        metadata.created().or_else(|_| metadata.modified()),
+        "created_at",
+        path,
+    )
 }
 
 fn file_modified_at(
@@ -1352,16 +1463,16 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
-    use xtask::sandbox::prelude::*;
     use xtask::sandbox::node_runtime::TestRuntimeBuilder;
+    use xtask::sandbox::prelude::*;
     use xtask::sandbox::sinex_test;
 
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1400,7 +1511,11 @@ mod tests {
         assert!(!state.healthy);
         assert_eq!(state.total_items, Some(0));
         assert_eq!(state.last_updated, None);
-        assert!(state.description.contains("No filesystem watch paths configured"));
+        assert!(
+            state
+                .description
+                .contains("No filesystem watch paths configured")
+        );
         Ok(())
     }
 
@@ -1418,8 +1533,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn filesystem_source_state_does_not_stay_unhealthy_after_transient_processing_error(
-    ) -> TestResult<()> {
+    async fn filesystem_source_state_does_not_stay_unhealthy_after_transient_processing_error()
+    -> TestResult<()> {
         let node = FilesystemNode::with_config(FilesystemConfig {
             watch_paths: vec!["/tmp".to_string()],
             ..FilesystemConfig::default()
@@ -1460,8 +1575,14 @@ mod tests {
         tokio::task::yield_now().await;
 
         let state = sinex_node_sdk::ExplorationProvider::get_source_state(&node)?;
-        assert!(state.is_connected, "one active watcher should keep the source connected");
-        assert!(!state.healthy, "finished watcher handles must degrade filesystem source health");
+        assert!(
+            state.is_connected,
+            "one active watcher should keep the source connected"
+        );
+        assert!(
+            !state.healthy,
+            "finished watcher handles must degrade filesystem source health"
+        );
         assert!(
             state.description.contains("degraded"),
             "description should reflect degraded watcher state: {}",
@@ -1523,16 +1644,21 @@ mod tests {
         std::fs::create_dir_all(temp_root.path().join("a/b"))?;
         std::fs::create_dir_all(temp_root.path().join("c"))?;
 
-        let count = estimate_watch_count(temp_root.path(), None)?;
-        assert_eq!(count, 4, "root + three nested directories should need four watches");
+        let count = inspect_watch_tree(temp_root.path(), None)?.watch_count;
+        assert_eq!(
+            count, 4,
+            "root + three nested directories should need four watches"
+        );
         Ok(())
     }
 
     #[cfg(unix)]
     #[sinex_test]
-    async fn estimate_watch_count_rejects_unreadable_subdirectories() -> TestResult<()> {
+    async fn estimate_watch_count_skips_unreadable_subdirectories() -> TestResult<()> {
         let temp_root = tempdir()?;
         let unreadable = temp_root.path().join("private");
+        let nested = unreadable.join("nested");
+        std::fs::create_dir_all(&nested)?;
         std::fs::create_dir_all(&unreadable)?;
 
         let original_permissions = std::fs::metadata(&unreadable)?.permissions();
@@ -1540,20 +1666,97 @@ mod tests {
         restricted_permissions.set_mode(0o000);
         std::fs::set_permissions(&unreadable, restricted_permissions)?;
 
-        let error = estimate_watch_count(temp_root.path(), None)
-            .expect_err("unreadable directory should fail watch estimation honestly");
+        let count = inspect_watch_tree(temp_root.path(), None)?.watch_count;
 
         std::fs::set_permissions(&unreadable, original_permissions)?;
 
-        let error_text = error.to_string();
         assert!(
-            error_text.contains("estimating watch budget"),
-            "unexpected error: {error_text}"
+            count >= 2,
+            "root and unreadable directory should still count toward watch budget: {count}"
         );
+        assert_eq!(
+            count, 2,
+            "nested descendants under an unreadable subtree should be skipped conservatively"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test(timeout = 30)]
+    async fn watch_path_falls_back_to_poll_watcher_for_unreadable_descendant(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
+
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "filesystem"));
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
+        let cancel_token = CancellationToken::new();
+        let stage_context =
+            StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
+
+        let temp_root = tempdir()?;
+        let unreadable = temp_root.path().join("private");
+        std::fs::create_dir_all(unreadable.join("nested"))?;
+        let original_permissions = std::fs::metadata(&unreadable)?.permissions();
+        let mut restricted_permissions = original_permissions.clone();
+        restricted_permissions.set_mode(0o000);
+        std::fs::set_permissions(&unreadable, restricted_permissions)?;
+
+        let watch_ctx = WatchContext {
+            acquisition,
+            stage_context,
+            max_capture_bytes: Bytes::from_mebibytes(1),
+            max_watches: DEFAULT_MAX_WATCHES,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
+            security_policy: FileWatchingSecurityPolicy::permissive(),
+            dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
+            poll_interval: Duration::from_millis(100),
+            cancel_token: cancel_token.clone(),
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+        };
+
+        let watch_path_root = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?
+            .to_string();
+
+        let watcher_task = tokio::spawn(watch_path(watch_path_root, watch_ctx));
+
+        tokio::time::sleep(Duration::from_millis(350)).await;
+
+        let created_path = temp_root.path().join("poll-created.txt");
+        tokio::fs::write(&created_path, b"watch me with polling").await?;
+
+        let event = timeout(Duration::from_secs(15), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem poll fallback emitted no event"))?;
+
+        assert_eq!(
+            event.event_type.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
+
+        let event_path = event
+            .payload
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event missing path payload"))?;
         assert!(
-            error_text.contains("private"),
-            "error should retain the unreadable directory path: {error_text}"
+            event_path.ends_with("poll-created.txt"),
+            "unexpected filesystem event path after poll fallback: {event_path}"
         );
+
+        cancel_token.cancel();
+        watcher_task.await??;
+        std::fs::set_permissions(&unreadable, original_permissions)?;
         Ok(())
     }
 
@@ -1615,7 +1818,8 @@ mod tests {
             ..FilesystemConfig::default()
         };
         let mut state = FilesystemCheckpoint::default();
-        node.initialize(config, &runtime.runtime, &mut state).await?;
+        node.initialize(config, &runtime.runtime, &mut state)
+            .await?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let _ = shutdown_tx.send(true);
@@ -1638,21 +1842,17 @@ mod tests {
     #[cfg(unix)]
     #[sinex_test]
     async fn observed_path_string_rejects_non_utf8_paths() -> TestResult<()> {
-        let invalid_path = PathBuf::from(OsString::from_vec(vec![
-            b'/',
-            b't',
-            b'm',
-            b'p',
-            b'/',
-            0xff,
-        ]));
+        let invalid_path =
+            PathBuf::from(OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff]));
 
         let error =
             observed_path_string(&invalid_path).expect_err("non-utf8 observed paths must fail");
 
-        assert!(error
-            .to_string()
-            .contains("filesystem watcher observed non-utf8 path"));
+        assert!(
+            error
+                .to_string()
+                .contains("filesystem watcher observed non-utf8 path")
+        );
         Ok(())
     }
 
@@ -1785,6 +1985,75 @@ mod tests {
             total_bytes.is_none(),
             "temporal ledger unexpectedly persisted; ingestd should be the sole DB writer"
         );
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 30)]
+    async fn watch_path_keeps_watcher_alive_and_emits_created_event(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
+
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "filesystem"));
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
+        let cancel_token = CancellationToken::new();
+        let stage_context =
+            StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
+
+        let watch_ctx = WatchContext {
+            acquisition,
+            stage_context,
+            max_capture_bytes: Bytes::from_mebibytes(1),
+            max_watches: DEFAULT_MAX_WATCHES,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
+            security_policy: FileWatchingSecurityPolicy::permissive(),
+            dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
+            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS.as_secs()),
+            cancel_token: cancel_token.clone(),
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+        };
+
+        let temp_root = tempdir()?;
+        let watch_path_root = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?
+            .to_string();
+
+        let watcher_task = tokio::spawn(watch_path(watch_path_root.clone(), watch_ctx));
+
+        // Give notify enough time to arm the recursive watcher before mutating the tree.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let created_path = temp_root.path().join("continuous-created.txt");
+        tokio::fs::write(&created_path, b"watch me").await?;
+
+        let event = timeout(Duration::from_secs(10), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem continuous watcher emitted no event"))?;
+
+        assert_eq!(
+            event.event_type.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_static_str()
+        );
+
+        let event_path = event
+            .payload
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event missing path payload"))?;
+        assert!(
+            event_path.ends_with("continuous-created.txt"),
+            "unexpected filesystem event path: {event_path}"
+        );
+
+        cancel_token.cancel();
+        watcher_task.await??;
         Ok(())
     }
 }

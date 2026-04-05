@@ -218,17 +218,18 @@ impl TelemetryCommands {
                 .display(format)?;
             }
 
-            Self::IngestdValidation { format } => match client.telemetry_ingestd_validation().await?
-            {
-                Some(snapshot) => {
-                    CommandOutput::single(snapshot, format_ingestd_validation_table)
-                        .display(format)?;
+            Self::IngestdValidation { format } => {
+                match client.telemetry_ingestd_validation().await? {
+                    Some(snapshot) => {
+                        CommandOutput::single(snapshot, format_ingestd_validation_table)
+                            .display(format)?;
+                    }
+                    None => CommandOutput::<IngestdValidationSnapshot>::empty(
+                        "No ingestd-validation data found.",
+                    )
+                    .display(format)?,
                 }
-                None => CommandOutput::<IngestdValidationSnapshot>::empty(
-                    "No ingestd-validation data found.",
-                )
-                .display(format)?,
-            },
+            }
         }
         Ok(())
     }

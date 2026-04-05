@@ -58,6 +58,14 @@ fn validate_finite_duration_secs(context: &str, duration_secs: f64) -> Result<()
     ))
 }
 
+fn normalize_junit_classname_package(classname: &str) -> Option<&str> {
+    classname
+        .split("::")
+        .next()
+        .map(str::trim)
+        .filter(|package| !package.is_empty())
+}
+
 fn is_sqlite_lock_error(error: &color_eyre::Report) -> bool {
     error.chain().any(|cause| {
         cause
@@ -87,6 +95,11 @@ fn is_recoverable_history_schema_version_error(error: &color_eyre::Report) -> bo
             Some(rusqlite::Error::FromSqlConversionFailure(..)) => true,
             _ => false,
         })
+}
+
+fn sqlite_integrity_pragma_ok(conn: &Connection, pragma: &str) -> bool {
+    conn.query_row(pragma, [], |row| row.get::<_, String>(0))
+        .is_ok_and(|result| result == "ok")
 }
 
 fn with_sqlite_lock_retry<T, F>(action: &str, mut operation: F) -> Result<T>
@@ -340,10 +353,11 @@ impl HistoryDb {
              PRAGMA busy_timeout=5000;",
         )?;
 
-        // Verify database integrity on open. If corrupted, delete and recreate.
-        let integrity_ok = conn
-            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
-            .is_ok_and(|result| result == "ok");
+        // Fast path: quick_check is materially cheaper on large history DBs and
+        // catches the common corruption cases. If it reports a problem, fall back
+        // to the full integrity sweep before deciding to recreate the DB.
+        let integrity_ok = sqlite_integrity_pragma_ok(&conn, "PRAGMA quick_check")
+            || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
         if !integrity_ok {
             drop(conn);
             eprintln!(
@@ -1736,7 +1750,7 @@ impl HistoryDb {
         invocation_id: i64,
         metadata: &std::collections::HashMap<String, crate::nextest::junit::JunitTestMeta>,
     ) -> Result<usize> {
-        let mut updated = 0usize;
+        let mut updated_tests = 0usize;
 
         // Phase 1: Back-fill output for tests that don't have it yet
         let mut output_stmt = self.conn.prepare(
@@ -1760,11 +1774,12 @@ impl HistoryDb {
 
         for (test_name, meta) in metadata {
             let pattern = format!("%{test_name}");
+            let mut touched = false;
 
             // Back-fill output if available and not already present
             if let Some(output) = &meta.output {
                 let rows = output_stmt.execute(params![output, invocation_id, &pattern])?;
-                updated += rows;
+                touched |= rows > 0;
             }
 
             // Update failure info and classname-based package
@@ -1772,13 +1787,22 @@ impl HistoryDb {
                 || meta.failure_type.is_some()
                 || meta.classname.is_some();
             if has_meta {
+                let normalized_package = meta
+                    .classname
+                    .as_deref()
+                    .and_then(normalize_junit_classname_package);
                 meta_stmt.execute(params![
                     meta.failure_message,
                     meta.failure_type,
-                    meta.classname,
+                    normalized_package,
                     invocation_id,
                     &pattern,
                 ])?;
+                touched = true;
+            }
+
+            if touched {
+                updated_tests += 1;
             }
         }
 
@@ -1788,7 +1812,7 @@ impl HistoryDb {
         // Phase 3: Parse slog events from output to extract sandbox metadata
         self.extract_sandbox_metadata(invocation_id)?;
 
-        Ok(updated)
+        Ok(updated_tests)
     }
 
     /// Extract sandbox infrastructure metadata from slog events in test output.
@@ -5312,6 +5336,47 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(pkg, "my-crate");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_junit_classname_normalizes_binary_suffix_to_package() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-meta-classname-normalization.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let id = db.start_invocation("test", None, None, None)?;
+        db.record_test_result(
+            id,
+            "health_aggregator_tracks_component_status",
+            "sinex-health-automaton",
+            "pass",
+            1.0,
+            None,
+            "nextest",
+        )?;
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "health_aggregator_tracks_component_status".to_string(),
+            crate::nextest::junit::JunitTestMeta {
+                output: None,
+                classname: Some("sinex-health-automaton::aggregation_test".to_string()),
+                failure_message: None,
+                failure_type: None,
+            },
+        );
+
+        let updated = db.backfill_test_metadata(id, &metadata)?;
+        assert_eq!(updated, 1);
+
+        let pkg: String = db.conn.query_row(
+            "SELECT package FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pkg, "sinex-health-automaton");
 
         Ok(())
     }

@@ -14,9 +14,10 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Browser/webhistory historical capture is still missing | source capture surface | Still a real product/runtime gap, but the implementation plan now lives in `040`. |
+| Clean prod query-backed smoke is still unproven | deployment surface | Local end-to-end proof exists and the host is live, but the honest deployment threshold is still a queryable smoke event from the cleaned prod stack. |
+| Browser/webhistory historical capture still lacks the right source-shaped ingestion path | source capture surface | The direct CLI shortcut is gone. The remaining work is native browser-DB ingestion plus historical import support for real browser export formats (`json`, `jsonl`, `csv`). |
 
-### Recently Fixed (verified 2026-04-03)
+### Recently Fixed (verified through 2026-04-04)
 
 | Issue | Fix |
 |-------|-----|
@@ -44,6 +45,11 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 | `core.node_runs` looked like dead schema | runtime state now inserts and updates real `node_runs` rows |
 | Automata privacy propagation had no proof | privacy filtering is now regression-locked on the invalidation output path |
 | History DB schema-version read failures could take down `xtask jobs list --json` | `HistoryDb::open()` now recreates unreadable junk-schema history DBs instead of failing the jobs surface |
+| `xtask status` treated any stray `sinex-gateway` process as "up" | Gateway status now uses readiness probing instead of `pgrep` truthiness |
+| `xtask` history opens made `status`/analytics take multiple seconds | Quick-check + lazy tracing + shared DB open path cut repeated history-open cost sharply |
+| Local pipeline had no real end-to-end proof | Clean dev-stack proof now exists for gateway + terminal + filesystem through `NATS -> ingestd -> Postgres -> sinexctl query` |
+| Host activation was still theoretical | `sinnix-prime` is switched live with healthy gateway readiness, materialized admin token, and active managed services |
+| Terminal/desktop target-user bridges were unproven | Host ACL/runtime bridge fix now yields live `.zsh_history`, Atuin, and Hyprland source-material emission under systemd |
 
 ### Design Tensions (Both Sides Are Correct)
 

@@ -277,14 +277,29 @@ mod tests {
         assert_eq!(entries[0].kind, ActivityWatchEntryKind::Window);
         assert_eq!(entries[0].host, "sinnix-prime");
         assert_eq!(entries[0].duration_ms, 3_000);
-        assert_eq!(entries[0].data.get("app").and_then(serde_json::Value::as_str), Some("kitty"));
+        assert_eq!(
+            entries[0]
+                .data
+                .get("app")
+                .and_then(serde_json::Value::as_str),
+            Some("kitty")
+        );
         assert_eq!(entries[1].kind, ActivityWatchEntryKind::Web);
         assert_eq!(
-            entries[1].data.get("url").and_then(serde_json::Value::as_str),
+            entries[1]
+                .data
+                .get("url")
+                .and_then(serde_json::Value::as_str),
             Some("https://example.com")
         );
         assert_eq!(entries[2].kind, ActivityWatchEntryKind::Afk);
-        assert_eq!(entries[2].data.get("status").and_then(serde_json::Value::as_str), Some("afk"));
+        assert_eq!(
+            entries[2]
+                .data
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+            Some("afk")
+        );
 
         Ok(())
     }
@@ -304,8 +319,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn activitywatch_history_reader_rejects_unrepresentable_end_time_filter()
-    -> TestResult<()> {
+    async fn activitywatch_history_reader_rejects_unrepresentable_end_time_filter() -> TestResult<()>
+    {
         let path = fixture_db()?;
         let end_time = super::Timestamp::from_unix_timestamp_nanos(i128::from(i64::MAX) + 1)
             .ok_or_else(|| eyre!("valid far-future timestamp"))?;
@@ -356,7 +371,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(
-            entries[0].data.get("title").and_then(serde_json::Value::as_str),
+            entries[0]
+                .data
+                .get("title")
+                .and_then(serde_json::Value::as_str),
             Some("after malformed json")
         );
         assert_eq!(last_row_id, 5);
@@ -391,7 +409,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].row_id, 5);
         assert_eq!(
-            entries[0].data.get("title").and_then(serde_json::Value::as_str),
+            entries[0]
+                .data
+                .get("title")
+                .and_then(serde_json::Value::as_str),
             Some("after malformed timestamp")
         );
         assert_eq!(last_row_id, 5);

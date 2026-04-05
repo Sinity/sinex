@@ -7,10 +7,10 @@ use crate::common::{
 };
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::Seconds;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::privacy::{self, ProcessingContext};
-use sinex_primitives::Uuid;
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -228,8 +228,7 @@ impl ClipboardWatcher {
 
     fn parse_hyprland_active_window(stdout: &[u8]) -> NodeResult<ActiveWindowContext> {
         let json = serde_json::from_slice::<serde_json::Value>(stdout).map_err(|error| {
-            SinexError::processing("Failed to parse hyprctl activewindow JSON")
-                .with_source(error)
+            SinexError::processing("Failed to parse hyprctl activewindow JSON").with_source(error)
         })?;
 
         Ok(ActiveWindowContext {
@@ -320,10 +319,7 @@ impl ClipboardWatcher {
         }
 
         let source_app = match self
-            .query_x11_active_window_field(
-                &["getactivewindow", "getwindowclassname"],
-                "class",
-            )
+            .query_x11_active_window_field(&["getactivewindow", "getwindowclassname"], "class")
             .await
         {
             Ok(value) => value,
@@ -333,10 +329,7 @@ impl ClipboardWatcher {
             }
         };
         let window_title = match self
-            .query_x11_active_window_field(
-                &["getactivewindow", "getwindowname"],
-                "title",
-            )
+            .query_x11_active_window_field(&["getactivewindow", "getwindowname"], "title")
             .await
         {
             Ok(value) => value,
@@ -891,10 +884,7 @@ mod tests {
         let nats_client = ctx.nats_client();
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-        let acquisition = Arc::new(AcquisitionManager::with_defaults(
-            nats_client,
-            "desktop",
-        ));
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "desktop"));
         let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(
             sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
         );
@@ -948,10 +938,9 @@ mod tests {
 
     #[sinex_test]
     async fn parse_hyprland_active_window_rejects_non_string_fields() -> TestResult<()> {
-        let error = ClipboardWatcher::parse_hyprland_active_window(
-            br#"{ "class": 42, "title": "Docs" }"#,
-        )
-        .expect_err("non-string active window class must fail honestly");
+        let error =
+            ClipboardWatcher::parse_hyprland_active_window(br#"{ "class": 42, "title": "Docs" }"#)
+                .expect_err("non-string active window class must fail honestly");
 
         assert!(error.to_string().contains("field 'class' must be a string"));
         Ok(())
@@ -962,7 +951,11 @@ mod tests {
         let error = ClipboardWatcher::parse_x11_active_window_field(&[0xFF], "title")
             .expect_err("invalid UTF-8 window titles must fail honestly");
 
-        assert!(error.to_string().contains("active window title output as UTF-8"));
+        assert!(
+            error
+                .to_string()
+                .contains("active window title output as UTF-8")
+        );
         Ok(())
     }
 

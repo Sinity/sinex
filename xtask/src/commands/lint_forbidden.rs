@@ -440,8 +440,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_filter_allowlist_rejects_empty_match_paths()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_filter_allowlist_rejects_empty_match_paths() -> ::xtask::sandbox::TestResult<()> {
         let error = filter_allowlist(vec![":10:test".to_string()], &[], |_| false)
             .expect_err("empty file path should fail");
         assert!(format!("{error:#}").contains("empty file path"));
@@ -457,8 +456,8 @@ mod tests {
             stderr: b"killed".to_vec(),
         };
 
-        let error = ensure_rg_completed(&output, "ripgrep")
-            .expect_err("signal termination should surface");
+        let error =
+            ensure_rg_completed(&output, "ripgrep").expect_err("signal termination should surface");
         assert!(error.to_string().contains("terminated by signal"));
         assert!(error.to_string().contains("killed"));
         Ok(())

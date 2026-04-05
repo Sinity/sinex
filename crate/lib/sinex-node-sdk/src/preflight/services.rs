@@ -10,6 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
+use sinex_primitives::temporal::parse_duration;
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
@@ -55,14 +56,7 @@ impl SystemdServiceDetails {
                     "Type" => unit_type = Some(value.to_string()),
                     "NotifyAccess" => notify_access = Some(value.to_string()),
                     "WatchdogUSec" => {
-                        watchdog_usec = Some(value.parse::<u64>().map_err(|error| {
-                            SinexError::processing(
-                                "Failed to parse systemd WatchdogUSec".to_string(),
-                            )
-                            .with_context("field", "WatchdogUSec")
-                            .with_context("value", value.to_string())
-                            .with_std_error(&error)
-                        })?);
+                        watchdog_usec = parse_systemd_watchdog_usec(value)?;
                     }
                     _ => {}
                 }
@@ -106,7 +100,8 @@ impl SystemdServiceDetails {
         match self.watchdog_usec {
             Some(value) if value > 0 => {}
             Some(value) => violations.push(format!("watchdog_usec={value}")),
-            None => violations.push("watchdog_usec=<unset>".to_string()),
+            None if self.is_active() => violations.push("watchdog_usec=<unset>".to_string()),
+            None => {}
         }
 
         violations
@@ -402,6 +397,31 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     }))
 }
 
+fn parse_systemd_watchdog_usec(value: &str) -> NodeResult<Option<u64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("infinity") {
+        return Ok(None);
+    }
+
+    if let Ok(raw_usec) = trimmed.parse::<u64>() {
+        return Ok(Some(raw_usec));
+    }
+
+    let duration = parse_duration(trimmed).ok_or_else(|| {
+        SinexError::processing("Failed to parse systemd WatchdogUSec".to_string())
+            .with_context("field", "WatchdogUSec")
+            .with_context("value", trimmed.to_string())
+    })?;
+    let raw_usec = duration.whole_microseconds();
+    let raw_usec = u64::try_from(raw_usec).map_err(|error| {
+        SinexError::processing("Failed to parse systemd WatchdogUSec".to_string())
+            .with_context("field", "WatchdogUSec")
+            .with_context("value", trimmed.to_string())
+            .with_std_error(&error)
+    })?;
+    Ok(Some(raw_usec))
+}
+
 #[derive(Debug)]
 struct BinaryInfo {
     path: String,
@@ -409,28 +429,22 @@ struct BinaryInfo {
 }
 
 async fn check_binary_availability(binary_name: &str) -> NodeResult<BinaryInfo> {
-    let which_output = run_command_with_timeout("which", &[binary_name]).await?;
+    let path = which::which(binary_name).map_err(|error| {
+        SinexError::processing(format!("Binary '{binary_name}' not found in PATH"))
+            .with_std_error(&error)
+    })?;
+    let path = path.display().to_string();
 
-    if !which_output.status.success() {
-        return Err(SinexError::processing(format!(
-            "Binary '{binary_name}' not found in PATH"
-        )));
-    }
-
-    let path = String::from_utf8_lossy(&which_output.stdout)
-        .trim()
-        .to_string();
-
-    let version = get_binary_version(binary_name, &path).await;
+    let version = get_binary_version(&path).await;
 
     Ok(BinaryInfo { path, version })
 }
 
-async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
+async fn get_binary_version(binary_path: &str) -> Option<String> {
     let version_flags = ["--version", "-V", "version"];
 
     for flag in version_flags {
-        if let Ok(output) = run_command_with_timeout(binary_name, &[flag]).await
+        if let Ok(output) = run_command_with_timeout(binary_path, &[flag]).await
             && output.status.success()
         {
             let version_output = String::from_utf8_lossy(&output.stdout);
@@ -471,8 +485,13 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
 
                     if service_name.starts_with("sinex-") && is_available {
                         if contract_violations.is_empty() {
+                            let contract_message = if service_data.is_active() {
+                                "has an active notify/watchdog contract"
+                            } else {
+                                "has the expected notify contract; watchdog will arm on start"
+                            };
                             messages.push(format!(
-                                "✓ Sinex service '{service_name}' has a valid notify/watchdog contract"
+                                "✓ Sinex service '{service_name}' {contract_message}"
                             ));
                         } else {
                             notify_contract_violations.push(format!(
@@ -871,7 +890,7 @@ fn redact_password(url: &str) -> String {
 mod tests {
     // Small inline tests are justified here because they exercise private
     // preflight helpers without widening the service-verification API surface.
-    use super::{SystemdServiceDetails, discover_unit_files_in_path};
+    use super::{SystemdServiceDetails, discover_unit_files_in_path, parse_systemd_watchdog_usec};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -894,6 +913,28 @@ mod tests {
 
         assert_eq!(details.watchdog_usec, Some(60_000_000));
         assert_eq!(details.unit_type.as_deref(), Some("notify"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_service_details_parse_watchdog_usec_human_duration() -> TestResult<()> {
+        let details = SystemdServiceDetails::from_show_output(
+            "ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=3min\n",
+        )?;
+
+        assert_eq!(details.watchdog_usec, Some(180_000_000));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn systemd_service_details_treat_infinity_watchdog_as_inactive_placeholder(
+    ) -> TestResult<()> {
+        let details = SystemdServiceDetails::from_show_output(
+            "ActiveState=inactive\nSubState=dead\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=infinity\n",
+        )?;
+
+        assert_eq!(details.watchdog_usec, None);
+        assert!(details.notify_contract_violations().is_empty());
         Ok(())
     }
 
@@ -946,6 +987,16 @@ mod tests {
                 format!("{}/sinex-ingestd.service", temp.path().display()),
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_systemd_watchdog_usec_rejects_unknown_units() -> TestResult<()> {
+        let error =
+            parse_systemd_watchdog_usec("forever").expect_err("unknown watchdog unit should fail");
+
+        assert!(error.to_string().contains("WatchdogUSec"));
+        assert!(error.to_string().contains("forever"));
         Ok(())
     }
 

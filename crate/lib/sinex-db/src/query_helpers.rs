@@ -140,8 +140,18 @@ pub fn is_retryable_db_error(err: &SinexError) -> bool {
         return true;
     }
 
-    // Fall back to variant-level retryability for non-SQL database wrappers.
-    err.is_retryable()
+    // Fall back to variant-level retryability for structured wrappers.
+    if err.is_retryable() {
+        return true;
+    }
+
+    // Preserve legacy message-based classification for plain Database errors
+    // created without SQLSTATE context.
+    let rendered = err.to_string().to_lowercase();
+    rendered.contains("deadlock detected")
+        || rendered.contains("could not serialize access")
+        || rendered.contains("transaction rollback")
+        || rendered.contains("current transaction is aborted")
 }
 
 /// Execute a closure within a transaction
@@ -162,12 +172,10 @@ where
                 .map_err(|e| db_error(e, "commit transaction"))?;
             Ok(result)
         }
-        Err(e) => {
-            Err(match tx.rollback().await {
-                Ok(()) => e,
-                Err(rollback_err) => rollback_failure(e, rollback_err, "with_transaction"),
-            })
-        }
+        Err(e) => Err(match tx.rollback().await {
+            Ok(()) => e,
+            Err(rollback_err) => rollback_failure(e, rollback_err, "with_transaction"),
+        }),
     }
 }
 

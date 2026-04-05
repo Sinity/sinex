@@ -93,8 +93,7 @@ pub fn var_optional(name: &str, context: &str) -> Option<String> {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = name,
-                context,
-                "Environment override is not valid UTF-8; ignoring value"
+                context, "Environment override is not valid UTF-8; ignoring value"
             );
             None
         }
@@ -164,9 +163,7 @@ pub fn bool_or(name: &str, default: bool, context: &str) -> bool {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = name,
-                default,
-                context,
-                "Environment override is not valid UTF-8; using default"
+                default, context, "Environment override is not valid UTF-8; using default"
             );
             default
         }
@@ -191,15 +188,18 @@ pub fn strict_env_filter_source(default_filter: &str) -> Result<String> {
         return Ok(default_filter.to_string());
     };
 
-    raw.into_string().map_err(|_| {
-        SinexError::configuration("RUST_LOG is not valid UTF-8".to_string())
-    })
+    raw.into_string()
+        .map_err(|_| SinexError::configuration("RUST_LOG is not valid UTF-8".to_string()))
 }
 
 /// Simple bool flag: true if the var is set to a truthy value, false otherwise.
 /// Does not warn — intended for feature toggles where absence means off.
 #[must_use]
 pub fn bool_flag(name: &str) -> bool {
-    std::env::var(name)
-        .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+    std::env::var(name).is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }

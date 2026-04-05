@@ -330,8 +330,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn build_engine_from_env_accepts_default_configuration() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn build_engine_from_env_accepts_default_configuration()
+    -> ::xtask::sandbox::TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
         unsafe { std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES") };

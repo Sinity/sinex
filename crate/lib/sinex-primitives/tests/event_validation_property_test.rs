@@ -43,66 +43,66 @@ fn valid_event_type_strings() -> impl Strategy<Value = String> {
 fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     let source = "[a-z][a-z0-9_]{2,49}".prop_map(|raw| format!("prop_{raw}"));
     (
-        source,                  // source
+        source, // source
         valid_event_type_strings(),
         "[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62}){0,3}", // host
-        event_payloads(),        // payload
-        prop::bool::ANY,         // random bool for ts_orig
+        event_payloads(),                                                       // payload
+        prop::bool::ANY, // random bool for ts_orig
     )
-        .prop_filter_map("strategy generates valid hostnames", |(
-            source,
-            event_type,
-            host,
-            payload,
-            has_ts_orig,
-        )| {
-            let source = EventSource::new(source).ok()?;
-            let event_type = EventType::new(event_type).ok()?;
-            let host = HostName::new(host).ok()?;
-            let mut event = event_fixture(source, event_type, payload);
-            event.host = host;
+        .prop_filter_map(
+            "strategy generates valid hostnames",
+            |(source, event_type, host, payload, has_ts_orig)| {
+                let source = EventSource::new(source).ok()?;
+                let event_type = EventType::new(event_type).ok()?;
+                let host = HostName::new(host).ok()?;
+                let mut event = event_fixture(source, event_type, payload);
+                event.host = host;
 
-            // Simulate ingest by assigning an ID
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+                // Simulate ingest by assigning an ID
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-            // Conditionally set ts_orig
-            if has_ts_orig {
-                let ingest_ts = event
-                    .id
-                    .as_ref()
-                    .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
-                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
-            }
+                // Conditionally set ts_orig
+                if has_ts_orig {
+                    let ingest_ts = event
+                        .id
+                        .as_ref()
+                        .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
+                    event.ts_orig = Some(ingest_ts - Duration::seconds(60));
+                }
 
-            Some(event)
-        })
+                Some(event)
+            },
+        )
 }
 
 /// Strategy for generating events with metadata
 fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
     (
-        "[a-z][a-z0-9_]{2,49}",  // source
+        "[a-z][a-z0-9_]{2,49}", // source
         valid_event_type_strings(),
     )
-        .prop_filter_map("metadata event source/type must be valid", |(source, event_type)| {
-            let source = EventSource::new(source).ok()?;
-            let event_type = EventType::new(event_type).ok()?;
-            let metadata_timestamp = (*Timestamp::now())
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default();
-            let payload = json!({
-                "data": "test",
-                "_metadata": {
-                    "source": source.as_str(),
-                    "timestamp": metadata_timestamp
-                }
-            });
+        .prop_filter_map(
+            "metadata event source/type must be valid",
+            |(source, event_type)| {
+                let source = EventSource::new(source).ok()?;
+                let event_type = EventType::new(event_type).ok()?;
+                let metadata_timestamp = (*Timestamp::now())
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                let payload = json!({
+                    "data": "test",
+                    "_metadata": {
+                        "source": source.as_str(),
+                        "timestamp": metadata_timestamp
+                    }
+                });
 
-            let mut event = event_fixture(source, event_type, payload);
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+                let mut event = event_fixture(source, event_type, payload);
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-            Some(event)
-        })
+                Some(event)
+            },
+        )
 }
 
 /// Strategy for generating boundary condition events

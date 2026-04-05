@@ -194,7 +194,9 @@ mod tests {
 
         timeout(Duration::from_secs(1), handle)
             .await
-            .map_err(|_| color_eyre::eyre::eyre!("cleanup task should exit after shutdown sender drops"))??;
+            .map_err(|_| {
+                color_eyre::eyre::eyre!("cleanup task should exit after shutdown sender drops")
+            })??;
         Ok(())
     }
 }

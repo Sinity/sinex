@@ -11,16 +11,16 @@ use super::{
         AssemblyPhase,
         BUFFER_DIR_NAME,
         FinalizationState,
+        // MaterialBeginMessage removed (unused)
+        MaterialEndMessage,
         PendingWrite,
         PersistedState,
 
-        // MaterialBeginMessage removed (unused)
-        MaterialEndMessage,
-        parse_material_started_at,
         TEMP_FILE_NAME,
         WAL_FILE_NAME,
         WalEntry,
         WalEntryEnvelope,
+        parse_material_started_at,
     },
 };
 use crate::{IngestdResult, SinexError};
@@ -187,22 +187,22 @@ async fn restore_state_params(
         };
         match parse_wal_envelope_line(line) {
             Ok(envelope) => {
-            if !entry_crc_ok {
-                warn!(
-                    material_id = %material_id,
-                    line = line_num + 1,
-                    seq = envelope.seq,
-                    expected_crc = envelope.crc,
-                    "WAL CRC mismatch — corruption detected, stopping replay"
-                );
-                replay_corrupted = true;
-                break;
-            }
-            if envelope.seq > max_seq {
-                max_seq = envelope.seq;
-            }
-            has_envelope_entries = true;
-            state_snapshot.apply(envelope.entry);
+                if !entry_crc_ok {
+                    warn!(
+                        material_id = %material_id,
+                        line = line_num + 1,
+                        seq = envelope.seq,
+                        expected_crc = envelope.crc,
+                        "WAL CRC mismatch — corruption detected, stopping replay"
+                    );
+                    replay_corrupted = true;
+                    break;
+                }
+                if envelope.seq > max_seq {
+                    max_seq = envelope.seq;
+                }
+                has_envelope_entries = true;
+                state_snapshot.apply(envelope.entry);
             }
             Err(error) => {
                 warn!(
@@ -287,10 +287,18 @@ async fn restore_state_params(
 
     let hasher = rebuild_hasher(&temp_path).await?;
     let mut buffered_slices = load_buffered_slices(&state_dir.join(BUFFER_DIR_NAME)).await?;
-    prune_stale_buffered_slices(material_id, state_snapshot.expected_offset, &mut buffered_slices)
-        .await?;
+    prune_stale_buffered_slices(
+        material_id,
+        state_snapshot.expected_offset,
+        &mut buffered_slices,
+    )
+    .await?;
     let buffered_bytes = buffered_slice_bytes(&buffered_slices).await?;
-    let last_slice_received = restore_last_slice_received(material_id, &wal_path)?;
+    let last_slice_received = restore_last_slice_received(
+        material_id,
+        &wal_path,
+        state_snapshot.last_slice_received.as_deref(),
+    )?;
 
     if restored_state_is_stale(
         &state_snapshot,
@@ -334,7 +342,20 @@ async fn restore_state_params(
     }))
 }
 
-fn restore_last_slice_received(material_id: Uuid, wal_path: &Path) -> IngestdResult<Timestamp> {
+fn restore_last_slice_received(
+    material_id: Uuid,
+    wal_path: &Path,
+    persisted_last_slice_received: Option<&str>,
+) -> IngestdResult<Timestamp> {
+    if let Some(last_slice_received) = persisted_last_slice_received {
+        return Timestamp::parse_rfc3339(last_slice_received).map_err(|error| {
+            SinexError::invalid_state(format!(
+                "Failed to parse persisted last_slice_received during restore (material {material_id})"
+            ))
+            .with_std_error(&error)
+        });
+    }
+
     let modified = std::fs::metadata(wal_path)
         .and_then(|metadata| metadata.modified())
         .map_err(|error| {
@@ -424,6 +445,7 @@ struct ReplayedState {
     expected_offset: i64,
     slice_count: usize,
     started_at: String,
+    last_slice_received: Option<String>,
     material_kind: String,
     source_identifier: String,
     metadata: serde_json::Value,
@@ -456,6 +478,7 @@ impl ReplayedState {
                 self.expected_offset = state.expected_offset;
                 self.slice_count = state.slice_count;
                 self.started_at = state.started_at;
+                self.last_slice_received = state.last_slice_received;
                 self.material_kind = state.material_kind;
                 self.source_identifier = state.source_identifier;
                 self.metadata = state.metadata;
@@ -515,7 +538,10 @@ async fn reconcile_replayed_file_progress(
         return Err(
             SinexError::invalid_state("pending_write does not match staged file progress")
                 .with_context("material_id", material_id.to_string())
-                .with_context("expected_offset", state_snapshot.expected_offset.to_string())
+                .with_context(
+                    "expected_offset",
+                    state_snapshot.expected_offset.to_string(),
+                )
                 .with_context("pending_offset", pending_write.offset.to_string())
                 .with_context("pending_len", pending_write.len.to_string())
                 .with_context("actual_size", actual_size.to_string()),
@@ -523,12 +549,15 @@ async fn reconcile_replayed_file_progress(
     }
 
     if actual_size != state_snapshot.expected_offset {
-        return Err(
-            SinexError::invalid_state("staged file size does not match restored WAL progress")
-                .with_context("material_id", material_id.to_string())
-                .with_context("expected_offset", state_snapshot.expected_offset.to_string())
-                .with_context("actual_size", actual_size.to_string()),
-        );
+        return Err(SinexError::invalid_state(
+            "staged file size does not match restored WAL progress",
+        )
+        .with_context("material_id", material_id.to_string())
+        .with_context(
+            "expected_offset",
+            state_snapshot.expected_offset.to_string(),
+        )
+        .with_context("actual_size", actual_size.to_string()));
     }
 
     Ok(())
@@ -542,10 +571,11 @@ async fn staged_file_size_bytes(temp_path: &Path) -> IngestdResult<i64> {
                 .with_std_error(&error)
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(error) => Err(
-            SinexError::io(format!("Failed to stat staged file {}", temp_path.display()))
-                .with_source(error),
-        ),
+        Err(error) => Err(SinexError::io(format!(
+            "Failed to stat staged file {}",
+            temp_path.display()
+        ))
+        .with_source(error)),
     }
 }
 
@@ -555,6 +585,7 @@ fn checkpoint_snapshot(state: &AssemblerState) -> PersistedState {
         expected_offset: state.expected_offset,
         slice_count: state.slice_count,
         started_at: state.started_at.format_rfc3339(),
+        last_slice_received: Some(state.last_slice_received.format_rfc3339()),
         material_kind: state.material_kind.clone(),
         source_identifier: state.source_identifier.clone(),
         metadata: state.metadata.clone(),
@@ -1098,8 +1129,7 @@ async fn append_slice_data(
                         .with_source(e)
                 })?;
                 file.sync_all().await.map_err(|e| {
-                    SinexError::io(format!("Failed to sync slice for {material_id}"))
-                        .with_source(e)
+                    SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
                 })?;
             }
         }
@@ -1112,13 +1142,13 @@ async fn append_slice_data(
             );
         }
         size => {
-            return Err(
-                SinexError::invalid_state("slice staging file is inconsistent with pending_write")
-                    .with_context("material_id", material_id.to_string())
-                    .with_context("pending_offset", pending_write.offset.to_string())
-                    .with_context("pending_len", pending_write.len.to_string())
-                    .with_context("actual_size", size.to_string()),
-            );
+            return Err(SinexError::invalid_state(
+                "slice staging file is inconsistent with pending_write",
+            )
+            .with_context("material_id", material_id.to_string())
+            .with_context("pending_offset", pending_write.offset.to_string())
+            .with_context("pending_len", pending_write.len.to_string())
+            .with_context("actual_size", size.to_string()));
         }
     }
 
@@ -1152,11 +1182,15 @@ async fn flush_buffered_slices(
             break;
         }
 
-        let buf_path = state.buffered_slices.get(&next_offset).cloned().ok_or_else(|| {
-            SinexError::service(format!(
-                "Missing buffered slice for {material_id} at offset {next_offset}"
-            ))
-        })?;
+        let buf_path = state
+            .buffered_slices
+            .get(&next_offset)
+            .cloned()
+            .ok_or_else(|| {
+                SinexError::service(format!(
+                    "Missing buffered slice for {material_id} at offset {next_offset}"
+                ))
+            })?;
 
         let buffered_data = fs::read(&buf_path).await.map_err(|e| {
             SinexError::io(format!(
@@ -1296,10 +1330,7 @@ mod tests {
         Ok((assembler, annex_dir, state_dir))
     }
 
-    async fn write_wal_entry(
-        wal_path: &std::path::Path,
-        entry: WalEntry,
-    ) -> TestResult<()> {
+    async fn write_wal_entry(wal_path: &std::path::Path, entry: WalEntry) -> TestResult<()> {
         let entry_json = serde_json::to_vec(&entry)?;
         let envelope = WalEntryEnvelope {
             seq: 0,
@@ -1351,9 +1382,11 @@ mod tests {
         let error = buffered_slice_file_len_bytes(Path::new("/tmp/oversized-slice"), u64::MAX)
             .expect_err("oversized buffered slices must fail honestly");
 
-        assert!(error
-            .to_string()
-            .contains("buffered slice length exceeds i64 range"));
+        assert!(
+            error
+                .to_string()
+                .contains("buffered slice length exceeds i64 range")
+        );
         Ok(())
     }
 
@@ -1362,9 +1395,11 @@ mod tests {
         let error = checked_buffered_slice_total(i64::MAX, 1, Path::new("/tmp/overflow-slice"))
             .expect_err("buffered slice byte totals must not silently overflow");
 
-        assert!(error
-            .to_string()
-            .contains("buffered slice byte total overflowed"));
+        assert!(
+            error
+                .to_string()
+                .contains("buffered slice byte total overflowed")
+        );
         Ok(())
     }
 
@@ -1595,9 +1630,55 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn restore_state_promotes_fully_staged_pending_write(
+    async fn restore_state_prefers_checkpoint_last_slice_received_over_wal_mtime(
         ctx: TestContext,
     ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+        tokio::fs::write(material_dir.join(TEMP_FILE_NAME), &[]).await?;
+
+        let persisted_last_slice_received = Timestamp::now();
+        let stale_wal_mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Checkpoint(PersistedState {
+                material_id: material_id.to_string(),
+                expected_offset: 0,
+                slice_count: 0,
+                started_at: Timestamp::now().format_rfc3339(),
+                last_slice_received: Some(persisted_last_slice_received.format_rfc3339()),
+                material_kind: "test".to_string(),
+                source_identifier: "test://restore".to_string(),
+                metadata: json!({}),
+                pending_write: None,
+                pending_end: None,
+                phase: AssemblyPhase::Accumulating,
+            }),
+        )
+        .await?;
+        std::fs::File::options()
+            .append(true)
+            .open(material_dir.join(WAL_FILE_NAME))?
+            .set_modified(stale_wal_mtime)?;
+
+        restore_state(&assembler).await?;
+
+        let state = assembler
+            .get_state_handle(&material_id)
+            .await
+            .expect("checkpoint-backed WAL state must restore");
+        assert_eq!(
+            state.lock().await.last_slice_received,
+            persisted_last_slice_received
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_promotes_fully_staged_pending_write(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
@@ -1612,6 +1693,7 @@ mod tests {
                 expected_offset: 0,
                 slice_count: 0,
                 started_at: Timestamp::now().format_rfc3339(),
+                last_slice_received: None,
                 material_kind: "test".to_string(),
                 source_identifier: "test://restore".to_string(),
                 metadata: json!({}),
@@ -1801,8 +1883,11 @@ mod tests {
         )
         .await?;
 
-        tokio::fs::write(material_dir.join(BUFFER_DIR_NAME).join("bad-offset.slice"), b"slice")
-            .await?;
+        tokio::fs::write(
+            material_dir.join(BUFFER_DIR_NAME).join("bad-offset.slice"),
+            b"slice",
+        )
+        .await?;
 
         restore_state(&assembler).await?;
 
@@ -1866,9 +1951,8 @@ mod tests {
     #[cfg(unix)]
     #[sinex_test]
     async fn parse_material_state_folder_rejects_non_utf8_name() -> TestResult<()> {
-        let path = std::path::PathBuf::from("/tmp").join(std::ffi::OsString::from_vec(vec![
-            0x66, 0x6f, 0x80,
-        ]));
+        let path = std::path::PathBuf::from("/tmp")
+            .join(std::ffi::OsString::from_vec(vec![0x66, 0x6f, 0x80]));
 
         let err = parse_material_state_folder(&path)
             .expect_err("non-UTF-8 material state folders must surface explicit errors");

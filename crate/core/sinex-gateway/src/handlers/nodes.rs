@@ -20,10 +20,8 @@ pub use sinex_primitives::rpc::nodes::{
 type Result<T> = std::result::Result<T, SinexError>;
 
 fn is_missing_node_state_bucket(error: &async_nats::jetstream::context::KeyValueError) -> bool {
-    use async_nats::jetstream::context::{
-        GetStreamError, GetStreamErrorKind, KeyValueErrorKind,
-    };
     use async_nats::jetstream::ErrorCode;
+    use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind, KeyValueErrorKind};
 
     if error.kind() != KeyValueErrorKind::GetBucket {
         return false;
@@ -65,11 +63,9 @@ pub async fn handle_nodes_list(
             });
         }
         Err(error) => {
-            return Err(
-                SinexError::kv("Failed to open node state bucket")
-                    .with_context("bucket", kv_bucket_name)
-                    .with_source(error),
-            );
+            return Err(SinexError::kv("Failed to open node state bucket")
+                .with_context("bucket", kv_bucket_name)
+                .with_source(error));
         }
     };
 
@@ -176,9 +172,7 @@ pub async fn handle_nodes_drain(
         status: OperationStatus::Pending,
         node_id: drain_params.node_id,
     })
-    .map_err(|e| {
-        SinexError::serialization("failed to serialize drain response").with_std_error(&e)
-    })
+    .map_err(|e| SinexError::serialization("failed to serialize drain response").with_std_error(&e))
 }
 
 /// Handle POST /nodes/{id}/resume - resume node processing
@@ -302,7 +296,6 @@ pub async fn handle_nodes_set_horizon(
         horizon: horizon_params.horizon,
     })
     .map_err(|e| {
-        SinexError::serialization("failed to serialize set-horizon response")
-            .with_std_error(&e)
+        SinexError::serialization("failed to serialize set-horizon response").with_std_error(&e)
     })
 }

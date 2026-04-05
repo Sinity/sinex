@@ -75,9 +75,7 @@ impl XtaskCommand for AnalyticsCommand {
                 AnalyticsSubcommand::WorkspaceHealth { breakdown } => {
                     execute_workspace_health(&analysis, *breakdown, ctx)
                 }
-                AnalyticsSubcommand::Hotspots { limit } => {
-                    execute_hotspots(&analysis, *limit, ctx)
-                }
+                AnalyticsSubcommand::Hotspots { limit } => execute_hotspots(&analysis, *limit, ctx),
                 AnalyticsSubcommand::Reliability { limit } => {
                     execute_reliability(&analysis, *limit, ctx)
                 }
@@ -496,7 +494,6 @@ fn truncate_str(s: &str, max: usize) -> String {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
 }
-
 
 #[allow(dead_code)]
 fn render_package_health_row(pkg: &PackageHealth) -> [String; 5] {

@@ -1,4 +1,5 @@
 use reqwest::Client;
+use serde_json::Value;
 use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use std::env;
 use tokio::sync::watch;
@@ -101,6 +102,8 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
         reqwest::StatusCode::OK,
         "Should accept valid token"
     );
+    let body: Value = resp.json().await?;
+    assert_eq!(body["result"], "pong");
 
     // Cleanup
     let _ = shutdown_tx.send(true);

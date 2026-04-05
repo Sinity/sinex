@@ -70,7 +70,7 @@ in
           };
         };
       };
-    resourceModule = { defaultMemory, defaultCpu, defaultShutdownSec ? 90 }:
+    resourceModule = { defaultMemory, defaultCpu, defaultShutdownSec ? 90, defaultOpenFiles ? null }:
       submodule {
         options = {
           memoryMax = mkOption {
@@ -87,6 +87,11 @@ in
             type = positive;
             default = defaultShutdownSec;
             description = "systemd TimeoutStopSec in seconds.";
+          };
+          openFilesLimit = mkOption {
+            type = nullOr positive;
+            default = defaultOpenFiles;
+            description = "systemd LimitNOFILE soft/hard limit.";
           };
         };
       };
@@ -496,7 +501,11 @@ in
                   description = "JetStream max_ack_pending for the material slices consumer.";
                 };
                 resources = mkOption {
-                  type = resourceModule { defaultMemory = "1G"; defaultCpu = "100%"; };
+                  type = resourceModule {
+                    defaultMemory = "1G";
+                    defaultCpu = "100%";
+                    defaultOpenFiles = 524288;
+                  };
                   default = {};
                   description = "Resource limits for ingestd.";
                 };
@@ -899,6 +908,20 @@ in
                     When empty and <option>services.sinex.users.target</option> is set,
                     defaults to the target user's home directory.
                   '';
+                };
+                maxWatches = mkOption {
+                  type = positive;
+                  default = 65536;
+                  description = ''
+                    Filesystem watch-budget threshold passed to the node config.
+                    When the estimated directory count exceeds this value, the node
+                    falls back to poll mode instead of native recursive watches.
+                  '';
+                };
+                pollIntervalSec = mkOption {
+                  type = positive;
+                  default = 5;
+                  description = "Poll interval, in seconds, used when the filesystem node falls back to poll mode.";
                 };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {
@@ -1442,6 +1465,9 @@ in
       targetHome =
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "home" ] "/home/${targetUser}" config;
+      targetGroup =
+        if targetUser == null then null
+        else lib.attrByPath [ "users" "users" targetUser "group" ] "users" config;
       targetUid =
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
@@ -1488,7 +1514,7 @@ in
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
       gatewayTlsTrustAnchorFile =
-        if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/ca.pem" else null;
+        if cfg.core.gateway.autoGenerateTls then runtimeDir + "/gateway-ca.pem" else null;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
       gatewayProbeListenAddress =
         if hasPrefix "0.0.0.0:" cfg.core.gateway.listenAddress then
@@ -1618,7 +1644,7 @@ in
         ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
         ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [ { path = "${stateRoot}/tls"; mode = "0750"; } ]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
-          { path = asciiPath; mode = "0770"; user = targetUser; group = targetUser; }
+          { path = asciiPath; mode = "0770"; user = targetUser; group = targetGroup; }
         ];
       tmpRule = rule:
         let

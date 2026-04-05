@@ -318,22 +318,24 @@ impl XtaskCommand for CheckCommand {
                 );
             }
 
-            let clippy_summary = ctx.cargo_runner().run_clippy_streaming(&package_arg_refs, &mut |n| {
-                if pkg_total > 0 {
-                    let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                    ctx.report_progress_full(
-                        "clippy",
-                        Some(pct),
-                        Some(n as i64),
-                        Some(pkg_total as i64),
-                        "determinate",
-                        Some("packages"),
-                        None,
-                        "rough",
-                        Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
-                    );
-                }
-            })?;
+            let clippy_summary =
+                ctx.cargo_runner()
+                    .run_clippy_streaming(&package_arg_refs, &mut |n| {
+                        if pkg_total > 0 {
+                            let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                            ctx.report_progress_full(
+                                "clippy",
+                                Some(pct),
+                                Some(n as i64),
+                                Some(pkg_total as i64),
+                                "determinate",
+                                Some("packages"),
+                                None,
+                                "rough",
+                                Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                            );
+                        }
+                    })?;
             let success = clippy_summary.success;
 
             // Show rendered output for humans
@@ -420,22 +422,24 @@ impl XtaskCommand for CheckCommand {
                 );
             }
 
-            let check_summary = ctx.cargo_runner().run_check_streaming(&package_arg_refs, &mut |n| {
-                if pkg_total > 0 {
-                    let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                    ctx.report_progress_full(
-                        "compile",
-                        Some(pct),
-                        Some(n as i64),
-                        Some(pkg_total as i64),
-                        "determinate",
-                        Some("packages"),
-                        None,
-                        "rough",
-                        Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
-                    );
-                }
-            })?;
+            let check_summary =
+                ctx.cargo_runner()
+                    .run_check_streaming(&package_arg_refs, &mut |n| {
+                        if pkg_total > 0 {
+                            let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                            ctx.report_progress_full(
+                                "compile",
+                                Some(pct),
+                                Some(n as i64),
+                                Some(pkg_total as i64),
+                                "determinate",
+                                Some("packages"),
+                                None,
+                                "rough",
+                                Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                            );
+                        }
+                    })?;
             let success = check_summary.success;
 
             if ctx.is_human() {
@@ -769,13 +773,16 @@ mod tests {
         let ctx = mock_ctx(runner);
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
-        assert!(result.is_success(), "clean check should succeed: {result:?}");
+        assert!(
+            result.is_success(),
+            "clean check should succeed: {result:?}"
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_execute_check_warns_when_fixable_count_is_unavailable(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_check_warns_when_fixable_count_is_unavailable()
+    -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let temp = tempfile::tempdir()?;
         let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
@@ -785,23 +792,31 @@ mod tests {
             .data
             .as_ref()
             .unwrap_or_else(|| panic!("expected structured data"));
-        assert!(result.is_success(), "clean check should still succeed: {result:?}");
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("auto-fixable diagnostic count")));
+        assert!(
+            result.is_success(),
+            "clean check should still succeed: {result:?}"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("auto-fixable diagnostic count"))
+        );
         assert!(data.get("fixable").is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning()
+    -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let ctx = mock_ctx(runner);
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
-        assert!(result.is_success(), "clean check should succeed: {result:?}");
+        assert!(
+            result.is_success(),
+            "clean check should succeed: {result:?}"
+        );
         assert!(
             result
                 .warnings
@@ -822,7 +837,8 @@ mod tests {
         assert!(!result.is_success(), "check with errors should fail");
         assert!(
             result.errors.iter().any(|e| e.code == "CHECK_FAILED"),
-            "expected CHECK_FAILED in errors: {:?}", result.errors,
+            "expected CHECK_FAILED in errors: {:?}",
+            result.errors,
         );
         Ok(())
     }
@@ -835,12 +851,16 @@ mod tests {
         cmd.execute(&ctx).await?;
         let calls = runner.calls();
         assert_eq!(calls.clippy, 1, "clippy should have been called once");
-        assert_eq!(calls.check, 0, "cargo check must NOT run when --lint active");
+        assert_eq!(
+            calls.check, 0,
+            "cargo check must NOT run when --lint active"
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_execute_compile_only_routes_to_check_not_clippy() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_compile_only_routes_to_check_not_clippy()
+    -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let ctx = mock_ctx(runner.clone());
         let cmd = make_cmd(false, false, false, false); // default: compile-only
@@ -857,16 +877,21 @@ mod tests {
         let ctx = mock_ctx(runner);
         let cmd = make_cmd(true, false, false, false); // --lint
         let result = cmd.execute(&ctx).await?;
-        assert!(!result.is_success(), "clippy errors should propagate to failure");
+        assert!(
+            !result.is_success(),
+            "clippy errors should propagate to failure"
+        );
         assert!(
             result.errors.iter().any(|e| e.code == "CLIPPY_FAILED"),
-            "expected CLIPPY_FAILED in errors: {:?}", result.errors,
+            "expected CLIPPY_FAILED in errors: {:?}",
+            result.errors,
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_execute_fmt_fail_short_circuits_before_compile() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_fmt_fail_short_circuits_before_compile()
+    -> ::xtask::sandbox::TestResult<()> {
         // --fmt with a formatting violation should bail before running cargo check.
         let runner = Arc::new(MockCargoRunner::clean().with_fmt_fail());
         let ctx = mock_ctx(runner.clone());
@@ -887,7 +912,10 @@ mod tests {
         let ctx = mock_ctx(runner);
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
-        assert!(result.is_success(), "warnings alone should not fail the check");
+        assert!(
+            result.is_success(),
+            "warnings alone should not fail the check"
+        );
         assert!(
             result.warnings.iter().any(|w| w.contains("3 warning")),
             "3 warnings should appear in result.warnings: {:?}",
@@ -897,7 +925,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()>
+    {
         // Verify that the progress callback is fired once per compiled package.
         // MockCargoRunner fires on_package_done N times for N compiled_packages.
         let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
@@ -950,11 +979,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_spawn_compilation_prefetch_surfaces_spawn_failure() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_spawn_compilation_prefetch_surfaces_spawn_failure()
+    -> ::xtask::sandbox::TestResult<()> {
         let error = spawn_compilation_prefetch_with("nonexistent-cargo-xyz-12345")
             .expect_err("missing cargo should fail");
         assert!(
-            format!("{error:#}").contains("failed to spawn `cargo test --no-run --workspace` prefetch")
+            format!("{error:#}")
+                .contains("failed to spawn `cargo test --no-run --workspace` prefetch")
         );
         Ok(())
     }

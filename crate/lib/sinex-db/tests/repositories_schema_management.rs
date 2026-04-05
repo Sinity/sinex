@@ -1,7 +1,7 @@
 use serde_json::json;
+use sinex_db::DynamicPayload;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
-use sinex_db::DynamicPayload;
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
 
@@ -270,7 +270,9 @@ async fn corrupt_validation_cache_rows_fail_honestly(ctx: TestContext) -> TestRe
         })
         .await?;
 
-    let material_id = ctx.create_source_material(Some("corrupt-validation-cache")).await?;
+    let material_id = ctx
+        .create_source_material(Some("corrupt-validation-cache"))
+        .await?;
     let inserted = ctx
         .pool
         .events()

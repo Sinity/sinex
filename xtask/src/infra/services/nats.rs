@@ -436,8 +436,9 @@ jetstream {{
 
     #[must_use]
     pub fn read_pid(&self) -> Option<u32> {
-        match self.read_pid_result() {
-            Ok(pid) => pid,
+        match self.pid_state() {
+            Ok(NatsPidState::Running(pid) | NatsPidState::Stale(pid)) => Some(pid),
+            Ok(NatsPidState::Missing) => None,
             Err(error) => {
                 tracing::warn!(path = %self.config.pid_file.display(), error = %error, "failed to read nats pid file");
                 None
@@ -470,6 +471,15 @@ jetstream {{
 
     fn listener_port_for_pid(&self, pid: u32) -> Result<Option<u16>> {
         listener_port_for_pid_probe(pid, Command::new("ss").args(["-ltnp"]).output())
+    }
+
+    fn running_pid_for_configured_port(&self) -> Result<Option<u32>> {
+        find_running_nats_pid_for_port(
+            self.config.port,
+            Command::new("pgrep").args(["-f", "nats-server"]).output(),
+            |pid| self.is_running_pid(pid),
+            |pid| self.listener_port_for_pid(pid),
+        )
     }
 
     fn nats_command(&self) -> Command {
@@ -513,7 +523,10 @@ jetstream {{
 
     fn pid_state(&self) -> Result<NatsPidState> {
         let Some(pid) = self.read_pid_result()? else {
-            return Ok(NatsPidState::Missing);
+            return Ok(match self.running_pid_for_configured_port()? {
+                Some(pid) => NatsPidState::Running(pid),
+                None => NatsPidState::Missing,
+            });
         };
 
         if self.is_running_pid(pid) {
@@ -562,6 +575,24 @@ fn listener_port_for_pid_probe(
         )
     })?;
     Ok(Some(parse_listener_port(listener)?))
+}
+
+fn find_running_nats_pid_for_port(
+    target_port: u16,
+    output: std::io::Result<std::process::Output>,
+    mut is_running_pid: impl FnMut(u32) -> bool,
+    mut listener_port_for_pid: impl FnMut(u32) -> Result<Option<u16>>,
+) -> Result<Option<u32>> {
+    for pid in parse_nats_pgrep_output(output)? {
+        if !is_running_pid(pid) {
+            continue;
+        }
+        if listener_port_for_pid(pid)? == Some(target_port) {
+            return Ok(Some(pid));
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -667,6 +698,49 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
         let message = format!("{error:#}");
         assert!(message.contains("missing port separator"));
         assert!(message.contains("malformed-listener"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn find_running_nats_pid_for_port_matches_live_server_without_pid_file() -> TestResult<()>
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        let pid = find_running_nats_pid_for_port(
+            4308,
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"111\n222\n".to_vec(),
+                stderr: Vec::new(),
+            }),
+            |candidate| candidate != 111,
+            |candidate| Ok(match candidate {
+                111 => Some(4308),
+                222 => Some(4308),
+                _ => None,
+            }),
+        )?;
+        assert_eq!(pid, Some(222));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn find_running_nats_pid_for_port_returns_none_when_port_differs() -> TestResult<()> {
+        use std::os::unix::process::ExitStatusExt;
+
+        let pid = find_running_nats_pid_for_port(
+            4308,
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"111\n".to_vec(),
+                stderr: Vec::new(),
+            }),
+            |_| true,
+            |_| Ok(Some(4222)),
+        )?;
+        assert_eq!(pid, None);
         Ok(())
     }
 

@@ -20,9 +20,7 @@ async fn advisory_lock_tracks_state_and_releases_after_drop(ctx: TestContext) ->
     ctx.timing()
         .wait_for_condition(
             || async {
-                Ok::<bool, color_eyre::Report>(
-                    !AdvisoryLock::is_locked(&ctx.pool, &key).await?,
-                )
+                Ok::<bool, color_eyre::Report>(!AdvisoryLock::is_locked(&ctx.pool, &key).await?)
             },
             10,
         )
@@ -32,7 +30,9 @@ async fn advisory_lock_tracks_state_and_releases_after_drop(ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn advisory_lock_waiter_acquires_after_prior_holder_drops(ctx: TestContext) -> TestResult<()> {
+async fn advisory_lock_waiter_acquires_after_prior_holder_drops(
+    ctx: TestContext,
+) -> TestResult<()> {
     let key = format!("advisory-lock-wait-{}", Uuid::now_v7());
 
     let first_guard = AdvisoryLock::try_acquire(&ctx.pool, &key)
@@ -59,9 +59,7 @@ async fn advisory_lock_waiter_acquires_after_prior_holder_drops(ctx: TestContext
     ctx.timing()
         .wait_for_condition(
             || async {
-                Ok::<bool, color_eyre::Report>(
-                    !AdvisoryLock::is_locked(&ctx.pool, &key).await?,
-                )
+                Ok::<bool, color_eyre::Report>(!AdvisoryLock::is_locked(&ctx.pool, &key).await?)
             },
             10,
         )

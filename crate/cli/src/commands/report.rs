@@ -154,8 +154,7 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
         ..Default::default()
     };
 
-    if let Ok(EventQueryResult::GroupedCounts { groups }) =
-        client.query_events(sources_query).await
+    if let Ok(EventQueryResult::GroupedCounts { groups }) = client.query_events(sources_query).await
     {
         if !groups.is_empty() {
             println!();
@@ -205,9 +204,7 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
         ..Default::default()
     };
 
-    if let Ok(EventQueryResult::TimeSeries { buckets }) =
-        client.query_events(heatmap_query).await
-    {
+    if let Ok(EventQueryResult::TimeSeries { buckets }) = client.query_events(heatmap_query).await {
         if !buckets.is_empty() {
             println!();
             println!("{}", style("Hourly Activity:").bold());

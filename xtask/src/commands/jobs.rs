@@ -608,7 +608,9 @@ struct StageTimingsProbe {
 
 fn load_invocation_progress(ctx: &CommandContext, invocation_id: Option<i64>) -> ProgressProbe {
     match invocation_id {
-        Some(iid) => progress_probe_from_result(iid, ctx.try_with_history_db(|db| db.get_progress(iid))),
+        Some(iid) => {
+            progress_probe_from_result(iid, ctx.try_with_history_db(|db| db.get_progress(iid)))
+        }
         None => ProgressProbe {
             progress: None,
             issue: None,
@@ -768,7 +770,12 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let probe = progress_probe_from_result(42, None);
         assert!(probe.progress.is_none());
-        assert!(probe.issue.unwrap_or_default().contains("history DB unavailable"));
+        assert!(
+            probe
+                .issue
+                .unwrap_or_default()
+                .contains("history DB unavailable")
+        );
         Ok(())
     }
 

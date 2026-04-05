@@ -17,7 +17,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::thread;
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -58,22 +58,22 @@ struct TraceRecord {
 
 /// Tracing layer that persists selected events to the history SQLite database.
 pub struct HistoryTracingLayer {
-    tx: std::sync::mpsc::SyncSender<TraceRecord>,
-    _writer_handle: thread::JoinHandle<()>,
+    db_path: PathBuf,
+    tx: OnceLock<std::sync::mpsc::SyncSender<TraceRecord>>,
     invocation_id: Arc<AtomicI64>,
 }
 
 impl HistoryTracingLayer {
-    /// Create a new layer. Spawns a writer thread.
+    /// Create a new layer.
     ///
-    /// Returns `None` only if the channel cannot be created (infallible in practice).
+    /// The history writer thread is spawned lazily on the first persisted event
+    /// so read-only commands do not pay a second `HistoryDb::open()` just for
+    /// unused trace plumbing.
     #[must_use]
     pub fn new(db_path: PathBuf) -> Self {
-        let (tx, rx) = std::sync::mpsc::sync_channel(512);
-        let handle = thread::spawn(move || writer_loop(db_path, rx));
         Self {
-            tx,
-            _writer_handle: handle,
+            db_path,
+            tx: OnceLock::new(),
             invocation_id: Arc::clone(&*CURRENT_INVOCATION_ID),
         }
     }
@@ -81,6 +81,15 @@ impl HistoryTracingLayer {
     fn current_invocation_id(&self) -> Option<i64> {
         let id = self.invocation_id.load(Ordering::SeqCst);
         if id == -1 { None } else { Some(id) }
+    }
+
+    fn trace_tx(&self) -> &std::sync::mpsc::SyncSender<TraceRecord> {
+        self.tx.get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(512);
+            let db_path = self.db_path.clone();
+            thread::spawn(move || writer_loop(db_path, rx));
+            tx
+        })
     }
 }
 
@@ -112,7 +121,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for HistoryTracingLayer {
             message: visitor.message,
             fields,
         };
-        if let Err(err) = self.tx.try_send(record) {
+        if let Err(err) = self.trace_tx().try_send(record) {
             warn_trace_history_once(&format!(
                 "failed to enqueue trace event for history persistence: {err}"
             ));
@@ -340,5 +349,57 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<TraceRecord>) {
     }
     if let Err(err) = tx.commit() {
         warn_trace_history_once(&format!("failed to commit trace history batch: {err}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+    use color_eyre::eyre::Context;
+    use tempfile::tempdir;
+    use tracing_subscriber::prelude::*;
+
+    #[sinex_test]
+    async fn test_history_tracing_layer_is_lazy_until_first_persisted_event() -> TestResult<()> {
+        let temp = tempdir().context("failed to create tempdir")?;
+        let db_path = temp.path().join("history.db");
+
+        let _layer = HistoryTracingLayer::new(db_path.clone());
+
+        assert!(
+            !db_path.exists(),
+            "history trace DB should not exist before the first persisted event"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_tracing_layer_persists_first_warn_event() -> TestResult<()> {
+        let temp = tempdir().context("failed to create tempdir")?;
+        let db_path = temp.path().join("history.db");
+        let subscriber =
+            tracing_subscriber::registry().with(HistoryTracingLayer::new(db_path.clone()));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(target: "xtask::history.tests", code = 17_i64, "persist trace event");
+        });
+
+        for _ in 0..50 {
+            if db_path.exists() {
+                let conn = Connection::open(&db_path)
+                    .with_context(|| format!("failed to open {}", db_path.display()))?;
+                let count: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM trace_events", [], |row| row.get(0))?;
+                if count == 1 {
+                    return Ok(());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        Err(color_eyre::eyre::eyre!(
+            "history tracing layer did not persist the first warning event in time"
+        ))
     }
 }

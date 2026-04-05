@@ -174,6 +174,103 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
+/// Reusing the same logical source must create distinct registry identifiers per observation.
+#[sinex_test]
+async fn material_acquisition_reuses_logical_source_without_aliasing_material_ids(
+    ctx: TestContext,
+) -> Result<()> {
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+
+    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-source");
+    let logical_source = "same-logical-source";
+
+    let mut first = manager.begin_material(logical_source).await?;
+    let first_id = first.material_id;
+    manager.append_slice(&mut first, b"first").await?;
+    manager.finalize(first, "first complete").await?;
+
+    let mut second = manager.begin_material(logical_source).await?;
+    let second_id = second.material_id;
+    manager.append_slice(&mut second, b"second").await?;
+    manager.finalize(second, "second complete").await?;
+
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                async move {
+                    let first = pool.source_materials().get_by_id(Id::from_uuid(first_id)).await?;
+                    let second = pool
+                        .source_materials()
+                        .get_by_id(Id::from_uuid(second_id))
+                        .await?;
+
+                    Ok::<bool, sinex_primitives::error::SinexError>(
+                        first
+                            .as_ref()
+                            .is_some_and(|record| record.status.as_str() == "completed")
+                            && second
+                                .as_ref()
+                                .is_some_and(|record| record.status.as_str() == "completed"),
+                    )
+                }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
+
+    let first = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(first_id))
+        .await?
+        .expect("first material should exist");
+    let second = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(second_id))
+        .await?
+        .expect("second material should exist");
+
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.source_identifier, second.source_identifier);
+    assert!(first.source_identifier.starts_with(logical_source));
+    assert!(second.source_identifier.starts_with(logical_source));
+    assert_eq!(
+        first
+            .metadata
+            .get("logical_source_identifier")
+            .and_then(serde_json::Value::as_str),
+        Some(logical_source)
+    );
+    assert_eq!(
+        second
+            .metadata
+            .get("logical_source_identifier")
+            .and_then(serde_json::Value::as_str),
+        Some(logical_source)
+    );
+    assert_eq!(
+        first
+            .metadata
+            .get("observation_material_id")
+            .and_then(serde_json::Value::as_str),
+        Some(first_id.to_string().as_str())
+    );
+    assert_eq!(
+        second
+            .metadata
+            .get("observation_material_id")
+            .and_then(serde_json::Value::as_str),
+        Some(second_id.to_string().as_str())
+    );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Dropping a never-written handle should not orphan a material registry row.
 #[sinex_test]
 async fn material_acquisition_drop_before_first_slice_does_not_publish_orphan(
@@ -805,8 +902,9 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
 #[sinex_test]
 async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
+    let work_dir = tempfile::tempdir()?;
     let (ctx, nats, nats_client, mut ingest_handle) =
-        setup_material_ingestd(ctx, None, |_| {}).await?;
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
     let js = nats.jetstream_with_client(nats_client.clone());
     nats.wait_for_stream(
         &js,

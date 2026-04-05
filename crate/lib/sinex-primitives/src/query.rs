@@ -106,11 +106,11 @@ impl TimeRange {
         if let (Some(start), Some(end)) = (start, end)
             && start >= end
         {
-            return Err(
-                SinexError::validation("start_time must be strictly earlier than end_time")
-                    .with_context("start_time", start)
-                    .with_context("end_time", end),
-            );
+            return Err(SinexError::validation(
+                "start_time must be strictly earlier than end_time",
+            )
+            .with_context("start_time", start)
+            .with_context("end_time", end));
         }
 
         Ok(Self { start, end })
@@ -293,22 +293,27 @@ impl Cursor {
             _ => {}
         }
 
-        for (label, anchor) in [("after", self.after.as_ref()), ("before", self.before.as_ref())] {
+        for (label, anchor) in [
+            ("after", self.after.as_ref()),
+            ("before", self.before.as_ref()),
+        ] {
             let Some(anchor) = anchor else {
                 continue;
             };
 
             if let Some(score) = anchor.relevance_score {
                 if !score.is_finite() {
-                    return Err(SinexError::validation("cursor relevance_score must be finite")
-                        .with_context("anchor", label)
-                        .with_context("relevance_score", score.to_string()));
+                    return Err(
+                        SinexError::validation("cursor relevance_score must be finite")
+                            .with_context("anchor", label)
+                            .with_context("relevance_score", score.to_string()),
+                    );
                 }
             } else if requires_relevance_score {
-                return Err(
-                    SinexError::validation("text-search pagination cursor requires relevance_score")
-                        .with_context("anchor", label),
-                );
+                return Err(SinexError::validation(
+                    "text-search pagination cursor requires relevance_score",
+                )
+                .with_context("anchor", label));
             }
         }
 
@@ -404,10 +409,9 @@ impl PayloadFilter {
             Self::And { filters } | Self::Or { filters } => {
                 filters.iter().any(Self::has_positive_text_search)
             }
-            Self::Not { .. }
-            | Self::Contains { .. }
-            | Self::HasKey { .. }
-            | Self::Path { .. } => false,
+            Self::Not { .. } | Self::Contains { .. } | Self::HasKey { .. } | Self::Path { .. } => {
+                false
+            }
         }
     }
 
@@ -644,12 +648,13 @@ impl SubscriptionFilter {
     pub fn validate(&self) -> Result<(), SinexError> {
         if let Some(ref pf) = self.payload {
             if pf.contains_text_search() {
-                return Err(
-                    SinexError::validation(
-                        "SubscriptionFilter does not support payload text search",
-                    )
-                    .with_context("reason", "events.stream uses in-memory matching, not PostgreSQL full-text search"),
-                );
+                return Err(SinexError::validation(
+                    "SubscriptionFilter does not support payload text search",
+                )
+                .with_context(
+                    "reason",
+                    "events.stream uses in-memory matching, not PostgreSQL full-text search",
+                ));
             }
             pf.validate_depth(0)?;
             // Apply tighter depth limit for in-memory evaluation

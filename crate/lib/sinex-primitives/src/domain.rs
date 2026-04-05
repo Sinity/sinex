@@ -800,9 +800,8 @@ impl HostName {
                 continue;
             }
 
-            let is_ascii_alnum = (b >= b'a' && b <= b'z')
-                || (b >= b'A' && b <= b'Z')
-                || (b >= b'0' && b <= b'9');
+            let is_ascii_alnum =
+                (b >= b'a' && b <= b'z') || (b >= b'A' && b <= b'Z') || (b >= b'0' && b <= b'9');
             assert!(
                 is_ascii_alnum || b == b'-',
                 "HostName must contain only ASCII letters, digits, hyphens, and dots"
@@ -871,7 +870,9 @@ impl HostName {
         }
 
         if label_len == 0 {
-            return Err(crate::SinexError::validation("HostName cannot end with '.'"));
+            return Err(crate::SinexError::validation(
+                "HostName cannot end with '.'",
+            ));
         }
         if bytes[bytes.len() - 1] == b'-' {
             return Err(crate::SinexError::validation(

@@ -215,12 +215,9 @@ fn ensure_no_intra_batch_synthesis_cycles(
     nodes.sort_unstable();
 
     for node in nodes {
-        if let Some(cycle) = detect_intra_batch_synthesis_cycle(
-            node,
-            &local_edges,
-            &mut finished,
-            &mut stack,
-        ) {
+        if let Some(cycle) =
+            detect_intra_batch_synthesis_cycle(node, &local_edges, &mut finished, &mut stack)
+        {
             let cycle = cycle
                 .into_iter()
                 .map(|id| id.to_string())
@@ -999,9 +996,7 @@ impl<'a> EventRepository<'a> {
         let mut tx = self.pool.begin().await.map_err(|e| {
             db_error(
                 e,
-                &format!(
-                    "Failed to begin transaction for batch insert of {total_events} events"
-                ),
+                &format!("Failed to begin transaction for batch insert of {total_events} events"),
             )
         })?;
 
@@ -1009,7 +1004,9 @@ impl<'a> EventRepository<'a> {
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
         for chunk in events.chunks(chunk_size) {
-            let mut chunk_results = self.insert_batch_unnest_in_tx(&mut tx, chunk.to_vec()).await?;
+            let mut chunk_results = self
+                .insert_batch_unnest_in_tx(&mut tx, chunk.to_vec())
+                .await?;
             processed += chunk_results.len();
             results.append(&mut chunk_results);
 
@@ -1262,10 +1259,7 @@ impl<'a> EventRepository<'a> {
                             .as_ref()
                             .filter(|source_ids| !source_ids.is_empty())
                             .map(|source_ids| {
-                                (
-                                    Id::<Event<JsonValue>>::from(row.id),
-                                    source_ids.clone(),
-                                )
+                                (Id::<Event<JsonValue>>::from(row.id), source_ids.clone())
                             })
                     })
                     .collect::<Vec<_>>();
@@ -2764,8 +2758,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_query_builder_for_small_material_batches(
-    ) -> color_eyre::Result<()> {
+    async fn stream_batch_insert_strategy_prefers_query_builder_for_small_material_batches()
+    -> color_eyre::Result<()> {
         let batch = vec![base_stream_batch_row()?];
         assert_eq!(
             EventRepository::stream_batch_insert_strategy(&batch),
@@ -2775,8 +2769,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches(
-    ) -> color_eyre::Result<()> {
+    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches()
+    -> color_eyre::Result<()> {
         let batch = (0..COPY_BATCH_THRESHOLD)
             .map(|_| base_stream_batch_row())
             .collect::<color_eyre::Result<Vec<_>>>()?;

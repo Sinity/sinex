@@ -1,6 +1,6 @@
 use camino::Utf8Path;
-use sqlx::error::{DatabaseError, ErrorKind};
 use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError};
+use sqlx::error::{DatabaseError, ErrorKind};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -202,12 +202,18 @@ async fn sqlx_unique_violation_maps_to_already_exists_with_context() -> TestResu
     .into();
 
     assert!(matches!(error, SinexError::AlreadyExists(_)));
-    assert_eq!(error.context_map().get("sqlstate"), Some(&"23505".to_string()));
+    assert_eq!(
+        error.context_map().get("sqlstate"),
+        Some(&"23505".to_string())
+    );
     assert_eq!(
         error.context_map().get("constraint"),
         Some(&"core_events_pkey".to_string())
     );
-    assert_eq!(error.context_map().get("table"), Some(&"events".to_string()));
+    assert_eq!(
+        error.context_map().get("table"),
+        Some(&"events".to_string())
+    );
     assert_eq!(
         error.context_map().get("database_error_kind"),
         Some(&"UniqueViolation".to_string())
@@ -227,7 +233,10 @@ async fn sqlx_foreign_key_violation_maps_to_validation() -> TestResult<()> {
     .into();
 
     assert!(matches!(error, SinexError::Validation(_)));
-    assert_eq!(error.context_map().get("sqlstate"), Some(&"23503".to_string()));
+    assert_eq!(
+        error.context_map().get("sqlstate"),
+        Some(&"23503".to_string())
+    );
     Ok(())
 }
 

@@ -56,11 +56,11 @@ async fn start_assembler(
         Some(ctx.pipeline_namespace().prefix().to_string()),
         1_000,
         Some(MaterialReadySet::default()),
-        100,  // max_buffered_slices
+        100,               // max_buffered_slices
         512 * 1024 * 1024, // max_material_size_bytes
-        300,  // slice_timeout_secs (5 min)
-        3600, // orphan_threshold_secs (1 hr)
-        90,   // disk_threshold_percent
+        300,               // slice_timeout_secs (5 min)
+        3600,              // orphan_threshold_secs (1 hr)
+        90,                // disk_threshold_percent
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
@@ -388,9 +388,13 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     .await?;
 
     // Slice
-    js.publish(
+    let mut slice_headers = async_nats::HeaderMap::new();
+    slice_headers.insert("Offset", "0");
+    slice_headers.insert("Chunk-Hash", blake3::hash(b"data").to_hex().as_str());
+    js.publish_with_headers(
         ctx.pipeline_namespace()
             .subject(&format!("source_material.slices.{material_id}")),
+        slice_headers,
         b"data".to_vec().into(),
     )
     .await?
@@ -466,9 +470,13 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     // 1. Slice
     let data = b"payload";
     let hash = blake3::hash(data).to_hex().to_string();
-    js.publish(
+    let mut slice_headers = async_nats::HeaderMap::new();
+    slice_headers.insert("Offset", "0");
+    slice_headers.insert("Chunk-Hash", hash.as_str());
+    js.publish_with_headers(
         ctx.pipeline_namespace()
             .subject(&format!("source_material.slices.{material_id}")),
+        slice_headers,
         data.to_vec().into(),
     )
     .await?

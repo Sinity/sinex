@@ -29,8 +29,7 @@ fn find_node_in_list<'a>(
 ) -> Option<&'a serde_json::Value> {
     list_json["nodes"].as_array().and_then(|nodes| {
         nodes.iter().find(|node| {
-            node["node_name"].as_str() == Some(name)
-                && node["instance_id"].as_str() == instance_id
+            node["node_name"].as_str() == Some(name) && node["instance_id"].as_str() == instance_id
         })
     })
 }
@@ -41,10 +40,11 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
     let node_name = NodeName::new("manifest-only-node");
 
     register_test_node(pool, "manifest-only-node", NodeType::Service, "1.0.0-test").await?;
-    assert!(pool
-        .state()
-        .update_node_heartbeat_for_version(&node_name, "1.0.0-test")
-        .await?);
+    assert!(
+        pool.state()
+            .update_node_heartbeat_for_version(&node_name, "1.0.0-test")
+            .await?
+    );
 
     let list_result = handle_nodes_list_active(pool, json!({})).await?;
     let node = find_node_in_list(&list_result, "manifest-only-node", None)
@@ -61,8 +61,8 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let manifest = register_test_node(pool, "run-backed-node", NodeType::Ingestor, "1.0.0-test")
-        .await?;
+    let manifest =
+        register_test_node(pool, "run-backed-node", NodeType::Ingestor, "1.0.0-test").await?;
 
     let run = pool
         .state()
@@ -97,8 +97,8 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 #[sinex_test]
 async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let manifest = register_test_node(pool, "parallel-run-node", NodeType::Ingestor, "1.0.0-test")
-        .await?;
+    let manifest =
+        register_test_node(pool, "parallel-run-node", NodeType::Ingestor, "1.0.0-test").await?;
 
     pool.state()
         .start_node_run(
@@ -143,10 +143,22 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
 async fn health_counts_unique_nodes_and_concrete_runs(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let manifest_only = NodeName::new("manifest-health-node");
-    let run_manifest = register_test_node(pool, "run-health-node", NodeType::Ingestor, "1.0.0-test")
-        .await?;
-    register_test_node(pool, "manifest-health-node", NodeType::Service, "1.0.0-test").await?;
-    register_test_node(pool, "inactive-health-node", NodeType::Automaton, "1.0.0-test").await?;
+    let run_manifest =
+        register_test_node(pool, "run-health-node", NodeType::Ingestor, "1.0.0-test").await?;
+    register_test_node(
+        pool,
+        "manifest-health-node",
+        NodeType::Service,
+        "1.0.0-test",
+    )
+    .await?;
+    register_test_node(
+        pool,
+        "inactive-health-node",
+        NodeType::Automaton,
+        "1.0.0-test",
+    )
+    .await?;
 
     pool.state()
         .start_node_run(
@@ -158,10 +170,11 @@ async fn health_counts_unique_nodes_and_concrete_runs(ctx: TestContext) -> TestR
             None,
         )
         .await?;
-    assert!(pool
-        .state()
-        .update_node_heartbeat_for_version(&manifest_only, "1.0.0-test")
-        .await?);
+    assert!(
+        pool.state()
+            .update_node_heartbeat_for_version(&manifest_only, "1.0.0-test")
+            .await?
+    );
 
     let health_result = handle_nodes_health(pool, json!({})).await?;
     assert_eq!(health_result["unique_nodes"].as_i64(), Some(3));

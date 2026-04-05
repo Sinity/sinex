@@ -59,7 +59,10 @@ async fn valid_env_overrides_are_applied() -> xtask::sandbox::TestResult<()> {
     let mut _guard = EnvGuard::new();
     _guard.set("SINEX_HEALTH_AGGREGATOR_AGGREGATION_WINDOW_SECONDS", "42");
     _guard.set("SINEX_HEALTH_AGGREGATOR_UNHEALTHY_THRESHOLD_MINUTES", "7");
-    _guard.set("SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS", "false");
+    _guard.set(
+        "SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS",
+        "false",
+    );
     _guard.set(
         "SINEX_HEALTH_AGGREGATOR_ENABLE_COMPONENT_HEALTH_REPORTS",
         "false",
