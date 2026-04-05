@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::Uuid;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{HashMap, VecDeque};
 
