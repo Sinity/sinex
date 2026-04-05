@@ -94,7 +94,10 @@ impl GatewayClient {
                 Ok(body) => Some(body),
                 Err(error) => Some(format!("<failed to read error body: {error}>")),
             };
-            return Err(ClientError::Gateway(format_http_error(status, body.as_deref())));
+            return Err(ClientError::Gateway(format_http_error(
+                status,
+                body.as_deref(),
+            )));
         }
 
         let rpc_response: JsonRpcResponse<R> = response.json().await?;
@@ -232,7 +235,9 @@ mod tests {
         assert!(should_accept_invalid_certs("https://127.0.0.1:3000"));
         assert!(should_accept_invalid_certs("https://[::1]:3000"));
 
-        assert!(!should_accept_invalid_certs("https://gateway.internal:3000"));
+        assert!(!should_accept_invalid_certs(
+            "https://gateway.internal:3000"
+        ));
         assert!(!should_accept_invalid_certs("https://10.0.0.8:3000"));
         assert!(!should_accept_invalid_certs("not a url"));
     }

@@ -306,8 +306,11 @@ impl SubscriptionBus {
 
         'outer: loop {
             let mut sub = loop {
-                let subscribe_result =
-                    tokio::time::timeout(SUBSCRIBE_ATTEMPT_TIMEOUT, nats_client.subscribe(subject.clone())).await;
+                let subscribe_result = tokio::time::timeout(
+                    SUBSCRIBE_ATTEMPT_TIMEOUT,
+                    nats_client.subscribe(subject.clone()),
+                )
+                .await;
                 match subscribe_result {
                     Ok(Ok(sub)) => {
                         if ready_notified {
@@ -431,10 +434,12 @@ impl SubscriptionBus {
         if !conf.persisted {
             return Ok(None);
         }
-        conf.event_id
-            .parse()
-            .map(Some)
-            .map_err(|error| format!("failed to parse confirmation event_id '{}': {error}", conf.event_id))
+        conf.event_id.parse().map(Some).map_err(|error| {
+            format!(
+                "failed to parse confirmation event_id '{}': {error}",
+                conf.event_id
+            )
+        })
     }
 
     fn payload_preview(payload: &[u8]) -> String {
@@ -646,7 +651,8 @@ mod tests {
         duplicate.id = Some(duplicate_id);
         let duplicate_again = duplicate.clone();
 
-        let indexed = SubscriptionBus::index_events_by_id(vec![missing_id, duplicate, duplicate_again]);
+        let indexed =
+            SubscriptionBus::index_events_by_id(vec![missing_id, duplicate, duplicate_again]);
 
         assert_eq!(indexed.missing_id_count, 1);
         assert_eq!(indexed.duplicate_id_count, 1);
@@ -674,7 +680,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn flush_batch_preserves_missing_confirmations_for_retry(ctx: TestContext) -> TestResult<()> {
+    async fn flush_batch_preserves_missing_confirmations_for_retry(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let bus = SubscriptionBus::new();
         let (_, mut rx) = bus
             .register(SubscriptionFilter::default(), None)
@@ -722,14 +730,18 @@ mod tests {
             .await?
             .expect("first delivery should reach the receiver");
         match message {
-            SseMessage::Event { event: delivered, .. } => {
+            SseMessage::Event {
+                event: delivered, ..
+            } => {
                 assert_eq!(delivered.id, event.id);
             }
             other => panic!("expected first SSE event, got {other:?}"),
         }
 
         assert!(
-            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
             "duplicate delivery should be suppressed for recently delivered events"
         );
         Ok(())
@@ -757,7 +769,9 @@ mod tests {
 
         assert!(matches!(slot.deliver(&event), DeliveryOutcome::Delivered));
         assert!(
-            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
             "the last delivered event id should not be replayed immediately on reconnect"
         );
         Ok(())
@@ -771,7 +785,10 @@ mod tests {
             .expect("test subscription should register");
 
         let event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
-            .from_material(ctx.create_source_material(Some("sse-duplicate-confirmations")).await?)
+            .from_material(
+                ctx.create_source_material(Some("sse-duplicate-confirmations"))
+                    .await?,
+            )
             .build()?;
         let event = ctx.pool().events().insert(event).await?;
         let event_id = event.id.expect("inserted event must have id");
@@ -788,7 +805,9 @@ mod tests {
         }
 
         assert!(
-            timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
             "duplicate confirmation ids should not trigger a second delivery"
         );
         assert!(

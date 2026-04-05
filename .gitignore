@@ -51,6 +51,7 @@ result
 
 # Claude Code (track includes, ignore ephemeral)
 .claude/scratch/
+.claude/worktrees/
 .claude/*.local.md
 .claude/*.local.json
 .cclsp.json

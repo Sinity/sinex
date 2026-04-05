@@ -26,8 +26,8 @@ use hyper_util::service::TowerToHyperService;
 use parking_lot::RwLock;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::systemd_notify;
 use serde_json::Value;
+use sinex_node_sdk::systemd_notify;
 use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Uuid};
@@ -321,7 +321,10 @@ impl GatewayAuth {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Modify(_) | EventKind::Create(_) => {
-                                        Self::reload_token_from_path(&token_clone, &path_for_closure);
+                                        Self::reload_token_from_path(
+                                            &token_clone,
+                                            &path_for_closure,
+                                        );
                                     }
                                     EventKind::Remove(_) => {
                                         // File was deleted — keep last valid token (fail-closed).
@@ -1363,18 +1366,10 @@ pub async fn spawn(
     };
 
     let metrics_task = metrics_task.map(|task| {
-        RpcServer::monitor_background_task(
-            "Metrics emission task",
-            task,
-            shutdown_rx.clone(),
-        )
+        RpcServer::monitor_background_task("Metrics emission task", task, shutdown_rx.clone())
     });
     let cleanup_task = cleanup_task.map(|task| {
-        RpcServer::monitor_background_task(
-            "Rate limiter cleanup task",
-            task,
-            shutdown_rx.clone(),
-        )
+        RpcServer::monitor_background_task("Rate limiter cleanup task", task, shutdown_rx.clone())
     });
     let sse_bus_task = sse_bus_task.map(|task| {
         RpcServer::monitor_background_task("SSE subscription bus", task, shutdown_rx.clone())
@@ -2050,22 +2045,21 @@ mod tests {
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let completed = tokio::spawn(async move {});
 
-        let error = RpcServer::monitor_background_task(
-            "Metrics emission task",
-            completed,
-            shutdown_rx,
-        )
-        .await
-        .expect("monitor join should succeed")
-        .expect_err("background task that exits before shutdown must be treated as a failure");
+        let error =
+            RpcServer::monitor_background_task("Metrics emission task", completed, shutdown_rx)
+                .await
+                .expect("monitor join should succeed")
+                .expect_err(
+                    "background task that exits before shutdown must be treated as a failure",
+                );
 
         assert!(error.to_string().contains("exited before gateway shutdown"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal(
-    ) -> TestResult<()> {
+    async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal()
+    -> TestResult<()> {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let completed = tokio::spawn(async move {});
         drop(shutdown_tx);
@@ -2090,7 +2084,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()> {
+    async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()>
+    {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         shutdown_tx.send(true)?;
         drop(shutdown_tx);
@@ -2238,10 +2233,7 @@ mod tests {
     async fn gateway_auth_blocks_missing_token() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = HeaderMap::new();
-        assert!(matches!(
-            auth.verify(&headers),
-            Err(AuthError::Missing)
-        ));
+        assert!(matches!(auth.verify(&headers), Err(AuthError::Missing)));
         Ok(())
     }
 
@@ -2262,11 +2254,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().await;
         clear_auth_env();
         unsafe {
-            std::env::set_var("SINEX_RPC_TOKEN", OsString::from_vec(vec![0x73, 0x80, 0x65]));
+            std::env::set_var(
+                "SINEX_RPC_TOKEN",
+                OsString::from_vec(vec![0x73, 0x80, 0x65]),
+            );
         }
 
-        let error = read_token_and_path_from_env()
-            .expect_err("non-UTF-8 token env should be rejected");
+        let error =
+            read_token_and_path_from_env().expect_err("non-UTF-8 token env should be rejected");
         assert!(error.to_string().contains("SINEX_RPC_TOKEN"));
 
         clear_auth_env();

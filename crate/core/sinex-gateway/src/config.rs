@@ -455,8 +455,7 @@ impl GatewayConfig {
     }
 
     fn apply_gateway_env_overrides(&mut self) -> Result<(), SinexError> {
-        self.tcp_listen =
-            env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone())?;
+        self.tcp_listen = env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone())?;
         self.cors_origins =
             env_string_override("SINEX_GATEWAY_CORS_ORIGINS", self.cors_origins.clone())?;
         self.pool_max_connections = env_u32_override(
@@ -471,14 +470,11 @@ impl GatewayConfig {
             "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS",
             self.pool_acquire_timeout_secs,
         )?;
-        self.annex_path =
-            env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone())?;
+        self.annex_path = env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone())?;
         self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take())?;
         self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take())?;
-        self.tls_client_ca = env_option_override(
-            "SINEX_GATEWAY_TLS_CLIENT_CA",
-            self.tls_client_ca.take(),
-        )?;
+        self.tls_client_ca =
+            env_option_override("SINEX_GATEWAY_TLS_CLIENT_CA", self.tls_client_ca.take())?;
         self.require_client_tls =
             env_bool_override("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", self.require_client_tls)?;
         self.max_concurrency =
@@ -502,12 +498,11 @@ impl GatewayConfig {
             .or(self.rpc_token.take());
         self.rpc_token_file =
             env_var_optional("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
-        self.admin_token_file = env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?
-            .or(self.admin_token_file.take());
+        self.admin_token_file =
+            env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?.or(self.admin_token_file.take());
         self.nats.url = env_string_override("SINEX_NATS_URL", self.nats.url.clone())?;
         self.nats.name = env_var_optional("SINEX_NATS_NAME")?.or(self.nats.name.take());
-        self.nats.require_tls =
-            env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls)?;
+        self.nats.require_tls = env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls)?;
         self.nats.ca_cert = env_var_optional("SINEX_NATS_CA_CERT")?
             .map(PathBuf::from)
             .or(self.nats.ca_cert.take());
@@ -556,24 +551,21 @@ impl GatewayConfig {
             "SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS",
             self.nats_consumer_create_timeout_secs,
         )?;
-        self.native_messaging_trusted_extensions = env_var_optional(
-            "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
-        )?
-        .or(self.native_messaging_trusted_extensions.take());
+        self.native_messaging_trusted_extensions =
+            env_var_optional("SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS")?
+                .or(self.native_messaging_trusted_extensions.take());
         self.native_messaging_trusted_hosts =
             env_var_optional("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS")?
                 .or(self.native_messaging_trusted_hosts.take());
-        self.native_messaging_protocol_version = env_var_optional(
-            "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION",
-        )?
-        .or(self.native_messaging_protocol_version.take());
+        self.native_messaging_protocol_version =
+            env_var_optional("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION")?
+                .or(self.native_messaging_protocol_version.take());
         self.native_messaging_capabilities =
             env_var_optional("SINEX_NATIVE_MESSAGING_CAPABILITIES")?
                 .or(self.native_messaging_capabilities.take());
-        self.native_messaging_extension_roles = env_var_optional(
-            "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES",
-        )?
-        .or(self.native_messaging_extension_roles.take());
+        self.native_messaging_extension_roles =
+            env_var_optional("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES")?
+                .or(self.native_messaging_extension_roles.take());
         self.native_messaging_read_timeout_secs = env_u64_override(
             "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS",
             self.native_messaging_read_timeout_secs,
@@ -614,10 +606,7 @@ fn env_string_override(name: &str, current: String) -> Result<String, SinexError
     Ok(shared_env::strict_var(name)?.unwrap_or(current))
 }
 
-fn env_option_override(
-    name: &str,
-    current: Option<String>,
-) -> Result<Option<String>, SinexError> {
+fn env_option_override(name: &str, current: Option<String>) -> Result<Option<String>, SinexError> {
     Ok(env_var_optional(name)?.or(current))
 }
 

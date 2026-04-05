@@ -270,8 +270,8 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinex_ingestd=wat");
 
-        let error =
-            load_env_filter("sinex_ingestd=info").expect_err("invalid directives must fail honestly");
+        let error = load_env_filter("sinex_ingestd=info")
+            .expect_err("invalid directives must fail honestly");
         let message = error.to_string();
 
         assert!(message.contains("RUST_LOG"));
@@ -285,8 +285,8 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
-        let error =
-            load_env_filter("sinex_ingestd=info").expect_err("non-UTF8 RUST_LOG must fail honestly");
+        let error = load_env_filter("sinex_ingestd=info")
+            .expect_err("non-UTF8 RUST_LOG must fail honestly");
         let message = error.to_string();
 
         assert!(message.contains("RUST_LOG"));
@@ -317,7 +317,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn load_runtime_config_rejects_invalid_database_url_before_service_start() -> TestResult<()> {
+    async fn load_runtime_config_rejects_invalid_database_url_before_service_start()
+    -> TestResult<()> {
         let mut args = test_args();
         args.database_url = Some("mysql://localhost/test".to_string());
 

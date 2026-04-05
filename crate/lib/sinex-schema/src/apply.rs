@@ -212,7 +212,9 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     if relation_exists(pool, "core.operations_log").await?
         && !operations_log_operation_type_constraint_is_current(pool).await?
     {
-        drifts.push("stale core.operations_log constraint operations_log_operation_type_check".into());
+        drifts.push(
+            "stale core.operations_log constraint operations_log_operation_type_check".into(),
+        );
     }
 
     if relation_exists(pool, "raw.source_material_registry").await?
@@ -276,9 +278,8 @@ async fn operations_log_operation_type_constraint_is_current(
     .fetch_optional(pool)
     .await?;
 
-    Ok(definition.is_some_and(|def| {
-        operations_log_operation_type_constraint_definition_is_current(&def)
-    }))
+    Ok(definition
+        .is_some_and(|def| operations_log_operation_type_constraint_definition_is_current(&def)))
 }
 
 fn operations_log_operation_type_constraint_definition_is_current(definition: &str) -> bool {
@@ -325,9 +326,8 @@ async fn source_material_registry_status_constraint_is_current(
     .fetch_optional(pool)
     .await?;
 
-    Ok(definition.is_some_and(|def| {
-        source_material_registry_status_constraint_definition_is_current(&def)
-    }))
+    Ok(definition
+        .is_some_and(|def| source_material_registry_status_constraint_definition_is_current(&def)))
 }
 
 fn source_material_registry_status_constraint_definition_is_current(definition: &str) -> bool {
@@ -562,7 +562,10 @@ fn render_indexes(stmts: Vec<IndexCreateStatement>) -> Vec<String> {
     stmts.into_iter().map(render_index).collect()
 }
 
-pub(crate) async fn relation_exists(pool: &PgPool, qualified_name: &str) -> Result<bool, ApplyError> {
+pub(crate) async fn relation_exists(
+    pool: &PgPool,
+    qualified_name: &str,
+) -> Result<bool, ApplyError> {
     let exists = sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
         .bind(qualified_name)
         .fetch_one(pool)
@@ -582,9 +585,7 @@ async fn relation_kind(pool: &PgPool, qualified_name: &str) -> Result<Option<cha
     .fetch_optional(pool)
     .await?;
 
-    Ok(relation_kind
-        .flatten()
-        .and_then(|kind| kind.chars().next()))
+    Ok(relation_kind.flatten().and_then(|kind| kind.chars().next()))
 }
 
 async fn continuous_aggregate_exists(
@@ -1384,16 +1385,45 @@ GROUP BY bucket, payload->>'workspace';
 CREATE OR REPLACE VIEW sinex_telemetry.command_frequency_hourly AS
 SELECT
     time_bucket('1 hour', ts_orig) AS bucket,
-    payload->>'command' AS command,
-    payload->>'shell' AS shell,
+    COALESCE(payload->>'command', payload->>'command_string') AS command,
+    CASE
+        WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
+        WHEN source = 'shell.atuin' THEN 'atuin'
+        WHEN source LIKE 'shell.history.%' THEN regexp_replace(source, '^shell\.history\.', '')
+        ELSE NULL
+    END AS shell,
     COUNT(*) AS total_executions,
-    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int = 0) AS successful_executions,
-    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int != 0) AS failed_executions,
-    AVG((payload->>'duration_ms')::float) AS avg_duration_ms
+    COUNT(*) FILTER (
+        WHERE COALESCE((payload->>'exit_code')::int, (payload->>'exit_status')::int) = 0
+    ) AS successful_executions,
+    COUNT(*) FILTER (
+        WHERE COALESCE((payload->>'exit_code')::int, (payload->>'exit_status')::int) IS NOT NULL
+          AND COALESCE((payload->>'exit_code')::int, (payload->>'exit_status')::int) != 0
+    ) AS failed_executions,
+    AVG(
+        COALESCE(
+            (payload->>'duration_ms')::float,
+            (payload->>'execution_time_ms')::float,
+            (payload->>'duration_ns')::float / 1000000.0
+        )
+    ) AS avg_duration_ms
 FROM core.events
-WHERE event_type IN ('shell.command', 'shell.command.canonical')
-  AND source LIKE 'terminal.%'
-GROUP BY bucket, payload->>'command', payload->>'shell';
+WHERE event_type = 'command.executed'
+  AND (
+      source = 'shell.kitty'
+      OR source = 'shell.atuin'
+      OR source LIKE 'shell.history.%'
+  )
+  AND COALESCE(payload->>'command', payload->>'command_string') IS NOT NULL
+GROUP BY
+    bucket,
+    COALESCE(payload->>'command', payload->>'command_string'),
+    CASE
+        WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
+        WHEN source = 'shell.atuin' THEN 'atuin'
+        WHEN source LIKE 'shell.history.%' THEN regexp_replace(source, '^shell\.history\.', '')
+        ELSE NULL
+    END;
 
 CREATE OR REPLACE VIEW sinex_telemetry.file_activity_summary AS
 SELECT

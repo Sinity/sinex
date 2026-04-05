@@ -374,7 +374,7 @@ impl SourceMaterialRepository<'_> {
                     set_repeatable_read(tx).await?;
                     sqlx::query_as!(
                         SourceMaterialRecord,
-                r#"
+                        r#"
                 INSERT INTO raw.source_material_registry (
                     id,
                     material_kind,
@@ -695,7 +695,8 @@ impl SourceMaterialRepository<'_> {
         id: Id<SourceMaterialRecord>,
         metadata: JsonValue,
     ) -> DbResult<Option<SourceMaterialRecord>> {
-        self.update_metadata_with_executor(self.pool, id, metadata).await
+        self.update_metadata_with_executor(self.pool, id, metadata)
+            .await
     }
 
     pub async fn update_metadata_with_executor<'e, E>(
@@ -965,7 +966,7 @@ impl SourceMaterialRepository<'_> {
             metadata,
             None,
         )
-            .await
+        .await
     }
     pub async fn register_external_in_flight(
         &self,
@@ -1167,7 +1168,8 @@ impl SourceMaterialRepository<'_> {
     /// The temporal ledger tracks timing metadata for captures, including
     /// offset ranges, capture timestamps, and clock information.
     pub async fn append_temporal_ledger(&self, entry: TemporalLedgerEntry) -> DbResult<()> {
-        self.append_temporal_ledger_with_executor(self.pool, entry).await
+        self.append_temporal_ledger_with_executor(self.pool, entry)
+            .await
     }
 
     pub async fn append_temporal_ledger_with_executor<'e, E>(

@@ -49,12 +49,18 @@ fn load_failing_test_details(
 ) -> (Vec<crate::history::FailingTest>, Option<String>) {
     match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(limit)) {
         Some(Ok(failures)) => (failures, None),
-        Some(Err(error)) => (Vec::new(), Some(failing_test_details_issue(ctx, Some(&error)))),
+        Some(Err(error)) => (
+            Vec::new(),
+            Some(failing_test_details_issue(ctx, Some(&error))),
+        ),
         None => (Vec::new(), Some(failing_test_details_issue(ctx, None))),
     }
 }
 
-fn load_flaky_tests(ctx: &CommandContext, limit: usize) -> (Vec<(String, String, i64)>, Option<String>) {
+fn load_flaky_tests(
+    ctx: &CommandContext,
+    limit: usize,
+) -> (Vec<(String, String, i64)>, Option<String>) {
     match ctx.try_with_history_db(|db| db.get_flaky_tests(limit)) {
         Some(Ok(flaky)) => (flaky, None),
         Some(Err(error)) => (Vec::new(), Some(flaky_test_probe_issue(ctx, Some(&error)))),
@@ -699,7 +705,9 @@ impl XtaskCommand for TestCommand {
                 }
                 eprintln!();
             }
-            if ctx.is_human() && let Some(issue) = &failure_details_issue {
+            if ctx.is_human()
+                && let Some(issue) = &failure_details_issue
+            {
                 eprintln!("⚠  {issue}");
                 eprintln!();
             }
@@ -752,7 +760,9 @@ impl XtaskCommand for TestCommand {
                 }
                 eprintln!();
             }
-            if ctx.is_human() && let Some(issue) = &flaky_issue {
+            if ctx.is_human()
+                && let Some(issue) = &flaky_issue
+            {
                 eprintln!("⚠  {issue}");
                 eprintln!();
             }
@@ -846,8 +856,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_nextest_history_preserves_real_invocation_id()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_nextest_history_preserves_real_invocation_id() -> ::xtask::sandbox::TestResult<()>
+    {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test.db");
         let db = HistoryDb::open(&db_path)?;
@@ -866,7 +876,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_fuzz_target_count_accepts_valid_count() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_fuzz_target_count_accepts_valid_count() -> ::xtask::sandbox::TestResult<()>
+    {
         let result = CommandResult::success().with_data(serde_json::json!({
             "target_count": 3u64
         }));
@@ -876,7 +887,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_fuzz_target_count_rejects_missing_count() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_fuzz_target_count_rejects_missing_count() -> ::xtask::sandbox::TestResult<()>
+    {
         let result = CommandResult::success().with_data(serde_json::json!({
             "items": []
         }));
@@ -901,9 +913,16 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_classify_disk_space_probe_reports_low_space() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_classify_disk_space_probe_reports_low_space() -> ::xtask::sandbox::TestResult<()>
+    {
         let status = super::classify_disk_space_probe_result(Ok(1), 2);
-        assert!(matches!(status, DiskSpaceStatus::Low { available_gb: 1, min_gb: 2 }));
+        assert!(matches!(
+            status,
+            DiskSpaceStatus::Low {
+                available_gb: 1,
+                min_gb: 2
+            }
+        ));
         Ok(())
     }
 
@@ -924,8 +943,7 @@ mod tests {
     #[sinex_test]
     async fn test_classify_disk_space_probe_surfaces_probe_failures()
     -> ::xtask::sandbox::TestResult<()> {
-        let status =
-            super::classify_disk_space_probe_result(Err("statvfs failed".to_string()), 2);
+        let status = super::classify_disk_space_probe_result(Err("statvfs failed".to_string()), 2);
         let DiskSpaceStatus::Unknown { issue } = status else {
             panic!("expected unknown disk-space status");
         };

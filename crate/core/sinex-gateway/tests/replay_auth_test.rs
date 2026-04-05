@@ -257,6 +257,33 @@ async fn write_cannot_approve_operation(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test(timeout = 60)]
+async fn write_cannot_submit_operation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let mut env_guard = EnvGuard::new();
+    let gw = RoleGateway::start(
+        ctx.database_url(),
+        ctx.nats_handle()?.client_url(),
+        "auth-test-token:write",
+        &mut env_guard,
+    )
+    .await?;
+
+    let resp = gw
+        .rpc_raw(
+            methods::REPLAY_SUBMIT_OPERATION,
+            json!({
+                "operation_id": "00000000-0000-0000-0000-000000000001"
+            }),
+        )
+        .await?;
+    assert!(
+        RoleGateway::is_permission_denied(&resp),
+        "Write should not be able to submit operations: {resp}"
+    );
+    Ok(())
+}
+
 // ── Admin role tests ────────────────────────────────────────────────
 
 #[sinex_test(timeout = 120)]

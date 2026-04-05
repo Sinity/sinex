@@ -331,9 +331,7 @@ impl NativeMessagingConfig {
     /// Capability configuration is mandatory (fail-closed).
     fn enforce_capabilities(&self, message: &NativeMessage) -> Result<()> {
         if let Some(err) = &self.capabilities_config_error {
-            return Err(eyre!(
-                "Invalid {CAPABILITIES_ENV} configuration: {err}"
-            ));
+            return Err(eyre!("Invalid {CAPABILITIES_ENV} configuration: {err}"));
         }
 
         // Explicit capability map is required for native messaging.
@@ -428,9 +426,7 @@ impl NativeMessagingConfig {
 
     fn enforce_host(&self, message: &NativeMessage) -> Result<()> {
         if let Some(err) = &self.trusted_hosts_config_error {
-            return Err(eyre!(
-                "Invalid {TRUSTED_HOSTS_ENV} configuration: {err}"
-            ));
+            return Err(eyre!("Invalid {TRUSTED_HOSTS_ENV} configuration: {err}"));
         }
 
         if self.trusted_hosts.is_empty() {
@@ -504,9 +500,7 @@ impl NativeMessagingConfig {
     /// Returns the configured role if found, or `ReadOnly` as the default.
     fn resolve_extension_role(&self, extension_id: Option<&str>) -> Result<crate::auth::Role> {
         if let Some(err) = &self.extension_roles_config_error {
-            return Err(eyre!(
-                "Invalid {EXTENSION_ROLES_ENV} configuration: {err}"
-            ));
+            return Err(eyre!("Invalid {EXTENSION_ROLES_ENV} configuration: {err}"));
         }
 
         Ok(extension_id
@@ -544,8 +538,7 @@ fn env_positive_usize_with_default(var: &str, default: usize) -> usize {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                default,
-                "Native messaging override is not valid UTF-8; using default"
+                default, "Native messaging override is not valid UTF-8; using default"
             );
             default
         }
@@ -580,8 +573,7 @@ fn env_positive_u64_with_default(var: &str, default: u64) -> u64 {
         Err(std::env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                default,
-                "Native messaging override is not valid UTF-8; using default"
+                default, "Native messaging override is not valid UTF-8; using default"
             );
             default
         }
@@ -597,9 +589,7 @@ fn normalize_optional_string(raw: &str) -> Option<String> {
     }
 }
 
-fn parse_capabilities(
-    raw: Option<&str>,
-) -> ParsedConfigMap<ExtensionCapabilities> {
+fn parse_capabilities(raw: Option<&str>) -> ParsedConfigMap<ExtensionCapabilities> {
     let Some(raw) = raw else {
         return ParsedConfigMap::default();
     };
@@ -628,16 +618,17 @@ fn parse_capabilities(
     }
 }
 
-fn parse_extension_roles(
-    raw: Option<&str>,
-) -> ParsedConfigMap<crate::auth::Role> {
+fn parse_extension_roles(raw: Option<&str>) -> ParsedConfigMap<crate::auth::Role> {
     let Some(raw) = raw else {
         return ParsedConfigMap::default();
     };
 
     match serde_json::from_str::<std::collections::HashMap<String, crate::auth::Role>>(raw) {
         Ok(roles) => {
-            info!(extensions = roles.len(), "Loaded native messaging extension roles");
+            info!(
+                extensions = roles.len(),
+                "Loaded native messaging extension roles"
+            );
             ParsedConfigMap {
                 values: roles,
                 error: None,
@@ -966,7 +957,11 @@ mod tests {
             })
             .expect_err("malformed trusted hosts config should be surfaced");
         assert!(error.to_string().contains(TRUSTED_HOSTS_ENV));
-        assert!(error.to_string().contains("no host entries could be parsed"));
+        assert!(
+            error
+                .to_string()
+                .contains("no host entries could be parsed")
+        );
         Ok(())
     }
 
@@ -1006,15 +1001,16 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
 
         let mut env = EnvGuard::new();
-        env.set(TRUSTED_EXTENSION_ENV, OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
+        env.set(
+            TRUSTED_EXTENSION_ENV,
+            OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
+        );
 
         let error = NativeMessagingConfig::from_env()
             .expect_err("non-UTF-8 native messaging env should be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("Environment variable SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS is not valid UTF-8")
-        );
+        assert!(error.to_string().contains(
+            "Environment variable SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS is not valid UTF-8"
+        ));
         Ok(())
     }
 
@@ -1169,7 +1165,13 @@ async fn read_message_from<R: AsyncRead + Unpin>(
     match tokio::time::timeout(read_timeout, reader.read_exact(&mut buffer)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(e.into()),
-        Err(_) => return Err(native_messaging_read_timeout("body", read_timeout, Some(length))),
+        Err(_) => {
+            return Err(native_messaging_read_timeout(
+                "body",
+                read_timeout,
+                Some(length),
+            ));
+        }
     }
 
     let message: NativeMessage =

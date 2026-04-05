@@ -61,12 +61,12 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> Result<
             );
             Ok(())
         }
-        Err(error) => Err(
-            SinexError::service("Failed to recover stale replay operations on startup")
-                .with_operation("gateway.recover_stale_replay_operations")
-                .with_source(error.to_string())
-                .into(),
-        ),
+        Err(error) => Err(SinexError::service(
+            "Failed to recover stale replay operations on startup",
+        )
+        .with_operation("gateway.recover_stale_replay_operations")
+        .with_source(error.to_string())
+        .into()),
     }
 }
 
@@ -222,7 +222,11 @@ impl ServiceContainer {
                 let snapshot = client.health_snapshot();
                 (true, snapshot.connected, snapshot.last_error)
             }
-            None => (false, false, Some(ReplayControlError::new("replay control not initialized"))),
+            None => (
+                false,
+                false,
+                Some(ReplayControlError::new("replay control not initialized")),
+            ),
         };
 
         ReplayControlStatus {
@@ -290,29 +294,28 @@ impl ServiceContainer {
         // Database ping — use the content pool (shared system pool).
         // Bounded by a 5-second timeout so a stalled DB doesn't hang the health endpoint.
         let db_start = std::time::Instant::now();
-        let (db_ok, db_latency_ms, db_detail) =
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                sqlx::query("SELECT 1").execute(self.pool()),
-            )
-            .await
-            {
-                Ok(Ok(_)) => (
-                    true,
-                    Some(db_start.elapsed().as_millis() as u64),
-                    "ok".to_string(),
-                ),
-                Ok(Err(error)) => (
-                    false,
-                    Some(db_start.elapsed().as_millis() as u64),
-                    format!("Database ping failed: {error}"),
-                ),
-                Err(_timeout) => (
-                    false,
-                    Some(5_000),
-                    "Database ping timed out (>5s)".to_string(),
-                ),
-            };
+        let (db_ok, db_latency_ms, db_detail) = match tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("SELECT 1").execute(self.pool()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => (
+                true,
+                Some(db_start.elapsed().as_millis() as u64),
+                "ok".to_string(),
+            ),
+            Ok(Err(error)) => (
+                false,
+                Some(db_start.elapsed().as_millis() as u64),
+                format!("Database ping failed: {error}"),
+            ),
+            Err(_timeout) => (
+                false,
+                Some(5_000),
+                "Database ping timed out (>5s)".to_string(),
+            ),
+        };
 
         let nats = self.probe_nats_active().await;
         let replay = self.replay_control_status();

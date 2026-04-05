@@ -1,10 +1,11 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_lifecycle_archive, handle_ops_cancel, handle_ops_get, handle_ops_list,
-    handle_ops_start, handle_tombstone_create, handle_tombstone_status,
+    handle_lifecycle_archive, handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+    handle_tombstone_create, handle_tombstone_status,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_gateway::{ReplayScope, ReplayState, ReplayStateMachine};
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::lifecycle::{
@@ -14,7 +15,6 @@ use sinex_primitives::rpc::lifecycle::{
 use sinex_primitives::rpc::ops::{
     OpsCancelResponse, OpsGetResponse, OpsListResponse, OpsStartResponse,
 };
-use sinex_gateway::{ReplayScope, ReplayState, ReplayStateMachine};
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
@@ -339,7 +339,10 @@ async fn ops_cancel_replay_updates_replay_state_machine(ctx: TestContext) -> Tes
     assert!(replay_operation.finished_at.is_some());
 
     let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
-    assert_eq!(persisted.operation.result_status, OperationStatus::Cancelled);
+    assert_eq!(
+        persisted.operation.result_status,
+        OperationStatus::Cancelled
+    );
     assert!(
         persisted.operation.duration_ms.is_some(),
         "terminal replay operations should persist duration_ms"
@@ -353,7 +356,10 @@ async fn ops_cancel_tombstone_updates_scope_state(ctx: TestContext) -> TestResul
     let auth = system_auth();
     let source = "test.ops.tombstone";
     let event = publish_event(&ctx, source, 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -424,7 +430,10 @@ async fn ops_cancel_tombstone_rejects_expired_operation(ctx: TestContext) -> Tes
     let auth = system_auth();
     let source = "test.ops.tombstone.expired";
     let event = publish_event(&ctx, source, 1).await?;
-    let event_id = event.id.expect("published event should have an id").to_string();
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(

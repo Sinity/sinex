@@ -1,15 +1,15 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
+use sinex_primitives::strict_env_filter_source;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands, DemoCommand,
-    DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands,
-    OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, StatusCommand,
-    TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
+    AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
+    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands,
+    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
+    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
-use sinex_primitives::strict_env_filter_source;
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]
@@ -59,7 +59,9 @@ fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
     matches.value_source(id) == Some(ValueSource::CommandLine)
 }
 
-fn load_env_filter(default_filter: &str) -> color_eyre::eyre::Result<tracing_subscriber::EnvFilter> {
+fn load_env_filter(
+    default_filter: &str,
+) -> color_eyre::eyre::Result<tracing_subscriber::EnvFilter> {
     let raw = strict_env_filter_source(default_filter)?;
     tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
         eyre!(
@@ -75,6 +77,12 @@ enum Commands {
     Gateway {
         #[command(subcommand)]
         cmd: GatewayCommands,
+    },
+
+    /// Blob maintenance commands
+    Blob {
+        #[command(subcommand)]
+        cmd: BlobCommands,
     },
 
     /// Core system operations
@@ -190,22 +198,6 @@ async fn main() -> color_eyre::Result<()> {
         Err(error) => error.exit(),
     };
 
-    // Handle config commands early (they don't need a gateway client)
-    if let Commands::Config { cmd } = cli.command {
-        return cmd.execute().await;
-    }
-
-    // Handle completions command early (doesn't need a gateway client)
-    if let Commands::Completions(cmd) = cli.command {
-        let mut clap_cmd = Cli::command();
-        return cmd.execute(&mut clap_cmd);
-    }
-
-    // Handle demo command early (connects directly to DB, no gateway needed)
-    if let Commands::Demo(cmd) = cli.command {
-        return cmd.execute().await;
-    }
-
     // Load effective config:
     // defaults -> runtime env overrides -> local user preferences
     let mut config = Config::load().unwrap_or_else(|e| {
@@ -214,8 +206,8 @@ async fn main() -> color_eyre::Result<()> {
     });
 
     // Override with explicit CLI args.
-    let rpc_url_override =
-        cli_value_is_explicit(&matches, "rpc_url").then(|| cli.rpc_url.clone().unwrap_or_else(default_rpc_url));
+    let rpc_url_override = cli_value_is_explicit(&matches, "rpc_url")
+        .then(|| cli.rpc_url.clone().unwrap_or_else(default_rpc_url));
     let token_override = cli_value_is_explicit(&matches, "token")
         .then(|| cli.token.clone())
         .flatten();
@@ -234,36 +226,46 @@ async fn main() -> color_eyre::Result<()> {
         format_override,
     );
 
-    // Convert to ClientConfig and create gateway client
-    let client_config = ClientConfig::from(&config);
-    let client = GatewayClient::new(client_config)?;
-
-    // Execute command (use merged config's format for commands that need it)
     let format = config.default_format;
-    match cli.command {
-        Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
-        Commands::Core { cmd } => cmd.execute(&client, format).await?,
-        Commands::Node { cmd } => cmd.execute(&client).await?,
-        Commands::Replay { cmd } => cmd.execute(&client).await?,
-        Commands::Dlq { cmd } => cmd.execute(&client).await?,
-        Commands::Query(cmd) => cmd.execute(&client).await?,
-        Commands::Trace(cmd) => cmd.execute(&client).await?,
-        Commands::Ops { cmd } => cmd.execute(&client).await?,
-        Commands::Audit(cmd) => cmd.execute(&client).await?,
-        Commands::Tui(cmd) => cmd.execute(&client).await?,
-        Commands::Config { .. } => unreachable!("Config command handled above"),
-        Commands::Demo(_) => unreachable!("Demo command handled above"),
-        Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
-        Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
-        Commands::Telemetry { cmd } => cmd.execute(&client).await?,
-        Commands::Report { cmd } => cmd.execute(&client).await?,
-        Commands::Status(cmd) => cmd.execute(&client).await?,
-        Commands::Recent(cmd) => cmd.execute(&client).await?,
-        Commands::Errors(cmd) => cmd.execute(&client).await?,
-        Commands::Watch(cmd) => cmd.execute(&client).await?,
-        Commands::Context(cmd) => cmd.execute(&client).await?,
-        Commands::Completions(_) => unreachable!("Completions command handled above"),
-    }
+    let command = cli.command;
+    match command {
+        Commands::Config { cmd } => cmd.execute().await?,
+        Commands::Completions(cmd) => {
+            let mut clap_cmd = Cli::command();
+            cmd.execute(&mut clap_cmd)?;
+        }
+        Commands::Demo(cmd) => cmd.execute().await?,
+        Commands::Blob { cmd } => cmd.execute(format).await?,
+        other => {
+            let client_config = ClientConfig::from(&config);
+            let client = GatewayClient::new(client_config)?;
+            match other {
+                Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
+                Commands::Blob { .. } => unreachable!("Blob command handled above"),
+                Commands::Core { cmd } => cmd.execute(&client, format).await?,
+                Commands::Node { cmd } => cmd.execute(&client).await?,
+                Commands::Replay { cmd } => cmd.execute(&client).await?,
+                Commands::Dlq { cmd } => cmd.execute(&client).await?,
+                Commands::Query(cmd) => cmd.execute(&client).await?,
+                Commands::Trace(cmd) => cmd.execute(&client).await?,
+                Commands::Ops { cmd } => cmd.execute(&client).await?,
+                Commands::Audit(cmd) => cmd.execute(&client).await?,
+                Commands::Tui(cmd) => cmd.execute(&client).await?,
+                Commands::Config { .. } => unreachable!("Config command handled above"),
+                Commands::Demo(_) => unreachable!("Demo command handled above"),
+                Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
+                Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
+                Commands::Telemetry { cmd } => cmd.execute(&client).await?,
+                Commands::Report { cmd } => cmd.execute(&client).await?,
+                Commands::Status(cmd) => cmd.execute(&client).await?,
+                Commands::Recent(cmd) => cmd.execute(&client).await?,
+                Commands::Errors(cmd) => cmd.execute(&client).await?,
+                Commands::Watch(cmd) => cmd.execute(&client).await?,
+                Commands::Context(cmd) => cmd.execute(&client).await?,
+                Commands::Completions(_) => unreachable!("Completions command handled above"),
+            }
+        }
+    };
 
     Ok(())
 }
@@ -318,7 +320,10 @@ mod tests {
             .flatten();
 
         assert_eq!(cli.token.as_deref(), Some("env-token"));
-        assert_eq!(matches.value_source("token"), Some(ValueSource::EnvVariable));
+        assert_eq!(
+            matches.value_source("token"),
+            Some(ValueSource::EnvVariable)
+        );
         assert_eq!(token_override, None);
         Ok(())
     }
@@ -330,7 +335,10 @@ mod tests {
             .then(|| cli.token.clone())
             .flatten();
 
-        assert_eq!(matches.value_source("token"), Some(ValueSource::CommandLine));
+        assert_eq!(
+            matches.value_source("token"),
+            Some(ValueSource::CommandLine)
+        );
         assert_eq!(token_override.as_deref(), Some("cli-token"));
         Ok(())
     }
@@ -368,7 +376,10 @@ mod tests {
             cli_value_is_explicit(&explicit_matches, "rpc_url"),
             "explicit --rpc-url must remain an explicit override even when equal to the default"
         );
-        assert_eq!(explicit_cli.rpc_url.as_deref(), Some(explicit_default.as_str()));
+        assert_eq!(
+            explicit_cli.rpc_url.as_deref(),
+            Some(explicit_default.as_str())
+        );
         Ok(())
     }
 

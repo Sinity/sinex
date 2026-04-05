@@ -59,7 +59,7 @@ pub use coordination::{
 };
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
-pub use system::handle_system_health;
+pub use system::{handle_system_health, handle_system_ping, handle_system_version};
 pub use telemetry::{
     handle_telemetry_command_frequency, handle_telemetry_file_activity,
     handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,

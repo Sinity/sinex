@@ -66,7 +66,8 @@ impl TransducerNode for TerminalCommandCanonicalizer {
 
         // 1:1 transform: ts_orig from input, single parent
         let ts_orig = context.require_ts_orig()?;
-        let Some(mut payload) = canonicalize_payload(context.source.as_str(), input, ts_orig)? else {
+        let Some(mut payload) = canonicalize_payload(context.source.as_str(), input, ts_orig)?
+        else {
             return Ok(None);
         };
         info!("Canonicalizing command: {}", payload.command);
@@ -104,15 +105,42 @@ fn canonicalize_payload(
         }
         source if source == BashCommandExecutedPayload::SOURCE.as_static_str() => {
             let payload = parse_payload::<BashCommandExecutedPayload>(input, source)?;
-            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+            canonicalize_history(
+                payload.command.to_string(),
+                payload.working_directory,
+                payload.exit_code,
+                payload.duration_ms,
+                payload.user,
+                payload.session_id,
+                payload.environment_hash,
+                ts_orig,
+            )
         }
         source if source == ZshCommandExecutedPayload::SOURCE.as_static_str() => {
             let payload = parse_payload::<ZshCommandExecutedPayload>(input, source)?;
-            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+            canonicalize_history(
+                payload.command.to_string(),
+                payload.working_directory,
+                payload.exit_code,
+                payload.duration_ms,
+                payload.user,
+                payload.session_id,
+                payload.environment_hash,
+                ts_orig,
+            )
         }
         source if source == FishCommandExecutedPayload::SOURCE.as_static_str() => {
             let payload = parse_payload::<FishCommandExecutedPayload>(input, source)?;
-            canonicalize_history(payload.command.to_string(), payload.working_directory, payload.exit_code, payload.duration_ms, payload.user, payload.session_id, payload.environment_hash, ts_orig)
+            canonicalize_history(
+                payload.command.to_string(),
+                payload.working_directory,
+                payload.exit_code,
+                payload.duration_ms,
+                payload.user,
+                payload.session_id,
+                payload.environment_hash,
+                ts_orig,
+            )
         }
         _ => Ok(None),
     }

@@ -389,10 +389,8 @@ impl IngestorNode for DocumentNode {
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
-        let acquisition = Arc::new(runtime.acquisition_manager(
-            RotationPolicy::default(),
-            "document",
-        )?);
+        let acquisition =
+            Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "document")?);
         let stage_context = StageAsYouGoContext::from_runtime(runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
 
@@ -426,7 +424,10 @@ impl IngestorNode for DocumentNode {
     ) -> NodeResult<ScanReport> {
         // Historical scan for files is effectively the same as snapshot for specific targets.
         if args.dry_run {
-            info!(targets = args.targets.len(), "Dry-run historical document ingestion");
+            info!(
+                targets = args.targets.len(),
+                "Dry-run historical document ingestion"
+            );
             Ok(Self::dry_run_report(args.targets.len()))
         } else {
             self.ingest_targets(&args.targets).await
@@ -575,8 +576,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn document_source_state_is_unhealthy_before_initialize(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn document_source_state_is_unhealthy_before_initialize()
+    -> ::xtask::sandbox::TestResult<()> {
         let node = DocumentNode::new();
         let state = node.get_source_state()?;
 
@@ -589,8 +590,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn document_source_state_surfaces_invalid_config(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn document_source_state_surfaces_invalid_config() -> ::xtask::sandbox::TestResult<()> {
         let node = DocumentNode::new();
         let state = node.get_source_state()?;
 

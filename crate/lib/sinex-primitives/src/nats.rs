@@ -347,8 +347,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn kv_bucket_already_exists_matches_stream_name_conflict(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn kv_bucket_already_exists_matches_stream_name_conflict()
+    -> xtask::sandbox::TestResult<()> {
         let stream_error = jetstream::context::CreateStreamError::new(
             jetstream::context::CreateStreamErrorKind::JetStream(serde_json::from_value(json!({
                 "code": 400,
@@ -366,8 +366,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn kv_bucket_already_exists_rejects_other_bucket_create_errors(
-    ) -> xtask::sandbox::TestResult<()> {
+    async fn kv_bucket_already_exists_rejects_other_bucket_create_errors()
+    -> xtask::sandbox::TestResult<()> {
         let stream_error = jetstream::context::CreateStreamError::new(
             jetstream::context::CreateStreamErrorKind::JetStream(serde_json::from_value(json!({
                 "code": 400,

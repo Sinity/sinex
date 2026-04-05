@@ -324,9 +324,11 @@ mod tests {
             .await
             .expect_err("append requests must not fabricate offsets from finalize replies");
 
-        assert!(error
-            .to_string()
-            .contains("finalize response for append request"));
+        assert!(
+            error
+                .to_string()
+                .contains("finalize response for append request")
+        );
         Ok(())
     }
 }

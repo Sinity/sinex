@@ -196,9 +196,11 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
         })?;
         for entry in entries.take(1000) {
             let entry = entry.map_err(|error| {
-                SinexError::io("Failed to enumerate directory entry while estimating watched file count")
-                    .with_context("path", path.to_string())
-                    .with_std_error(&error)
+                SinexError::io(
+                    "Failed to enumerate directory entry while estimating watched file count",
+                )
+                .with_context("path", path.to_string())
+                .with_std_error(&error)
             })?;
             // Limit for performance
             let child_path = entry.path();
@@ -211,8 +213,10 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
                 count += 1;
             } else if metadata.is_dir() {
                 let utf8_path = camino::Utf8PathBuf::from_path_buf(child_path).map_err(|path| {
-                    SinexError::validation("Encountered non-UTF-8 path while estimating watched file count")
-                        .with_context("path", path.display().to_string())
+                    SinexError::validation(
+                        "Encountered non-UTF-8 path while estimating watched file count",
+                    )
+                    .with_context("path", path.display().to_string())
                 })?;
                 count += count_files_recursive(&utf8_path, depth + 1, max_depth)?;
             }

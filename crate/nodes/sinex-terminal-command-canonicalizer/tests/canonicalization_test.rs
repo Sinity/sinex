@@ -81,7 +81,10 @@ async fn test_accepts_shell_atuin_source() -> TestResult<()> {
     assert!(result.is_some(), "shell.atuin should be accepted");
     let payload = result.unwrap().payload;
     assert_eq!(payload.command, "git status");
-    assert_eq!(payload.working_directory.as_deref(), Some("/home/user/project"));
+    assert_eq!(
+        payload.working_directory.as_deref(),
+        Some("/home/user/project")
+    );
     assert_eq!(payload.duration_ms, Some(1500));
     assert_eq!(payload.session_id.as_deref(), Some("sess-001"));
     Ok(())
@@ -214,7 +217,9 @@ async fn test_missing_command_field_errors() -> TestResult<()> {
         .expect_err("missing required command should fail honestly");
 
     assert!(
-        error.to_string().contains("failed to parse shell.kitty command.executed payload"),
+        error
+            .to_string()
+            .contains("failed to parse shell.kitty command.executed payload"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -244,7 +249,10 @@ async fn test_extracts_all_fields() -> TestResult<()> {
         .expect("should produce output");
 
     assert_eq!(result.payload.command, "cargo build");
-    assert_eq!(result.payload.working_directory.as_deref(), Some("/home/user/project"));
+    assert_eq!(
+        result.payload.working_directory.as_deref(),
+        Some("/home/user/project")
+    );
     assert_eq!(
         result.payload.exit_code,
         Some(sinex_primitives::units::ExitCode::from_raw(0))
@@ -373,7 +381,9 @@ async fn test_invalid_atuin_payload_shape_errors() -> TestResult<()> {
         .expect_err("old generic shape should not be accepted for shell.atuin");
 
     assert!(
-        error.to_string().contains("failed to parse shell.atuin command.executed payload"),
+        error
+            .to_string()
+            .contains("failed to parse shell.atuin command.executed payload"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -395,7 +405,9 @@ async fn test_history_optional_field_type_errors() -> TestResult<()> {
         .expect_err("malformed optional fields should fail honestly");
 
     assert!(
-        error.to_string().contains("failed to parse shell.history.bash command.executed payload"),
+        error
+            .to_string()
+            .contains("failed to parse shell.history.bash command.executed payload"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -418,7 +430,9 @@ async fn test_non_string_command_field_errors() -> TestResult<()> {
         .expect_err("non-string commands should fail honestly");
 
     assert!(
-        error.to_string().contains("failed to parse shell.kitty command.executed payload"),
+        error
+            .to_string()
+            .contains("failed to parse shell.kitty command.executed payload"),
         "unexpected error: {error}"
     );
     Ok(())

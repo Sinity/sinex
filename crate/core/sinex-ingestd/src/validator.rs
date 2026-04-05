@@ -198,7 +198,9 @@ impl EventValidator {
     ) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate_payload_for(source, event_type, payload) {
-                SchemaValidationOutcome::Valid { schema_id } => ValidationResult::Valid { schema_id },
+                SchemaValidationOutcome::Valid { schema_id } => {
+                    ValidationResult::Valid { schema_id }
+                }
                 SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
                 SchemaValidationOutcome::SchemaNotFound { schema_id } => {
                     ValidationResult::SchemaNotFound { schema_id }
@@ -222,16 +224,16 @@ impl EventValidator {
                     event.event_type.as_ref(),
                     &event.payload,
                 ) {
-                    SchemaValidationOutcome::Valid { schema_id } => ValidationResult::Valid {
-                        schema_id,
-                    },
+                    SchemaValidationOutcome::Valid { schema_id } => {
+                        ValidationResult::Valid { schema_id }
+                    }
                     SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
                     SchemaValidationOutcome::SchemaNotFound { schema_id } => {
                         ValidationResult::SchemaNotFound { schema_id }
                     }
-                    SchemaValidationOutcome::Invalid { errors } => ValidationResult::Invalid {
-                        errors,
-                    },
+                    SchemaValidationOutcome::Invalid { errors } => {
+                        ValidationResult::Invalid { errors }
+                    }
                 },
                 Err(err) => ValidationResult::Invalid {
                     errors: vec![err.to_string()],

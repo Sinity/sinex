@@ -178,7 +178,10 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             match wait_for_shutdown_signal().await {
                 Ok(signal_name) => {
-                    info!(signal = signal_name, "Received shutdown signal, initiating graceful shutdown");
+                    info!(
+                        signal = signal_name,
+                        "Received shutdown signal, initiating graceful shutdown"
+                    );
                 }
                 Err(error) => {
                     error!(error = %error, "Failed to listen for gateway shutdown signal");
@@ -198,8 +201,11 @@ async fn main() -> Result<()> {
             cors_origins,
         } => {
             // CLI args override the loaded config before the runtime starts.
-            let config =
-                load_gateway_config(database_url)?.with_cli_overrides(None, tcp_listen, cors_origins);
+            let config = load_gateway_config(database_url)?.with_cli_overrides(
+                None,
+                tcp_listen,
+                cors_origins,
+            );
 
             info!("Starting RPC server on {}", config.tcp_listen);
 
@@ -267,8 +273,8 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinex_gateway=wat");
 
-        let error =
-            load_env_filter("sinex_gateway=info").expect_err("invalid directives must fail honestly");
+        let error = load_env_filter("sinex_gateway=info")
+            .expect_err("invalid directives must fail honestly");
         let message = error.to_string();
 
         assert!(message.contains("RUST_LOG"));
@@ -282,8 +288,8 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
-        let error =
-            load_env_filter("sinex_gateway=info").expect_err("non-UTF8 RUST_LOG must fail honestly");
+        let error = load_env_filter("sinex_gateway=info")
+            .expect_err("non-UTF8 RUST_LOG must fail honestly");
         let message = error.to_string();
 
         assert!(message.contains("RUST_LOG"));

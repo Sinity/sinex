@@ -8,7 +8,10 @@ use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
-fn build_coordination_client(ctx: &TestContext, service_name: &str) -> TestResult<CoordinationKvClient> {
+fn build_coordination_client(
+    ctx: &TestContext,
+    service_name: &str,
+) -> TestResult<CoordinationKvClient> {
     let js = jetstream::new(ctx.nats_client());
     Ok(CoordinationKvClient::new(js, service_name.to_string()))
 }
@@ -39,7 +42,10 @@ async fn coordination_instance_health_uses_configured_stale_timeout(
     )
     .await?;
     assert_eq!(response["healthy"].as_bool(), Some(true));
-    assert_eq!(response["instance"]["instance_id"].as_str(), Some("instance-a"));
+    assert_eq!(
+        response["instance"]["instance_id"].as_str(),
+        Some("instance-a")
+    );
     assert_eq!(response["last_error"], serde_json::Value::Null);
 
     Ok(())
@@ -50,9 +56,10 @@ async fn coordination_instance_health_rejects_missing_instance(ctx: TestContext)
     let ctx = ctx.with_nats().dedicated().await?;
     let kv_client = build_coordination_client(&ctx, "gateway-health-missing")?;
 
-    let error = handle_coordination_instance_health(&kv_client, json!({ "instance_id": "missing" }))
-        .await
-        .expect_err("missing coordination instances must fail loudly");
+    let error =
+        handle_coordination_instance_health(&kv_client, json!({ "instance_id": "missing" }))
+            .await
+            .expect_err("missing coordination instances must fail loudly");
     assert!(error.to_string().contains("Instance not found: missing"));
 
     Ok(())

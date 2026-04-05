@@ -109,9 +109,8 @@ async fn test_read_atuin_history_incremental() -> TestResult<()> {
     )
     .wrap_err("insert incremental Atuin history row")?;
 
-    let (new_entries, new_last_row_id) =
-        read_atuin_history(&history_path, last_row_id, None)
-            .wrap_err("read incremental Atuin history")?;
+    let (new_entries, new_last_row_id) = read_atuin_history(&history_path, last_row_id, None)
+        .wrap_err("read incremental Atuin history")?;
     assert_eq!(new_entries.len(), 1);
     assert_eq!(new_entries[0].history_id, "h3");
     assert_eq!(new_last_row_id, 3);
@@ -144,9 +143,11 @@ async fn test_read_atuin_history_rejects_unrepresentable_end_time_filter() -> Te
     let error = read_atuin_history(&history_path, 0, Some(end_time))
         .expect_err("far-future end_time filter should fail honestly");
 
-    assert!(error
-        .to_string()
-        .contains("outside SQLite i64 nanosecond range"));
+    assert!(
+        error
+            .to_string()
+            .contains("outside SQLite i64 nanosecond range")
+    );
     Ok(())
 }
 

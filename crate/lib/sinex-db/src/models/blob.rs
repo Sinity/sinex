@@ -63,9 +63,9 @@ impl Blob {
         let size_str = prefix_parts
             .next()
             .ok_or_else(|| format!("invalid annex key `{key}`: missing size segment"))?;
-        let size = size_str
-            .parse::<i64>()
-            .map_err(|error| format!("invalid annex key `{key}`: invalid size `{size_str}`: {error}"))?;
+        let size = size_str.parse::<i64>().map_err(|error| {
+            format!("invalid annex key `{key}`: invalid size `{size_str}`: {error}")
+        })?;
 
         Ok((backend, size, hash_fragment))
     }

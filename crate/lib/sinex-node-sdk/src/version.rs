@@ -4,13 +4,13 @@
 //! by shadow-rs, including semantic versioning, git metadata, and
 //! build information for node coordination and handoff.
 
-use crate::error_helpers::elapsed_seconds_with_warning;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 use std::time::SystemTime;
+use tracing::warn;
 
 // Import shadow-rs generated build information
 shadow_rs::shadow!(build);
@@ -207,6 +207,20 @@ impl NodeInstance {
             self.host_name,
             self.uptime_seconds()
         )
+    }
+}
+
+fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u64 {
+    match start_time.elapsed() {
+        Ok(elapsed) => elapsed.as_secs(),
+        Err(error) => {
+            warn!(
+                context,
+                error = %error,
+                "System clock moved backwards; clamping elapsed time to zero"
+            );
+            0
+        }
     }
 }
 

@@ -1,8 +1,8 @@
 use crate::EventRecord;
 use crate::repositories::common::DbResult;
-use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
 
@@ -32,9 +32,9 @@ where
 {
     match value {
         Some(raw) => raw.parse::<T>().map(Some).map_err(|error| {
-            sinex_primitives::SinexError::invalid_state(format!(
-                "event record has invalid {field}",
-            ))
+            sinex_primitives::SinexError::invalid_state(
+                format!("event record has invalid {field}",),
+            )
             .with_context("event_id", event_id.to_string())
             .with_context("field", field.to_string())
             .with_context("value", raw)

@@ -64,12 +64,19 @@ pub async fn verify_configuration_generation()
                 has_warnings = true;
             }
             if event_config
-                .get("configured_unavailable_count")
+                .get("configured_unavailable_blocking_count")
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
                 > 0
             {
                 has_failures = true;
+            } else if event_config
+                .get("configured_unavailable_advisory_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+            {
+                has_warnings = true;
             }
             details.insert("event_sources", event_config);
         }
@@ -241,6 +248,8 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
     let mut event_sources = HashMap::new();
     let descriptor = deployment_descriptor_result("preflight configuration checks")?;
     let mut configured_unavailable = Vec::new();
+    let mut configured_unavailable_blocking = Vec::new();
+    let mut configured_unavailable_advisory = Vec::new();
 
     // Deployment readiness is config-derived: source availability follows the
     // staged descriptor, not whichever binaries or dotfiles happen to exist in
@@ -259,15 +268,24 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
         let config_info = verify_event_source_config(source_name, description, descriptor.as_ref());
         let is_available = config_info["available"].as_bool().unwrap_or(false);
         let is_configured = config_info["configured"].as_bool().unwrap_or(false);
+        let is_blocking = config_info["blocking"].as_bool().unwrap_or(false);
         event_sources.insert(source_name.to_string(), config_info);
 
         if is_available {
             messages.push(format!("✓ Event source '{source_name}' is available"));
         } else if is_configured {
             configured_unavailable.push(source_name.to_string());
-            messages.push(format!(
-                "✗ Event source '{source_name}' is configured but not currently available"
-            ));
+            if is_blocking {
+                configured_unavailable_blocking.push(source_name.to_string());
+                messages.push(format!(
+                    "✗ Event source '{source_name}' is configured but not currently available"
+                ));
+            } else {
+                configured_unavailable_advisory.push(source_name.to_string());
+                messages.push(format!(
+                    "⚠ Event source '{source_name}' is configured but not currently visible to preflight"
+                ));
+            }
         } else {
             messages.push(format!(
                 "ℹ Event source '{source_name}' is not configured by the deployment descriptor"
@@ -275,11 +293,19 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
         }
     }
 
+    let configured_unavailable_count = configured_unavailable.len();
+    let configured_unavailable_blocking_count = configured_unavailable_blocking.len();
+    let configured_unavailable_advisory_count = configured_unavailable_advisory.len();
+
     Ok(json!({
         "deployment_descriptor_loaded": descriptor.is_some(),
         "sources": event_sources,
         "configured_unavailable": configured_unavailable,
-        "configured_unavailable_count": configured_unavailable.len(),
+        "configured_unavailable_count": configured_unavailable_count,
+        "configured_unavailable_blocking": configured_unavailable_blocking,
+        "configured_unavailable_blocking_count": configured_unavailable_blocking_count,
+        "configured_unavailable_advisory": configured_unavailable_advisory,
+        "configured_unavailable_advisory_count": configured_unavailable_advisory_count,
         "total_available": event_sources.values()
             .filter(|v| v["available"].as_bool().unwrap_or(false))
             .count()
@@ -395,6 +421,7 @@ fn verify_event_source_config(
 struct EventSourceProbe {
     configured: bool,
     available: bool,
+    blocking: bool,
     reason: String,
     evidence_paths: Vec<PathBuf>,
 }
@@ -404,15 +431,27 @@ impl EventSourceProbe {
         Self {
             configured: true,
             available: true,
+            blocking: false,
             reason: reason.into(),
             evidence_paths,
         }
     }
 
-    fn unavailable(reason: impl Into<String>, evidence_paths: Vec<PathBuf>) -> Self {
+    fn blocking_unavailable(reason: impl Into<String>, evidence_paths: Vec<PathBuf>) -> Self {
         Self {
             configured: true,
             available: false,
+            blocking: true,
+            reason: reason.into(),
+            evidence_paths,
+        }
+    }
+
+    fn advisory_unavailable(reason: impl Into<String>, evidence_paths: Vec<PathBuf>) -> Self {
+        Self {
+            configured: true,
+            available: false,
+            blocking: false,
             reason: reason.into(),
             evidence_paths,
         }
@@ -422,6 +461,7 @@ impl EventSourceProbe {
         Self {
             configured: false,
             available: false,
+            blocking: false,
             reason: reason.into(),
             evidence_paths: Vec::new(),
         }
@@ -432,6 +472,7 @@ impl EventSourceProbe {
             "description": description,
             "configured": self.configured,
             "available": self.available,
+            "blocking": self.blocking,
             "dependencies_met": self.available,
             "reason": self.reason,
             "evidence_paths": self.evidence_paths
@@ -477,7 +518,7 @@ fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
         .map(|source| source.path.clone())
         .collect();
     if evidence_paths.is_empty() {
-        return EventSourceProbe::unavailable(
+        return EventSourceProbe::blocking_unavailable(
             "Terminal capture is enabled but no history sources are configured",
             evidence_paths,
         );
@@ -485,22 +526,34 @@ fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
 
     let mut readable = Vec::new();
     let mut unreadable = Vec::new();
+    let mut advisory_unreadable = Vec::new();
     for source in &descriptor.terminal.history_sources {
         match validate_terminal_history_source(&source.shell, &source.path) {
             Ok(()) => readable.push(format!("{}:{}", source.shell, source.path.display())),
-            Err(error) => unreadable.push(format!(
-                "{}:{} ({error})",
-                source.shell,
-                source.path.display()
-            )),
+            Err(error) => {
+                let entry = format!("{}:{} ({error})", source.shell, source.path.display());
+                if terminal_history_source_error_is_blocking(source, &error) {
+                    unreadable.push(entry);
+                } else {
+                    advisory_unreadable.push(entry);
+                }
+            }
         }
     }
 
     if !unreadable.is_empty() {
-        EventSourceProbe::unavailable(
+        EventSourceProbe::blocking_unavailable(
             format!(
                 "Configured terminal history sources are unreadable or malformed: {}",
                 unreadable.join(", ")
+            ),
+            evidence_paths,
+        )
+    } else if !advisory_unreadable.is_empty() {
+        EventSourceProbe::advisory_unavailable(
+            format!(
+                "Configured terminal history sources are not currently visible to preflight: {}",
+                advisory_unreadable.join(", ")
             ),
             evidence_paths,
         )
@@ -513,10 +566,23 @@ fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
             evidence_paths,
         )
     } else {
-        EventSourceProbe::unavailable(
+        EventSourceProbe::blocking_unavailable(
             "Configured terminal history sources are missing",
             evidence_paths,
         )
+    }
+}
+
+fn terminal_history_source_error_is_blocking(
+    source: &sinex_primitives::TerminalHistorySource,
+    error: &SinexError,
+) -> bool {
+    match source.shell.as_str() {
+        "elvish" => true,
+        "fish" => {
+            error.to_string().contains("unsupported") && source.path.is_file()
+        }
+        _ => false,
     }
 }
 
@@ -578,15 +644,15 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
                 vec![event_socket],
             )
         } else {
-            EventSourceProbe::unavailable(
-                "Configured Hyprland event socket is missing",
+            EventSourceProbe::advisory_unavailable(
+                "Configured Hyprland event socket is not currently visible to preflight",
                 vec![event_socket],
             )
         };
     }
 
     let Some(runtime_dir) = descriptor.desktop.runtime_dir.clone() else {
-        return EventSourceProbe::unavailable(
+        return EventSourceProbe::blocking_unavailable(
             "Desktop capture is enabled but no runtime_dir is declared",
             Vec::new(),
         );
@@ -601,16 +667,16 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
                 vec![event_socket],
             )
         } else {
-            EventSourceProbe::unavailable(
-                "Configured Hyprland instance socket is missing",
+            EventSourceProbe::advisory_unavailable(
+                "Configured Hyprland instance socket is not currently visible to preflight",
                 vec![event_socket],
             )
         };
     }
 
     let Ok(entries) = std::fs::read_dir(&hypr_dir) else {
-        return EventSourceProbe::unavailable(
-            "Hyprland runtime directory is missing or unreadable",
+        return EventSourceProbe::advisory_unavailable(
+            "Hyprland runtime directory is not currently visible to preflight",
             vec![hypr_dir],
         );
     };
@@ -621,7 +687,7 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
     ) {
         Ok(sockets) => sockets,
         Err(reason) => {
-            return EventSourceProbe::unavailable(reason, vec![hypr_dir]);
+            return EventSourceProbe::advisory_unavailable(reason, vec![hypr_dir]);
         }
     };
 
@@ -630,11 +696,11 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
             "Resolved a single Hyprland event socket from the configured runtime directory",
             vec![socket.clone()],
         ),
-        [] => EventSourceProbe::unavailable(
-            "Configured Hyprland runtime directory contains no event socket",
+        [] => EventSourceProbe::advisory_unavailable(
+            "Configured Hyprland runtime directory contains no currently visible event socket",
             vec![hypr_dir],
         ),
-        _ => EventSourceProbe::unavailable(
+        _ => EventSourceProbe::blocking_unavailable(
             "Configured Hyprland runtime directory contains multiple instances; set hyprland_instance_signature or hyprland_event_socket explicitly",
             sockets,
         ),
@@ -695,8 +761,10 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
             "Configured Atuin history database validated successfully",
             vec![path],
         ),
-        Err(error) => EventSourceProbe::unavailable(
-            format!("Configured Atuin history database is unreadable or malformed: {error}"),
+        Err(error) => EventSourceProbe::advisory_unavailable(
+            format!(
+                "Configured Atuin history database is not currently visible to preflight: {error}"
+            ),
             vec![path],
         ),
     }
@@ -790,7 +858,7 @@ fn probe_activitywatch_source(
     }
 
     let Some(path) = descriptor.desktop.activitywatch_db_path.clone() else {
-        return EventSourceProbe::unavailable(
+        return EventSourceProbe::blocking_unavailable(
             "Desktop capture is enabled but no ActivityWatch database path is configured",
             Vec::new(),
         );
@@ -801,9 +869,9 @@ fn probe_activitywatch_source(
             "Configured ActivityWatch history database validated successfully",
             vec![path],
         ),
-        Err(error) => EventSourceProbe::unavailable(
+        Err(error) => EventSourceProbe::advisory_unavailable(
             format!(
-                "Configured ActivityWatch history database is unreadable or malformed: {error}"
+                "Configured ActivityWatch history database is not currently visible to preflight: {error}"
             ),
             vec![path],
         ),

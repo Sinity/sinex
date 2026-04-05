@@ -545,9 +545,14 @@ fn read_base_contract_contents(base: &str, file: &str) -> Result<Option<String>>
     )
 }
 
-fn read_base_contract_contents_with(git_obj: &str, output: std::io::Result<Output>) -> Result<Option<String>> {
+fn read_base_contract_contents_with(
+    git_obj: &str,
+    output: std::io::Result<Output>,
+) -> Result<Option<String>> {
     match output {
-        Ok(output) if output.status.success() => Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned())),
+        Ok(output) if output.status.success() => {
+            Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+        }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if git_show_reports_missing_object(&stderr) {
@@ -608,7 +613,8 @@ fn resolve_socket_dir(
 ) -> Result<PathBuf> {
     match socket_dir {
         Some(path) => Ok(path),
-        None => current_dir.wrap_err("failed to determine current directory for ephemeral Postgres socket dir"),
+        None => current_dir
+            .wrap_err("failed to determine current directory for ephemeral Postgres socket dir"),
     }
 }
 
@@ -692,7 +698,10 @@ mod tests {
             r#"{"type":"object","required":["a"]}"#,
             r#"{"type":"object","required":["a","b"]}"#,
         )?;
-        assert!(!success, "new required fields should fail the contract guard");
+        assert!(
+            !success,
+            "new required fields should fail the contract guard"
+        );
         Ok(())
     }
 

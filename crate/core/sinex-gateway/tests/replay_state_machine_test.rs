@@ -184,7 +184,10 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
         node_id: "atomic-create-node".to_string(),
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
-        filters: HashMap::from([("event_types".to_string(), serde_json::json!(["file.created"]))]),
+        filters: HashMap::from([(
+            "event_types".to_string(),
+            serde_json::json!(["file.created"]),
+        )]),
     };
 
     let created = replay
@@ -265,9 +268,65 @@ async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn mark_failed_persists_pre_execution_and_execution_failures(
+async fn submit_previewed_operation_sets_execution_metadata_atomically(
     ctx: TestContext,
 ) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "submit-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    let preview_start = Timestamp::now() - time::Duration::minutes(5);
+    let preview_end = preview_start + time::Duration::minutes(1);
+    let root_event_id = Uuid::now_v7();
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({
+                "total_events": 1,
+                "time_window": {
+                    "start": preview_start.format_rfc3339(),
+                    "end": preview_end.format_rfc3339(),
+                },
+                "root_event_ids": [root_event_id],
+            }),
+        )
+        .await?;
+
+    let submitted = replay
+        .submit_previewed_for_execution(
+            operation.operation_id,
+            "admin:submitter".to_string(),
+            sinex_primitives::domain::NodeName::new("gateway-node"),
+        )
+        .await?;
+
+    assert_eq!(submitted.state, ReplayState::Executing);
+    assert_eq!(submitted.approved_by.as_deref(), Some("admin:submitter"));
+    assert!(submitted.approved_at.is_some());
+    assert!(submitted.started_at.is_some());
+    assert_eq!(submitted.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(submitted.outcome, None);
+    assert_eq!(submitted.error_details, None);
+
+    let loaded = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(loaded.state, ReplayState::Executing);
+    assert_eq!(loaded.approved_by.as_deref(), Some("admin:submitter"));
+    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.approved_at, submitted.approved_at);
+    assert_eq!(loaded.started_at, submitted.started_at);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestContext) -> Result<()> {
     let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
         node_id: "test-node".to_string(),
@@ -305,10 +364,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(
 
     let failed_before_execution = replay.load_operation(operation.operation_id).await?;
     assert_eq!(failed_before_execution.state, ReplayState::Failed);
-    assert_eq!(
-        failed_before_execution.outcome,
-        Some(ReplayOutcome::Failed)
-    );
+    assert_eq!(failed_before_execution.outcome, Some(ReplayOutcome::Failed));
     assert_eq!(
         failed_before_execution.error_details.as_deref(),
         Some("pre-execution error")
@@ -339,7 +395,10 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(
         .transition(second_operation.operation_id, ReplayState::Executing)
         .await?;
     replay
-        .mark_failed(second_operation.operation_id, "execution failed".to_string())
+        .mark_failed(
+            second_operation.operation_id,
+            "execution failed".to_string(),
+        )
         .await?;
 
     let failed = replay.load_operation(second_operation.operation_id).await?;
@@ -435,12 +494,18 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
         .await?;
 
     replay
-        .cancel(operation.operation_id, "operator requested stop".to_string())
+        .cancel(
+            operation.operation_id,
+            "operator requested stop".to_string(),
+        )
         .await?;
 
     let cancelling = replay.load_operation(operation.operation_id).await?;
     assert_eq!(cancelling.state, ReplayState::Cancelling);
-    assert_eq!(cancelling.error_details.as_deref(), Some("operator requested stop"));
+    assert_eq!(
+        cancelling.error_details.as_deref(),
+        Some("operator requested stop")
+    );
     assert!(cancelling.outcome.is_none());
     assert!(cancelling.finished_at.is_none());
 
@@ -449,7 +514,10 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
     let cancelled = replay.load_operation(operation.operation_id).await?;
     assert_eq!(cancelled.state, ReplayState::Cancelled);
     assert_eq!(cancelled.outcome, Some(ReplayOutcome::Cancelled));
-    assert_eq!(cancelled.error_details.as_deref(), Some("operator requested stop"));
+    assert_eq!(
+        cancelled.error_details.as_deref(),
+        Some("operator requested stop")
+    );
     assert!(cancelled.finished_at.is_some());
 
     Ok(())

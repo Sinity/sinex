@@ -169,24 +169,22 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
         arb_json_value(),
         prop::option::of(arb_timestamp()),
     )
-        .prop_filter_map("source and event_type must satisfy domain validation", |(
-            source,
-            event_type,
-            payload,
-            ts_orig,
-        )| {
-            let source = EventSource::new(source).ok()?;
-            let event_type = EventType::new(event_type).ok()?;
-            let mut event = test_event(source, event_type, payload);
-            // Simulate ingest by assigning an ID
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+        .prop_filter_map(
+            "source and event_type must satisfy domain validation",
+            |(source, event_type, payload, ts_orig)| {
+                let source = EventSource::new(source).ok()?;
+                let event_type = EventType::new(event_type).ok()?;
+                let mut event = test_event(source, event_type, payload);
+                // Simulate ingest by assigning an ID
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-            if let Some(ts) = ts_orig {
-                event.ts_orig = Some(ts);
-            }
+                if let Some(ts) = ts_orig {
+                    event.ts_orig = Some(ts);
+                }
 
-            Some(event)
-        })
+                Some(event)
+            },
+        )
 }
 
 // =============================================================================

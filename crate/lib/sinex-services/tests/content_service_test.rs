@@ -105,7 +105,13 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"metadata test";
     let annex_key = service
-        .store_content(payload, "meta.txt", "text/plain", "test-harness", "test-harness")
+        .store_content(
+            payload,
+            "meta.txt",
+            "text/plain",
+            "test-harness",
+            "test-harness",
+        )
         .await?;
 
     let meta = service.get_content_metadata(&annex_key).await?;
@@ -126,10 +132,22 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"deduplicate this content";
     let key_a = service
-        .store_content(payload, "a.txt", "text/plain", "test-harness", "test-harness")
+        .store_content(
+            payload,
+            "a.txt",
+            "text/plain",
+            "test-harness",
+            "test-harness",
+        )
         .await?;
     let key_b = service
-        .store_content(payload, "b.txt", "text/plain", "test-harness", "test-harness")
+        .store_content(
+            payload,
+            "b.txt",
+            "text/plain",
+            "test-harness",
+            "test-harness",
+        )
         .await?;
 
     assert_eq!(

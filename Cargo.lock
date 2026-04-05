@@ -6192,6 +6192,8 @@ version = "0.4.2"
 dependencies = [
  "assert_cmd",
  "atty",
+ "blake3",
+ "camino",
  "clap",
  "clap_complete",
  "color-eyre",

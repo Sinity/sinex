@@ -4,9 +4,7 @@
 //! stored in git-annex with metadata in `PostgreSQL`.
 
 use num_traits::ToPrimitive;
-use sqlx::Error as SqlxError;
 use sqlx::PgPool;
-use tokio::time::{Duration, sleep};
 use tracing::instrument;
 
 use crate::models::Blob;
@@ -44,12 +42,9 @@ impl BlobRepository {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
-        let natural_backend = blob.annex_backend.clone();
-        let natural_hash = blob.content_hash.clone();
-        let natural_size = blob.size_bytes;
         let record: BlobRecord = blob.into();
 
-        let insert_result = sqlx::query_as!(
+        let record = sqlx::query_as!(
             BlobRecord,
             r#"
             INSERT INTO core.blobs (
@@ -59,6 +54,8 @@ impl BlobRepository {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
+            ON CONFLICT (annex_backend, content_hash) DO UPDATE
+            SET original_filename = core.blobs.original_filename
             RETURNING 
                 id as "id!: uuid::Uuid",
                 annex_backend,
@@ -84,57 +81,15 @@ impl BlobRepository {
             record.verification_status
         )
         .fetch_one(executor)
-        .await;
+        .await
+        .map_err(|err| {
+            SinexError::database(format!(
+                "Failed to insert blob (backend={}, hash={}): {err}",
+                record.annex_backend, record.content_hash
+            ))
+        })?;
 
-        match insert_result {
-            Ok(record) => Self::decode_record(record, "insert blob"),
-            Err(SqlxError::Database(db_err)) if db_err.is_unique_violation() => {
-                tracing::debug!(
-                    annex_backend = %natural_backend,
-                    content_hash = %natural_hash,
-                    "Blob insert hit unique constraint; fetching existing record"
-                );
-                tracing::warn!(
-                    annex_backend = %natural_backend,
-                    content_hash = %natural_hash,
-                    content_size = natural_size,
-                    "Blob insert unique violation detected"
-                );
-
-                const MAX_FETCH_RETRIES: usize = 5;
-                const RETRY_DELAY_MS: u64 = 50;
-
-                for attempt in 0..MAX_FETCH_RETRIES {
-                    if let Some(existing) = self
-                        .get_by_content(&natural_backend, &natural_hash, natural_size)
-                        .await?
-                    {
-                        return Ok(existing);
-                    }
-                    tracing::trace!(
-                        attempt = attempt + 1,
-                        "Existing blob not visible yet; retrying fetch"
-                    );
-                    sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                }
-
-                tracing::warn!(
-                    annex_backend = %natural_backend,
-                    content_hash = %natural_hash,
-                    content_size = natural_size,
-                    retries = MAX_FETCH_RETRIES,
-                    "Blob insert dedup lookup failed after retries"
-                );
-                Err(SinexError::database(format!(
-                    "Blob exists but could not be retrieved after {MAX_FETCH_RETRIES} retries (backend={natural_backend}, hash={natural_hash}, size={natural_size})"
-                )))
-            }
-            Err(err) => {
-                return Err(SinexError::database(format!(
-                    "Failed to insert blob (backend={natural_backend}, hash={natural_hash}): {err}"
-                )));
-            }
-        }
+        Self::decode_record(record, "insert blob")
     }
 
     /// Get a blob by ID

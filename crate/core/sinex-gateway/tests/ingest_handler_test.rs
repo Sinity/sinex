@@ -4,8 +4,8 @@ use common::{NatsHarness, ensure_events_stream};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_gateway::handlers::handle_events_ingest;
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::rpc::ingest::EventIngestResponse;
+use sinex_primitives::temporal::Timestamp;
 use std::time::Duration;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
@@ -76,7 +76,9 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
 
     assert_eq!(record.status, "completed");
     assert!(
-        record.source_identifier.starts_with("gateway://events.ingest/"),
+        record
+            .source_identifier
+            .starts_with("gateway://events.ingest/"),
         "unexpected source identifier: {}",
         record.source_identifier
     );
@@ -84,7 +86,10 @@ async fn events_ingest_registers_material_and_publishes_full_envelope(
         record.metadata["gateway_surface"].as_str(),
         Some("events.ingest")
     );
-    assert_eq!(record.metadata["event_source"].as_str(), Some("gateway.test"));
+    assert_eq!(
+        record.metadata["event_source"].as_str(),
+        Some("gateway.test")
+    );
     assert_eq!(record.metadata["event_type"].as_str(), Some("inline.event"));
     assert_eq!(record.metadata["inline_payload"].as_bool(), Some(true));
     assert_eq!(record.metadata["payload_bytes"].as_i64(), Some(12));

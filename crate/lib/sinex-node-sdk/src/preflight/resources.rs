@@ -9,12 +9,14 @@
  */
 
 use crate::{NodeResult, SinexError};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
+use libc::{gid_t, uid_t};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sinex_primitives::env as shared_env;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use std::os::unix::fs::MetadataExt;
 use tracing::info;
 
 use super::VerificationStatus;
@@ -65,6 +67,20 @@ fn configured_work_dir() -> NodeResult<String> {
 
 fn configured_tmp_dir() -> NodeResult<String> {
     Ok(env_string("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
+}
+
+fn nearest_existing_ancestor(path: &Utf8Path) -> NodeResult<Utf8PathBuf> {
+    let mut candidate = Some(path);
+    while let Some(current) = candidate {
+        if current.exists() {
+            return Ok(current.to_path_buf());
+        }
+        candidate = current.parent();
+    }
+
+    Err(SinexError::processing(format!(
+        "No existing ancestor found for path '{path}'"
+    )))
 }
 
 /// Verify system resource availability for Sinex deployment
@@ -293,7 +309,9 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
 fn get_disk_space(path: &str) -> NodeResult<(f64, f64)> {
     use nix::sys::statvfs::statvfs;
 
-    let stat = statvfs(path).map_err(|e| SinexError::processing(format!("Error: {e}")))?;
+    let probe_path = nearest_existing_ancestor(Utf8Path::new(path))?;
+    let stat =
+        statvfs(probe_path.as_std_path()).map_err(|e| SinexError::processing(format!("Error: {e}")))?;
 
     let block_size = stat.block_size();
     let total_blocks = stat.blocks();
@@ -371,6 +389,7 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
         match check_directory_permissions(dir_path.as_str()).await {
             Ok(perms) => {
                 let is_writable = perms["writable"].as_bool().unwrap_or(false);
+                let exists = perms["exists"].as_bool().unwrap_or(true);
                 if let Some(cleanup_error) = perms.get("cleanup_error").and_then(Value::as_str) {
                     messages.push(format!(
                         "⚠ Directory {dir_path} left a preflight probe file behind: {cleanup_error}"
@@ -379,9 +398,19 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
                 permissions_info.insert(dir_path.clone(), perms);
 
                 if is_writable {
-                    messages.push(format!("✓ Directory {dir_path} is writable"));
+                    if exists {
+                        messages.push(format!("✓ Directory {dir_path} is writable"));
+                    } else {
+                        messages.push(format!("✓ Directory {dir_path} can be created"));
+                    }
                 } else {
-                    messages.push(format!("✗ Directory {dir_path} is not writable"));
+                    if exists {
+                        messages.push(format!("✗ Directory {dir_path} is not writable"));
+                    } else {
+                        messages.push(format!(
+                            "✗ Directory {dir_path} cannot be created from its nearest existing parent"
+                        ));
+                    }
                     has_issues = true;
                 }
             }
@@ -405,49 +434,104 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
     }))
 }
 
-async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
-    let path = Utf8Path::new(dir_path);
-    let metadata = match tokio::fs::metadata(path.as_std_path()).await {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(SinexError::io("Directory does not exist")
-                .with_context("path", dir_path.to_string())
-                .with_std_error(&e));
-        }
-        Err(e) => {
-            return Err(SinexError::io("Failed to inspect directory metadata")
-                .with_context("path", dir_path.to_string())
-                .with_std_error(&e));
-        }
-    };
-
-    if !metadata.is_dir() {
-        return Err(SinexError::processing("Path is not a directory")
-            .with_context("path", dir_path.to_string()));
+fn current_process_ids() -> NodeResult<(uid_t, gid_t, Vec<gid_t>)> {
+    let euid = unsafe { libc::geteuid() };
+    let egid = unsafe { libc::getegid() };
+    let group_count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if group_count < 0 {
+        return Err(SinexError::io("Failed to enumerate supplementary groups"));
     }
 
-    // Test write permissions by creating a temporary file
-    let test_file = path.join(format!(".sinex_preflight_test_{}", std::process::id()));
+    let mut groups = vec![0; group_count as usize];
+    if group_count > 0 {
+        let result = unsafe { libc::getgroups(group_count, groups.as_mut_ptr()) };
+        if result < 0 {
+            return Err(SinexError::io("Failed to load supplementary groups"));
+        }
+    }
 
-    match tokio::fs::write(test_file.as_std_path(), "test").await {
-        Ok(()) => {
-            let mut details = json!({
-                "exists": true,
-                "is_directory": true,
-                "writable": true,
-                "readable": true
-            });
-            if let Err(error) = tokio::fs::remove_file(test_file.as_std_path()).await {
-                details["cleanup_error"] = json!(error.to_string());
+    Ok((euid, egid, groups))
+}
+
+fn permission_bits_allow(mode: u32, read_bit: u32, write_bit: u32, exec_bit: u32) -> (bool, bool) {
+    let readable = mode & read_bit != 0;
+    let writable = mode & write_bit != 0 && mode & exec_bit != 0;
+    (readable, writable)
+}
+
+fn directory_access_from_metadata(
+    metadata: &std::fs::Metadata,
+    euid: uid_t,
+    egid: gid_t,
+    groups: &[gid_t],
+) -> (bool, bool) {
+    let mode = metadata.mode();
+    if euid == 0 {
+        let readable = mode & 0o444 != 0;
+        let writable = mode & 0o222 != 0 && mode & 0o111 != 0;
+        return (readable, writable);
+    }
+
+    let owner = metadata.uid();
+    let group = metadata.gid();
+    if owner == euid {
+        return permission_bits_allow(mode, 0o400, 0o200, 0o100);
+    }
+    if group == egid || groups.contains(&group) {
+        return permission_bits_allow(mode, 0o040, 0o020, 0o010);
+    }
+
+    permission_bits_allow(mode, 0o004, 0o002, 0o001)
+}
+
+async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
+    let path = Utf8Path::new(dir_path);
+    let (euid, egid, groups) = current_process_ids()?;
+
+    match tokio::fs::metadata(path.as_std_path()).await {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(SinexError::processing("Path is not a directory")
+                    .with_context("path", dir_path.to_string()));
             }
 
-            Ok(details)
+            let (readable, writable) = directory_access_from_metadata(&metadata, euid, egid, &groups);
+            Ok(json!({
+                "exists": true,
+                "is_directory": true,
+                "writable": writable,
+                "readable": readable,
+                "creatable": false
+            }))
         }
-        Err(e) => Err(
-            SinexError::io("Failed to write directory permission probe file")
-                .with_context("path", dir_path.to_string())
-                .with_std_error(&e),
-        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let parent = nearest_existing_ancestor(path)?;
+            let metadata = tokio::fs::metadata(parent.as_std_path())
+                .await
+                .map_err(|error| {
+                    SinexError::io("Failed to inspect nearest existing parent metadata")
+                        .with_context("path", parent.to_string())
+                        .with_std_error(&error)
+                })?;
+
+            if !metadata.is_dir() {
+                return Err(SinexError::processing("Nearest existing ancestor is not a directory")
+                    .with_context("path", parent.to_string()));
+            }
+
+            let (readable, writable) = directory_access_from_metadata(&metadata, euid, egid, &groups);
+            Ok(json!({
+                "exists": false,
+                "is_directory": true,
+                "writable": writable,
+                "readable": readable,
+                "creatable": writable,
+                "parent": parent.to_string()
+            }))
+        }
+        Err(e) => Err(SinexError::io("Failed to inspect directory metadata")
+            .with_context("path", dir_path.to_string())
+            .with_std_error(&e)),
     }
 }
 
@@ -688,6 +772,7 @@ mod tests {
     };
     use serde_json::Value;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
     use xtask::sandbox::{EnvGuard, sinex_test};
 
@@ -761,7 +846,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn verify_disk_space_rejects_unprobeable_required_paths()
+    async fn verify_disk_space_accepts_missing_paths_when_parent_filesystem_exists()
     -> ::xtask::sandbox::TestResult<()> {
         let root = tempdir()?;
         let state_dir = root.path().join("state");
@@ -782,27 +867,19 @@ mod tests {
         env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
 
         let mut messages = Vec::new();
-        let error = verify_disk_space(&mut messages)
-            .await
-            .expect_err("missing required disk probe path must fail, not downgrade to warning");
-
+        let disk_info = verify_disk_space(&mut messages).await?;
+        let missing_work_dir_str = missing_work_dir.display().to_string();
         assert!(
-            error
-                .to_string()
-                .contains("Insufficient disk space on one or more required paths")
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("✗ Could not check disk space")
-                    && message.contains(&missing_work_dir.display().to_string())),
-            "disk probe failure should mention the unprobeable required path: {messages:#?}"
+            disk_info["paths"][missing_work_dir_str.as_str()]["meets_requirements"]
+                .as_bool()
+                .unwrap_or(false),
+            "missing work dir should reuse the nearest existing parent filesystem: {disk_info:#?}"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn verify_filesystem_permissions_rejects_unprobeable_required_paths()
+    async fn verify_filesystem_permissions_accepts_missing_paths_when_parent_is_creatable()
     -> ::xtask::sandbox::TestResult<()> {
         let root = tempdir()?;
         let state_dir = root.path().join("state");
@@ -824,20 +901,69 @@ mod tests {
 
         let mut messages = Vec::new();
         let fs_info = verify_filesystem_permissions(&mut messages).await?;
+        let missing_work_dir_str = missing_work_dir.display().to_string();
+
+        assert!(
+            fs_info
+                .get("meets_requirements")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            "missing work dir should be treated as creatable when its parent is writable"
+        );
+        assert!(
+            fs_info["directories"][missing_work_dir_str.as_str()]["creatable"]
+                .as_bool()
+                .unwrap_or(false),
+            "missing work dir should be marked creatable: {fs_info:#?}"
+        );
+        assert!(
+            messages.iter().any(|message| {
+                message.contains("can be created") && message.contains(&missing_work_dir_str)
+            }),
+            "filesystem probe should report the missing path as creatable: {messages:#?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn verify_filesystem_permissions_rejects_missing_paths_when_parent_is_not_writable()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = tempdir()?;
+        let state_dir = root.path().join("state");
+        let data_dir = root.path().join("data");
+        let log_dir = root.path().join("logs");
+        let tmp_dir = root.path().join("tmp");
+        let locked_parent = root.path().join("locked");
+        let missing_work_dir = locked_parent.join("work-missing");
+
+        for dir in [&state_dir, &data_dir, &log_dir, &tmp_dir, &locked_parent] {
+            fs::create_dir_all(dir)?;
+        }
+        fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o555))?;
+
+        let mut env = EnvGuard::new();
+        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
+        env.set("TMPDIR", &tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+
+        let mut messages = Vec::new();
+        let fs_info = verify_filesystem_permissions(&mut messages).await?;
+        let missing_work_dir_str = missing_work_dir.display().to_string();
 
         assert!(
             !fs_info
                 .get("meets_requirements")
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
-            "filesystem probe should fail when a required path is unprobeable"
+            "missing work dir should fail when its nearest existing parent is not writable"
         );
         assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("✗ Could not check permissions")
-                    && message.contains(&missing_work_dir.display().to_string())),
-            "filesystem probe failure should mention the unprobeable required path: {messages:#?}"
+            messages.iter().any(|message| {
+                message.contains("cannot be created") && message.contains(&missing_work_dir_str)
+            }),
+            "filesystem probe should report the missing path as non-creatable: {messages:#?}"
         );
         Ok(())
     }

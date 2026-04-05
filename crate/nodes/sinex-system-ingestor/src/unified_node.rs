@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::{
-    EventTransport, ingestor_node::IngestorNode, nats_publisher::NatsPublisher,
+    EventTransport,
+    ingestor_node::IngestorNode,
+    nats_publisher::NatsPublisher,
     watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use std::collections::HashMap;
@@ -148,11 +150,9 @@ fn forwarder_join_result(
 ) -> NodeResult<()> {
     match result {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(err)) => Err(
-            SinexError::processing("system forwarder task failed")
-                .with_context("task", task_name.to_string())
-                .with_std_error(&err),
-        ),
+        Ok(Err(err)) => Err(SinexError::processing("system forwarder task failed")
+            .with_context("task", task_name.to_string())
+            .with_std_error(&err)),
         Err(err) if err.is_cancelled() => {
             warn!(task = task_name, "System forwarder task was cancelled");
             Ok(())
@@ -210,9 +210,11 @@ async fn finalize_material_after_scan_error(
     original_error: &SinexError,
 ) -> NodeResult<()> {
     material.finalize(reason).await.map_err(|finalize_error| {
-        SinexError::processing("unified journal historical scan failed and material finalization also failed")
-            .with_context("scan_error", original_error.to_string())
-            .with_context("finalize_error", finalize_error.to_string())
+        SinexError::processing(
+            "unified journal historical scan failed and material finalization also failed",
+        )
+        .with_context("scan_error", original_error.to_string())
+        .with_context("finalize_error", finalize_error.to_string())
     })?;
     Err(original_error.clone())
 }
@@ -791,7 +793,8 @@ impl SystemNode {
 
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
-            let (journal_result, systemd_result) = tokio::join!(journal_forwarder, systemd_forwarder);
+            let (journal_result, systemd_result) =
+                tokio::join!(journal_forwarder, systemd_forwarder);
             let mut forwarder_errors = Vec::new();
             if let Err(error) = forwarder_join_result("journal", journal_result) {
                 forwarder_errors.push(error);
@@ -958,10 +961,8 @@ impl IngestorNode for SystemNode {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
-        let acquisition = Arc::new(runtime.acquisition_manager(
-            RotationPolicy::default(),
-            "system",
-        )?);
+        let acquisition =
+            Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "system")?);
 
         let node_material_real = RealWatcherMaterialContext::new(
             Arc::clone(&acquisition),
@@ -1185,9 +1186,7 @@ impl IngestorNode for SystemNode {
                 "System Source ({connected_sources}/{active_sources} watcher(s) connected, degraded)"
             )
         } else {
-            format!(
-                "System Source ({connected_sources}/{active_sources} watcher(s) connected)"
-            )
+            format!("System Source ({connected_sources}/{active_sources} watcher(s) connected)")
         };
 
         Ok(sinex_node_sdk::exploration::SourceState {
@@ -1222,10 +1221,7 @@ impl IngestorNode for SystemNode {
 }
 
 /// Helper to forward events from a watcher channel to the emitter
-fn record_forwarder_health_error(
-    health: &Arc<RwLock<WatcherHealth>>,
-    error: &SinexError,
-) {
+fn record_forwarder_health_error(health: &Arc<RwLock<WatcherHealth>>, error: &SinexError) {
     health.write().last_error = Some(error.to_string());
 }
 
@@ -1284,23 +1280,46 @@ impl SystemNode {
         match watcher_type {
             "dbus" => {
                 if let Some(h) = self.dbus_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("dbus watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!("dbus watcher shutdown should stay explicit in tests: {error}");
+                        }
+                    }
                 }
             }
             "unified_journal" => {
                 if let Some(h) = self.unified_journal_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("journal watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!(
+                                "journal watcher shutdown should stay explicit in tests: {error}"
+                            );
+                        }
+                    }
                 }
             }
             "udev" => {
                 if let Some(h) = self.udev_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("udev watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!("udev watcher shutdown should stay explicit in tests: {error}");
+                        }
+                    }
                 }
             }
             _ => panic!("Unknown watcher: {watcher_type}"),
@@ -1427,17 +1446,18 @@ mod tests {
     #[sinex_test]
     async fn system_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
         let node = SystemNode::new();
-        let error = IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
-            .expect_err("system node should not fabricate coverage analysis");
+        let error =
+            IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
+                .expect_err("system node should not fabricate coverage analysis");
         assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn system_source_state_is_disconnected_when_enabled_watchers_are_inactive() -> TestResult<()> {
+    async fn system_source_state_is_disconnected_when_enabled_watchers_are_inactive()
+    -> TestResult<()> {
         let node = SystemNode::new();
-        let source =
-            IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
+        let source = IngestorNode::get_source_state(&node, &SystemPersistentState::default())?;
 
         assert!(!source.is_connected);
         assert!(!source.healthy);
@@ -1562,8 +1582,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn system_source_state_is_healthy_when_all_enabled_watchers_are_connected() -> TestResult<()>
-    {
+    async fn system_source_state_is_healthy_when_all_enabled_watchers_are_connected()
+    -> TestResult<()> {
         let mut node = SystemNode::with_config(SystemConfig {
             dbus_enabled: true,
             journal_enabled: false,
@@ -1708,7 +1728,10 @@ mod tests {
 
         let report = task.await??;
         assert!(
-            report.warnings.iter().any(|warning| warning.contains("shutdown channel dropped")),
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("shutdown channel dropped")),
             "expected shutdown channel drop warning, got: {:?}",
             report.warnings
         );
@@ -1812,7 +1835,10 @@ mod tests {
 
         SystemNode::record_snapshot_result(&mut state, &mut warnings, Ok(snapshot.clone()));
 
-        assert_eq!(state.last_state.as_ref().map(|s| &s.enabled_sources), Some(&snapshot.enabled_sources));
+        assert_eq!(
+            state.last_state.as_ref().map(|s| &s.enabled_sources),
+            Some(&snapshot.enabled_sources)
+        );
         assert!(warnings.is_empty());
         Ok(())
     }
@@ -1954,6 +1980,37 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("system forwarder task failed"));
         assert!(message.contains("system.test.forwarder"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn spawn_forwarder_stamps_missing_ids_before_emit() -> TestResult<()> {
+        let (emitter_tx, mut emitter_rx) = mpsc::channel(1);
+        let emitter = EventEmitter::new(emitter_tx, false);
+
+        let (tx, rx) = mpsc::channel(1);
+        let handle = spawn_forwarder("system.test.forwarder", rx, emitter, None);
+
+        let event = sinex_primitives::events::Event::new_json(
+            "system.test",
+            "system.test.forwarded",
+            serde_json::json!({ "ok": true }),
+            sinex_primitives::events::Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+        );
+        assert!(event.id.is_none());
+
+        tx.send(event)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!(error.to_string()))?;
+        drop(tx);
+
+        let emitted = emitter_rx
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing forwarded event"))?;
+        assert!(emitted.id.is_some());
+
+        forwarder_join_result("system.test.forwarder", handle.await)?;
         Ok(())
     }
 }

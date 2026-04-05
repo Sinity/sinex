@@ -54,7 +54,10 @@ mod tests {
         let error = db_error(sqlx::Error::RowNotFound, "lookup event");
         assert!(matches!(error, SinexError::NotFound(_)));
         assert_eq!(error.message(), "lookup event");
-        assert_eq!(error.context_map().get("operation"), Some(&"database".to_string()));
+        assert_eq!(
+            error.context_map().get("operation"),
+            Some(&"database".to_string())
+        );
         Ok(())
     }
 

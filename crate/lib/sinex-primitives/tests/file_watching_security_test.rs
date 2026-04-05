@@ -43,11 +43,15 @@ async fn validate_watch_paths_rejects_unreadable_subdirectories() -> TestResult<
 
     std::fs::set_permissions(&unreadable, original_permissions)?;
 
-    assert!(error
-        .to_string()
-        .contains("Failed to read directory while estimating watched file count"));
-    assert!(error
-        .to_string()
-        .contains(unreadable.to_string_lossy().as_ref()));
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to read directory while estimating watched file count")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(unreadable.to_string_lossy().as_ref())
+    );
     Ok(())
 }

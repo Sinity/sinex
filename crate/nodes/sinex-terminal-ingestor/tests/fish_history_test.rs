@@ -104,9 +104,8 @@ async fn test_read_fish_history_incremental() -> TestResult<()> {
     )
     .wrap_err("insert incremental fish history row")?;
 
-    let (new_entries, new_last_row_id) =
-        read_fish_history(&history_path, last_row_id, None)
-            .wrap_err("read incremental fish history")?;
+    let (new_entries, new_last_row_id) = read_fish_history(&history_path, last_row_id, None)
+        .wrap_err("read incremental fish history")?;
     assert_eq!(new_entries.len(), 1);
     assert_eq!(new_entries[0].command, "echo new");
     assert_eq!(new_last_row_id, 4);
@@ -120,8 +119,8 @@ async fn test_read_fish_history_respects_end_time_boundary() -> TestResult<()> {
     let end_time = Timestamp::from_unix_timestamp(1_234_567_891)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid Fish end time"))?;
 
-    let (entries, last_row_id) =
-        read_fish_history(&history_path, 0, Some(end_time)).wrap_err("read bounded fish history")?;
+    let (entries, last_row_id) = read_fish_history(&history_path, 0, Some(end_time))
+        .wrap_err("read bounded fish history")?;
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].command, "echo hello");
@@ -135,7 +134,8 @@ async fn test_read_fish_history_rejects_invalid_when_type() -> TestResult<()> {
     let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
     let history_path = create_test_fish_history(&temp_dir)?;
 
-    let conn = Connection::open(history_path.as_std_path()).wrap_err("re-open fish history database")?;
+    let conn =
+        Connection::open(history_path.as_std_path()).wrap_err("re-open fish history database")?;
     conn.execute(
         "INSERT INTO history (command, \"when\") VALUES (?, ?)",
         rusqlite::params!["echo broken", "not-a-timestamp"],

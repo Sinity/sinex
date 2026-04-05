@@ -203,8 +203,11 @@ impl QaManifest {
 
     /// Detect regressions: exercises passing in `baseline` but failing in `self`.
     pub fn regressions(&self, baseline: &QaManifest) -> Vec<String> {
-        let current: std::collections::HashMap<&str, bool> =
-            self.exercises.iter().map(|e| (e.id.as_str(), e.passed)).collect();
+        let current: std::collections::HashMap<&str, bool> = self
+            .exercises
+            .iter()
+            .map(|e| (e.id.as_str(), e.passed))
+            .collect();
         baseline
             .exercises
             .iter()
@@ -224,8 +227,11 @@ impl QaManifest {
 
     /// Newly-passing exercises: failing in baseline, passing now.
     pub fn new_passes(&self, baseline: &QaManifest) -> Vec<String> {
-        let baseline_map: std::collections::HashMap<&str, bool> =
-            baseline.exercises.iter().map(|e| (e.id.as_str(), e.passed)).collect();
+        let baseline_map: std::collections::HashMap<&str, bool> = baseline
+            .exercises
+            .iter()
+            .map(|e| (e.id.as_str(), e.passed))
+            .collect();
         self.exercises
             .iter()
             .filter_map(|e| {

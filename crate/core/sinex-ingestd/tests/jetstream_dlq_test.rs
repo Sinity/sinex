@@ -16,14 +16,14 @@ use sinex_primitives::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use support::{
+    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+};
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
 use xtask::sandbox::TestHooks;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use support::{
-    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
-};
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
@@ -509,8 +509,8 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material_exists(
-) -> TestResult<()> {
+async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material_exists()
+-> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-enriched-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
@@ -642,7 +642,9 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            async move { Ok::<bool, SinexError>(pool.events().get_by_id(event_id.into()).await?.is_some()) }
+            async move {
+                Ok::<bool, SinexError>(pool.events().get_by_id(event_id.into()).await?.is_some())
+            }
         },
         Timeouts::STANDARD,
     )
@@ -665,7 +667,10 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
 #[sinex_test]
 async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("schema-fk-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
+    let suffix = format!(
+        "schema-fk-dlq-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let hooks = TestHooks::none();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -717,7 +722,11 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
         Some(bogus_schema_id_str.as_str())
     );
     assert!(
-        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
         "invalid schema FK event must not persist"
     );
 
@@ -729,7 +738,10 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
 #[sinex_test]
 async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("batch-isolate-{}", Uuid::now_v7().to_string().to_lowercase());
+    let suffix = format!(
+        "batch-isolate-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks_and_batch_config(
         &ctx,
@@ -840,14 +852,22 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
 
     for event_id in good_event_ids {
         assert!(
-            ctx.pool.events().get_by_id(event_id.into()).await?.is_some(),
+            ctx.pool
+                .events()
+                .get_by_id(event_id.into())
+                .await?
+                .is_some(),
             "good event {event_id} should persist despite a poisoned sibling row"
         );
     }
 
     let bad_event_id = bad_event_id.expect("bad event id must be set");
     assert!(
-        ctx.pool.events().get_by_id(bad_event_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(bad_event_id.into())
+            .await?
+            .is_none(),
         "isolated bad event must not persist"
     );
 
@@ -1030,12 +1050,16 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
 async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
 
-    let suffix = format!("persist-terminal-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
+    let suffix = format!(
+        "persist-terminal-dlq-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let (hooks, counters) = TestHooks::builder()
         .fail_persistence_attempts(10)
         .count_deliveries()
         .build();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(100), &hooks).await?;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(100), &hooks).await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),

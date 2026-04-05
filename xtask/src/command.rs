@@ -433,6 +433,28 @@ impl CommandContext {
         }
     }
 
+    /// Seed the context with an already-open history DB connection.
+    ///
+    /// This lets the top-level dispatcher reuse the connection it opened for
+    /// invocation tracking instead of paying `HistoryDb::open()` twice inside
+    /// one command run.
+    #[must_use]
+    pub fn with_preopened_history_db(self, db: Option<crate::history::HistoryDb>) -> Self {
+        let mut guard = match self.history_db.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB mutex was poisoned while seeding preopened state; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
+        *guard = db;
+        drop(guard);
+        self
+    }
+
     /// Get the name of the command this context was created for.
     #[must_use]
     pub fn command_name(&self) -> &str {

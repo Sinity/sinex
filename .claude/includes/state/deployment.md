@@ -4,8 +4,15 @@ Canonical deferred deployment/host-activation backlog lives in:
 
 - `.claude/scratch/041-advanced-horizon-plan.md`
 
-**Current state:** `sinex.enable = false; provisionDatabase = false` on sinnix-prime. Zero production events.
-2.83M ActivityWatch events + 65K Atuin commands sit in parallel capture infrastructure. Only `sinexctl import atuin` exists (pipeline-bypassing). No ActivityWatch import path exists at all. SDK SQLite adapter needed for proper ingestor-driven import.
+**Current state:** `sinex.enable = true; provisionDatabase = true` on `sinnix-prime`, and the
+host has been switched successfully under the checked-in NixOS module graph. The trustworthy gap
+is no longer "can the services start?" or "can the target-user bridges be established?" but
+"has the live prod stack been proven from a clean persisted-smoke/query loop?".
+
+A clean local development proof now exists: `xtask run core` plus real terminal/filesystem/gateway
+traffic were observed through `NATS -> ingestd -> Postgres -> sinexctl query` on the dev stack.
+On-host, gateway readiness is healthy, `/run/agenix/sinex-gateway-admin-token` materializes, and
+the desktop/terminal services now emit real source-material traffic under systemd hardening.
 
 ### What Works Now
 
@@ -18,29 +25,32 @@ Canonical deferred deployment/host-activation backlog lives in:
 | gateway | READY | sd_notify added, `Type=simple` override in NixOS |
 | Schema apply | READY | `sinex-schema-apply.service` exists in both NixOS paths |
 | sinexctl | READY | query, trace, telemetry, context, report, import subcommands |
+| Local end-to-end proof | VERIFIED | gateway + terminal + filesystem traffic persisted on the dev stack and was queried back through `sinexctl` |
+| Desktop ingestor on host | VERIFIED | Hyprland/window-manager traffic creates and finalizes source material on `sinnix-prime` |
+| Terminal ingestor on host | VERIFIED | target-home ACL bridge now permits `.zsh_history` and Atuin reads; fresh source material was created after host switch |
+| Gateway admin token on host | VERIFIED | `/run/agenix/sinex-gateway-admin-token` is readable after switch |
 
-### What's Blocked (Host Proof, Not Core Rust)
+### What's Still Blocking Trusted Production
 
 | Component | Blocker | Fix |
 |-----------|---------|-----|
-| Desktop ingestor | `sinnix` now wires target-runtime bind mounts, but the dark host has not yet proven live Hyprland socket access end to end | First enabled-host proof on `sinnix-prime` |
-| Terminal ingestor | `sinnix` now wires target-home bind mounts for Atuin/history access, but the dark host has not yet proven the service can read them | First enabled-host proof on `sinnix-prime` |
-| Gateway admin token | agenix fallback path is wired, but the dark host has not yet proven `/run/agenix/sinex-gateway-admin-token` materialization | First enabled-host proof on `sinnix-prime` |
+| Production persisted smoke | The live prod host still needs a clean `events.ingest -> NATS -> ingestd -> Postgres -> query` proof after clearing earlier poisoned/raw backlog state | Reset the prod proof surface, ingest a smoke event through the real gateway, and query it back |
+| Production historical-path proof | Terminal/desktop access and live source-material emission are now proved, but the host still lacks a clean proof for historical backfill behavior on the prod stack | Re-run terminal/desktop historical scans on the cleaned prod environment and query the resulting rows |
 
 ### Activation Sequence (Critical Path)
 
 ```
-Phase 0: nixos-rebuild switch (pick up code changes)
-Phase 1: provisionDatabase = true → schema applied, DB ready
-         Verify: psql sinex_prod -c "SELECT count(*) FROM core.events" → 0
-Phase 2: enable = true with ONLY ingestd + gateway + fs-ingestor + system-ingestor
-         Verify: sinexctl status, create test event, query it back
-Phase 3: Historical import (limited — SDK adapter gap)
-         sinexctl import atuin → 65K events (bypasses pipeline, only existing import)
-         ActivityWatch: NO import path exists yet (needs SDK SQLite adapter or new CLI command)
-         After: refresh all CAs manually
-Phase 4: Enable remaining nodes + automata (config changes only)
-Phase 5: Stabilize (monitor DLQ, batch latency, node health)
+Phase 0: switch host with checked-in `sinex.enable = true` graph
+         Verify: managed units active, `/ready` healthy, admin token materialized
+Phase 1: prove clean local pipeline end to end
+         Verify: gateway + terminal + filesystem traffic queryable on dev stack
+Phase 2: prove host access bridges under real hardening
+         Verify: desktop/terminal create source material on `sinnix-prime`
+Phase 3: clean prod persisted smoke
+         Verify: real gateway ingest is queryable back from `sinex_prod`
+Phase 4: historical backfill on the node/runtime plane
+         Verify: desktop/terminal historical rows land through normal pipeline
+Phase 5: stabilize (monitor DLQ, batch latency, node health)
 ```
 
 ### Service User Permission Model
@@ -51,16 +61,16 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 |----------|---------------|-----|
 | `/realm/project/*` | YES | World-readable (755) |
 | systemd journal | YES | journald API access |
-| Hyprland socket (`/run/user/1000/hypr/`) | **CONFIGURED, UNPROVEN** | `sinnix` bridge now binds target runtime paths; host proof still pending |
-| Atuin DB (`~/.local/share/atuin/history.db`) | **CONFIGURED, UNPROVEN** | `sinnix` bridge now binds target-home history paths; host proof still pending |
+| Hyprland socket (`/run/user/1000/hypr/`) | **YES (live host proof)** | Desktop ingestor emits real source-material traffic under the target-runtime bridge |
+| Atuin DB (`~/.local/share/atuin/history.db`) | **YES (live host proof)** | Terminal ingestor reads the target-home history paths after the ACL-mask fix |
 | `/home/sinity` | **NO** | ProtectHome=true on most services |
 
 ### Evolution Phases
 
 ```
-A (now)    → Activation: FS + system ingestors give file changes + journal events
-B (hours)  → Import: 3M historical events, refresh CAs
-C (config) → Full capture: terminal + desktop with permission fixes
+A (done)   → Activation: FS + system ingestors give file changes + journal events
+B (done)   → Full capture bridges: terminal + desktop host access proved
+C (next)   → Clean prod persisted smoke + historical proofs
 D (days)   → Intelligence: entity extractor, session detector (SDK complete, logic vacant)
 E (weeks)  → Semantic: embedding pipeline, hybrid search
 ```

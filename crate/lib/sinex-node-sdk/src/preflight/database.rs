@@ -9,12 +9,10 @@
  */
 
 use crate::{NodeResult, SinexError};
-use camino::Utf8PathBuf;
 use serde_json::{Value, json};
 use sinex_primitives::constants::timeouts;
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::fs;
 use tracing::{debug, error, info};
 
 use super::{VerificationStatus, resolve_database_url};
@@ -392,7 +390,7 @@ async fn collect_schema_drift(pool: &PgPool) -> NodeResult<Vec<String>> {
         ("core", "operations_log"),
         ("raw", "source_material_registry"),
         ("sinex_schemas", "event_payload_schemas"),
-        ("sinex_schemas", "node_manifests"),
+        ("core", "node_manifests"),
     ];
 
     for (schema, table) in required_tables {
@@ -437,7 +435,7 @@ async fn perform_schema_readiness_probe(
 
     // This path is intentionally read-only. It verifies declarative schema source
     // availability and DB prerequisites without applying anything.
-    let schema_sources = discover_schema_sources().await?;
+    let schema_sources = discover_schema_sources();
     details.insert("schema_sources", json!(schema_sources));
 
     messages.push(format!(
@@ -446,7 +444,7 @@ async fn perform_schema_readiness_probe(
     ));
 
     for source_file in &schema_sources {
-        if let Err(e) = validate_schema_source(source_file).await {
+        if let Err(e) = validate_schema_source(source_file) {
             return Err(SinexError::processing(format!(
                 "Declarative schema source '{}' is invalid: {e}",
                 source_file.kind
@@ -454,7 +452,7 @@ async fn perform_schema_readiness_probe(
         }
     }
 
-    messages.push("✓ Declarative schema source files are accessible".to_string());
+    messages.push("✓ Embedded declarative schema manifest is populated".to_string());
     verify_schema_prerequisites(pool).await?;
     messages.push("✓ Schema prerequisites check passed".to_string());
 
@@ -463,73 +461,104 @@ async fn perform_schema_readiness_probe(
 
 #[derive(Debug, serde::Serialize)]
 struct SchemaSourceFile {
-    kind: String,
-    path: String,
+    kind: &'static str,
+    path: &'static str,
+    embedded: bool,
+    bytes: usize,
+    #[serde(skip_serializing)]
+    contents: &'static str,
 }
 
-async fn discover_schema_sources() -> NodeResult<Vec<SchemaSourceFile>> {
-    let schema_src_root = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sinex-schema/src");
-    let schema_dir = schema_src_root.join("schema");
-    let mut discovered = Vec::new();
-
-    for entry in fs::read_dir(schema_dir.as_std_path()).map_err(SinexError::io)? {
-        let entry = entry.map_err(SinexError::io)?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let utf8_path = Utf8PathBuf::from_path_buf(path.clone()).map_err(|_| {
-            SinexError::processing(format!(
-                "Schema path is not valid UTF-8: {}",
-                path.display()
-            ))
-        })?;
-
-        if !utf8_path.as_str().ends_with(".rs") {
-            continue;
-        }
-
-        discovered.push(SchemaSourceFile {
-            kind: format!("schema/{}", utf8_path.file_name().unwrap_or_default()),
-            path: utf8_path.to_string(),
-        });
-    }
-
-    for (kind, path) in [
-        ("apply.rs".to_string(), schema_src_root.join("apply.rs")),
-        (
-            "schema_registry.rs".to_string(),
-            schema_src_root.join("schema_registry.rs"),
+fn discover_schema_sources() -> Vec<SchemaSourceFile> {
+    let mut discovered = vec![
+        schema_source(
+            "apply.rs",
+            "crate/lib/sinex-schema/src/apply.rs",
+            include_str!("../../../sinex-schema/src/apply.rs"),
         ),
-    ] {
-        discovered.push(SchemaSourceFile {
-            kind,
-            path: path.to_string(),
-        });
-    }
+        schema_source(
+            "schema_registry.rs",
+            "crate/lib/sinex-schema/src/schema_registry.rs",
+            include_str!("../../../sinex-schema/src/schema_registry.rs"),
+        ),
+        schema_source(
+            "schema/annotations.rs",
+            "crate/lib/sinex-schema/src/schema/annotations.rs",
+            include_str!("../../../sinex-schema/src/schema/annotations.rs"),
+        ),
+        schema_source(
+            "schema/blobs.rs",
+            "crate/lib/sinex-schema/src/schema/blobs.rs",
+            include_str!("../../../sinex-schema/src/schema/blobs.rs"),
+        ),
+        schema_source(
+            "schema/embeddings.rs",
+            "crate/lib/sinex-schema/src/schema/embeddings.rs",
+            include_str!("../../../sinex-schema/src/schema/embeddings.rs"),
+        ),
+        schema_source(
+            "schema/entities.rs",
+            "crate/lib/sinex-schema/src/schema/entities.rs",
+            include_str!("../../../sinex-schema/src/schema/entities.rs"),
+        ),
+        schema_source(
+            "schema/events.rs",
+            "crate/lib/sinex-schema/src/schema/events.rs",
+            include_str!("../../../sinex-schema/src/schema/events.rs"),
+        ),
+        schema_source(
+            "schema/mod.rs",
+            "crate/lib/sinex-schema/src/schema/mod.rs",
+            include_str!("../../../sinex-schema/src/schema/mod.rs"),
+        ),
+        schema_source(
+            "schema/operations.rs",
+            "crate/lib/sinex-schema/src/schema/operations.rs",
+            include_str!("../../../sinex-schema/src/schema/operations.rs"),
+        ),
+        schema_source(
+            "schema/sinex_schemas.rs",
+            "crate/lib/sinex-schema/src/schema/sinex_schemas.rs",
+            include_str!("../../../sinex-schema/src/schema/sinex_schemas.rs"),
+        ),
+        schema_source(
+            "schema/source_materials.rs",
+            "crate/lib/sinex-schema/src/schema/source_materials.rs",
+            include_str!("../../../sinex-schema/src/schema/source_materials.rs"),
+        ),
+        schema_source(
+            "schema/temporal_ledger.rs",
+            "crate/lib/sinex-schema/src/schema/temporal_ledger.rs",
+            include_str!("../../../sinex-schema/src/schema/temporal_ledger.rs"),
+        ),
+    ];
 
-    discovered.sort_by(|left, right| left.path.cmp(&right.path));
-
-    Ok(discovered)
+    discovered.sort_by(|left, right| left.path.cmp(right.path));
+    discovered
 }
 
-async fn validate_schema_source(source: &SchemaSourceFile) -> NodeResult<()> {
+fn schema_source(
+    kind: &'static str,
+    path: &'static str,
+    contents: &'static str,
+) -> SchemaSourceFile {
+    SchemaSourceFile {
+        kind,
+        path,
+        embedded: true,
+        bytes: contents.len(),
+        contents,
+    }
+}
+
+fn validate_schema_source(source: &SchemaSourceFile) -> NodeResult<()> {
     debug!("Validating declarative schema source: {}", source.kind);
-    let path = Utf8PathBuf::from(source.path.as_str());
-    if !path.exists() {
+    if source.contents.trim().is_empty() {
         return Err(SinexError::processing(format!(
-            "Schema source file not found: {}",
+            "Embedded schema source is empty: {}",
             source.path
         )));
     }
-
-    fs::metadata(path.as_std_path()).map_err(|e| {
-        SinexError::processing(format!(
-            "Schema source file not accessible: {} ({})",
-            source.path, e
-        ))
-    })?;
 
     Ok(())
 }
@@ -580,7 +609,7 @@ async fn verify_schema_integrity(
         "core.blobs",
         "raw.source_material_registry",
         "sinex_schemas.event_payload_schemas",
-        "sinex_schemas.node_manifests",
+        "core.node_manifests",
         "core.operations_log",
     ];
 
@@ -645,5 +674,30 @@ fn redact_password(url: &str) -> String {
         redacted.to_string()
     } else {
         "[INVALID_URL]".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{discover_schema_sources, validate_schema_source};
+
+    #[test]
+    fn schema_source_manifest_is_embedded() {
+        let schema_sources = discover_schema_sources();
+        assert!(!schema_sources.is_empty());
+        assert!(schema_sources.iter().all(|source| source.embedded));
+        assert!(schema_sources.iter().all(|source| source.bytes > 0));
+        assert!(
+            schema_sources
+                .iter()
+                .all(|source| source.path.starts_with("crate/lib/sinex-schema/src/"))
+        );
+    }
+
+    #[test]
+    fn embedded_schema_sources_validate_without_filesystem_access() {
+        for source in discover_schema_sources() {
+            validate_schema_source(&source).expect("embedded schema source should validate");
+        }
     }
 }

@@ -579,10 +579,7 @@ name = "helper"
         let targets = parse_fuzz_manifest(&manifest)?;
         assert_eq!(
             targets,
-            vec![(
-                "demo-fuzz".to_string(),
-                "fuzz_input_validation".to_string()
-            )]
+            vec![("demo-fuzz".to_string(), "fuzz_input_validation".to_string())]
         );
         Ok(())
     }

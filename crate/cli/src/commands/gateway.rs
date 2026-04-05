@@ -71,9 +71,7 @@ impl GatewayCommands {
                 let payload_value: Value = serde_json::from_str(payload)
                     .map_err(|e| color_eyre::eyre::eyre!("invalid --payload JSON: {e}"))?;
 
-                let resolved_host = host
-                    .clone()
-                    .unwrap_or_else(|| get_hostname().to_string());
+                let resolved_host = host.clone().unwrap_or_else(|| get_hostname().to_string());
 
                 let req = EventIngestRequest {
                     source: source.clone(),
@@ -94,10 +92,7 @@ impl GatewayCommands {
 }
 
 fn format_ingest_response(r: &sinex_primitives::rpc::ingest::EventIngestResponse) -> String {
-    format!(
-        "event_id:  {}\nsequence:  {}",
-        r.event_id, r.sequence
-    )
+    format!("event_id:  {}\nsequence:  {}", r.event_id, r.sequence)
 }
 
 #[derive(Serialize)]

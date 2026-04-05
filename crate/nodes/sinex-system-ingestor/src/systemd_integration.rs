@@ -149,8 +149,7 @@ impl SystemdMonitor {
         let tasks_file = unit_path.join("cgroup.procs");
         if tasks_file.exists() {
             let contents = std::fs::read_to_string(&tasks_file)?;
-            if let Some(first_line) = contents.lines().next()
-            {
+            if let Some(first_line) = contents.lines().next() {
                 let first_line = first_line.trim();
                 if first_line.is_empty() {
                     return Ok(None);
@@ -195,8 +194,7 @@ impl SystemdMonitor {
         if cpu_file.exists() {
             let contents = std::fs::read_to_string(&cpu_file)?;
             for line in contents.lines() {
-                if line.starts_with("usage_usec")
-                {
+                if line.starts_with("usage_usec") {
                     let Some(value) = line.split_whitespace().nth(1) else {
                         return Err(eyre!(
                             "unit cpu.stat entry '{}' in {} is missing usage value",
@@ -532,7 +530,10 @@ mod tests {
         let entries = reader.read_new_entries().await?;
 
         assert_eq!(entries, vec!["entry-1".to_string(), "entry-2".to_string()]);
-        assert_eq!(reader.last_position, std::fs::metadata(&journal_file)?.len());
+        assert_eq!(
+            reader.last_position,
+            std::fs::metadata(&journal_file)?.len()
+        );
         std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
     }
@@ -599,7 +600,11 @@ mod tests {
             .read_memory_usage(&unit_path)
             .expect_err("invalid memory.current must fail honestly");
 
-        assert!(error.to_string().contains("Failed to parse unit memory usage"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse unit memory usage")
+        );
         assert!(error.to_string().contains("nan"));
         std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
@@ -647,7 +652,11 @@ mod tests {
             .list_service_units()
             .expect_err("non-utf8 unit names must fail honestly");
 
-        assert!(error.to_string().contains("decode systemd unit name as UTF-8"));
+        assert!(
+            error
+                .to_string()
+                .contains("decode systemd unit name as UTF-8")
+        );
         std::fs::remove_dir_all(&temp_dir)?;
         Ok(())
     }

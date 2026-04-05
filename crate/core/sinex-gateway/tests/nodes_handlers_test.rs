@@ -141,8 +141,11 @@ async fn nodes_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResult<
         },
     )
     .await?;
-    kv.put("broken-node", br#"{ definitely not valid json"#.as_slice().into())
-        .await?;
+    kv.put(
+        "broken-node",
+        br#"{ definitely not valid json"#.as_slice().into(),
+    )
+    .await?;
 
     let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
         .await
@@ -160,6 +163,10 @@ async fn nodes_list_surfaces_bucket_open_failures(ctx: TestContext) -> TestResul
     let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
         .await
         .expect_err("closed JetStream should surface instead of looking empty");
-    assert!(error.to_string().contains("Failed to open node state bucket"));
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to open node state bucket")
+    );
     Ok(())
 }

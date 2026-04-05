@@ -127,8 +127,11 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
     let req: TelemetryWindowFocusRequest = super::parse_default_on_null(params)
         .wrap_err("failed to parse telemetry.window_focus request")?;
 
-    let (from, to) =
-        resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 3)?;
+    let (from, to) = resolve_time_range(
+        req.time_range.from.as_deref(),
+        req.time_range.to.as_deref(),
+        3,
+    )?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, WindowFocusRow>(
@@ -168,7 +171,9 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryWindowFocusResponse { buckets })?)
+    Ok(serde_json::to_value(TelemetryWindowFocusResponse {
+        buckets,
+    })?)
 }
 
 /// Handle `telemetry.command_frequency`
@@ -179,8 +184,11 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
     let req: TelemetryCommandFrequencyRequest = super::parse_default_on_null(params)
         .wrap_err("failed to parse telemetry.command_frequency request")?;
 
-    let (from, to) =
-        resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 24)?;
+    let (from, to) = resolve_time_range(
+        req.time_range.from.as_deref(),
+        req.time_range.to.as_deref(),
+        24,
+    )?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CommandFrequencyRow>(
@@ -219,7 +227,9 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryCommandFrequencyResponse { entries })?)
+    Ok(serde_json::to_value(TelemetryCommandFrequencyResponse {
+        entries,
+    })?)
 }
 
 /// Handle `telemetry.file_activity`
@@ -230,8 +240,11 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
     let req: TelemetryFileActivityRequest = super::parse_default_on_null(params)
         .wrap_err("failed to parse telemetry.file_activity request")?;
 
-    let (from, to) =
-        resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 24)?;
+    let (from, to) = resolve_time_range(
+        req.time_range.from.as_deref(),
+        req.time_range.to.as_deref(),
+        24,
+    )?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, FileActivityRow>(
@@ -267,7 +280,9 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryFileActivityResponse { entries })?)
+    Ok(serde_json::to_value(TelemetryFileActivityResponse {
+        entries,
+    })?)
 }
 
 /// Handle `telemetry.recent_activity`
@@ -307,7 +322,9 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryRecentActivityResponse { entries })?)
+    Ok(serde_json::to_value(TelemetryRecentActivityResponse {
+        entries,
+    })?)
 }
 
 /// Handle `telemetry.system_state`
@@ -318,8 +335,11 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
     let req: TelemetrySystemStateRequest = super::parse_default_on_null(params)
         .wrap_err("failed to parse telemetry.system_state request")?;
 
-    let (from, to) =
-        resolve_time_range(req.time_range.from.as_deref(), req.time_range.to.as_deref(), 3)?;
+    let (from, to) = resolve_time_range(
+        req.time_range.from.as_deref(),
+        req.time_range.to.as_deref(),
+        3,
+    )?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, SystemStateRow>(
@@ -361,7 +381,9 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetrySystemStateResponse { buckets })?)
+    Ok(serde_json::to_value(TelemetrySystemStateResponse {
+        buckets,
+    })?)
 }
 
 /// Handle `telemetry.ingestd_validation`
@@ -416,5 +438,7 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
         suspicious_future_ts_orig: row.suspicious_future_ts_orig,
     });
 
-    Ok(serde_json::to_value(TelemetryIngestdValidationResponse { snapshot })?)
+    Ok(serde_json::to_value(TelemetryIngestdValidationResponse {
+        snapshot,
+    })?)
 }

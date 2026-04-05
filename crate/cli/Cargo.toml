@@ -23,6 +23,7 @@ workspace = true
 
 [dependencies]
 rand                = { workspace = true }
+blake3              = { workspace = true }
 clap_complete       = "4"
 serde_yaml          = "0.9"
 tabled              = "0.17"
@@ -51,6 +52,9 @@ default-features = false
 features = ["db"]
 
 [dependencies.rusqlite]
+workspace = true
+
+[dependencies.camino]
 workspace = true
 
 [dependencies.dirs]

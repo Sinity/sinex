@@ -514,7 +514,10 @@ async fn execute_run(
                     "dry_run": true,
                 }))?
             ),
-            _ => println!("{}", format_replay_preview_table(&previewed_operation, &preview)),
+            _ => println!(
+                "{}",
+                format_replay_preview_table(&previewed_operation, &preview)
+            ),
         }
         return Ok(());
     }
@@ -619,6 +622,29 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
                     ));
                 }
             }
+        }
+    }
+
+    if let Some(safety_analysis) = preview.get("safety_analysis")
+        && safety_analysis
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            == Some("failed")
+    {
+        output.push_str(
+            "  Safety Warning: analysis failed; review safety_analysis details before approval\n",
+        );
+        if let Some(message) = safety_analysis
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+        {
+            output.push_str(&format!("  Safety Error:   {message}\n"));
+        }
+        if let Some(warning) = safety_analysis
+            .get("warning")
+            .and_then(serde_json::Value::as_str)
+        {
+            output.push_str(&format!("  Safety Detail:  {warning}\n"));
         }
     }
 
@@ -727,8 +753,11 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::preview_total_events;
+    use super::{format_replay_preview_table, preview_total_events};
     use serde_json::json;
+    use sinex_primitives::rpc::replay::{
+        ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
+    };
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -750,6 +779,55 @@ mod tests {
         let error = preview_total_events(&json!({ "total_events": "zero" }))
             .expect_err("non-numeric total_events must fail");
         assert!(error.to_string().contains("total_events"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_preview_table_surfaces_failed_safety_analysis() -> TestResult<()> {
+        let operation = ReplayOperation {
+            operation_id: "op-1".to_string(),
+            state: ReplayState::Previewed,
+            scope: ReplayScope {
+                node_id: "terminal-ingestor".to_string(),
+                time_window: None,
+                material_filter: None,
+                filters: std::collections::HashMap::new(),
+            },
+            preview_summary: None,
+            checkpoint: ReplayCheckpoint {
+                processed_events: 0,
+                total_events: 0,
+                last_event_id: None,
+                batch_number: 0,
+                savepoint_id: None,
+                updated_at: "2026-04-04T00:00:00Z".to_string(),
+            },
+            actor: "tester".to_string(),
+            created_at: "2026-04-04T00:00:00Z".to_string(),
+            approved_by: None,
+            approved_at: None,
+            executor_node: None,
+            started_at: None,
+            finished_at: None,
+            outcome: None,
+            error_details: None,
+        };
+        let preview = json!({
+            "total_events": 3,
+            "safety_analysis": {
+                "status": "failed",
+                "error": "integrity analyzer unavailable",
+                "warning": "Cascade impact could not be determined. Approve with caution."
+            }
+        });
+
+        let rendered = format_replay_preview_table(&operation, &preview);
+
+        assert!(rendered.contains("Safety Warning: analysis failed"));
+        assert!(rendered.contains("Safety Error:   integrity analyzer unavailable"));
+        assert!(rendered.contains(
+            "Safety Detail:  Cascade impact could not be determined. Approve with caution."
+        ));
         Ok(())
     }
 }

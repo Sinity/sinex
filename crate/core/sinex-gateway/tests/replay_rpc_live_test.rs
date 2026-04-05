@@ -301,32 +301,29 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         "preview should declare replay semantics"
     );
 
-    // ── Step 3: Approve via HTTP RPC ────────────────────────────────
-    let approve_result = gw
+    // ── Step 3: Submit via HTTP RPC (atomic approve+execute) ────────
+    let submit_result = gw
         .rpc(
-            methods::REPLAY_APPROVE_OPERATION,
-            json!({ "operation_id": op_id, "approver": "admin:superuser" }),
+            methods::REPLAY_SUBMIT_OPERATION,
+            json!({ "operation_id": op_id }),
         )
         .await?;
     assert_eq!(
-        approve_result["operation"]["state"].as_str(),
-        Some("Approved")
+        submit_result["operation"]["state"].as_str(),
+        Some("Completed")
     );
     assert_eq!(
-        approve_result["operation"]["approved_by"].as_str(),
+        submit_result["operation"]["approved_by"].as_str(),
         Some("admin:token:live-rpc"),
-        "gateway RPC must persist the authenticated approver identity"
+        "gateway RPC must persist the authenticated submitter identity"
+    );
+    assert_eq!(
+        submit_result["operation"]["executor_node"].as_str(),
+        Some("admin:token:live-rpc"),
+        "gateway RPC submit must record the authenticated executor identity"
     );
 
-    // ── Step 4: Execute via HTTP RPC ────────────────────────────────
-    let _execute_result = gw
-        .rpc(
-            methods::REPLAY_EXECUTE_OPERATION,
-            json!({ "operation_id": op_id, "executor": "service:worker-1" }),
-        )
-        .await?;
-
-    // ── Step 5: Poll status until completion ────────────────────────
+    // ── Step 4: Poll status until completion ────────────────────────
     let mut status = json!(null);
     for _ in 0..60 {
         status = gw
@@ -350,7 +347,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         Some(1)
     );
 
-    // ── Step 6: List operations ─────────────────────────────────────
+    // ── Step 5: List operations ─────────────────────────────────────
     let list_result = gw.rpc(methods::REPLAY_LIST_OPERATIONS, json!({})).await?;
     let ops = list_result["operations"]
         .as_array()

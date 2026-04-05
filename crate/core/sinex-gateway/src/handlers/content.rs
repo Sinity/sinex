@@ -22,17 +22,12 @@ pub async fn handle_store_blob(
     let content = decode_blob_content(content_b64, limit)?;
 
     let filename = params
-        .optional_str("filename")
-        ?
+        .optional_str("filename")?
         .unwrap_or(DEFAULT_BLOB_FILENAME);
     let content_type = params
-        .optional_str("content_type")
-        ?
+        .optional_str("content_type")?
         .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
-    let source = params
-        .optional_str("source")
-        ?
-        .unwrap_or(auth.actor_id());
+    let source = params.optional_str("source")?.unwrap_or(auth.actor_id());
 
     let key = services
         .content
@@ -40,7 +35,10 @@ pub async fn handle_store_blob(
         .await?;
     let metadata = services.content.get_content_metadata(&key).await?;
     let size = u64::try_from(metadata.size_bytes).map_err(|_| {
-        color_eyre::eyre::eyre!("blob metadata reported negative size: {}", metadata.size_bytes)
+        color_eyre::eyre::eyre!(
+            "blob metadata reported negative size: {}",
+            metadata.size_bytes
+        )
     })?;
 
     Ok(serde_json::to_value(StoreBlobResponse {
@@ -57,5 +55,7 @@ pub async fn handle_retrieve_blob(services: &ServiceContainer, params: Value) ->
     let content = services.content.retrieve_content(key).await?;
     let metadata = services.content.get_content_metadata(key).await?;
 
-    Ok(serde_json::to_value(blob_response_payload(&content, &metadata)?)?)
+    Ok(serde_json::to_value(blob_response_payload(
+        &content, &metadata,
+    )?)?)
 }

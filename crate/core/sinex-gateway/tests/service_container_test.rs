@@ -19,7 +19,10 @@ fn configure_gateway_env(
     ctx: &TestContext,
     annex_path: &std::path::Path,
 ) -> TestResult<()> {
-    env.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
+    env.set(
+        "SINEX_NATS_URL",
+        &ctx.nats_handle()?.client_url().to_string(),
+    );
     set_annex_path(env, annex_path);
     Ok(())
 }
@@ -144,7 +147,10 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
 async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set("SINEX_NATS_URL", &ctx.nats_handle()?.client_url().to_string());
+    env.set(
+        "SINEX_NATS_URL",
+        &ctx.nats_handle()?.client_url().to_string(),
+    );
 
     // Test with custom annex path
     let custom_dir = TempDir::new()?;
@@ -321,20 +327,14 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
     );
     match report.status {
         GatewayHealthStatus::Healthy => {
-            assert!(
-                report.healthy,
-                "Healthy status must imply healthy=true"
-            );
+            assert!(report.healthy, "Healthy status must imply healthy=true");
             assert!(
                 report.degradation_reasons.is_empty(),
                 "Healthy status should not carry degradation reasons"
             );
         }
         GatewayHealthStatus::Degraded => {
-            assert!(
-                !report.healthy,
-                "Degraded status must imply healthy=false"
-            );
+            assert!(!report.healthy, "Degraded status must imply healthy=false");
             assert!(
                 !report.degradation_reasons.is_empty(),
                 "Degraded status should explain what is missing"
@@ -348,8 +348,14 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
         !report.nats.detail.is_empty(),
         "NATS probe detail should always be populated"
     );
-    assert!(report.replay.enabled, "Replay control should be initialized");
-    assert!(report.replay.connected, "Replay control should be connected");
+    assert!(
+        report.replay.enabled,
+        "Replay control should be initialized"
+    );
+    assert!(
+        report.replay.connected,
+        "Replay control should be connected"
+    );
 
     Ok(())
 }

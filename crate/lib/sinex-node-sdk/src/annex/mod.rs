@@ -57,12 +57,18 @@ pub struct AnnexConfig {
     pub large_files: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnnexKey {
     pub key: String,
     pub backend: String,
     pub size: u64,
     pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnusedAnnexEntry {
+    pub number: u32,
+    pub key: AnnexKey,
 }
 
 #[derive(Debug, Clone)]
@@ -661,6 +667,51 @@ impl GitAnnex {
             .map_err(|e| SinexError::processing("Invalid UTF-8 in status output").with_source(e))
     }
 
+    /// List git-annex keys reported as unused by the current repository.
+    pub async fn list_unused(&self) -> NodeResult<Vec<UnusedAnnexEntry>> {
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("unused")
+            .arg("--json")
+            .current_dir(&self.config.repo_path);
+        let output = run_command_async(cmd, "Failed to run git-annex unused").await?;
+
+        if !output.status.success() {
+            return Err(SinexError::processing(format!(
+                "git-annex unused failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        parse_unused_output(&output.stdout).map_err(SinexError::processing)
+    }
+
+    /// Drop unused git-annex content by the numbered slots returned from `unused`.
+    pub async fn drop_unused(&self, numbers: &[u32], force: bool) -> NodeResult<()> {
+        if numbers.is_empty() {
+            return Ok(());
+        }
+
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("dropunused");
+        if force {
+            cmd.arg("--force");
+        }
+        for number in numbers {
+            cmd.arg(number.to_string());
+        }
+        cmd.current_dir(&self.config.repo_path);
+
+        let output = run_command_async(cmd, "Failed to run git-annex dropunused").await?;
+        if !output.status.success() {
+            return Err(SinexError::processing(format!(
+                "git-annex dropunused failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Compute BLAKE3 hash for deduplication
     pub async fn compute_blake3_hash(file_path: &Utf8Path) -> NodeResult<String> {
         let content = tokio::fs::read(file_path).await.map_err(SinexError::io)?;
@@ -743,6 +794,62 @@ fn parse_add_output_for_key(stdout: &[u8]) -> Result<Option<AnnexKey>, String> {
     }
 }
 
+fn parse_unused_output(stdout: &[u8]) -> Result<Vec<UnusedAnnexEntry>, String> {
+    let output = std::str::from_utf8(stdout)
+        .map_err(|error| format!("git-annex unused output was not valid UTF-8: {error}"))?;
+    let mut invalid_line: Option<String> = None;
+    let mut entries = Vec::new();
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parsed: JsonValue = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                invalid_line.get_or_insert_with(|| {
+                    format!(
+                        "git-annex unused output contained invalid JSON line `{}`: {error}",
+                        line.chars().take(120).collect::<String>()
+                    )
+                });
+                continue;
+            }
+        };
+
+        let Some(unused_list) = parsed
+            .get("unused-list")
+            .and_then(|value| value.as_object())
+        else {
+            continue;
+        };
+
+        for (number, raw_key) in unused_list {
+            let number = number.parse::<u32>().map_err(|error| {
+                format!("git-annex unused entry number `{number}` was not a valid u32: {error}")
+            })?;
+            let raw_key = raw_key.as_str().ok_or_else(|| {
+                format!("git-annex unused entry `{number}` did not contain a string key")
+            })?;
+            let key = AnnexKey::parse(raw_key).map_err(|error| {
+                format!("git-annex unused entry `{number}` had invalid key: {error}")
+            })?;
+            entries.push(UnusedAnnexEntry { number, key });
+        }
+    }
+
+    if entries.is_empty()
+        && let Some(error) = invalid_line
+    {
+        return Err(error);
+    }
+
+    entries.sort_by_key(|entry| entry.number);
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     // Small inline tests are used here because the parser helper is private
@@ -754,6 +861,32 @@ mod tests {
     async fn parse_add_output_for_key_reports_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
         let error = parse_add_output_for_key(&[0xff]).expect_err("invalid utf-8 must be reported");
         assert!(error.contains("not valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_unused_output_extracts_numbered_unused_entries()
+    -> ::xtask::sandbox::TestResult<()> {
+        let entries = parse_unused_output(
+            br#"{"unused-list":{"2":"SHA256E-s4--beef.txt","1":"SHA256E-s5--deadbeef.dat"}}"#,
+        )
+        .expect("valid unused output should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].number, 1);
+        assert_eq!(entries[0].key.key, "SHA256E-s5--deadbeef.dat");
+        assert_eq!(entries[1].number, 2);
+        assert_eq!(entries[1].key.hash, "beef.txt");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_unused_output_rejects_non_numeric_entry_numbers()
+    -> ::xtask::sandbox::TestResult<()> {
+        let error = parse_unused_output(br#"{"unused-list":{"oops":"SHA256E-s5--deadbeef.dat"}}"#)
+            .expect_err("non-numeric unused entry number must fail honestly");
+
+        assert!(error.contains("valid u32"));
         Ok(())
     }
 

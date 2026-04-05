@@ -7,10 +7,10 @@
 use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::{Value, Value as JsonValue, json};
-use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_db::repositories::source_materials::{
     SourceMaterial, TemporalLedgerEntry, status as material_status,
 };
+use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_primitives::{
     Id, Uuid,
     domain::{EventSource, EventType, HostName},
@@ -100,7 +100,11 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
     if raw_ts_orig.trim().is_empty() {
         color_eyre::eyre::bail!("`ts_orig` must not be empty");
     }
-    if req.host.as_deref().is_some_and(|host| host.trim().is_empty()) {
+    if req
+        .host
+        .as_deref()
+        .is_some_and(|host| host.trim().is_empty())
+    {
         color_eyre::eyre::bail!("`host` must not be empty when provided");
     }
 
@@ -183,7 +187,8 @@ pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) ->
     let sequence = match publish_result {
         Ok(sequence) => sequence,
         Err(err) => {
-            mark_events_ingest_material_failed(services, material_record_id, &err.to_string()).await;
+            mark_events_ingest_material_failed(services, material_record_id, &err.to_string())
+                .await;
             return Err(err);
         }
     };

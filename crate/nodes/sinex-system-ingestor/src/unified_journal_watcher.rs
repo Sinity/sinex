@@ -371,8 +371,22 @@ impl UnifiedJournalWatcher {
     }
 
     fn resolve_max_line_bytes() -> NodeResult<usize> {
-        Ok(sinex_primitives::env::strict_parsed::<usize>("SINEX_JOURNAL_MAX_LINE_BYTES")?
-            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES))
+        match sinex_primitives::env::strict_var("SINEX_JOURNAL_MAX_LINE_BYTES")? {
+            None => Ok(DEFAULT_MAX_JOURNAL_LINE_BYTES),
+            Some(raw) => {
+                let parsed = raw.parse::<usize>().map_err(|_error| {
+                    SinexError::configuration(format!(
+                        "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer (got `{raw}`)"
+                    ))
+                })?;
+                if parsed == 0 {
+                    return Err(SinexError::configuration(format!(
+                        "SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer (got `{raw}`)"
+                    )));
+                }
+                Ok(parsed)
+            }
+        }
     }
 
     fn parse_optional_field<T>(
@@ -1780,6 +1794,23 @@ mod tests {
                 .contains("SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer")
         );
         assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_max_line_bytes_rejects_zero_env(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let _guard = EnvGuard::set_single("SINEX_JOURNAL_MAX_LINE_BYTES", "0");
+
+        let error = UnifiedJournalWatcher::resolve_max_line_bytes()
+            .expect_err("zero journal max line env must fail honestly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer")
+        );
+        assert!(error.to_string().contains("0"));
         Ok(())
     }
 

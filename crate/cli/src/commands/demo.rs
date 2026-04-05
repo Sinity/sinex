@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use clap::Parser;
 use color_eyre::Result;
-use rand::{RngExt, SeedableRng};
 use rand::rngs::SmallRng;
+use rand::{RngExt, SeedableRng};
 use serde_json::json;
 use sinex_db::repositories::{SourceMaterial, StreamBatchRow};
 use sinex_db::{DbPoolExt, create_pool};
@@ -87,15 +87,13 @@ impl DemoCommand {
         }
 
         // Register a single source material used by all demo events.
-        let material =
-            SourceMaterial::stream(format!("sinexctl-demo://seed={}", self.seed));
+        let material = SourceMaterial::stream(format!("sinexctl-demo://seed={}", self.seed));
         let material_record = pool
             .source_materials()
             .register_material(material)
             .await
             .map_err(|e| color_eyre::eyre::eyre!("Failed to register source material: {}", e))?;
-        let material_id: Id<SourceMaterialMarker> =
-            Id::from_uuid(material_record.id);
+        let material_id: Id<SourceMaterialMarker> = Id::from_uuid(material_record.id);
 
         println!("Seeding {} events (seed={})...", self.count, self.seed);
         let started = Instant::now();

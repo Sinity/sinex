@@ -43,7 +43,9 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
     derived.node_model = Some(DerivedNodeModel::ScopeReconciler);
 
     let inserted = ctx.pool().events().insert(derived).await?;
-    let event_id = inserted.id.expect("inserted derived event should have an id");
+    let event_id = inserted
+        .id
+        .expect("inserted derived event should have an id");
 
     let archive_operation_id = Uuid::now_v7().to_string();
     ctx.pool()

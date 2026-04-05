@@ -1,5 +1,5 @@
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_node_sdk::WindowedNode;
+use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
@@ -188,7 +188,10 @@ async fn gap_boundary_emits_previous_session_and_seeds_next_one() -> TestResult<
         .await?
         .expect("gap boundary should emit a completed session");
 
-    let payload = output.payload.as_object().expect("session output should be an object");
+    let payload = output
+        .payload
+        .as_object()
+        .expect("session output should be an object");
     assert_eq!(payload.get("event_count"), Some(&serde_json::json!(1)));
     assert_eq!(
         payload.get("start_time"),
@@ -207,8 +210,14 @@ async fn gap_boundary_emits_previous_session_and_seeds_next_one() -> TestResult<
     assert_eq!(state.session_start, Some(second));
     assert_eq!(state.last_event_time, Some(second));
     assert_eq!(state.event_count, 1);
-    assert!(!state.gap_detected, "next session should be ready to accumulate");
-    assert_eq!(state.event_ids, vec![*second_context.trigger_event_id.as_uuid()]);
+    assert!(
+        !state.gap_detected,
+        "next session should be ready to accumulate"
+    );
+    assert_eq!(
+        state.event_ids,
+        vec![*second_context.trigger_event_id.as_uuid()]
+    );
 
     Ok(())
 }

@@ -7,8 +7,8 @@ mod jobs;
 mod output;
 
 pub use affected::{
-    custom_affected_clean, custom_affected_foundation, custom_affected_transitive,
-    custom_affected_workspace, custom_affected_leaf,
+    custom_affected_clean, custom_affected_foundation, custom_affected_leaf,
+    custom_affected_transitive, custom_affected_workspace,
 };
 pub use analytics::{custom_analytics_recommend_runs, custom_live_stage_visible_during_run};
 pub use bg_job::custom_bg_job_lifecycle;

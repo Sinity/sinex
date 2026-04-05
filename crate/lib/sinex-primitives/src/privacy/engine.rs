@@ -184,7 +184,10 @@ impl PrivacyEngine {
 
         // Pre-compute default redact labels so the hot path never allocates.
         for def in &mut definitions {
-            if let Strategy::Redact { label: ref mut l @ None } = def.strategy {
+            if let Strategy::Redact {
+                label: ref mut l @ None,
+            } = def.strategy
+            {
                 *l = Some(format!("<{}>", def.name.to_uppercase()));
             }
         }
@@ -572,10 +575,7 @@ impl PrivacyEngine {
         rule_name: &str,
     ) -> String {
         match strategy {
-            Strategy::Redact { label } => label
-                .as_deref()
-                .unwrap_or("<UNKNOWN>")
-                .to_string(),
+            Strategy::Redact { label } => label.as_deref().unwrap_or("<UNKNOWN>").to_string(),
             Strategy::Encrypt => {
                 if let Some(ref key) = self.key {
                     envelope::encrypt_token(matched, key).unwrap_or_else(|error| {
@@ -787,7 +787,11 @@ mod tests {
         let result = e.process(input, ProcessingContext::Clipboard);
         assert!(result.any_matched());
         // Degrades to redact since no key
-        assert!(result.text.contains("<EMAIL_ADDRESS>"), "got: {}", result.text);
+        assert!(
+            result.text.contains("<EMAIL_ADDRESS>"),
+            "got: {}",
+            result.text
+        );
         assert!(!result.text.contains("user@example.com"));
         Ok(())
     }

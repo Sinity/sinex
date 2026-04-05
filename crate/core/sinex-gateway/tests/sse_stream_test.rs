@@ -705,11 +705,14 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         }
     }
 
-    let (from_seq, to_seq, dropped) =
-        gap_seen.ok_or_else(|| color_eyre::eyre::eyre!("expected a gap marker after saturation"))?;
+    let (from_seq, to_seq, dropped) = gap_seen
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected a gap marker after saturation"))?;
     assert!(to_seq >= from_seq, "gap range should be ordered");
     assert!(dropped > 0, "gap marker should report dropped events");
-    assert!(resumed_seen, "resumed event should eventually be delivered after gap");
+    assert!(
+        resumed_seen,
+        "resumed event should eventually be delivered after gap"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;
@@ -803,8 +806,10 @@ async fn multiple_subscribers_keep_independent_sequence_numbers(
     let env = ctx.env().clone();
     let env_name = env.name().to_string();
 
-    let first_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 1})).await?;
-    let second_id = insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 2})).await?;
+    let first_id =
+        insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 1})).await?;
+    let second_id =
+        insert_test_event(&pool, "shared", "shared.event", "h", json!({"seq": 2})).await?;
 
     let bus = Arc::new(SubscriptionBus::new());
     let (_, mut rx_a) = bus

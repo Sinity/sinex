@@ -388,7 +388,11 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
     .fetch_all(pool)
     .await?;
 
-    assert_eq!(rows.len(), 2, "current_health must retain one row per component");
+    assert_eq!(
+        rows.len(),
+        2,
+        "current_health must retain one row per component"
+    );
     assert_eq!(rows[0].component.as_deref(), Some("gateway"));
     assert_eq!(rows[0].status.as_deref(), Some("degraded"));
     assert_eq!(rows[0].reason.as_deref(), Some("warming caches"));
@@ -431,11 +435,24 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
     let expected_contracts = [
         (
             "current_health",
-            &["source", "event_type", "component", "status", "reason", "last_update"][..],
+            &[
+                "source",
+                "event_type",
+                "component",
+                "status",
+                "reason",
+                "last_update",
+            ][..],
         ),
         (
             "current_device_state",
-            &["unit_name", "unit_type", "state", "sub_state", "last_update"][..],
+            &[
+                "unit_name",
+                "unit_type",
+                "state",
+                "sub_state",
+                "last_update",
+            ][..],
         ),
         (
             "gateway_stats_1h",

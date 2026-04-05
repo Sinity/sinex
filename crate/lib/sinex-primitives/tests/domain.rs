@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    AnnexKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath,
-    SchemaVersion, ServiceName,
+    AnnexKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath, SchemaVersion,
+    ServiceName,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{

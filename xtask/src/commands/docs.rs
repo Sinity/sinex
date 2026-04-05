@@ -406,8 +406,9 @@ fn find_workspace_root(mut current: std::path::PathBuf) -> Result<std::path::Pat
     loop {
         let toml = current.join("Cargo.toml");
         if toml.exists() {
-            let content = std::fs::read_to_string(&toml)
-                .wrap_err_with(|| format!("Failed to read workspace manifest {}", toml.display()))?;
+            let content = std::fs::read_to_string(&toml).wrap_err_with(|| {
+                format!("Failed to read workspace manifest {}", toml.display())
+            })?;
             if content.contains("[workspace]") {
                 return Ok(current);
             }
@@ -453,7 +454,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_find_workspace_root_reports_manifest_read_failures() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_find_workspace_root_reports_manifest_read_failures()
+    -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let manifest = temp.path().join("Cargo.toml");
         std::fs::create_dir(&manifest)?;
@@ -464,9 +466,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox::TestResult<()>
+    {
         let temp = tempfile::tempdir()?;
-        std::fs::write(temp.path().join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = []\n",
+        )?;
         let nested = temp.path().join("nested/child");
         std::fs::create_dir_all(&nested)?;
 

@@ -107,9 +107,7 @@ async fn document_node_rejects_unsupported_mime_targets(ctx: TestContext) -> Tes
     assert_eq!(report.events_processed, 0);
     assert_eq!(report.failed_targets.len(), 1);
     assert!(
-        report.failed_targets[0]
-            .1
-            .contains("Unsupported MIME type"),
+        report.failed_targets[0].1.contains("Unsupported MIME type"),
         "unexpected failure: {:?}",
         report.failed_targets
     );
@@ -145,7 +143,8 @@ async fn document_node_source_state_reports_initialized_readiness(
             .to_string_lossy()
             .into_owned(),
     ];
-    let init_ctx = NodeInitContext::new(config.clone(), raw_config, service_info, handles, work_dir);
+    let init_ctx =
+        NodeInitContext::new(config.clone(), raw_config, service_info, handles, work_dir);
 
     let mut node = IngestorNodeAdapter::<DocumentNode>::default();
     node.initialize(init_ctx).await?;
@@ -154,7 +153,10 @@ async fn document_node_source_state_reports_initialized_readiness(
     assert!(state.is_connected);
     assert!(state.healthy);
     assert!(state.description.contains("ready"));
-    assert_eq!(state.metadata.get("initialized"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        state.metadata.get("initialized"),
+        Some(&serde_json::json!(true))
+    );
     assert_eq!(
         state.metadata.get("allowed_roots"),
         Some(&serde_json::json!(config.allowed_roots))
@@ -164,7 +166,9 @@ async fn document_node_source_state_reports_initialized_readiness(
 }
 
 #[sinex_test]
-async fn document_node_historical_dry_run_stays_side_effect_free(ctx: TestContext) -> TestResult<()> {
+async fn document_node_historical_dry_run_stays_side_effect_free(
+    ctx: TestContext,
+) -> TestResult<()> {
     let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
         .with_dry_run(true)
         .build()
@@ -220,7 +224,9 @@ async fn document_node_historical_dry_run_stays_side_effect_free(ctx: TestContex
 }
 
 #[sinex_test]
-async fn document_node_skipped_targets_are_not_reported_as_success(ctx: TestContext) -> TestResult<()> {
+async fn document_node_skipped_targets_are_not_reported_as_success(
+    ctx: TestContext,
+) -> TestResult<()> {
     let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
         .with_dry_run(false)
         .build()

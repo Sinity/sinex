@@ -311,10 +311,10 @@ impl AtuinCommandExecutedPayload {
         hostname: impl Into<String>,
     ) -> crate::Result<Self> {
         if duration_ns < 0 {
-            return Err(
-                crate::SinexError::validation("Atuin history duration must not be negative")
-                    .with_context("duration_ns", duration_ns.to_string()),
-            );
+            return Err(crate::SinexError::validation(
+                "Atuin history duration must not be negative",
+            )
+            .with_context("duration_ns", duration_ns.to_string()));
         }
 
         let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_ns))

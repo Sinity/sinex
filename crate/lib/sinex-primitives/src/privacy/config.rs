@@ -367,10 +367,8 @@ impl PrivacyConfig {
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_SECRET_STRATEGY") {
-            config.secret_strategy = Some(parse_strategy_env(
-                "SINEX_PRIVACY_SECRET_STRATEGY",
-                &val,
-            )?);
+            config.secret_strategy =
+                Some(parse_strategy_env("SINEX_PRIVACY_SECRET_STRATEGY", &val)?);
         }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_KEY_FILE") {
@@ -621,7 +619,11 @@ hex = "abcd1234"
 
         let error = result.expect_err("missing explicit privacy config must surface");
         assert!(error.to_string().contains("failed to read privacy config"));
-        assert!(error.to_string().contains(missing.to_string_lossy().as_ref()));
+        assert!(
+            error
+                .to_string()
+                .contains(missing.to_string_lossy().as_ref())
+        );
         Ok(())
     }
 
@@ -706,7 +708,11 @@ hex = "abcd1234"
                 .to_string()
                 .contains("invalid privacy environment override SINEX_PRIVACY_DEFAULT_STRATEGY")
         );
-        assert!(error.to_string().contains("expected redact, encrypt, hash, or suppress"));
+        assert!(
+            error
+                .to_string()
+                .contains("expected redact, encrypt, hash, or suppress")
+        );
         Ok(())
     }
 }

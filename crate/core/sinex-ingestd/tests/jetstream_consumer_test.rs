@@ -13,13 +13,13 @@ use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use support::{
     FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
     wait_for_last_stream_message_by_subject,
 };
+use tokio::sync::RwLock;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 /// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
@@ -160,8 +160,8 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
         Arc::new(RwLock::new(validator)),
         topology,
     );
-    let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer)
-        .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
 
     let event_id = Uuid::now_v7();
     publish_event(
@@ -429,7 +429,8 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd-db-fallback"),
+        ctx.pipeline_namespace()
+            .consumer_name("ingestd-db-fallback"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -459,8 +460,8 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
         .build()?;
     event.id = Some(Id::from_uuid(event_uuid));
 
-    let subject =
-        env.nats_subject_with_namespace(Some(&namespace), "events.raw.fallback_test.material_ready");
+    let subject = env
+        .nats_subject_with_namespace(Some(&namespace), "events.raw.fallback_test.material_ready");
     let event_json = serde_json::to_vec(&event)?;
     nats_client.publish(subject, event_json.into()).await?;
     nats_client.flush().await?;

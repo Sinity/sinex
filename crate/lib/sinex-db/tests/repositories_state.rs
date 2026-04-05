@@ -293,7 +293,12 @@ async fn register_node_is_idempotent_per_manifest_version(ctx: TestContext) -> T
     let node_name = NodeName::new("idempotent-node");
 
     let first = repo
-        .register_node(&node_name, NodeType::Service, "1.0.0", Some("first description"))
+        .register_node(
+            &node_name,
+            NodeType::Service,
+            "1.0.0",
+            Some("first description"),
+        )
         .await?;
     let second = repo
         .register_node(
@@ -304,7 +309,10 @@ async fn register_node_is_idempotent_per_manifest_version(ctx: TestContext) -> T
         )
         .await?;
 
-    assert_eq!(first.id, second.id, "duplicate registration should reuse the manifest row");
+    assert_eq!(
+        first.id, second.id,
+        "duplicate registration should reuse the manifest row"
+    );
     assert_eq!(second.description.as_deref(), Some("updated description"));
 
     let manifests = repo.get_all_nodes().await?;
@@ -312,9 +320,16 @@ async fn register_node_is_idempotent_per_manifest_version(ctx: TestContext) -> T
         .into_iter()
         .filter(|manifest| manifest.node_name == node_name)
         .collect::<Vec<_>>();
-    assert_eq!(matching.len(), 1, "duplicate registration should not create extra rows");
+    assert_eq!(
+        matching.len(),
+        1,
+        "duplicate registration should not create extra rows"
+    );
     assert_eq!(matching[0].version, "1.0.0");
-    assert_eq!(matching[0].description.as_deref(), Some("updated description"));
+    assert_eq!(
+        matching[0].description.as_deref(),
+        Some("updated description")
+    );
 
     Ok(())
 }
@@ -402,7 +417,9 @@ async fn cancel_tombstone_operation_rejects_invalid_created_at(ctx: TestContext)
 }
 
 #[sinex_test]
-async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext) -> TestResult<()> {
+async fn node_manifest_heartbeat_updates_only_requested_version(
+    ctx: TestContext,
+) -> TestResult<()> {
     let repo = ctx.pool.state();
     let node_name = NodeName::new("versioned-heartbeat-node");
 
@@ -411,12 +428,14 @@ async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext
     repo.register_node(&node_name, NodeType::Service, "2.0.0", Some("newer build"))
         .await?;
 
-    assert!(repo
-        .mark_node_inactive_for_version(&node_name, "1.0.0")
-        .await?);
-    assert!(repo
-        .update_node_heartbeat_for_version(&node_name, "2.0.0")
-        .await?);
+    assert!(
+        repo.mark_node_inactive_for_version(&node_name, "1.0.0")
+            .await?
+    );
+    assert!(
+        repo.update_node_heartbeat_for_version(&node_name, "2.0.0")
+            .await?
+    );
 
     let manifests = repo.get_all_nodes().await?;
     let older = manifests
@@ -436,7 +455,9 @@ async fn node_manifest_heartbeat_updates_only_requested_version(ctx: TestContext
         "heartbeat should only be persisted for the requested version"
     );
 
-    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    let live_nodes = repo
+        .list_live_node_presence(Duration::from_secs(120))
+        .await?;
     assert_eq!(live_nodes.len(), 1);
     assert_eq!(live_nodes[0].node_name, node_name);
     assert_eq!(live_nodes[0].version, "2.0.0");
@@ -461,16 +482,19 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
         .await?;
     repo.register_node(&node_name, NodeType::Service, "2.0.0", Some("newer build"))
         .await?;
-    assert!(repo
-        .update_node_heartbeat_for_version(&node_name, "1.0.0")
-        .await?);
-    assert!(repo
-        .update_node_heartbeat_for_version(&node_name, "2.0.0")
-        .await?);
+    assert!(
+        repo.update_node_heartbeat_for_version(&node_name, "1.0.0")
+            .await?
+    );
+    assert!(
+        repo.update_node_heartbeat_for_version(&node_name, "2.0.0")
+            .await?
+    );
 
-    assert!(repo
-        .mark_node_inactive_for_version(&node_name, "1.0.0")
-        .await?);
+    assert!(
+        repo.mark_node_inactive_for_version(&node_name, "1.0.0")
+            .await?
+    );
 
     let manifests = repo.get_all_nodes().await?;
     let older = manifests
@@ -489,7 +513,9 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
         "marking one version inactive must not clear the other version heartbeat"
     );
 
-    let live_nodes = repo.list_live_node_presence(Duration::from_secs(120)).await?;
+    let live_nodes = repo
+        .list_live_node_presence(Duration::from_secs(120))
+        .await?;
     assert_eq!(live_nodes.len(), 1);
     assert_eq!(live_nodes[0].version, "2.0.0");
     assert_eq!(live_nodes[0].heartbeat_source, "manifest");
@@ -503,7 +529,12 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
     let node_name = NodeName::new("node-run-lifecycle");
 
     let manifest = repo
-        .register_node(&node_name, NodeType::Ingestor, "1.2.3", Some("node run test"))
+        .register_node(
+            &node_name,
+            NodeType::Ingestor,
+            "1.2.3",
+            Some("node run test"),
+        )
         .await?;
 
     let config = json!({
@@ -532,9 +563,10 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
     assert_eq!(run.effective_config, Some(config.clone()));
 
     assert!(repo.update_node_run_heartbeat(run.id).await?);
-    assert!(repo
-        .update_node_run_status(run.id, NodeState::Stopped)
-        .await?);
+    assert!(
+        repo.update_node_run_status(run.id, NodeState::Stopped)
+            .await?
+    );
 
     let refreshed = sqlx::query!(
         r#"
@@ -553,7 +585,10 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
 
     assert_eq!(refreshed.status, "stopped");
     assert!(refreshed.ended_at.is_some());
-    assert_eq!(refreshed.effective_config_hash.as_deref(), Some("b3-abc123"));
+    assert_eq!(
+        refreshed.effective_config_hash.as_deref(),
+        Some("b3-abc123")
+    );
     assert_eq!(refreshed.effective_config, Some(config));
 
     Ok(())
@@ -565,7 +600,12 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
     let node_name = NodeName::new("node-run-heartbeat-terminal");
 
     let manifest = repo
-        .register_node(&node_name, NodeType::Ingestor, "1.2.3", Some("node run test"))
+        .register_node(
+            &node_name,
+            NodeType::Ingestor,
+            "1.2.3",
+            Some("node run test"),
+        )
         .await?;
 
     let run = repo
@@ -579,9 +619,10 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
         )
         .await?;
 
-    assert!(repo
-        .update_node_run_status(run.id, NodeState::Stopped)
-        .await?);
+    assert!(
+        repo.update_node_run_status(run.id, NodeState::Stopped)
+            .await?
+    );
     assert!(
         !repo.update_node_run_heartbeat(run.id).await?,
         "terminal runs must not be revived by a late heartbeat"

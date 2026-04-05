@@ -88,9 +88,14 @@ async fn health_aggregator_rejects_missing_ts_orig(ctx: TestContext) -> TestResu
         "current_status": "degraded",
     });
 
-    let error = process(&mut aggregator, &mut state, input, &make_context_with_optional_ts(None))
-        .await
-        .expect_err("missing ts_orig must be rejected");
+    let error = process(
+        &mut aggregator,
+        &mut state,
+        input,
+        &make_context_with_optional_ts(None),
+    )
+    .await
+    .expect_err("missing ts_orig must be rejected");
 
     assert!(error.to_string().contains("missing ts_orig"));
     Ok(())
@@ -300,7 +305,9 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn health_aggregator_system_status_includes_trigger_component(ctx: TestContext) -> TestResult<()> {
+async fn health_aggregator_system_status_includes_trigger_component(
+    ctx: TestContext,
+) -> TestResult<()> {
     let _ = ctx;
     let config = HealthAggregatorConfig {
         aggregation_window_seconds: 60,
@@ -332,7 +339,10 @@ async fn health_aggregator_system_status_includes_trigger_component(ctx: TestCon
     let system_status = outputs
         .into_iter()
         .find(|output| {
-            output.payload.get("report_type").and_then(|value| value.as_str())
+            output
+                .payload
+                .get("report_type")
+                .and_then(|value| value.as_str())
                 == Some("system_health_status")
         })
         .expect("system-wide report should be emitted");
@@ -397,17 +407,27 @@ async fn health_aggregator_emits_all_due_reports_for_one_trigger(
     )
     .await?;
 
-    assert_eq!(outputs.len(), 2, "first trigger should emit both periodic reports");
+    assert_eq!(
+        outputs.len(),
+        2,
+        "first trigger should emit both periodic reports"
+    );
     assert!(
         outputs.iter().any(|output| {
-            output.payload.get("report_type").and_then(|value| value.as_str())
+            output
+                .payload
+                .get("report_type")
+                .and_then(|value| value.as_str())
                 == Some("system_health_status")
         }),
         "system-wide report should be present"
     );
     assert!(
         outputs.iter().any(|output| {
-            output.payload.get("report_type").and_then(|value| value.as_str())
+            output
+                .payload
+                .get("report_type")
+                .and_then(|value| value.as_str())
                 == Some("component_health_report")
         }),
         "component report should be present"
@@ -516,7 +536,10 @@ async fn health_aggregator_reports_unknown_system_status_for_unknown_components(
     let system_status = outputs
         .into_iter()
         .find(|output| {
-            output.payload.get("report_type").and_then(|value| value.as_str())
+            output
+                .payload
+                .get("report_type")
+                .and_then(|value| value.as_str())
                 == Some("system_health_status")
         })
         .expect("system-wide report should be emitted");
@@ -749,7 +772,11 @@ async fn health_aggregator_rejects_missing_component(ctx: TestContext) -> TestRe
         .await
         .expect_err("missing component names must fail honestly");
 
-    assert!(error.to_string().contains("missing required field 'component'"));
+    assert!(
+        error
+            .to_string()
+            .contains("missing required field 'component'")
+    );
     Ok(())
 }
 
@@ -769,7 +796,11 @@ async fn health_aggregator_rejects_non_string_component(ctx: TestContext) -> Tes
         .await
         .expect_err("non-string component names must fail honestly");
 
-    assert!(error.to_string().contains("field 'component' must be a string"));
+    assert!(
+        error
+            .to_string()
+            .contains("field 'component' must be a string")
+    );
     Ok(())
 }
 
@@ -802,10 +833,7 @@ async fn test_scope_reconciler_invalid_component_gets_unique_sentinel_scope() ->
 
     let scope_keys = aggregator.scope_keys(&input, &ctx);
     assert_eq!(scope_keys.len(), 1);
-    assert_eq!(
-        scope_keys[0],
-        format!("__invalid_component__:{trigger_id}")
-    );
+    assert_eq!(scope_keys[0], format!("__invalid_component__:{trigger_id}"));
     assert_ne!(
         scope_keys[0], "unknown",
         "malformed payloads must not collide with the literal unknown component"

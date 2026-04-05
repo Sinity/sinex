@@ -1,6 +1,8 @@
 //! PKM RPC handlers.
 
-use super::rpc_handlers::{RpcParams, decode_note_content, validate_entity_link_ids, validate_entity_name};
+use super::rpc_handlers::{
+    RpcParams, decode_note_content, validate_entity_link_ids, validate_entity_name,
+};
 use crate::rpc_server::RpcAuthContext;
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
@@ -24,7 +26,13 @@ pub async fn handle_create_note(
     let content = decode_note_content(&request.content)?;
 
     let annotation_id = service
-        .create_note(request.event_id, &content, request.tags, auth.actor_id(), None)
+        .create_note(
+            request.event_id,
+            &content,
+            request.tags,
+            auth.actor_id(),
+            None,
+        )
         .await?;
     Ok(serde_json::to_value(CreateNoteResponse {
         annotation_id: Id::<Event<JsonValue>>::from_uuid(annotation_id),

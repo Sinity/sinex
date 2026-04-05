@@ -39,8 +39,8 @@ pub use runner::{
     run_xtask, save_output, setup_output_dir, validate_step,
 };
 pub use types::{
-    ExerciseDef, ExerciseKind, ExerciseOutcome, ExerciseReport, ExpectedExit, InfraReq,
-    QaManifest, QaManifestEntry, ReportEntry, StepEntry, StepOutcome, StepOutput, Tier, Validation,
+    ExerciseDef, ExerciseKind, ExerciseOutcome, ExerciseReport, ExpectedExit, InfraReq, QaManifest,
+    QaManifestEntry, ReportEntry, StepEntry, StepOutcome, StepOutput, Tier, Validation,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -143,9 +143,9 @@ pub struct ExerciseCommand {
 impl ExerciseCommand {
     /// Resolve the baseline path: explicit `--baseline`, else workspace default.
     fn baseline_path(&self) -> PathBuf {
-        self.baseline.clone().unwrap_or_else(|| {
-            workspace_root().join("config/verify/exercise-baseline.json")
-        })
+        self.baseline
+            .clone()
+            .unwrap_or_else(|| workspace_root().join("config/verify/exercise-baseline.json"))
     }
 }
 
@@ -441,8 +441,12 @@ impl XtaskCommand for ExerciseCommand {
                 }
             } else if baseline_path.exists() {
                 let baseline_raw = fs::read_to_string(&baseline_path)?;
-                let baseline: QaManifest = serde_json::from_str(&baseline_raw)
-                    .map_err(|e| color_eyre::eyre::eyre!("Failed to parse baseline {}: {e}", baseline_path.display()))?;
+                let baseline: QaManifest = serde_json::from_str(&baseline_raw).map_err(|e| {
+                    color_eyre::eyre::eyre!(
+                        "Failed to parse baseline {}: {e}",
+                        baseline_path.display()
+                    )
+                })?;
                 ci_regressions = manifest.regressions(&baseline);
                 ci_new_passes = manifest.new_passes(&baseline);
 
@@ -460,7 +464,10 @@ impl XtaskCommand for ExerciseCommand {
                         }
                     }
                     if ci_regressions.is_empty() {
-                        println!("  ✓ No regressions vs baseline ({})", baseline_path.display());
+                        println!(
+                            "  ✓ No regressions vs baseline ({})",
+                            baseline_path.display()
+                        );
                     }
                 }
             } else {
@@ -1301,7 +1308,10 @@ exit 2
 
         let original_path = std::env::var("PATH").unwrap_or_default();
         let mut env = EnvGuard::new();
-        env.set("PATH", format!("{}:{original_path}", bin_dir.path().display()));
+        env.set(
+            "PATH",
+            format!("{}:{original_path}", bin_dir.path().display()),
+        );
 
         let error = match runner::GitStateGuard::new() {
             Ok(_) => panic!("git state guard should fail when stash fails"),

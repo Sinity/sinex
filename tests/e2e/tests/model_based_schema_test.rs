@@ -92,7 +92,8 @@ impl ReferenceModel {
             content_hash: content_hash.clone(),
             active: true,
         };
-        self.schemas_by_hash.insert(content_hash.clone(), schema.clone());
+        self.schemas_by_hash
+            .insert(content_hash.clone(), schema.clone());
         self.active_by_key.insert(key, content_hash);
         Ok(schema)
     }
@@ -176,14 +177,16 @@ fn schema_content(idx: u8) -> Value {
 
 fn operation_strategy() -> impl Strategy<Value = SchemaOp> {
     prop_oneof![
-        (0u8..2, 0u8..2, 0u8..2, 0u8..3).prop_map(|(source_idx, event_type_idx, version_idx, content_idx)| {
-            SchemaOp::Register {
-                source_idx,
-                event_type_idx,
-                version_idx,
-                content_idx,
+        (0u8..2, 0u8..2, 0u8..2, 0u8..3).prop_map(
+            |(source_idx, event_type_idx, version_idx, content_idx)| {
+                SchemaOp::Register {
+                    source_idx,
+                    event_type_idx,
+                    version_idx,
+                    content_idx,
+                }
             }
-        }),
+        ),
         (0u8..2, 0u8..2).prop_map(|(source_idx, event_type_idx)| SchemaOp::DeprecateActive {
             source_idx,
             event_type_idx,
@@ -230,7 +233,10 @@ async fn verify_repository_matches_model(
         let listed = repo.list_schemas_for_source(&source, true).await?;
         let expected_count = model.count_for_source(&source);
         if listed.len() != expected_count {
-            bail!("list_schemas_for_source({source}) count mismatch: actual={} expected={expected_count}", listed.len());
+            bail!(
+                "list_schemas_for_source({source}) count mismatch: actual={} expected={expected_count}",
+                listed.len()
+            );
         }
 
         for event_type_idx in 0..2u8 {
@@ -367,7 +373,9 @@ async fn prop_schema_repo_model_matches_reference(
                 match model.expected_active_hash(&key) {
                     Some(expected_hash) => {
                         let actual = actual.map_err(|e| {
-                            eyre!("expected active schema for {source}/{event_type}, got error: {e}")
+                            eyre!(
+                                "expected active schema for {source}/{event_type}, got error: {e}"
+                            )
                         })?;
                         if actual.content_hash != expected_hash {
                             bail!(

@@ -60,5 +60,10 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         preview["cascade_impact"].is_null(),
         "metadata query failures must invalidate cascade impact instead of synthesizing empty metadata"
     );
+    assert_eq!(
+        preview["root_event_ids"],
+        serde_json::json!([root_id.to_uuid()]),
+        "preview summaries must carry root ids for downstream replay execution"
+    );
     Ok(())
 }

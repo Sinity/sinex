@@ -192,9 +192,9 @@ impl FixCommand {
     /// Resolve packages with fixable diagnostics from history DB.
     /// Falls back to normal resolve_packages() if no data available.
     fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
-        let fixable = match ctx.try_with_history_db(|db| {
-            db.get_current_diagnostics(None, None, None, None, true)
-        }) {
+        let fixable = match ctx
+            .try_with_history_db(|db| db.get_current_diagnostics(None, None, None, None, true))
+        {
             Some(result) => result?,
             None => {
                 if ctx.is_human() {
