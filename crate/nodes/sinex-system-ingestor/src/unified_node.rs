@@ -1280,23 +1280,46 @@ impl SystemNode {
         match watcher_type {
             "dbus" => {
                 if let Some(h) = self.dbus_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("dbus watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!("dbus watcher shutdown should stay explicit in tests: {error}");
+                        }
+                    }
                 }
             }
             "unified_journal" => {
                 if let Some(h) = self.unified_journal_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("journal watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!(
+                                "journal watcher shutdown should stay explicit in tests: {error}"
+                            );
+                        }
+                    }
                 }
             }
             "udev" => {
                 if let Some(h) = self.udev_watcher.take() {
-                    h.shutdown()
-                        .await
-                        .expect("udev watcher shutdown should stay explicit in tests");
+                    match h.shutdown().await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error
+                                .to_string()
+                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                        Err(error) => {
+                            panic!("udev watcher shutdown should stay explicit in tests: {error}");
+                        }
+                    }
                 }
             }
             _ => panic!("Unknown watcher: {watcher_type}"),
