@@ -222,10 +222,7 @@ pub fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     }
 }
 
-fn read_cached_command_exists(
-    cmd: &str,
-    cache: &RwLock<HashMap<String, bool>>,
-) -> Option<bool> {
+fn read_cached_command_exists(cmd: &str, cache: &RwLock<HashMap<String, bool>>) -> Option<bool> {
     cache.read().get(cmd).copied()
 }
 
@@ -289,11 +286,7 @@ fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() {
-            stderr
-        } else {
-            stdout
-        };
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
         let message = if detail.is_empty() {
             format!(
                 "failed to determine {} version: command exited with {}",
@@ -332,8 +325,7 @@ fn read_optional_env_var(var: &str, context: &str) -> Option<String> {
         Err(env::VarError::NotUnicode(_)) => {
             warn!(
                 variable = var,
-                context,
-                "Environment variable is not valid UTF-8; ignoring value"
+                context, "Environment variable is not valid UTF-8; ignoring value"
             );
             None
         }
@@ -385,7 +377,6 @@ mod tests {
     };
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
-
     #[sinex_serial_test]
     async fn read_optional_env_var_returns_none_without_value() -> xtask::sandbox::TestResult<()> {
         let _env = EnvGuard::new();
@@ -412,7 +403,9 @@ mod tests {
     #[sinex_test]
     async fn get_shell_version_surfaces_failure_as_none() -> xtask::sandbox::TestResult<()> {
         assert_eq!(
-            get_shell_version(&ShellType::Unknown("__sinex_nonexistent_shell__".to_string())),
+            get_shell_version(&ShellType::Unknown(
+                "__sinex_nonexistent_shell__".to_string()
+            )),
             None
         );
         Ok(())
@@ -432,7 +425,10 @@ mod tests {
     -> xtask::sandbox::TestResult<()> {
         let home = Some(Utf8PathBuf::from("/tmp/home"));
 
-        assert_eq!(ShellType::Fish.default_history_path_from(home.clone()), None);
+        assert_eq!(
+            ShellType::Fish.default_history_path_from(home.clone()),
+            None
+        );
         assert_eq!(ShellType::Elvish.default_history_path_from(home), None);
         assert_eq!(
             ShellType::Nushell.default_history_path_from(Some(Utf8PathBuf::from("/tmp/home"))),

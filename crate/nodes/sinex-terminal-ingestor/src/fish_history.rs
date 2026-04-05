@@ -4,11 +4,11 @@
 //! This module only handles explicitly SQLite-backed Fish history sources.
 
 use camino::Utf8PathBuf;
+use sinex_node_sdk::read_rows_with_params;
 use sinex_node_sdk::{
     SqliteTableCheckError, ensure_sqlite_with_tables, max_row_id_for_query, read_rows_after,
 };
 use sinex_primitives::Timestamp;
-use sinex_node_sdk::read_rows_with_params;
 
 /// Represents a single command from Fish history
 #[derive(Debug, Clone)]
