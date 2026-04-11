@@ -7,12 +7,11 @@
 { config, lib, pkgs, ... }:
 
 {
-  imports = [ ./modules ];
+  imports = [ ../modules ];
 
   services.sinex = {
     enable = true;
     users.target = "myuser"; # REQUIRED: replace with the user to observe
-    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
 
     # Optional: select packages explicitly (module defaults work out of the box)
     # package = pkgs.sinex;
@@ -24,7 +23,6 @@
       port = 5432;
       name = "sinex_prod";
       user = "sinex";
-      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "prod"; # REQUIRED for production; use "dev" for local testing only
@@ -68,13 +66,12 @@
     };
   };
 
-  # Ensure the monitored user exists (adjust to match targetUser above)
+  # Ensure the monitored user exists (adjust to match services.sinex.users.target above)
   users.users.myuser = {
     isNormalUser = true;
     createHome = true;
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "example-admin:admin";
-  environment.etc."sinex/db-password".text = "example-db-password";
+  environment.etc."sinex/gateway-admin-token".text = "workstation-admin:admin";
 }

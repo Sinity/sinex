@@ -1,10 +1,17 @@
-# Secrets Management with agenix
+# Secrets and Secret Material
 
-**Status (2026-03-23)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start if the token file is missing. The managed NATS surfaces also resolve conventional secret names automatically for local server TLS (`sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`) and the shared client TLS/auth path (`sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`). When `services.sinex.users.target` is known, the module now adds that user's `~/.ssh/id_ed25519` as an additional age identity alongside the host SSH key.
+**Status (2026-03-23)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `nixos/secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The same secret-path registry also picks up conventional declarative `environment.etc."sinex/..."` entries, so the rest of the module can resolve either source uniformly. The gateway unit requires `sinex-gateway-admin-token.age` or `environment.etc."sinex/gateway-admin-token"` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start if the token file is missing. Database-auth surfaces resolve `sinex-local-db` / `sinex-remote-db` automatically when password auth is enabled, and also honor `/etc/sinex/db-password` / `/etc/sinex/remote-db-password` when those are declared via `environment.etc`. The managed NATS surfaces also resolve conventional secret names automatically for local server TLS (`sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`) and the shared client TLS/auth path (`sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`, `sinex-remote-nats-ca`, `sinex-remote-nats-cert`, `sinex-remote-nats-key`). Grafana stays declarative: it derives a stable local key by default and will consume `sinex-grafana-secret-key.age` or `environment.etc."sinex/grafana-secret-key"` automatically when present. When `services.sinex.users.target` is known, the module now adds that user's `~/.ssh/id_ed25519` as an additional age identity alongside the host SSH key.
 
 ## Overview
 
-`agenix` is used for managing secrets (API keys, database passwords, encryption keys) within the NixOS configuration. It ensures secrets are encrypted in the Git repository and decrypted securely at system activation.
+The Sinex module can consume secret material from two declarative sources:
+
+- `agenix` for real encrypted secrets committed to the repo
+- conventional `environment.etc."sinex/..."` entries for local/dev or
+  operator-managed file material
+
+For anything sensitive, prefer agenix. The shared `config.sinex.secrets.paths`
+registry lets the rest of the module treat both sources uniformly.
 
 ## Core Concepts
 
@@ -13,6 +20,8 @@
 - Decryption based on `age` identities (X25519 keys, SSH keys)
 - Plaintext secrets never stored in world-readable Nix store
 - Decryption at system activation to `/run/agenix.d/` or `/run/secrets/`
+- Optional declarative file fallback through `environment.etc."sinex/..."` for
+  deployments that are not using agenix yet
 
 ## Usage Guide
 
@@ -118,13 +127,16 @@ For secrets requiring periodic rotation:
 
 ✅ Implemented:
 - agenix is included in the flake inputs and imported by the Sinex NixOS module.
-- `.age` files under `secret/` are decrypted to `/run/agenix/<name>` and exposed via `config.sinex.secrets.paths`.
-- Gateway requires `sinex-gateway-admin-token.age` (or `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start without it.
-- Managed local NATS TLS/auth surfaces resolve the conventional `sinex-nats-*` secret names automatically.
+- `.age` files under `nixos/secret/` are decrypted to `/run/agenix/<name>` and exposed via `config.sinex.secrets.paths`.
+- The same `config.sinex.secrets.paths` registry also imports conventional declarative `environment.etc."sinex/..."` entries.
+- Gateway requires `sinex-gateway-admin-token.age`, `environment.etc."sinex/gateway-admin-token"`, or `services.sinex.secrets.gatewayAdminTokenFile`.
+- Database password consumers resolve `sinex-local-db` / `sinex-remote-db` automatically and also honor `/etc/sinex/db-password` / `/etc/sinex/remote-db-password`.
+- Managed local and remote NATS TLS/auth surfaces resolve the conventional `sinex-nats-*` and `sinex-remote-nats-*` secret names automatically.
+- Grafana resolves `sinex-grafana-secret-key.age` or `/etc/sinex/grafana-secret-key` automatically when present, otherwise it uses the module-derived stable default.
 
 ⚠️ Operator tasks (per deployment):
 - Generate age keys for host/user and encrypt secrets.
-- Place encrypted `.age` files under `secret/` or set explicit secret file paths.
+- Place encrypted `.age` files under `nixos/secret/`, declare conventional `environment.etc."sinex/..."` files, or set explicit secret file paths.
 - Rotate secrets by updating the encrypted file and rebuilding.
 
 ## Related Documentation

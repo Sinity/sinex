@@ -6,19 +6,16 @@
 { config, lib, pkgs, ... }:
 
 {
-  imports = [ ./modules ];
+  imports = [ ../modules ];
 
   services.sinex = {
     enable = true;
     users.target = "serveruser";
-    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
-
     database = {
       autoSetup = true;
       host = "127.0.0.1";
       name = "sinex_server_prod";
       user = "sinex";
-      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "prod";
@@ -73,6 +70,5 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "example-headless-admin:admin";
-  environment.etc."sinex/db-password".text = "example-db-password";
+  environment.etc."sinex/gateway-admin-token".text = "headless-admin:admin";
 }

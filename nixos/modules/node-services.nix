@@ -5,11 +5,13 @@ with lib;
 let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
     renderDatabaseUrl
     ;
+  inherit (secretResolution) resolveNamedSecretPath;
   cfg = config.services.sinex;
   coreCfg = cfg.core;
   nodesCfg = cfg.nodes;
@@ -76,29 +78,31 @@ let
 
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or {};
-  resolveSecretPath = explicit: names:
-    if explicit != null then explicit else
-    let
-      match = findFirst (name: builtins.hasAttr name secretPaths) null names;
-    in
-    if match == null then null else builtins.getAttr match secretPaths;
+  resolveSecretPath = resolveNamedSecretPath secretPaths;
   gatewayAdminTokenFile =
-    if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
-    else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
-    else null;
+    resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
+      "sinex-gateway-admin-token"
+    ];
+  effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
+    "sinex-local-db"
+    "sinex-remote-db"
+  ];
   natsTlsCfg = nodesCfg.nats.tls;
   natsAuthCfg = nodesCfg.nats.auth;
   effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
+    "sinex-remote-nats-ca"
   ];
   effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
     "sinex-nats-client-cert"
     "nats-client-cert"
+    "sinex-remote-nats-cert"
   ];
   effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
     "sinex-nats-client-key"
     "nats-client-key"
+    "sinex-remote-nats-key"
   ];
   effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
     "sinex-nats-token"
@@ -117,7 +121,7 @@ let
     || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
   collectReadablePaths = paths: filter (path: path != null) paths;
   databaseSecretAssertPaths = collectReadablePaths [
-    (if cfg.database.enable then cfg.database.passwordFile else null)
+    (if cfg.database.enable then effectiveDatabasePasswordFile else null)
   ];
   natsSecretAssertPaths = collectReadablePaths [
     effectiveNatsCaCertFile
@@ -424,7 +428,7 @@ let
           ExecStart = mkDatabasePasswordExec {
             name = "ingestd";
             command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
-            passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+            passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
           };
         };
       };
@@ -447,7 +451,7 @@ let
             ExecStart = mkDatabasePasswordExec {
               name = "gateway";
               command = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
-              passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
             };
           }
           // optionalAttrs (gatewayRuntimeInputStageScript != null) {
@@ -972,7 +976,7 @@ let
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
             command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
-            passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+            passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
           };
           WorkingDirectory = stateRoot;
         } // serviceConfigOverrides);
@@ -1008,7 +1012,7 @@ let
         ExecStart = mkDatabasePasswordExec {
           name = params.binary;
           command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
-          passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+          passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
         };
         WorkingDirectory = stateRoot;
       };
