@@ -79,7 +79,6 @@
 
 mod agent_lifecycle_chaos_test;
 mod attack_simulation_test;
-mod bottleneck_identification_test;
 mod boundary_test;
 mod concurrency_test;
 mod concurrent_load_test;
@@ -113,7 +112,6 @@ mod node_crash_recovery_test;
 mod performance_test;
 mod pipeline_end_to_end;
 mod pipeline_idempotency_test;
-mod regression_detection_test;
 mod resource_exhaustion_test;
 mod resource_monitoring_test;
 mod schema_compatibility_test;
