@@ -1,6 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "ProcessStatus": {
       "description": "Strongly typed status for process heartbeat payloads",
       "enum": [
@@ -9,36 +8,40 @@
         "failed"
       ],
       "type": "string"
+    },
+    "SequenceNumber": {
+      "description": "Sequence number newtype for ordering.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "metrics": {
-      "description": "Optional metrics collected from MetricsProviders"
+      "description": "Optional metrics collected from `MetricsProviders`"
     },
     "sequence": {
-      "description": "Sequence number of this heartbeat (increments each emission)",
-      "format": "uint64",
-      "minimum": 0.0,
-      "type": "integer"
+      "$ref": "#/$defs/SequenceNumber",
+      "description": "Sequence number of this heartbeat (increments each emission)"
     },
     "source": {
       "description": "Name of the service/process emitting the heartbeat",
       "type": "string"
     },
     "status": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/ProcessStatus"
-        }
-      ],
+      "$ref": "#/$defs/ProcessStatus",
       "description": "Status of the process"
     }
   },
   "required": [
-    "sequence",
     "source",
+    "sequence",
     "status"
   ],
   "title": "ProcessHeartbeatPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "process.heartbeat",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

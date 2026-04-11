@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "blob_id": {
       "type": "string"
@@ -9,7 +9,7 @@
     },
     "freed_bytes": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
@@ -19,5 +19,8 @@
     "freed_bytes"
   ],
   "title": "BlobDeletedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "blob.deleted",
+  "x-sinex-source": "blob_storage",
+  "x-sinex-version": "1.0.0"
 }

@@ -8,8 +8,9 @@ on:
   pull_request:
     paths:
       - 'schemas/**'
-      - 'crate/lib/sinex-core/src/types/events/**'
-      - 'xtask/src/main.rs'
+      - 'crate/lib/sinex-primitives/src/events/**'
+      - 'crate/lib/sinex-macros/**'
+      - 'xtask/src/**/*.rs'
 
 jobs:
   check-schemas:
@@ -30,7 +31,7 @@ jobs:
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
-            CI_BASE_BRANCH=${{ github.base_ref }} xtask schema compat
+            xtask ci compat --base "${{ github.base_ref }}"
           '
 
       - name: Comment on PR
@@ -45,7 +46,7 @@ jobs:
             - Any breaking changes get a schema version bump
             - Optional additions remain backward compatible
 
-            Run \`xtask schema compat --base ${{ github.base_ref }}\` locally for details.
+            Run \`xtask ci compat --base ${{ github.base_ref }}\` locally for details.
             `;
 
             github.rest.issues.createComment({

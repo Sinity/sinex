@@ -1,0 +1,19 @@
+{
+  "version": "v2",
+  "entries": [
+    {
+      "source": "canonical.terminal",
+      "event_type": "command.canonical",
+      "version": "2.0.0",
+      "path": "canonical.terminal/command.canonical.json",
+      "content_hash": "e793b236113209a149fcbadd92593559b0142e4b9dbc4a3115dece89b3c3a329"
+    },
+    {
+      "source": "sinex.ingestd",
+      "event_type": "batch.stats",
+      "version": "2.0.0",
+      "path": "sinex.ingestd/batch.stats.json",
+      "content_hash": "42fd69311db898683bf4b6398b16bab45efe46261144a0675d7bf6322724ab01"
+    }
+  ]
+}

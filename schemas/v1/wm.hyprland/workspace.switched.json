@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "active_window_id": {
       "type": [
@@ -22,9 +22,12 @@
   },
   "required": [
     "from_workspace_id",
-    "monitor_id",
-    "to_workspace_id"
+    "to_workspace_id",
+    "monitor_id"
   ],
   "title": "HyprlandWorkspaceSwitchedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "workspace.switched",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
 }

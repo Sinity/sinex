@@ -1,18 +1,31 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "modified_at": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
     },
-    "path": {
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
       "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "modified_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "path": {
+      "$ref": "#/$defs/RecordedPath"
+    }
+  },
   "required": [
-    "modified_at",
-    "path"
+    "path",
+    "modified_at"
   ],
   "title": "DirDiscoveredPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "dir.discovered",
+  "x-sinex-source": "fs-watcher",
+  "x-sinex-version": "1.0.0"
 }

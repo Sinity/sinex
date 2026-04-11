@@ -1,6 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "ComponentHealthStatus": {
       "description": "Health status for a system component (health automaton)",
       "enum": [
@@ -10,20 +9,24 @@
         "Unknown"
       ],
       "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Component health report from health automaton",
   "properties": {
     "component_name": {
       "type": "string"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "last_seen": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "metrics": {
       "additionalProperties": {
@@ -38,26 +41,29 @@
     },
     "recent_event_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "report_type": {
       "type": "string"
     },
     "status": {
-      "$ref": "#/definitions/ComponentHealthStatus"
+      "$ref": "#/$defs/ComponentHealthStatus"
     }
   },
   "required": [
+    "report_type",
     "component_name",
-    "generated_at",
+    "status",
     "last_seen",
     "metrics",
-    "minutes_since_last_update",
     "recent_event_count",
-    "report_type",
-    "status"
+    "minutes_since_last_update",
+    "generated_at"
   ],
   "title": "HealthComponentReportPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "health.component_report",
+  "x-sinex-source": "health-automaton",
+  "x-sinex-version": "1.0.0"
 }

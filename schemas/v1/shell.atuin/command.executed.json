@@ -1,5 +1,34 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "CommandText": {
+      "description": "A command line text",
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
+      "format": "int32",
+      "type": "integer"
+    },
+    "HostName": {
+      "description": "The hostname where an event occurred.\n\nAlways valid by construction. Use [`HostName::new`] to parse runtime input,\nor [`HostName::from_static`] for compile-time literals.\n\nValid format: ASCII alphanumeric labels separated by dots, with optional\ninterior hyphens. Labels may not start or end with `-`, may not be empty,\nand the full hostname must not exceed 255 bytes.",
+      "type": "string"
+    },
+    "Nanoseconds": {
+      "description": "Nanosecond-count newtype for very high-precision timing.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Atuin command execution captured from history ingestion.",
   "properties": {
     "atuin_history_id": {
@@ -9,21 +38,19 @@
       "type": "string"
     },
     "command_string": {
-      "type": "string"
+      "$ref": "#/$defs/CommandText"
     },
     "cwd": {
-      "type": "string"
+      "$ref": "#/$defs/RecordedPath"
     },
     "duration_ns": {
-      "format": "int64",
-      "type": "integer"
+      "$ref": "#/$defs/Nanoseconds"
     },
     "exit_code": {
-      "format": "int32",
-      "type": "integer"
+      "$ref": "#/$defs/ExitCode"
     },
     "hostname": {
-      "type": "string"
+      "$ref": "#/$defs/HostName"
     },
     "terminal_session_uuid": {
       "type": [
@@ -36,26 +63,27 @@
       "type": "integer"
     },
     "ts_end_orig": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "ts_start_orig": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "atuin_history_id",
-    "atuin_session_id",
     "command_string",
     "cwd",
-    "duration_ns",
     "exit_code",
-    "hostname",
+    "duration_ns",
+    "atuin_history_id",
+    "atuin_session_id",
     "timestamp",
+    "ts_start_orig",
     "ts_end_orig",
-    "ts_start_orig"
+    "hostname"
   ],
   "title": "AtuinCommandExecutedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "command.executed",
+  "x-sinex-source": "shell.atuin",
+  "x-sinex-version": "1.0.0"
 }

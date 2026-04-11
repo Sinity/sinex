@@ -1,14 +1,106 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "DeviceType": {
+      "description": "Device/subsystem type",
+      "oneOf": [
+        {
+          "const": "usb",
+          "description": "USB device",
+          "type": "string"
+        },
+        {
+          "const": "storage",
+          "description": "Storage device (disk, partition)",
+          "type": "string"
+        },
+        {
+          "const": "network",
+          "description": "Network interface",
+          "type": "string"
+        },
+        {
+          "const": "input",
+          "description": "Input device (keyboard, mouse)",
+          "type": "string"
+        },
+        {
+          "const": "audio",
+          "description": "Audio device",
+          "type": "string"
+        },
+        {
+          "const": "video",
+          "description": "Video/display device",
+          "type": "string"
+        },
+        {
+          "const": "bluetooth",
+          "description": "Bluetooth device",
+          "type": "string"
+        },
+        {
+          "const": "battery",
+          "description": "Battery",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Other/unknown device type",
+          "type": "string"
+        }
+      ]
+    },
+    "UdevAction": {
+      "description": "udev action type",
+      "oneOf": [
+        {
+          "const": "add",
+          "description": "Device added",
+          "type": "string"
+        },
+        {
+          "const": "remove",
+          "description": "Device removed",
+          "type": "string"
+        },
+        {
+          "const": "change",
+          "description": "Device changed",
+          "type": "string"
+        },
+        {
+          "const": "bind",
+          "description": "Driver bound",
+          "type": "string"
+        },
+        {
+          "const": "unbind",
+          "description": "Driver unbound",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Other action",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "action": {
-      "type": "string"
+      "$ref": "#/$defs/UdevAction"
     },
     "device_path": {
       "type": "string"
     },
     "device_type": {
-      "type": "string"
+      "$ref": "#/$defs/DeviceType"
     },
     "devtype": {
       "type": [
@@ -41,7 +133,7 @@
       ]
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "vendor": {
       "type": [
@@ -58,5 +150,8 @@
     "timestamp"
   ],
   "title": "UdevDeviceDriverChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "device.driver_changed",
+  "x-sinex-source": "udev",
+  "x-sinex-version": "1.0.0"
 }

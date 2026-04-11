@@ -1,8 +1,15 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "focus_timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "kitty_tab_id": {
       "type": "string"
@@ -18,7 +25,7 @@
     },
     "tab_index": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "tab_title": {
@@ -26,12 +33,15 @@
     }
   },
   "required": [
-    "focus_timestamp",
     "kitty_tab_id",
     "kitty_window_id",
+    "tab_title",
     "tab_index",
-    "tab_title"
+    "focus_timestamp"
   ],
   "title": "KittyTabFocusedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "tab.focused",
+  "x-sinex-source": "shell.kitty",
+  "x-sinex-version": "1.0.0"
 }

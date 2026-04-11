@@ -1,874 +1,873 @@
 {
   "version": "v1",
-  "generated_at": "2026-01-22T16:30:37.984910112+00:00",
   "entries": [
+    {
+      "source": "activitywatch",
+      "event_type": "afk.changed",
+      "version": "1.0.0",
+      "path": "activitywatch/afk.changed.json",
+      "content_hash": "9801c6ed72837985e2a11a6dc889546b5a7c94aa7106dab0986aabd284306596"
+    },
+    {
+      "source": "activitywatch",
+      "event_type": "browser.tab.active",
+      "version": "1.0.0",
+      "path": "activitywatch/browser.tab.active.json",
+      "content_hash": "931c2ebe84b0ef470bbf19a15f491375ea33f5f952e114e907da3434b256f34c"
+    },
+    {
+      "source": "activitywatch",
+      "event_type": "window.active",
+      "version": "1.0.0",
+      "path": "activitywatch/window.active.json",
+      "content_hash": "4c70aa8ddf161d5668c6eadaf4c8533e5d9f9a7526cf66aac9ed41f864b8213e"
+    },
     {
       "source": "analytics-automaton",
       "event_type": "analytics.correlation",
       "version": "1.0.0",
       "path": "analytics-automaton/analytics.correlation.json",
-      "content_hash": "da0775bb90a800d854d4cffb06cc854f93cff8a9eca0492ff4c0c2ffd717f0c6"
+      "content_hash": "007bd233920b708283f87e1f4445b57069a2a287bb45f739710078f2266a45b4"
     },
     {
       "source": "analytics-automaton",
       "event_type": "analytics.frequency",
       "version": "1.0.0",
       "path": "analytics-automaton/analytics.frequency.json",
-      "content_hash": "7f7266533a57d667d310e58ce7f7ac2f488b003e1ce1346f4d3e3eced1886874"
+      "content_hash": "c0ff8b00540d22eccfe6c2b6dea3cef0282e6ee3cacd2e62abcea89a6aeabe6f"
     },
     {
       "source": "analytics-automaton",
       "event_type": "analytics.pattern.detected",
       "version": "1.0.0",
       "path": "analytics-automaton/analytics.pattern.detected.json",
-      "content_hash": "7909c310c59e122ad407c497a207fcc127f6cb433e3ff17cc5297df89c9abf60"
-    },
-    {
-      "source": "atuin",
-      "event_type": "entry.imported",
-      "version": "1.0.0",
-      "path": "atuin/entry.imported.json",
-      "content_hash": "f9ad2fbf4c0e1928138ec165ce37a92b0e17ec170d611382f4f5e04df46ecf00"
+      "content_hash": "316f90bfcb96e42637f83d1c733f7ab166e56e3317e8b4b6e5ca4b8971167e8b"
     },
     {
       "source": "blob_storage",
       "event_type": "blob.deleted",
       "version": "1.0.0",
       "path": "blob_storage/blob.deleted.json",
-      "content_hash": "cd79d59e581e1c2bc15c4c25263585361814879a9bd3f8dc0315cee5e2b38230"
+      "content_hash": "ed65580586e62268d90b01948af505ec312bcbbd04a821f1a274e47c9283e1e6"
     },
     {
       "source": "blob_storage",
       "event_type": "blob.ingested",
       "version": "1.0.0",
       "path": "blob_storage/blob.ingested.json",
-      "content_hash": "56e069fce3d6a74cf0aeb119a570ea95370a753ccd7c4b84a679850ce140d5e8"
+      "content_hash": "28073ed7853d5a8c10fb886851bc4fedca57fd2b8ff908aff0c7bd696e689144"
     },
     {
       "source": "blob_storage",
       "event_type": "blob.retrieved",
       "version": "1.0.0",
       "path": "blob_storage/blob.retrieved.json",
-      "content_hash": "c6189149034d4b044c4da84acea616169e38fbb825de1e303a584ba840350b80"
+      "content_hash": "b6f8d5e5a389e5d081930fe2d3883815725966dcf3334cc5986ad50637370c31"
     },
     {
       "source": "blob_storage",
       "event_type": "blob.stored",
       "version": "1.0.0",
       "path": "blob_storage/blob.stored.json",
-      "content_hash": "57e38402f258830aff824ec268ea6eef5197fde48eb96cc74d0fd9d12c7ef89f"
+      "content_hash": "8671c0b395ab5d7443b223598acdca9a3d2d513fdeef6aecf7ab5e17013c7f5f"
     },
     {
       "source": "blob_storage",
       "event_type": "blob.verified",
       "version": "1.0.0",
       "path": "blob_storage/blob.verified.json",
-      "content_hash": "2d99d63b8524ec09d702667614901391bbd07329a9538c819cf9c46173fbc7fe"
+      "content_hash": "802160c7cfab639466e1e43217c68bc40d2512648c815328f53c89729cdd9ae0"
     },
     {
       "source": "blob_storage",
       "event_type": "storage.statistics",
       "version": "1.0.0",
       "path": "blob_storage/storage.statistics.json",
-      "content_hash": "33bb72b08446a85e467d7becfa968afc83eeb5c5e8f9df3f0c8c0df82ee79c0e"
-    },
-    {
-      "source": "canonical.terminal",
-      "event_type": "command.canonical",
-      "version": "1.0.0",
-      "path": "canonical.terminal/command.canonical.json",
-      "content_hash": "a8dbeccf21e2679d53d0d43e0e58797109a34712d3ed7652d011a95c62d17380"
+      "content_hash": "f2df667f82cb0c442d748f382c0b9d42c9756982358c9c069f961aae996e1980"
     },
     {
       "source": "clipboard",
       "event_type": "clipboard.copied",
       "version": "1.0.0",
       "path": "clipboard/clipboard.copied.json",
-      "content_hash": "e62fdc0fee0f134c1f7c56539b51c6ac5437d31f2b1d03d7495e41696f5bc462"
+      "content_hash": "d9b13199e7f58d1ad303eaf20969f02f1843c95a049a47add2e9b332036f85ec"
     },
     {
       "source": "clipboard",
       "event_type": "clipboard.selected",
       "version": "1.0.0",
       "path": "clipboard/clipboard.selected.json",
-      "content_hash": "42698a16fd3804b6c6b65b8041c4809726883321d07ece555d8c8c96e82b2239"
+      "content_hash": "21449feb3e4c58028ef9d0656e5f6d8ce240e5b1c508c3596a246173077e5282"
     },
     {
       "source": "content-automaton",
       "event_type": "content.analyzed",
       "version": "1.0.0",
       "path": "content-automaton/content.analyzed.json",
-      "content_hash": "a858d38416c3193edb5a328e6b4df7d34fa134af7a907ff1acf06d8572c437ae"
+      "content_hash": "23c710203c28cf2e393ab93adb96ec0f48428f5249922389541cf55626d178cd"
     },
     {
       "source": "content-automaton",
       "event_type": "content.classified",
       "version": "1.0.0",
       "path": "content-automaton/content.classified.json",
-      "content_hash": "7ee0c80528b2358bfd9dfa42cda22880738e1e6c2e2349a05deccf287ff16baa"
+      "content_hash": "dc957c3dffec59e9435b0bb2e4cdd1d71d31e6df3e795418aacf4e241767aaf8"
     },
     {
       "source": "content-automaton",
       "event_type": "content.similarity_detected",
       "version": "1.0.0",
       "path": "content-automaton/content.similarity_detected.json",
-      "content_hash": "59474bb9f8916537c5bd28e48502df7266d4c1b714f73c2f1b41663f51eeedb4"
+      "content_hash": "b0ceb8ffdc0341e998807def6f01117ef4db3eb24c2040deb6c19f1fb0a2d67b"
     },
     {
       "source": "dbus",
       "event_type": "bluetooth.device_changed",
       "version": "1.0.0",
       "path": "dbus/bluetooth.device_changed.json",
-      "content_hash": "a8a24633ae3fb8a6d364022209aab592bb6dbaec2c22fa3dd5bb50da79c97450"
+      "content_hash": "beaca1727937624684c835b73d8f6e82d234d77849118492c5f8750df4335144"
     },
     {
       "source": "dbus",
       "event_type": "device.connected",
       "version": "1.0.0",
       "path": "dbus/device.connected.json",
-      "content_hash": "53acb8bffe36247ee2761e1f5980ad9b4ee98dfd4eca29026bb4261a99423eb5"
+      "content_hash": "382126f65bc91abeb8f62117431da4de630bea7d70716c08d371bd9b694b2687"
     },
     {
       "source": "dbus",
       "event_type": "media.state_changed",
       "version": "1.0.0",
       "path": "dbus/media.state_changed.json",
-      "content_hash": "52a7ec0f71edf09b9f71730ca5b751e3b1805c25f0ed051ca1eb5e51b7f2f0ac"
+      "content_hash": "f53fc89935eb90705a823e263916d9382a2c438916f385f47932f5705bebc860"
     },
     {
       "source": "dbus",
       "event_type": "method.called",
       "version": "1.0.0",
       "path": "dbus/method.called.json",
-      "content_hash": "58119948faa9a4736013eabfcd11dc6849e81502af15725d14bff1c20bfb9396"
+      "content_hash": "024afd376151bbe6af8c53971140ad9cb0a37d981b5243ea086e3b013f8b23eb"
     },
     {
       "source": "dbus",
       "event_type": "mount.event",
       "version": "1.0.0",
       "path": "dbus/mount.event.json",
-      "content_hash": "2834dfd79806524168e28f3ad9349fab905211ebf92c1bdab8a5bf46e4a6b847"
+      "content_hash": "47399112d27caca3445ec59beccd274168635eb87d16ab3a93c31c7769c50872"
     },
     {
       "source": "dbus",
       "event_type": "network.state_changed",
       "version": "1.0.0",
       "path": "dbus/network.state_changed.json",
-      "content_hash": "6c69b4896db7d12e89658df09527c7b29c8f94498d0b53dffced37faf2c2960e"
+      "content_hash": "4e33a3daa91d334b9513d38e41c24c018cb8d8c46a7b9447ed2a58a7d90c3479"
     },
     {
       "source": "dbus",
       "event_type": "notification.sent",
       "version": "1.0.0",
       "path": "dbus/notification.sent.json",
-      "content_hash": "d3ffb9509804008e0905ae1a6e4f877b6606f3c8f6ce137495dac730ed1caa65"
+      "content_hash": "94afb9b5673a92199e48a27790a50765ae064691b573f04bde43381078c923e6"
     },
     {
       "source": "dbus",
       "event_type": "power.state_changed",
       "version": "1.0.0",
       "path": "dbus/power.state_changed.json",
-      "content_hash": "bcc6fbe4d147843295709490d4862b51cadbb84b0d0659ac51e6d221f0f3cb2a"
+      "content_hash": "212e78d85f12a438bd68b9b9387b0aa72081e7debce0c5ad1689270de636faba"
     },
     {
       "source": "dbus",
       "event_type": "signal.received",
       "version": "1.0.0",
       "path": "dbus/signal.received.json",
-      "content_hash": "8dcfd899a95965a6437f3e0c8338228e2979168d9fda4bbf3f722ead71e59f1e"
+      "content_hash": "4f242de51a59ce26e71c43f170eab22f996868c20550b21b9c13983c86ff2e14"
     },
     {
       "source": "desktop",
       "event_type": "clipboard.historical",
       "version": "1.0.0",
       "path": "desktop/clipboard.historical.json",
-      "content_hash": "41abaff6889b8e2b54fe53f188abbb058259fdd3a1f7bfa5d975ab75e2874748"
+      "content_hash": "0becf83dde66d2989ec6268f85c0015a3832aa1485f70d47c80da57da802a9c7"
     },
     {
       "source": "desktop",
       "event_type": "desktop.monitoring_started",
       "version": "1.0.0",
       "path": "desktop/desktop.monitoring_started.json",
-      "content_hash": "e833074ce05bba966d6330bc055ee6b97a62800571d63223b322b41227c74930"
+      "content_hash": "b0fc23428fce2bc208b75a393e13b33d1f6cc24ed26551e2fff653eadf1f10d9"
     },
     {
       "source": "desktop",
       "event_type": "desktop.snapshot",
       "version": "1.0.0",
       "path": "desktop/desktop.snapshot.json",
-      "content_hash": "85ca7823b7e61e4439e457d7b3ac8700db3e25332fa46e88787c4dd288e8860b"
+      "content_hash": "cf52e03d1917ab29e1d598954e13d41644d13fa6418e9b951dd9e05490d84fcb"
     },
     {
       "source": "desktop",
       "event_type": "window.wm_historical",
       "version": "1.0.0",
       "path": "desktop/window.wm_historical.json",
-      "content_hash": "0eee4ad736a07ea8f07b1afded6be0b8ff827f1c9c0bb42bea2b3ae20d2df1ec"
+      "content_hash": "6e7c5d6c09cff58c904cabee81b1e8face51b5ad2c3d39087163d8e9b01677d1"
     },
     {
       "source": "document-ingestor",
       "event_type": "document.ingested",
       "version": "1.0.0",
       "path": "document-ingestor/document.ingested.json",
-      "content_hash": "d043e8bb2a6f5a6f80946f60b35b425e4a1c5871cd106fcc1977b626e080d9a2"
+      "content_hash": "c8546cbad8531810abb04ad644343a252b0dc9898cc89f8bcbac97e97da3ebe7"
     },
     {
       "source": "fs-watcher",
       "event_type": "dir.created",
       "version": "1.0.0",
       "path": "fs-watcher/dir.created.json",
-      "content_hash": "815b38a4b779e502a5c4c24255eecc37abe8f7f09a0f9f8360e72555786f5a03"
+      "content_hash": "29d1fced0a00e048cc66be4faf9da60e4f361d9c0fbea58e3844a1af13f5f115"
     },
     {
       "source": "fs-watcher",
       "event_type": "dir.deleted",
       "version": "1.0.0",
       "path": "fs-watcher/dir.deleted.json",
-      "content_hash": "fbb25164a4aaa8f07462cbaa415439e4a3321dba1738546cab20e6eabf2cc9d6"
+      "content_hash": "6aa1b23d13564f7c426e137d61401237b9332702961f5865a743256361301f79"
     },
     {
       "source": "fs-watcher",
       "event_type": "dir.discovered",
       "version": "1.0.0",
       "path": "fs-watcher/dir.discovered.json",
-      "content_hash": "dcdff6e2fbe674dd2b254107fb7eb42eda7dd2d0891d217dc94ca3b976ae9ad6"
+      "content_hash": "13d0e530b746ae0aeb5c6bffcb9ef1a67255d475efe0ca50f2b99fd636921fd2"
     },
     {
       "source": "fs-watcher",
       "event_type": "file.created",
       "version": "1.0.0",
       "path": "fs-watcher/file.created.json",
-      "content_hash": "cf998153fb5cabfadbe429dd5faf8c2520f910965d78f45931be042cea125c84"
+      "content_hash": "0117e404c15a4ad4e120bf3991838eebc3076674f32863bc9480a2af13a4139d"
     },
     {
       "source": "fs-watcher",
       "event_type": "file.deleted",
       "version": "1.0.0",
       "path": "fs-watcher/file.deleted.json",
-      "content_hash": "45e11cc866876a26388571e0911f07cb2638ae815911dd68f3fe5b9ffa9084ff"
+      "content_hash": "dbff46fb683148e3260a9513c6c3345ef5cce7752661a3cdc0c8cc90789a1eca"
     },
     {
       "source": "fs-watcher",
       "event_type": "file.discovered",
       "version": "1.0.0",
       "path": "fs-watcher/file.discovered.json",
-      "content_hash": "a72bd56750edc7009a11feddc28dd44705fad09df51349f0c95ce4bfaff5347b"
+      "content_hash": "52b155d33b89e649440ea1272ed9e1a529bd404601fa96f68d304c5c440acc50"
     },
     {
       "source": "fs-watcher",
       "event_type": "file.modified",
       "version": "1.0.0",
       "path": "fs-watcher/file.modified.json",
-      "content_hash": "d93bad09c742f46bee2efb29ff596a88d5d53cae80531a70873be96340354a75"
+      "content_hash": "6591153e50b05cdee3a8946c3fe0e7b234179d4a4e06b29cf0acfe0136c9b95e"
     },
     {
       "source": "fs-watcher",
       "event_type": "file.moved",
       "version": "1.0.0",
       "path": "fs-watcher/file.moved.json",
-      "content_hash": "47a9e7d48b852aec0e110cab3f13b04077561cfcf64920525a3ade7d755c7625"
+      "content_hash": "0267138505f6e477d1cf67122c2a885db92b66a2b86c8024edd5dec1415b04f6"
     },
     {
       "source": "health-aggregator",
       "event_type": "system.health_summary",
       "version": "1.0.0",
       "path": "health-aggregator/system.health_summary.json",
-      "content_hash": "e69622c8a589ba5d3e09dda781760a77c73a9ecbc8986869cd3ddb5d78c66c31"
+      "content_hash": "eb3f741ea4248e08be9ecaca32535311f46fa15122669133b4eb70c346d512fa"
     },
     {
       "source": "health-automaton",
       "event_type": "health.alert",
       "version": "1.0.0",
       "path": "health-automaton/health.alert.json",
-      "content_hash": "9747f7072bafe71c151f559f2eafc929b6fddb9d86bda7f769181bc9083caa0a"
+      "content_hash": "592f2c057b064d34b4717bdc85d46ddff9e4d07922abce8868ddedadae5e9e9b"
     },
     {
       "source": "health-automaton",
       "event_type": "health.component_report",
       "version": "1.0.0",
       "path": "health-automaton/health.component_report.json",
-      "content_hash": "626bf38bc0da910c52d10b736f182eaccaf9c81c3b685c7054d1b75bca210075"
+      "content_hash": "ad042a8e22074438987b545e418fe2015b98d6ca18e2f32d3e1ce3c250f4d16b"
     },
     {
       "source": "health-automaton",
       "event_type": "health.system_status",
       "version": "1.0.0",
       "path": "health-automaton/health.system_status.json",
-      "content_hash": "a4cea1d08f8d152bcb85f7ed21c283896dbea8fc4a4ee3b22f299218688b55c0"
+      "content_hash": "2dacbb9fc11ea7951a0b99e61ac210b94a6fce559ad2b437dc38695ff0ae62b2"
     },
     {
       "source": "journald",
       "event_type": "entry.written",
       "version": "1.0.0",
       "path": "journald/entry.written.json",
-      "content_hash": "bf1d3f924aacf267f94ec70b26b09e3fe660914140911970caefd168273e1b2c"
+      "content_hash": "f68c503fad1f971e2b9dbeefd1734d5c3138428a0b774a66353fb8421db6779b"
     },
     {
       "source": "journald",
       "event_type": "log_entry.captured",
       "version": "1.0.0",
       "path": "journald/log_entry.captured.json",
-      "content_hash": "ee2d650d97fa40f29060d307fd3af11c9d70257189f26b639df7a594eababca6"
+      "content_hash": "0aca9964e122211a41016cfa41600a54f41de5635236e3aea68db9a736624a7d"
     },
     {
       "source": "journald",
       "event_type": "node.heartbeat",
       "version": "1.0.0",
       "path": "journald/node.heartbeat.json",
-      "content_hash": "bc21514b109b98015db0cd6914ac024a6308e5e67bff76d57ce899a9134a242a"
+      "content_hash": "1af8d04f094370943fed268f2b115923563d008e921a61072a7dde4004acb509"
     },
     {
       "source": "journald",
       "event_type": "sync.completed",
       "version": "1.0.0",
       "path": "journald/sync.completed.json",
-      "content_hash": "db2636285fa09e7a9f6f4b26e6e7111a8bfe9a9eac05d2272f597550c627a617"
+      "content_hash": "2b2a9cc06bbf4e0a94c998da36c7bd87c6a26d4243f0917e19d0a7a49e4f18d4"
     },
     {
       "source": "log_processor",
       "event_type": "log.line",
       "version": "1.0.0",
       "path": "log_processor/log.line.json",
-      "content_hash": "a72e67b793ed79f5bd304f6586bb2e2b7e6a387e4216b8926b02e8654c2e6ba0"
+      "content_hash": "7f93a38efea4cf64a1ae280b443a47aef7501974d1b1f4ae71c554213b1228b3"
     },
     {
       "source": "pkm-automaton",
       "event_type": "pkm.knowledge_extraction",
       "version": "1.0.0",
       "path": "pkm-automaton/pkm.knowledge_extraction.json",
-      "content_hash": "2de64f146d7c2b8b76bce068cd76a767e616188fad65d50421a6e88019c6bf6b"
+      "content_hash": "1b413443b5408580b28f22813d207a3f3dbdf94b8b1e7dc25d7e258495db6523"
     },
     {
       "source": "pkm-automaton",
       "event_type": "pkm.knowledge_graph",
       "version": "1.0.0",
       "path": "pkm-automaton/pkm.knowledge_graph.json",
-      "content_hash": "b251607b562b711816072b734e22e0291a22baf657cbcaf72451db8758326459"
+      "content_hash": "21c88cac520c0524fa75552eb47bf8a6cb513cd157a0ee07d3986df70cf5c55e"
     },
     {
       "source": "pkm-automaton",
       "event_type": "pkm.learning_session",
       "version": "1.0.0",
       "path": "pkm-automaton/pkm.learning_session.json",
-      "content_hash": "38cc4f12cc31952f5f4ff61e9215d3d78c0e97dbb9ddfa5a94bad9bb5da77077"
+      "content_hash": "0bab3a2747e948f05e7f24a635b9b0bac0a164ea0c9221245e65efa4fcaa7d6c"
     },
     {
       "source": "pkm-automaton",
       "event_type": "pkm.workflow_pattern",
       "version": "1.0.0",
       "path": "pkm-automaton/pkm.workflow_pattern.json",
-      "content_hash": "98b035030ae9fa8a94095085aaf434184a0f0054d5ee26add5e3b445caf698d3"
-    },
-    {
-      "source": "rpc.content",
-      "event_type": "rpc.response",
-      "version": "1.0.0",
-      "path": "rpc.content/rpc.response.json",
-      "content_hash": "9fe40cd16d77e51e7810663e90e1499a28f8cf90d5dfe87e574194a9dddb5531"
-    },
-    {
-      "source": "rpc.pkm",
-      "event_type": "rpc.response",
-      "version": "1.0.0",
-      "path": "rpc.pkm/rpc.response.json",
-      "content_hash": "7100229b490b69573c569e0be511738ffd16cb87c79e77b257f84e7b80085c5a"
+      "content_hash": "2ac1f5319ee7d6217d003882ca008b150a6650dd5ebd9e6a114e568ce0b61c0a"
     },
     {
       "source": "search-automaton",
       "event_type": "search.analytics",
       "version": "1.0.0",
       "path": "search-automaton/search.analytics.json",
-      "content_hash": "5c0dc64f8a874fb5b42cbaae8f98c744344694d5bb28cc73bf2c39936ba00461"
+      "content_hash": "c368f3c17ccd516c70b560034028005d55d3dea8165464f7bf8aa4f5a06efe0b"
     },
     {
       "source": "search-automaton",
       "event_type": "search.discoverability",
       "version": "1.0.0",
       "path": "search-automaton/search.discoverability.json",
-      "content_hash": "da6a1d06af101e320011d219051b6cb5cd5f4522b243637b2339d4986649eb8d"
+      "content_hash": "11772cb3a9e47ef2073b9451f492e4b639bd90318211d029e384ebc997193440"
     },
     {
       "source": "search-automaton",
       "event_type": "search.index_built",
       "version": "1.0.0",
       "path": "search-automaton/search.index_built.json",
-      "content_hash": "8ac04a5abeb202a1346c587be8ef7e0074e86288c2cb22b3663e9f3fdea8b26d"
-    },
-    {
-      "source": "shell",
-      "event_type": "command.imported",
-      "version": "1.0.0",
-      "path": "shell/command.imported.json",
-      "content_hash": "6dcd3c3d7750f9148fccfa016791644a0bba00f4b6013438c65bb9971b5784a6"
+      "content_hash": "08354c3486e96f0bdbf68780a00d69d63c26ab8728647968c3fa113b624c94b0"
     },
     {
       "source": "shell.asciinema",
       "event_type": "shell.session_ended",
       "version": "1.0.0",
       "path": "shell.asciinema/shell.session_ended.json",
-      "content_hash": "8ba131da8aeab01308f1fc62350bc34d5e327d8a1f28206addcc77cece87673d"
+      "content_hash": "aea0f61af0456221482781cb926ba52fbb7cf4d50a49fcc45833ca56af05a65b"
     },
     {
       "source": "shell.asciinema",
       "event_type": "shell.session_started",
       "version": "1.0.0",
       "path": "shell.asciinema/shell.session_started.json",
-      "content_hash": "85173ebbf700d64a302e1e1f0aa2f070d2c34b1982b440098864b09faf14690a"
+      "content_hash": "9ba48bcfb3a5a6086a0a1575f315c09d5b115a17dcd9000e0a87544a55831e07"
     },
     {
       "source": "shell.atuin",
       "event_type": "command.completed",
       "version": "1.0.0",
       "path": "shell.atuin/command.completed.json",
-      "content_hash": "f8dffe26bafcf8c0e2a347a47ded3e5f22ed431cdf9e685ba993d5c13d094b7d"
+      "content_hash": "074697fb15b9a2f0805ca2c4395cc9a067beb0fa6a3a25b5ac4a1ad4dcb43024"
     },
     {
       "source": "shell.atuin",
       "event_type": "command.executed",
       "version": "1.0.0",
       "path": "shell.atuin/command.executed.json",
-      "content_hash": "2092f9ca0181c6b90170aad041ffb6a41fdced0a4386f1ea9ed5b31de2191b88"
-    },
-    {
-      "source": "shell.bash_histfile",
-      "event_type": "command.historical",
-      "version": "1.0.0",
-      "path": "shell.bash_histfile/command.historical.json",
-      "content_hash": "2447ace285f17fa4d1f07cee0e07bb1eb6e1ce31fb41aa3a2a9778139e76a092"
-    },
-    {
-      "source": "shell.bash_histfile",
-      "event_type": "entry.imported",
-      "version": "1.0.0",
-      "path": "shell.bash_histfile/entry.imported.json",
-      "content_hash": "82816d57d5597c90f141cd5b79b1eabad182dcbc706e41e30457d6b365eb9a56"
-    },
-    {
-      "source": "shell.fish_history",
-      "event_type": "command.historical",
-      "version": "1.0.0",
-      "path": "shell.fish_history/command.historical.json",
-      "content_hash": "753a97430a9efcb53265a8208380b81e92de3e5d940a5f6302749cbba9bbaffd"
+      "content_hash": "8b141a0bb8a37840ede6a833f1a39598f13862f787c8a23940924001c9654452"
     },
     {
       "source": "shell.history",
       "event_type": "command.imported",
       "version": "1.0.0",
       "path": "shell.history/command.imported.json",
-      "content_hash": "51d62d6b639d03394ad575646e9ab2530e3b09e40b1a4e28baf27b5fc5be3877"
+      "content_hash": "6f7d98f079924923b0fbe86dea75ce9ab5567f3ab71c7983ba9f2fbd5110135d"
+    },
+    {
+      "source": "shell.history.bash",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "path": "shell.history.bash/command.executed.json",
+      "content_hash": "1527b09d91cbf711bb5750ce4ae3fcf31e8549811998f2d813fab4d3ba255883"
+    },
+    {
+      "source": "shell.history.fish",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "path": "shell.history.fish/command.executed.json",
+      "content_hash": "c4b7dc06da7b02d1ba8743f3f2c72bf5d53c69ab85597f4fa42a5d28e3dff09e"
+    },
+    {
+      "source": "shell.history.zsh",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "path": "shell.history.zsh/command.executed.json",
+      "content_hash": "3c3c74a73daa40412bc92d17691a7e3c659ce1e51923cc2b193c444f0d8fe0d3"
     },
     {
       "source": "shell.kitty",
       "event_type": "command.completed",
       "version": "1.0.0",
       "path": "shell.kitty/command.completed.json",
-      "content_hash": "0a433d44ba6c5e614afd8e2b7df981d7e7960b7ca7a04e14b24af0d4afb91f7c"
+      "content_hash": "aed3caf3905db0687c480fd132581b95179306aadf1261125b90b5b9d0091492"
     },
     {
       "source": "shell.kitty",
       "event_type": "command.executed",
       "version": "1.0.0",
       "path": "shell.kitty/command.executed.json",
-      "content_hash": "10f638a1e65f4c78456a1dc4d9c51765f55476511c3f16fab33699bfd89bf6bc"
+      "content_hash": "6e15ae45b65d943ad94447c0aa555a2764a43a75a1f5a5eb7d3a4dd2bdde4438"
     },
     {
       "source": "shell.kitty",
       "event_type": "content.streamed",
       "version": "1.0.0",
       "path": "shell.kitty/content.streamed.json",
-      "content_hash": "61a59a07ec3e35b2af324eaab0d48601dc1efc004d9cadeb36f76036960976a8"
+      "content_hash": "a777d3875703315de8f3fa2141bb80eeee24d42a98d05b623be575d74a8f667a"
     },
     {
       "source": "shell.kitty",
       "event_type": "process.changed",
       "version": "1.0.0",
       "path": "shell.kitty/process.changed.json",
-      "content_hash": "bddc95d2a3ecb54610f324d4b5e889bf32543eba903d4716594695dfbeefc4ce"
+      "content_hash": "bb7b8e4ffa99741fe1563b165796f9e554e4cf4cf6ce8c9544c3eb1c4b686747"
     },
     {
       "source": "shell.kitty",
       "event_type": "tab.focused",
       "version": "1.0.0",
       "path": "shell.kitty/tab.focused.json",
-      "content_hash": "20ac8da325c2834c9e070312e87ab95ad548d589d1d51cb92cbed921733a3da0"
+      "content_hash": "ce0d60aaf1eeb2f2fab469a848abeaa1beabf095c4b7401bdd674571f749c5ad"
     },
     {
       "source": "shell.scrollback",
       "event_type": "shell.output_captured",
       "version": "1.0.0",
       "path": "shell.scrollback/shell.output_captured.json",
-      "content_hash": "dd1d77aa4d395dbcd28a49037aa689cfbddfe20a88d21ba8095f6fa9c5749c2d"
-    },
-    {
-      "source": "shell.zsh_histfile",
-      "event_type": "command.historical",
-      "version": "1.0.0",
-      "path": "shell.zsh_histfile/command.historical.json",
-      "content_hash": "ff1a98aa4bd911706711a9a6171903d065946722f85965665b980adbff3095e9"
+      "content_hash": "10f571e2541d07f267491ee152a2db3697fa3e41a4a56f4fd35f4c1d8cbb0c9e"
     },
     {
       "source": "sinex",
       "event_type": "automaton.error",
       "version": "1.0.0",
       "path": "sinex/automaton.error.json",
-      "content_hash": "b0080c43fa296760f01e615a806d8e5c3f6c054fdb08dde22dc64b4b2ae67d9d"
+      "content_hash": "83843ec8b2a48862ec68f88c3ee47e768c6780ebd92456b4d1e15e1662397c15"
     },
     {
       "source": "sinex",
       "event_type": "health.status",
       "version": "1.0.0",
       "path": "sinex/health.status.json",
-      "content_hash": "2547ffc7f2ec106cad2c4b2737ff3bf9ebb22050c3b7e3817478b8bd456ecc94"
+      "content_hash": "2b19d0c58d4ac18b1a61a27f7b543ea3a910ef1ca8c83e6665af9c693457b3d4"
     },
     {
       "source": "sinex",
       "event_type": "metric.counter",
       "version": "1.0.0",
       "path": "sinex/metric.counter.json",
-      "content_hash": "53db5c5a0de83bb735c7d869866c0356626ea178b1e7e123ec3a2a6b0c44a8c1"
+      "content_hash": "dd475ebe5dd8574ad47898e33db60e17a21ade52056c56508f5da146a905093e"
     },
     {
       "source": "sinex",
       "event_type": "metric.gauge",
       "version": "1.0.0",
       "path": "sinex/metric.gauge.json",
-      "content_hash": "76923e4388ffa051da97e468be0815ad948165db08ba8474f16b0122c78d0bd6"
+      "content_hash": "a386d757cd65dfaf3c2357a75f4d89cf7ccf05e64ff1511de9b53d1104613c03"
     },
     {
       "source": "sinex",
       "event_type": "metric.histogram",
       "version": "1.0.0",
       "path": "sinex/metric.histogram.json",
-      "content_hash": "b993ad6bb1a8ab15fba87c448ba42ca6109775283639816207bf374e7ea61804"
+      "content_hash": "26b05e182dd3a325f29f82eeff5a8163b3cb386a28af7522207418a08288b965"
     },
     {
       "source": "sinex",
       "event_type": "process.degraded",
       "version": "1.0.0",
       "path": "sinex/process.degraded.json",
-      "content_hash": "97db7869dcd9fae1269fe7e44f863747ca1179c23789970d363416c8d3f612b4"
+      "content_hash": "893e777e3a299b49de10c5e249c32b3ace50899734b80d0d4258c121544d8c2c"
     },
     {
       "source": "sinex",
       "event_type": "process.failed",
       "version": "1.0.0",
       "path": "sinex/process.failed.json",
-      "content_hash": "a1a02761edc19724a6f73a57300defd410823d149b9741fb73440be1ef3a87b7"
+      "content_hash": "02731e1155f58a8e3f24739c07f59ad10acedc2ae91444f78e3ab755a73b3353"
     },
     {
       "source": "sinex",
       "event_type": "process.heartbeat",
       "version": "1.0.0",
       "path": "sinex/process.heartbeat.json",
-      "content_hash": "f8dcf8cdb08a88c231ff373b0c891941be945dac6dc3e312da6ae6c0ce7ca55d"
+      "content_hash": "5507840052ab930c62f7ac2da48e52a3930e6f31508ea51780db892b80839738"
     },
     {
       "source": "sinex",
       "event_type": "process.shutdown",
       "version": "1.0.0",
       "path": "sinex/process.shutdown.json",
-      "content_hash": "bae82488312fd3022a6751c0685c4a19bb099c8287e0f6daa914dee2ab840694"
+      "content_hash": "fa45323f74eead86c7e397631b451fde087eb0077afe1068397fff398918ba3a"
     },
     {
       "source": "sinex",
       "event_type": "process.started",
       "version": "1.0.0",
       "path": "sinex/process.started.json",
-      "content_hash": "071dd61c494847c908f2d7a2f175652cd18ede97333ca3bf36d452a7baf51cbf"
+      "content_hash": "993a2066940a61d0ae125075401f3d72c9805c737f96b784de77b33eb7b84225"
     },
     {
       "source": "sinex",
       "event_type": "sensor.activated",
       "version": "1.0.0",
       "path": "sinex/sensor.activated.json",
-      "content_hash": "c83b536819413dca137374b10d3c326f8892c733b22967c750fced343e7a9722"
+      "content_hash": "1580d0ad9d37ab1abf914f2ed03c975201a1a072e2fee59d6a68297fd55a6ca1"
     },
     {
       "source": "sinex",
       "event_type": "sensor.deactivated",
       "version": "1.0.0",
       "path": "sinex/sensor.deactivated.json",
-      "content_hash": "ca8acbd48c34e9e2eb373a8806249cd9bd6543fb1750cb9e098ea5a5b64b8abd"
+      "content_hash": "7df351003bed9b9de7e4acd2c4b47cd1e19546765f18e958c4c15647b652e8f2"
     },
     {
       "source": "sinex.gateway",
       "event_type": "pool.stats",
       "version": "1.0.0",
       "path": "sinex.gateway/pool.stats.json",
-      "content_hash": "b818efb75bfb4aa2a02d6f79491563ae8ad6197ae30e83721105ee17523cd409"
+      "content_hash": "a0fc49fe2cfe723fd1b4dcdb796342a54c82043e3d5f39740ce6ea1c030f08fb"
     },
     {
       "source": "sinex.gateway",
       "event_type": "rate_limit.exceeded",
       "version": "1.0.0",
       "path": "sinex.gateway/rate_limit.exceeded.json",
-      "content_hash": "fdf3ebb5af1d79dc22df2b48b0472f94a61e11209458db0fb58b24fce7ff0d1b"
+      "content_hash": "d519261f38e402b7d3364fb4fc4eb3059153a4afd4ebca326a18c391286e8722"
     },
     {
       "source": "sinex.gateway",
       "event_type": "replay.stats",
       "version": "1.0.0",
       "path": "sinex.gateway/replay.stats.json",
-      "content_hash": "af2897703adafca04c14227fc6b326a4d4ad3546efe78cfbe490d1f21dcc3ddf"
+      "content_hash": "1c1ce9a135927a3f0dc3580139070aa7c447c4740d704700993f1a28356d7f41"
     },
     {
       "source": "sinex.gateway",
       "event_type": "request.stats",
       "version": "1.0.0",
       "path": "sinex.gateway/request.stats.json",
-      "content_hash": "5eed66f7b4b633da292b77e426913eabdf6abb80bf1fdfbb2e7f65be8cfd5a92"
+      "content_hash": "830ad0dfab5be6ea0dc0ba39ad39dbc2d5db8a5b305c0a072397f8885a4294fa"
     },
     {
       "source": "sinex.ingestd",
       "event_type": "assembly.stats",
       "version": "1.0.0",
       "path": "sinex.ingestd/assembly.stats.json",
-      "content_hash": "721eec60592214e699c9a6946b3b67526c4221c460fc8fe9a0cf81e10fef0da6"
+      "content_hash": "a04ec8c7c84903e97e9b09676ade219992d9e4185920ae1f25a0ade602cb5da6"
     },
     {
       "source": "sinex.ingestd",
       "event_type": "stream.stats",
       "version": "1.0.0",
       "path": "sinex.ingestd/stream.stats.json",
-      "content_hash": "a91ffe38f6e5e2e6fc0cec181bade02eee0d5e7f0b4aa1ce8c2df2463b8975be"
+      "content_hash": "409d47753df0b208bb0f16f5f70d8aa3b4bcb27f080d9addf7ba3a5bd589fa3c"
     },
     {
       "source": "sinex.node",
       "event_type": "processing.stats",
       "version": "1.0.0",
       "path": "sinex.node/processing.stats.json",
-      "content_hash": "332998456977a97bd2872648789fffda2ea47c1d97361753fc065f984a023618"
+      "content_hash": "1243baccdc8672f134f292182900064c85af1378722b9fb7d41c7806ccedc5ff"
     },
     {
       "source": "system",
       "event_type": "monitoring.started",
       "version": "1.0.0",
       "path": "system/monitoring.started.json",
-      "content_hash": "444cdb910cc6b73c4316ecc0b63e983d529c3f7724dc6207054dbbede280dfde"
+      "content_hash": "be6735fe04cf70a00a420a82effd38b6c6ba73f9a9774f649835ad21835a851d"
     },
     {
       "source": "system",
       "event_type": "scan.completed",
       "version": "1.0.0",
       "path": "system/scan.completed.json",
-      "content_hash": "736bae091e591175b0817573c12d9aaccea29d8dc130e3391561d4cc1897858e"
+      "content_hash": "b04a80cd6cda8feb0a83e25105ea0f25f5fde4ad32215b2877563a19e57f710d"
     },
     {
       "source": "system",
       "event_type": "scan.started",
       "version": "1.0.0",
       "path": "system/scan.started.json",
-      "content_hash": "95dadd27fd7a6cfb6253adb0fd07f91d04d7675b3de5682fdfdc274243ebc1d2"
+      "content_hash": "e7b135a5ed19669530bee3f5c2ebeaa0b817d12fc09036f75914fa5ebb2fe12e"
     },
     {
       "source": "system",
       "event_type": "snapshot",
       "version": "1.0.0",
       "path": "system/snapshot.json",
-      "content_hash": "b61eefc15581cbb3e73b1bf1db0b2e4a873b97240cadcfccc51f49f7fed6c38f"
+      "content_hash": "0485da351991ea1d7be716cafdd3356677961a5b2e49d6ae2204804220b26905"
     },
     {
       "source": "systemd",
       "event_type": "timer.triggered",
       "version": "1.0.0",
       "path": "systemd/timer.triggered.json",
-      "content_hash": "d60c7925b4298fc16bfbb753e87b8d3de7c9dd32e9bdc68aef05b6b17227e385"
+      "content_hash": "49d928566cdf0796de275a3049189c0253e1f38955c8441076cffc8ebe7acfd0"
     },
     {
       "source": "systemd",
       "event_type": "unit.failed",
       "version": "1.0.0",
       "path": "systemd/unit.failed.json",
-      "content_hash": "d66265e4db7f73bbfaebf4314866cf67cc2857902370b8793111b80ad9977d17"
+      "content_hash": "e46387aaead9a0e2c2ccca92805d001fef97c175628e220e407afa8b90664b81"
     },
     {
       "source": "systemd",
       "event_type": "unit.reloaded",
       "version": "1.0.0",
       "path": "systemd/unit.reloaded.json",
-      "content_hash": "9f4ebb0b85f8df8d847a622d3bd69ff720f445a0370124ca904a7dddc166bb76"
+      "content_hash": "19bfbef9e5f2c01786c8aac19ce2b4bccd3d8d535c3bb34e0b1a85fd65998f3d"
     },
     {
       "source": "systemd",
       "event_type": "unit.started",
       "version": "1.0.0",
       "path": "systemd/unit.started.json",
-      "content_hash": "b44c34550ce31ddea39fa91440a2ad7be218dff49a0517f4473d0ee5dd63f293"
+      "content_hash": "65912d1083424e9c0c6278ea1f85ebb2190ce295a0d062ab0d0e8095d760fdf3"
     },
     {
       "source": "systemd",
       "event_type": "unit.starting",
       "version": "1.0.0",
       "path": "systemd/unit.starting.json",
-      "content_hash": "dabc6d2532a40c0dd4cf91ddfec313f948773e4f1bbbbfca965bf8fd8fb2fbe4"
+      "content_hash": "ad552dbfe6301f3fec01bc11ea6784412e2c83c2c8cc20ce730ed99401766c80"
     },
     {
       "source": "systemd",
       "event_type": "unit.state_changed",
       "version": "1.0.0",
       "path": "systemd/unit.state_changed.json",
-      "content_hash": "ed82c0ee312b2526dcedaebe850b97922ceb11cbd8eefab683a820202f92a9ee"
+      "content_hash": "40e578a9765b5b7977bbcca2e35302d59af9c9ed72db56ff7fd5f2b9a57fda9d"
     },
     {
       "source": "systemd",
       "event_type": "unit.status",
       "version": "1.0.0",
       "path": "systemd/unit.status.json",
-      "content_hash": "863b9f0bab7d0f3c01e473ab79a3b54d4c5976763565cb30bc38a758e93029fb"
+      "content_hash": "42cfa7c61b41a94b88f3401807627c680b13e8eb80a6dcc8d256d8e436363708"
     },
     {
       "source": "systemd",
       "event_type": "unit.stopped",
       "version": "1.0.0",
       "path": "systemd/unit.stopped.json",
-      "content_hash": "06f4cdee80de7a097d73bbace8c2002e5f87129a38e532e38efa8a266b69b32c"
+      "content_hash": "3ce9105e4bd8ee60333f2d522d28bc8eec85b2eed1f9274b0aab81f77dc297df"
     },
     {
       "source": "systemd",
       "event_type": "unit.stopping",
       "version": "1.0.0",
       "path": "systemd/unit.stopping.json",
-      "content_hash": "599b0469d4b8605e94b55d3f3df90e02e41a4bc613d630225f203ef8fc2969f8"
-    },
-    {
-      "source": "terminal",
-      "event_type": "shell.command_historical",
-      "version": "1.0.0",
-      "path": "terminal/shell.command_historical.json",
-      "content_hash": "cf5eb7f2455662b97752279ae6bf06c64243b087824786448d109bc76f3c0f64"
-    },
-    {
-      "source": "terminal",
-      "event_type": "shell.history_historical",
-      "version": "1.0.0",
-      "path": "terminal/shell.history_historical.json",
-      "content_hash": "d443e52cba00f89bc6e39e7684d1a8a4840c9791e4c388efb00ba80bd231aae2"
+      "content_hash": "59373d19ca9a7ad5f9b299d564a39a34f5fafca52a3fc6c96a5457310d94b7b1"
     },
     {
       "source": "terminal",
       "event_type": "shell.terminal_monitoring_started",
       "version": "1.0.0",
       "path": "terminal/shell.terminal_monitoring_started.json",
-      "content_hash": "c6301b9c1ba151a740c566b696baad9499a0c4a218763ae4d6d3f0f8d6076b2d"
-    },
-    {
-      "source": "terminal",
-      "event_type": "shell.terminal_snapshot",
-      "version": "1.0.0",
-      "path": "terminal/shell.terminal_snapshot.json",
-      "content_hash": "63c9486647e50c76545c586038d46323e1ae79010cd6a2afabfa00a1840346fe"
+      "content_hash": "9c9e5972c6d18a6ef1bc67b61db1433e32030a4a8c436756d02e11d2a8d0cab0"
     },
     {
       "source": "terminal.kitty",
       "event_type": "session.ended",
       "version": "1.0.0",
       "path": "terminal.kitty/session.ended.json",
-      "content_hash": "9db010c5804ecc706f7abd5ae16ec2b421317d86ae5602cee78c46497d1e2355"
+      "content_hash": "3549ae9616159fba83e418ac24697f413ca375523fb17bcc43a42c2431a12d27"
     },
     {
       "source": "terminal.kitty",
       "event_type": "session.started",
       "version": "1.0.0",
       "path": "terminal.kitty/session.started.json",
-      "content_hash": "97b2a4d1aec10f87894cc1cfb8b3765e6f1b39e0932e2975c8bec07506110912"
+      "content_hash": "5fde47143b8502669154b8e2f01b519e878622f7300975de806e93d82d4dc1de"
+    },
+    {
+      "source": "test",
+      "event_type": "test.event",
+      "version": "1.0.0",
+      "path": "test/test.event.json",
+      "content_hash": "a80f52979c8781d02d0014f0bd982a7e23175d5ae08139c6e42bbf340204a4e7"
+    },
+    {
+      "source": "test",
+      "event_type": "test.numeric",
+      "version": "1.0.0",
+      "path": "test/test.numeric.json",
+      "content_hash": "2f9874197b372ea959dce25fb08575f0280c5dc18eedcbcee915658455966825"
+    },
+    {
+      "source": "test",
+      "event_type": "test.structured",
+      "version": "1.0.0",
+      "path": "test/test.structured.json",
+      "content_hash": "5cd60807364d46a5727aa95eaf9e0c09ce135e3154b3ec07df11d479ed280b43"
+    },
+    {
+      "source": "test.alpha",
+      "event_type": "test.alpha_event",
+      "version": "1.0.0",
+      "path": "test.alpha/test.alpha_event.json",
+      "content_hash": "b74036582e27476b9a8778c40036c969068554d3f583ad0bdbb311a0ee16c0a5"
+    },
+    {
+      "source": "test.beta",
+      "event_type": "test.beta_event",
+      "version": "1.0.0",
+      "path": "test.beta/test.beta_event.json",
+      "content_hash": "df6afa0614fbe5820e6585e93be07caa7c469a1d68f44b776cfd89633ba4b5e1"
     },
     {
       "source": "udev",
       "event_type": "device.added",
       "version": "1.0.0",
       "path": "udev/device.added.json",
-      "content_hash": "51f13aa7c9bac6eb7f22d9ce981b0df6efd23b08ffc54306233605ed9769b4c8"
+      "content_hash": "3cbf4680e501a8ef245285b47d0344957a9a5270183a5a49f22de9e759b5f3ef"
     },
     {
       "source": "udev",
       "event_type": "device.changed",
       "version": "1.0.0",
       "path": "udev/device.changed.json",
-      "content_hash": "795092fd10ee623be234991af1b1ef31f3f4a826b6a82102a06662abe4683300"
+      "content_hash": "1d0195388fb0ed7a806371f429aebd6abc3d0bd16c685d21b5f3cc85a43b1c64"
     },
     {
       "source": "udev",
       "event_type": "device.connected",
       "version": "1.0.0",
       "path": "udev/device.connected.json",
-      "content_hash": "bf5eb93eb241428ae0cc841f1ae3dbbd55169f6d740f10b1e06f94c5d6016bd4"
+      "content_hash": "6d47984303d76ef4c067d9c14de5d58f487c5c41d8ea02f54b97a360e1f2bcd9"
     },
     {
       "source": "udev",
       "event_type": "device.disconnected",
       "version": "1.0.0",
       "path": "udev/device.disconnected.json",
-      "content_hash": "fe966ac047d51bba12e3823e0a3b469810c01cb94b460dd3747524f2ca5c41ec"
+      "content_hash": "2e03c81ce14b20df6ed5b4fa817869b8047d8ace7b6bfb8ede350573daead151"
     },
     {
       "source": "udev",
       "event_type": "device.driver_changed",
       "version": "1.0.0",
       "path": "udev/device.driver_changed.json",
-      "content_hash": "5c1fe8d71857553caebbcbcfbf91e99555f3495a8cfdbb36775de1e317adb919"
+      "content_hash": "d0d8d96f03d054397edb1be267667d03edb3f81aa9396c088358e0c55168eeb8"
     },
     {
       "source": "udev",
       "event_type": "device.other",
       "version": "1.0.0",
       "path": "udev/device.other.json",
-      "content_hash": "1173b789bbabb9137803d6bb7a4fe660c70176d7d112ee504dbb3b330bf0c513"
+      "content_hash": "3895f25b2250d639177fd8a74a3a5fec5831cbe9d9410d212c4353d47df5098f"
     },
     {
       "source": "udev",
       "event_type": "device.removed",
       "version": "1.0.0",
       "path": "udev/device.removed.json",
-      "content_hash": "ea69802e057f9e28cce8f516dc384e19e4fd82085ef74c2ec5a4678d5507deb8"
+      "content_hash": "7b45ae96b88ad47fe305901de1c5686ed9bf61abaa4292bc9937b1293298ccc4"
+    },
+    {
+      "source": "webhistory",
+      "event_type": "browser.history.imported",
+      "version": "1.0.0",
+      "path": "webhistory/browser.history.imported.json",
+      "content_hash": "5b62444503d696956cfd23a0c9420a26a2c062a971b5cbfb9efaa6ad0a533f73"
     },
     {
       "source": "wm.hyprland",
       "event_type": "monitor.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/monitor.focused.json",
-      "content_hash": "9baa7b600aa035ce94edffea9b4e46dc89c89011c85f8a0f44149f9e4ccc40b1"
+      "content_hash": "e3e6c9befc4b0004484e6c86bdc838e587587434e4350253d743a60a7b9970ee"
     },
     {
       "source": "wm.hyprland",
       "event_type": "state.captured",
       "version": "1.0.0",
       "path": "wm.hyprland/state.captured.json",
-      "content_hash": "8b847eab2e819c61cfafe4122d5043c07c379a470e4d34d41b698a093a4d755b"
+      "content_hash": "e4c1b6f8f3d6a9d73d5552e7da90ddf9caab452e1833a952850ce388c02b29c9"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.closed",
       "version": "1.0.0",
       "path": "wm.hyprland/window.closed.json",
-      "content_hash": "1f6d5ab7f5fb6f197545f0c74e2fd68c31cdcdec08f2235a8b6e009bf03025bf"
+      "content_hash": "8c05c22cb4af5bcc8b37732c730283a2fa2fb97ff371d547a485b31de9d80804"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/window.focused.json",
-      "content_hash": "e9d32898d0b39ed4404ba1ca045fb419238026fe21b4b93fc02218312259f619"
+      "content_hash": "b91a6bb9dac757c839beeda276bafcfba8843785b423650e08c3709cab32d0ce"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.moved",
       "version": "1.0.0",
       "path": "wm.hyprland/window.moved.json",
-      "content_hash": "b7adaf2b074e63648e9e80b92ace314364138865418dac90b9e9332a38b2f64d"
+      "content_hash": "12bffaa4a6520fc18a9bc9d32c7a838a0f0cac30d1392e792cf256e82b7a2bdd"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.opened",
       "version": "1.0.0",
       "path": "wm.hyprland/window.opened.json",
-      "content_hash": "0828ca0e27b761894dc770653aa2e2160bdd054d3e8253d0a408cf234906f106"
+      "content_hash": "cd8d2edf6de39ba7db787d25237f367c6a11e5e3cbaba54bd05ecbe2d29fae13"
     },
     {
       "source": "wm.hyprland",
       "event_type": "workspace.switched",
       "version": "1.0.0",
       "path": "wm.hyprland/workspace.switched.json",
-      "content_hash": "e69966817a484ec0fa5e5eebf4b8eb91f3cddfe1e0a554632fd12025e7fe2329"
+      "content_hash": "47c09290386b81d03db2ceaf3607e98ce0ad6513db82d0f148e3623b245407da"
     }
   ]
 }

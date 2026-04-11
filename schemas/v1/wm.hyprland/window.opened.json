@@ -1,16 +1,15 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "WindowGeometry": {
       "properties": {
         "height": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "width": {
           "format": "uint32",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         },
         "x": {
@@ -23,20 +22,21 @@
         }
       },
       "required": [
-        "height",
-        "width",
         "x",
-        "y"
+        "y",
+        "width",
+        "height"
       ],
       "type": "object"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "floating": {
       "type": "boolean"
     },
     "geometry": {
-      "$ref": "#/definitions/WindowGeometry"
+      "$ref": "#/$defs/WindowGeometry"
     },
     "monitor_id": {
       "format": "int32",
@@ -57,14 +57,17 @@
     }
   },
   "required": [
-    "floating",
-    "geometry",
-    "monitor_id",
-    "window_class",
     "window_id",
+    "window_class",
     "window_title",
-    "workspace_id"
+    "workspace_id",
+    "monitor_id",
+    "geometry",
+    "floating"
   ],
   "title": "HyprlandWindowOpenedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "window.opened",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
 }

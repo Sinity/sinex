@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "end_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "enrichment_history": {
+      "items": true,
+      "type": "array"
+    },
+    "environment_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitCode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_events": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "start_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "user": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "command",
+    "start_time",
+    "end_time",
+    "source_events",
+    "enrichment_history"
+  ],
+  "title": "CanonicalCommandPayload",
+  "type": "object",
+  "x-sinex-event-type": "command.canonical",
+  "x-sinex-source": "canonical.terminal",
+  "x-sinex-version": "2.0.0"
+}

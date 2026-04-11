@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Shell history command imported event.",
   "properties": {
     "command": {
@@ -7,7 +14,7 @@
     },
     "line_number": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": [
         "integer",
         "null"
@@ -20,10 +27,13 @@
       "type": "string"
     },
     "timestamp": {
-      "format": "date-time",
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   },
@@ -33,5 +43,8 @@
     "source_file"
   ],
   "title": "HistoryCommandImportedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "command.imported",
+  "x-sinex-source": "shell.history",
+  "x-sinex-version": "1.0.0"
 }

@@ -16,6 +16,7 @@ use sinex_primitives::rpc::{
         DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
     },
     gitops::{
+        DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
         GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
@@ -374,9 +375,11 @@ impl GatewayClient {
     ) -> Result<GitOpsCreateSourceResponse> {
         let req = GitOpsCreateSourceRequest {
             repository_url,
-            branch: branch.unwrap_or_else(|| "main".to_string()),
-            path_pattern: path_pattern.unwrap_or_else(|| "schemas/**/*.json".to_string()),
-            sync_frequency_minutes: sync_frequency_minutes.unwrap_or(60),
+            branch: branch.unwrap_or_else(|| DEFAULT_GITOPS_BRANCH.to_string()),
+            path_pattern: path_pattern
+                .unwrap_or_else(|| DEFAULT_GITOPS_PATH_PATTERN.to_string()),
+            sync_frequency_minutes: sync_frequency_minutes
+                .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
         };
         let result = self
             .call_rpc(methods::GITOPS_CREATE_SOURCE, serde_json::to_value(&req)?)

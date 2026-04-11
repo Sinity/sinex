@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Ingestd batch processing statistics\n\nEmitted after each batch is processed by the `JetStream` consumer.\nCaptures throughput, latency, and schema validation coverage data for batch processing.",
+  "properties": {
+    "batch_size": {
+      "description": "Number of events in this batch",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_deferred": {
+      "description": "Events deferred to retry",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_failed": {
+      "description": "Events that failed processing",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "fetch_to_ack_ms": {
+      "description": "Time from fetch to ack in milliseconds",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "had_synthesis": {
+      "description": "Whether this batch contained synthesis events",
+      "type": "boolean"
+    },
+    "insert_path": {
+      "description": "Insert path used: \"copy\" or \"`query_builder`\"",
+      "type": "string"
+    },
+    "suspicious_future_ts_orig": {
+      "description": "Cumulative count of events whose `ts_orig` is implausibly far in the future.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "validation_coverage_pct": {
+      "description": "Schema coverage percentage: events with a schema / total validated (excluding skipped)",
+      "format": "double",
+      "type": "number"
+    },
+    "validation_invalid": {
+      "description": "Cumulative count of events that failed schema validation",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "validation_no_schema": {
+      "description": "Cumulative count of events with no registered schema",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "validation_schema_not_found": {
+      "description": "Cumulative count of events whose schema was not found in the registry",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "validation_skipped": {
+      "description": "Cumulative count of events where validation was skipped (disabled)",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "validation_valid": {
+      "description": "Cumulative count of events that passed schema validation",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "batch_size",
+    "fetch_to_ack_ms",
+    "events_deferred",
+    "events_failed",
+    "had_synthesis",
+    "insert_path",
+    "validation_valid",
+    "validation_skipped",
+    "validation_no_schema",
+    "validation_schema_not_found",
+    "validation_invalid",
+    "validation_coverage_pct",
+    "suspicious_future_ts_orig"
+  ],
+  "title": "IngestdBatchStatsPayload",
+  "type": "object",
+  "x-sinex-event-type": "batch.stats",
+  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-version": "2.0.0"
+}

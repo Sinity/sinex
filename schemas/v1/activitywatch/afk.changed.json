@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bucket_id": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "duration_ms",
+    "bucket_id"
+  ],
+  "title": "ActivityWatchAfkChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "afk.changed",
+  "x-sinex-source": "activitywatch",
+  "x-sinex-version": "1.0.0"
+}

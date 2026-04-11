@@ -1,17 +1,23 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "active_watchers": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "clipboard_enabled": {
       "type": "boolean"
     },
     "snapshot_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "window_manager_enabled": {
       "type": "boolean"
@@ -20,9 +26,12 @@
   "required": [
     "active_watchers",
     "clipboard_enabled",
-    "snapshot_time",
-    "window_manager_enabled"
+    "window_manager_enabled",
+    "snapshot_time"
   ],
   "title": "DesktopSnapshotPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "desktop.snapshot",
+  "x-sinex-source": "desktop",
+  "x-sinex-version": "1.0.0"
 }

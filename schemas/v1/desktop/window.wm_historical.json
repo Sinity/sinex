@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "note": {
       "type": "string"
@@ -15,11 +15,14 @@
     }
   },
   "required": [
-    "note",
-    "scan_type",
     "source",
-    "wm_type"
+    "wm_type",
+    "scan_type",
+    "note"
   ],
   "title": "WindowManagerHistoricalPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "window.wm_historical",
+  "x-sinex-source": "desktop",
+  "x-sinex-version": "1.0.0"
 }

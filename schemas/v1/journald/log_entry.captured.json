@@ -1,5 +1,19 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "SyslogPriority": {
+      "description": "Syslog priority level (0-7).\n\n- 0: Emergency\n- 1: Alert\n- 2: Critical\n- 3: Error\n- 4: Warning\n- 5: Notice\n- 6: Informational\n- 7: Debug",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Captures a journald log entry with raw fields.",
   "properties": {
     "fields": {
@@ -12,13 +26,10 @@
       "type": "string"
     },
     "priority": {
-      "format": "uint8",
-      "minimum": 0.0,
-      "type": "integer"
+      "$ref": "#/$defs/SyslogPriority"
     },
     "timestamp": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "unit": {
       "type": [
@@ -28,11 +39,14 @@
     }
   },
   "required": [
-    "fields",
-    "message",
     "priority",
+    "message",
+    "fields",
     "timestamp"
   ],
   "title": "JournalEntryPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "log_entry.captured",
+  "x-sinex-source": "journald",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,21 +1,63 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "TerminalType": {
+      "description": "Terminal/shell type",
+      "oneOf": [
+        {
+          "const": "kitty",
+          "description": "Kitty terminal",
+          "type": "string"
+        },
+        {
+          "const": "alacritty",
+          "description": "Alacritty terminal",
+          "type": "string"
+        },
+        {
+          "const": "foot",
+          "description": "Foot terminal",
+          "type": "string"
+        },
+        {
+          "const": "wezterm",
+          "description": "`WezTerm`",
+          "type": "string"
+        },
+        {
+          "const": "iterm2",
+          "description": "iTerm2",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Generic/unknown terminal",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "duration_seconds": {
       "format": "double",
       "type": "number"
     },
     "end_time": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "event_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "file_size_bytes": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": [
         "integer",
         "null"
@@ -33,18 +75,21 @@
       "type": "string"
     },
     "terminal_type": {
-      "type": "string"
+      "$ref": "#/$defs/TerminalType"
     }
   },
   "required": [
-    "duration_seconds",
-    "end_time",
-    "event_count",
-    "recording_file",
     "session_id",
+    "terminal_type",
     "terminal_id",
-    "terminal_type"
+    "end_time",
+    "duration_seconds",
+    "event_count",
+    "recording_file"
   ],
   "title": "AsciinemaSessionEndedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "shell.session_ended",
+  "x-sinex-source": "shell.asciinema",
+  "x-sinex-version": "1.0.0"
 }
