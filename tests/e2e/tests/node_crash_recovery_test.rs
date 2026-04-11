@@ -16,8 +16,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
+use std::time::Duration;
 use xtask::sandbox::{
     TestIngestdConfig, TestIngestdHandle, prelude::*, start_test_ingestd_with_config,
     timing::Timeouts,
@@ -77,28 +76,117 @@ async fn wait_for_material_row(
     ctx: &TestContext,
     material_id: Uuid,
 ) -> Result<sqlx::postgres::PgRow> {
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
-    loop {
-        let row = sqlx::query(
-            r"
-            SELECT status, optional_blob_id
-            FROM raw.source_material_registry
-            WHERE id = $1::uuid
-            ",
-        )
-        .bind(material_id)
-        .fetch_optional(&ctx.pool)
-        .await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                Ok::<bool, sqlx::Error>(
+                    sqlx::query(
+                        r"
+                        SELECT 1
+                        FROM raw.source_material_registry
+                        WHERE id = $1::uuid
+                        ",
+                    )
+                    .bind(material_id)
+                    .fetch_optional(&pool)
+                    .await?
+                    .is_some(),
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
 
-        if let Some(row) = row {
-            return Ok(row);
+    sqlx::query(
+        r"
+        SELECT status, optional_blob_id
+        FROM raw.source_material_registry
+        WHERE id = $1::uuid
+        ",
+    )
+    .bind(material_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn ledger_count(ctx: &TestContext, material_id: Uuid, source_type: Option<&str>) -> Result<i64> {
+    let count = match source_type {
+        Some(source_type) => {
+            sqlx::query_scalar!(
+                r#"
+                SELECT COUNT(*) FROM raw.temporal_ledger
+                WHERE source_material_id = $1::uuid
+                  AND source_type = $2
+                "#,
+                Uuid::from(material_id),
+                source_type
+            )
+            .fetch_one(&ctx.pool)
+            .await?
         }
-        assert!(
-            Instant::now() <= deadline,
-            "material {material_id} was never registered by ingestd"
-        );
-        sleep(Duration::from_millis(50)).await;
-    }
+        None => {
+            sqlx::query_scalar!(
+                r#"
+                SELECT COUNT(*) FROM raw.temporal_ledger
+                WHERE source_material_id = $1::uuid
+                "#,
+                Uuid::from(material_id)
+            )
+            .fetch_one(&ctx.pool)
+            .await?
+        }
+    };
+
+    Ok(count.unwrap_or(0))
+}
+
+async fn wait_for_material_ledger_counts(
+    ctx: &TestContext,
+    material_id: Uuid,
+    expected_staged_at: i64,
+    expected_realtime_capture: i64,
+) -> Result<()> {
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let staged_at = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.temporal_ledger
+                    WHERE source_material_id = $1::uuid
+                      AND source_type = 'staged_at'
+                    "#,
+                    Uuid::from(material_id)
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0);
+                let realtime_capture = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.temporal_ledger
+                    WHERE source_material_id = $1::uuid
+                      AND source_type = 'realtime_capture'
+                    "#,
+                    Uuid::from(material_id)
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0);
+
+                Ok::<bool, sqlx::Error>(
+                    staged_at == expected_staged_at
+                        && realtime_capture == expected_realtime_capture,
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    Ok(())
 }
 
 /// Node crashes immediately after registering a material (begin published, no slices/end).
@@ -109,7 +197,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -118,7 +206,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
         "crash_early_stream".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/crash_early.log");
+    .with_work_dir(work_dir.path().join("crash_early"));
 
     let handle = acquisition_mgr.begin_material("crash-early-source").await?;
     let material_id = handle.material_id;
@@ -133,16 +221,10 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
 
-    let ledger_count: Option<i64> = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid
-        "#,
-        Uuid::from(material_id)
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-    assert_eq!(ledger_count.unwrap_or(0), 0, "no ledger until finalized");
+    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
+    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
 
     ingest_handle.stop().await?;
     Ok(())
@@ -156,7 +238,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -165,7 +247,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
         "crash_mid_stream".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/crash_mid.log");
+    .with_work_dir(work_dir.path().join("crash_mid"));
 
     let mut handle = acquisition_mgr.begin_material("crash-mid-source").await?;
     let material_id = handle.material_id;
@@ -186,16 +268,10 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
 
-    let ledger_count: Option<i64> = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid
-        "#,
-        Uuid::from(material_id)
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-    assert_eq!(ledger_count.unwrap_or(0), 0, "no ledger until finalized");
+    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
+    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
 
     ingest_handle.stop().await?;
     Ok(())
@@ -209,7 +285,7 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acq_mgr1 = AcquisitionManager::new_with_namespace(
@@ -218,14 +294,14 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         "orphan_stream_1".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/orphan1.log");
+    .with_work_dir(work_dir.path().join("orphan1"));
     let acq_mgr2 = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "orphan_stream_2".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/orphan2.log");
+    .with_work_dir(work_dir.path().join("orphan2"));
 
     let mut handle1 = acq_mgr1.begin_material("orphan-source-1").await?;
     let material_id1 = handle1.material_id;
@@ -324,7 +400,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let successful_materials = Arc::new(AtomicU64::new(0));
@@ -336,6 +412,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         let success_count = successful_materials.clone();
         let crash_count = crashed_materials.clone();
         let ns = namespace.clone();
+        let worker_work_dir = work_dir.path().join(format!("concurrent_{worker_id}"));
 
         joins.push(tokio::spawn(async move {
             let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -344,7 +421,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
                 format!("concurrent_stream_{worker_id}"),
                 Some(ns),
             )
-            .with_work_dir(format!("/test/concurrent_{worker_id}.log"));
+            .with_work_dir(worker_work_dir);
 
             let mut handle = acquisition_mgr
                 .begin_material(&format!("concurrent-source-{worker_id}"))
@@ -376,69 +453,109 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     let crashed = crashed_materials.load(Ordering::SeqCst);
     assert_eq!(successful + crashed, 20);
 
-    // Poll until ingestd persists all statuses.
-    // Uses STANDARD (30s) not SHORT (10s): 10 concurrent finalizations produce 10 JetStream
-    // end-messages that the single MaterialAssembler consumer processes sequentially; 10s
-    // isn't enough for the assembler to process all of them plus update the DB.
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
-    let (completed_count, sensing_count) = loop {
-        let completed: Option<i64> = sqlx::query_scalar!(
-            r#"
-            SELECT COUNT(*) FROM raw.source_material_registry
-            WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
-            "#,
-            status::COMPLETED
-        )
-        .fetch_one(&ctx.pool)
-        .await?;
-        let sensing: Option<i64> = sqlx::query_scalar!(
-            r#"
-            SELECT COUNT(*) FROM raw.source_material_registry
-            WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
-            "#,
-            status::SENSING
-        )
-        .fetch_one(&ctx.pool)
-        .await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let completed = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.source_material_registry
+                    WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
+                    "#,
+                    status::COMPLETED
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0) as u64;
+                let sensing = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.source_material_registry
+                    WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
+                    "#,
+                    status::SENSING
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0) as u64;
 
-        let completed = completed.unwrap_or(0) as u64;
-        let sensing = sensing.unwrap_or(0) as u64;
-        if completed == successful && sensing == crashed {
-            break (completed, sensing);
-        }
-        assert!(
-            Instant::now() <= deadline,
-            "ingestd did not settle counts (completed={completed} sensing={sensing})"
-        );
-        sleep(Duration::from_millis(100)).await;
-    };
+                Ok::<bool, sqlx::Error>(completed == successful && sensing == crashed)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let completed_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) FROM raw.source_material_registry
+        WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
+        "#,
+        status::COMPLETED
+    )
+    .fetch_one(&ctx.pool)
+    .await?
+    .unwrap_or(0) as u64;
+    let sensing_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) FROM raw.source_material_registry
+        WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
+        "#,
+        status::SENSING
+    )
+    .fetch_one(&ctx.pool)
+    .await?
+    .unwrap_or(0) as u64;
 
     assert_eq!(completed_count, successful);
     assert_eq!(sensing_count, crashed);
 
-    // Ledger entries are written in a separate transaction after finalization,
-    // so poll until they appear rather than reading once.
-    let ledger_deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
-    loop {
-        let ledger_count: Option<i64> = sqlx::query_scalar!(
-            r#"
-            SELECT COUNT(*) FROM raw.temporal_ledger tl
-            JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
-            WHERE smr.source_identifier LIKE 'concurrent-source-%'
-            "#
-        )
-        .fetch_one(&ctx.pool)
-        .await?;
-        let count = ledger_count.unwrap_or(0) as u64;
-        if count == successful {
-            break;
-        }
-        assert!(
-            Instant::now() <= ledger_deadline,
-            "temporal_ledger entries did not settle (got={count}, expected={successful})"
-        );
-        sleep(Duration::from_millis(100)).await;
-    }
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let staged_at = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.temporal_ledger tl
+                    JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
+                    WHERE smr.source_identifier LIKE 'concurrent-source-%'
+                      AND tl.source_type = 'staged_at'
+                    "#
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0) as u64;
+                let realtime_capture = sqlx::query_scalar!(
+                    r#"
+                    SELECT COUNT(*) FROM raw.temporal_ledger tl
+                    JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
+                    WHERE smr.source_identifier LIKE 'concurrent-source-%'
+                      AND tl.source_type = 'realtime_capture'
+                    "#
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0) as u64;
+
+                Ok::<bool, sqlx::Error>(
+                    staged_at == successful + crashed && realtime_capture == successful,
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let total_ledger_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) FROM raw.temporal_ledger tl
+        JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
+        WHERE smr.source_identifier LIKE 'concurrent-source-%'
+        "#
+    )
+    .fetch_one(&ctx.pool)
+    .await?
+    .unwrap_or(0) as u64;
+    assert_eq!(total_ledger_count, successful + crashed + successful);
 
     ingest_handle.stop().await?;
     Ok(())
@@ -452,7 +569,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -461,7 +578,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
         "crash_finalize_stream".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/crash_finalize.log");
+    .with_work_dir(work_dir.path().join("crash_finalize"));
 
     let mut handle = acquisition_mgr
         .begin_material("crash-finalize-source")
@@ -481,16 +598,10 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
 
-    let ledger_count: Option<i64> = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid
-        "#,
-        Uuid::from(material_id)
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-    assert_eq!(ledger_count.unwrap_or(0), 0);
+    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
+    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
+    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
 
     ingest_handle.stop().await?;
     Ok(())
@@ -504,7 +615,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         mut ingest_handle,
         nats_client,
         namespace,
-        _work_dir,
+        _work_dir: work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -513,7 +624,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         "recovery_stream".to_string(),
         Some(namespace.clone()),
     )
-    .with_work_dir("/test/recovery.log");
+    .with_work_dir(work_dir.path().join("recovery"));
 
     let mut handle = acquisition_mgr.begin_material("recovery-source").await?;
     let material_id = handle.material_id;
