@@ -372,6 +372,8 @@ struct SummaryOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     velocity: Option<Vec<VelocityTrendOutput>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    baseline_velocity: Option<Vec<VelocityTrendOutput>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     recommendations: Option<Vec<RecommendationOutput>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime: Option<RuntimeMetrics>,
@@ -767,6 +769,7 @@ struct HistorySnapshot {
     is_synthetic: bool,
     health_report: Option<WorkspaceHealthReport>,
     velocity: Vec<VelocityTrend>,
+    baseline_velocity: Vec<VelocityTrend>,
     recommendations: Vec<Recommendation>,
     issues: Vec<String>,
 }
@@ -872,7 +875,7 @@ fn collect_history_snapshot_from_db(
         let analysis = HistoryAnalysis::new(db);
         let analytics_started_at = Instant::now();
         match analysis.status_summary_snapshot() {
-            Ok((report, velocity, recommendations)) => {
+            Ok((report, velocity, baseline_velocity, recommendations)) => {
                 snapshot.diag_counts = DiagnosticCounts {
                     errors: report.error_count,
                     warnings: report.warning_count,
@@ -880,6 +883,7 @@ fn collect_history_snapshot_from_db(
                 };
                 snapshot.health_report = Some(report);
                 snapshot.velocity = velocity;
+                snapshot.baseline_velocity = baseline_velocity;
                 snapshot.recommendations = recommendations;
             }
             Err(error) => snapshot.issues.push(format!(
@@ -1471,6 +1475,17 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         } else {
             None
         },
+        baseline_velocity: if !data.history.baseline_velocity.is_empty() {
+            Some(
+                data.history
+                    .baseline_velocity
+                    .iter()
+                    .map(VelocityTrendOutput::from)
+                    .collect(),
+            )
+        } else {
+            None
+        },
         recommendations: if !data.history.recommendations.is_empty() {
             Some(
                 data.history
@@ -1539,7 +1554,8 @@ impl<'a> MotdRenderer<'a> {
         self.render_build();
 
         // Velocity trends (when meaningful data exists)
-        self.render_velocity();
+        self.render_loop_velocity();
+        self.render_baseline_velocity();
 
         // Recommendations (when critical/warning exist)
         self.render_recommendations();
@@ -1803,11 +1819,8 @@ impl<'a> MotdRenderer<'a> {
 
     // ─── Velocity ───────────────────────────────────────────────────────
 
-    fn render_velocity(&self) {
-        let meaningful: Vec<_> = self
-            .data
-            .history
-            .velocity
+    fn render_velocity_line(&self, label_text: &str, trends: &[VelocityTrend]) {
+        let meaningful: Vec<_> = trends
             .iter()
             .filter(|v| v.sample_count >= 4 && v.recent_avg_secs.is_some())
             .collect();
@@ -1816,7 +1829,7 @@ impl<'a> MotdRenderer<'a> {
             return;
         }
 
-        let label = style("  trend").dim();
+        let label = style(label_text).dim();
         let parts: Vec<String> = meaningful
             .iter()
             .map(|v| {
@@ -1835,6 +1848,14 @@ impl<'a> MotdRenderer<'a> {
             .collect();
 
         println!("{label}    {}", parts.join("   "));
+    }
+
+    fn render_loop_velocity(&self) {
+        self.render_velocity_line("  loop", &self.data.history.velocity);
+    }
+
+    fn render_baseline_velocity(&self) {
+        self.render_velocity_line("  repo", &self.data.history.baseline_velocity);
     }
 
     // ─── Recommendations ────────────────────────────────────────────────
@@ -2988,6 +3009,14 @@ mod tests {
                 trend: "improving".into(),
                 sample_count: 8,
             }]),
+            baseline_velocity: Some(vec![VelocityTrendOutput {
+                command: "test".into(),
+                scope_label: Some("workspace".into()),
+                recent_avg_secs: Some(61.0),
+                delta_pct: Some(9.0),
+                trend: "slower".into(),
+                sample_count: 6,
+            }]),
             recommendations: Some(vec![RecommendationOutput {
                 severity: "warning".into(),
                 category: "diagnostics".into(),
@@ -3051,6 +3080,8 @@ mod tests {
         assert!(json["velocity"].is_array());
         assert_eq!(json["velocity"][0]["command"], "check");
         assert_eq!(json["velocity"][0]["delta_pct"], -12.0);
+        assert!(json["baseline_velocity"].is_array());
+        assert_eq!(json["baseline_velocity"][0]["command"], "test");
         assert!(json["recommendations"].is_array());
         assert_eq!(json["recommendations"][0]["severity"], "warning");
         assert_eq!(json["recommendations"][0]["action"], "xtask fix --smart");
@@ -3112,6 +3143,7 @@ mod tests {
             },
             health_score: None,
             velocity: None,
+            baseline_velocity: None,
             recommendations: None,
             runtime: None,
             services: None,
@@ -3177,6 +3209,7 @@ mod tests {
             },
             health_score: None,
             velocity: None,
+            baseline_velocity: None,
             recommendations: None,
             runtime: None,
             services: None,

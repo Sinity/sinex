@@ -286,60 +286,72 @@ fn execute_reliability(
 // ── J4: velocity ──────────────────────────────────────────────────────────────
 
 fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Result<CommandResult> {
-    let trends = analysis.velocity_trends()?;
+    let loop_trends = analysis.loop_velocity_trends()?;
+    let baseline_trends = analysis.workspace_baseline_velocity_trends()?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&trends)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "loop": loop_trends,
+                "baseline": baseline_trends,
+            }))?
+        );
         return Ok(CommandResult::success()
             .with_message("velocity trends computed")
             .with_duration(ctx.elapsed()));
     }
 
-    println!(
-        "\n{}",
-        style("Build/Test Velocity (recent 7d vs prior 7d):").bold()
-    );
-    let mut builder = Builder::new();
-    builder.push_record([
-        "TARGET",
-        "RECENT AVG",
-        "PRIOR AVG",
-        "DELTA",
-        "TREND",
-        "SAMPLES",
-    ]);
-    for t in &trends {
-        let target = t.display_label();
-        let recent = t
-            .recent_avg_secs
-            .map(|s| format!("{s:.1}s"))
-            .unwrap_or_else(|| "-".into());
-        let older = t
-            .older_avg_secs
-            .map(|s| format!("{s:.1}s"))
-            .unwrap_or_else(|| "-".into());
-        let delta = t
-            .delta_pct
-            .map(|d| format!("{:+.1}%", d))
-            .unwrap_or_else(|| "-".into());
-        let trend_colored = match t.trend.as_str() {
-            "faster" => style("↓ faster").green().to_string(),
-            "slower" => style("↑ slower").red().to_string(),
-            "stable" => style("→ stable").dim().to_string(),
-            _ => style("no data").dim().to_string(),
-        };
+    for (heading, trends) in [
+        ("Current Loop Velocity", &loop_trends),
+        ("Canonical Workspace Baselines", &baseline_trends),
+    ] {
+        println!(
+            "\n{}",
+            style(format!("{heading} (recent 7d vs prior 7d):")).bold()
+        );
+        let mut builder = Builder::new();
         builder.push_record([
-            &target,
-            &recent,
-            &older,
-            &delta,
-            &trend_colored,
-            &t.sample_count.to_string(),
+            "TARGET",
+            "RECENT AVG",
+            "PRIOR AVG",
+            "DELTA",
+            "TREND",
+            "SAMPLES",
         ]);
+        for t in trends {
+            let target = t.display_label();
+            let recent = t
+                .recent_avg_secs
+                .map(|s| format!("{s:.1}s"))
+                .unwrap_or_else(|| "-".into());
+            let older = t
+                .older_avg_secs
+                .map(|s| format!("{s:.1}s"))
+                .unwrap_or_else(|| "-".into());
+            let delta = t
+                .delta_pct
+                .map(|d| format!("{:+.1}%", d))
+                .unwrap_or_else(|| "-".into());
+            let trend_colored = match t.trend.as_str() {
+                "faster" => style("↓ faster").green().to_string(),
+                "slower" => style("↑ slower").red().to_string(),
+                "stable" => style("→ stable").dim().to_string(),
+                _ => style("no data").dim().to_string(),
+            };
+            builder.push_record([
+                &target,
+                &recent,
+                &older,
+                &delta,
+                &trend_colored,
+                &t.sample_count.to_string(),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::sharp());
+        println!("{table}");
     }
-    let mut table = builder.build();
-    table.with(Style::sharp());
-    println!("{table}");
     println!();
 
     Ok(CommandResult::success()
