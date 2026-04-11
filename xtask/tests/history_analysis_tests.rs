@@ -34,6 +34,20 @@ fn seed_invocation(
     Ok(id)
 }
 
+fn seed_invocation_with_scope(
+    db: &HistoryDb,
+    command: &str,
+    subcommand: Option<&str>,
+    args: &[&str],
+    status: InvocationStatus,
+    duration: f64,
+) -> Result<i64> {
+    let args_json = serde_json::to_string(args)?;
+    let id = db.start_invocation(command, subcommand, None, Some(&args_json))?;
+    db.finish_invocation(id, status, Some(0), duration)?;
+    Ok(id)
+}
+
 /// Record test results for an invocation: `pass_count` passes then `fail_count` failures.
 fn seed_tests(
     db: &HistoryDb,
@@ -409,6 +423,114 @@ async fn test_velocity_trend_no_data_with_few_invocations() -> ::xtask::sandbox:
     assert!(
         check.delta_pct.is_none(),
         "no delta_pct with insufficient data"
+    );
+    Ok(())
+}
+
+/// Velocity trends must not mix incomparable scopes such as workspace checks and `-p` checks.
+#[sinex_test]
+async fn test_velocity_trend_uses_most_recent_comparable_scope() -> ::xtask::sandbox::TestResult<()>
+{
+    let (_dir, db) = temp_db()?;
+
+    for _ in 0..4 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["--all"],
+            InvocationStatus::Success,
+            30.0,
+        )?;
+    }
+    for _ in 0..4 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["--all"],
+            InvocationStatus::Success,
+            30.0,
+        )?;
+    }
+
+    for _ in 0..4 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["-p", "sinex-db"],
+            InvocationStatus::Success,
+            20.0,
+        )?;
+    }
+    for _ in 0..4 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["-p", "sinex-db"],
+            InvocationStatus::Success,
+            10.0,
+        )?;
+    }
+
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend present");
+
+    assert_eq!(check.scope_label.as_deref(), Some("-p sinex-db"));
+    let delta = check.delta_pct.expect("delta_pct should be present");
+    assert!(
+        (delta - (-50.0)).abs() < 1.0,
+        "expected delta_pct ≈ -50 for the package-scoped cluster, got {delta}"
+    );
+    Ok(())
+}
+
+/// Irrelevant execution flags must not split one workload into separate trend scopes.
+#[sinex_test]
+async fn test_velocity_trend_ignores_non_scope_flags_in_scope_identity()
+-> ::xtask::sandbox::TestResult<()> {
+    let (_dir, db) = temp_db()?;
+
+    for _ in 0..2 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["-p", "sinex-db"],
+            InvocationStatus::Success,
+            20.0,
+        )?;
+    }
+    for _ in 0..2 {
+        seed_invocation_with_scope(
+            &db,
+            "check",
+            None,
+            &["--json", "--bg", "-p", "sinex-db", "--lint"],
+            InvocationStatus::Success,
+            10.0,
+        )?;
+    }
+
+    let analysis = HistoryAnalysis::new(&db);
+    let trends = analysis.velocity_trends()?;
+    let check = trends
+        .iter()
+        .find(|t| t.command == "check")
+        .expect("check trend present");
+
+    assert_eq!(check.scope_label.as_deref(), Some("-p sinex-db"));
+    assert_eq!(check.sample_count, 4);
+    let delta = check.delta_pct.expect("delta_pct should be present");
+    assert!(
+        (delta - (-50.0)).abs() < 1.0,
+        "expected delta_pct ≈ -50 when irrelevant flags are normalized, got {delta}"
     );
     Ok(())
 }

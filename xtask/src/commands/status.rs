@@ -462,6 +462,7 @@ fn runtime_query_error_message(metrics: &RuntimeMetrics) -> Option<String> {
 #[derive(Debug, Serialize)]
 struct VelocityTrendOutput {
     command: String,
+    scope_label: Option<String>,
     recent_avg_secs: Option<f64>,
     delta_pct: Option<f64>,
     trend: String,
@@ -472,6 +473,7 @@ impl From<&VelocityTrend> for VelocityTrendOutput {
     fn from(v: &VelocityTrend) -> Self {
         Self {
             command: v.command.clone(),
+            scope_label: v.scope_label.clone(),
             recent_avg_secs: v.recent_avg_secs,
             delta_pct: v.delta_pct,
             trend: v.trend.clone(),
@@ -1824,7 +1826,11 @@ impl<'a> MotdRenderer<'a> {
                     Some(d) if d > 5.0 => style(format!("↑{:.0}%", d)).red().to_string(),
                     _ => style("→").dim().to_string(),
                 };
-                format!("{} {} {}", v.command, avg, delta)
+                let label = match v.scope_label.as_deref() {
+                    Some(scope) if !scope.is_empty() => format!("{} [{}]", v.command, scope),
+                    _ => v.command.clone(),
+                };
+                format!("{label} {avg} {delta}")
             })
             .collect();
 
@@ -2976,6 +2982,7 @@ mod tests {
             health_score: Some(85),
             velocity: Some(vec![VelocityTrendOutput {
                 command: "check".into(),
+                scope_label: Some("-p sinex-db".into()),
                 recent_avg_secs: Some(4.2),
                 delta_pct: Some(-12.0),
                 trend: "improving".into(),

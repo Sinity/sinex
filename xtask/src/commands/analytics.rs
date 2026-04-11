@@ -301,7 +301,7 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
     );
     let mut builder = Builder::new();
     builder.push_record([
-        "COMMAND",
+        "TARGET",
         "RECENT AVG",
         "PRIOR AVG",
         "DELTA",
@@ -309,6 +309,7 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
         "SAMPLES",
     ]);
     for t in &trends {
+        let target = t.display_label();
         let recent = t
             .recent_avg_secs
             .map(|s| format!("{s:.1}s"))
@@ -328,7 +329,7 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
             _ => style("no data").dim().to_string(),
         };
         builder.push_record([
-            t.command.as_str(),
+            &target,
             &recent,
             &older,
             &delta,

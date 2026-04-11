@@ -853,6 +853,15 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
     relevant
 }
 
+/// Describe the command's workload scope using only scope-relevant arguments.
+///
+/// Unlike `scope_key`, this preserves argument order for human-facing output.
+#[must_use]
+pub fn describe_scope(command: &str, args: &[String]) -> Option<String> {
+    let relevant = extract_scope_args(command, args);
+    (!relevant.is_empty()).then(|| relevant.join(" "))
+}
+
 /// X4: Returns true if a coordinator state file was modified within the last 5 seconds.
 ///
 /// Used to distinguish a fresh sentinel reservation (pid=0, just written) from a

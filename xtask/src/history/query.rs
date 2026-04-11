@@ -693,6 +693,35 @@ impl<'db> HistoryAnalysis<'db> {
         ((75.0 - avg_delta * 0.5).clamp(0.0, 100.0)) as u32
     }
 
+    fn parse_invocation_args(args_json: Option<&str>) -> Vec<String> {
+        args_json
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default()
+    }
+
+    fn describe_velocity_scope(command: &str, invocation: &Invocation) -> Option<String> {
+        let args = Self::parse_invocation_args(invocation.args_json.as_deref());
+        let scope = crate::coordinator::describe_scope(command, &args);
+        match (invocation.subcommand.as_deref(), scope) {
+            (Some(subcommand), Some(scope)) => Some(format!("{subcommand} {scope}")),
+            (Some(subcommand), None) => Some(subcommand.to_string()),
+            (None, scope) => scope,
+        }
+    }
+
+    fn velocity_scope_identity(command: &str, invocation: &Invocation) -> (String, Option<String>) {
+        let args = Self::parse_invocation_args(invocation.args_json.as_deref());
+        let scope_hash = crate::coordinator::compute_scope_key(command, &args);
+        let scope_key = invocation
+            .subcommand
+            .as_ref()
+            .map_or(scope_hash.clone(), |subcommand| {
+                format!("{subcommand}:{scope_hash}")
+            });
+        let scope_label = Self::describe_velocity_scope(command, invocation);
+        (scope_key, scope_label)
+    }
+
     /// J2: Diagnostic hotspots — most active (churning) diagnostics.
     ///
     /// Uses lifecycle classification: chronic and recurring diagnostics are
@@ -795,7 +824,8 @@ impl<'db> HistoryAnalysis<'db> {
 
     /// J4: Build/test velocity trends (recent 7d vs prior 7d average duration).
     ///
-    /// Returns one `VelocityTrend` per command with ≥ 4 data points.
+    /// Returns one `VelocityTrend` per command by comparing the most recent
+    /// scope-comparable invocation cluster with ≥ 4 data points.
     /// A positive `delta_pct` means slower; negative means faster.
     pub fn velocity_trends(&self) -> Result<Vec<VelocityTrend>> {
         let mut trends = Vec::new();
@@ -804,14 +834,45 @@ impl<'db> HistoryAnalysis<'db> {
                 .command(command)
                 .succeeded()
                 .days(14)
-                .limit(30)
+                .limit(60)
                 .run(self.db)?;
 
-            let durations: Vec<f64> = invocations.iter().filter_map(|i| i.duration_secs).collect();
+            let mut scopes: Vec<(String, Option<String>, Vec<f64>)> = Vec::new();
+            for invocation in &invocations {
+                let Some(duration) = invocation.duration_secs else {
+                    continue;
+                };
+                let (scope_key, scope_label) = Self::velocity_scope_identity(command, invocation);
+                if let Some((_, _, durations)) = scopes
+                    .iter_mut()
+                    .find(|(existing_scope_key, _, _)| *existing_scope_key == scope_key)
+                {
+                    durations.push(duration);
+                } else {
+                    scopes.push((scope_key, scope_label, vec![duration]));
+                }
+            }
+
+            let fallback_scope = scopes.first();
+            let comparable_scope = scopes.iter().find(|(_, _, durations)| durations.len() >= 4);
+
+            let Some((_, scope_label, durations)) = comparable_scope.or(fallback_scope) else {
+                trends.push(VelocityTrend {
+                    command: command.to_string(),
+                    scope_label: None,
+                    recent_avg_secs: None,
+                    older_avg_secs: None,
+                    delta_pct: None,
+                    trend: "no_data".to_string(),
+                    sample_count: 0,
+                });
+                continue;
+            };
 
             if durations.len() < 4 {
                 trends.push(VelocityTrend {
                     command: command.to_string(),
+                    scope_label: scope_label.clone(),
                     recent_avg_secs: durations.first().copied(),
                     older_avg_secs: None,
                     delta_pct: None,
@@ -821,11 +882,16 @@ impl<'db> HistoryAnalysis<'db> {
                 continue;
             }
 
-            // InvocationQuery returns DESC order — first half is most recent
+            // InvocationQuery returns DESC order. Each scope's durations preserve
+            // that ordering because samples are appended as the invocations are traversed.
             let mid = durations.len() / 2;
             let recent_avg = durations[..mid].iter().sum::<f64>() / mid as f64;
             let older_avg = durations[mid..].iter().sum::<f64>() / (durations.len() - mid) as f64;
-            let delta_pct = ((recent_avg - older_avg) / older_avg) * 100.0;
+            let delta_pct = if older_avg.abs() < f64::EPSILON {
+                0.0
+            } else {
+                ((recent_avg - older_avg) / older_avg) * 100.0
+            };
 
             let trend = if delta_pct.abs() < 5.0 {
                 "stable"
@@ -837,6 +903,7 @@ impl<'db> HistoryAnalysis<'db> {
 
             trends.push(VelocityTrend {
                 command: command.to_string(),
+                scope_label: scope_label.clone(),
                 recent_avg_secs: Some(recent_avg),
                 older_avg_secs: Some(older_avg),
                 delta_pct: Some(delta_pct),
@@ -954,7 +1021,7 @@ impl<'db> HistoryAnalysis<'db> {
                 category: "performance".to_string(),
                 description: format!(
                     "`{}` is {:.0}% slower than the prior week",
-                    trend.command,
+                    trend.display_label(),
                     trend.delta_pct.unwrap_or(0.0)
                 ),
                 action: "xtask history timeline".to_string(),
@@ -1049,7 +1116,7 @@ impl<'db> HistoryAnalysis<'db> {
                 category: "performance".to_string(),
                 description: format!(
                     "`{}` is {:.0}% slower than the prior week",
-                    trend.command,
+                    trend.display_label(),
                     trend.delta_pct.unwrap_or(0.0)
                 ),
                 action: "xtask history timeline".to_string(),
@@ -1108,12 +1175,23 @@ pub struct PackageReliability {
 #[derive(Debug, Clone, Serialize)]
 pub struct VelocityTrend {
     pub command: String,
+    pub scope_label: Option<String>,
     pub recent_avg_secs: Option<f64>,
     pub older_avg_secs: Option<f64>,
     /// Positive = slower, negative = faster (%)
     pub delta_pct: Option<f64>,
     pub trend: String,
     pub sample_count: usize,
+}
+
+impl VelocityTrend {
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        match self.scope_label.as_deref() {
+            Some(scope) if !scope.is_empty() => format!("{} [{}]", self.command, scope),
+            _ => self.command.clone(),
+        }
+    }
 }
 
 /// An actionable recommendation with the exact command to run (J5).
