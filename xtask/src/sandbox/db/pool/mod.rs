@@ -48,8 +48,8 @@ use provisioning::{
     converge_pool_database_schema, create_database_from_template, database_exists,
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
     ensure_pool_database_exists, grant_pool_database_permissions_checked,
-    is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
+    is_missing_database_error, is_retryable_connection_error, is_timescaledb_missing_library_error,
+    load_pool_meta, mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
     recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
     wait_for_database_absence, wait_for_database_absence_admin,
 };
@@ -471,6 +471,40 @@ struct LazySlotPruneSummary {
     locked_stale_slots: Vec<(String, String)>,
 }
 
+enum SlotConnectionDisposition {
+    Gone,
+    Deferred,
+    Fatal,
+}
+
+enum SlotDropLockOutcome {
+    Acquired(PgConnection),
+    Locked,
+    Deferred,
+    Gone,
+}
+
+async fn classify_slot_connection_error(
+    admin_conn: &mut PgConnection,
+    slot_name: &str,
+    error: &sqlx::Error,
+) -> TestResult<SlotConnectionDisposition> {
+    if is_missing_database_error(error) {
+        return Ok(SlotConnectionDisposition::Gone);
+    }
+
+    if is_retryable_connection_error(error) {
+        let still_exists = provisioning::database_exists_admin(admin_conn, slot_name).await?;
+        return Ok(if still_exists {
+            SlotConnectionDisposition::Deferred
+        } else {
+            SlotConnectionDisposition::Gone
+        });
+    }
+
+    Ok(SlotConnectionDisposition::Fatal)
+}
+
 async fn prune_stale_lazy_slot_databases(
     admin_url: &str,
     slot_names: &[String],
@@ -491,13 +525,26 @@ async fn prune_stale_lazy_slot_databases(
                     && meta.extensions == *expected_extensions =>
             {
                 let slot_url = url_with_db_name(admin_url, slot_name)?;
-                let slot_pool = sqlx::postgres::PgPoolOptions::new()
+                let slot_pool = match sqlx::postgres::PgPoolOptions::new()
                     .max_connections(2)
                     .connect(&slot_url)
                     .await
-                    .map_err(|error| {
-                        eyre!("failed to connect for lazy slot schema verification: {error}")
-                    })?;
+                {
+                    Ok(pool) => pool,
+                    Err(error) => {
+                        match classify_slot_connection_error(&mut admin_conn, slot_name, &error)
+                            .await?
+                        {
+                            SlotConnectionDisposition::Gone
+                            | SlotConnectionDisposition::Deferred => continue,
+                            SlotConnectionDisposition::Fatal => {
+                                return Err(eyre!(
+                                    "failed to connect for lazy slot schema verification: {error}"
+                                ));
+                            }
+                        }
+                    }
+                };
                 let schema_drift = reset::schema_mismatch_reason(&slot_pool).await?;
                 slot_pool.close().await;
                 schema_drift.map(|reason| format!("actual schema drift ({reason})"))
@@ -515,14 +562,17 @@ async fn prune_stale_lazy_slot_databases(
         };
 
         let slot_url = url_with_db_name(admin_url, slot_name)?;
-        let Some(slot_guard_conn) =
-            try_lock_slot_database_for_drop(&mut admin_conn, slot_name, &slot_url).await?
-        else {
-            summary
-                .locked_stale_slots
-                .push((slot_name.clone(), stale_reason));
-            continue;
-        };
+        let slot_guard_conn =
+            match try_lock_slot_database_for_drop(&mut admin_conn, slot_name, &slot_url).await? {
+                SlotDropLockOutcome::Acquired(conn) => conn,
+                SlotDropLockOutcome::Locked => {
+                    summary
+                        .locked_stale_slots
+                        .push((slot_name.clone(), stale_reason));
+                    continue;
+                }
+                SlotDropLockOutcome::Deferred | SlotDropLockOutcome::Gone => continue,
+            };
 
         let drop_result = async {
             eprintln!("♻️  Dropping stale lazy pool database {slot_name} ({stale_reason})");
@@ -553,14 +603,20 @@ async fn try_lock_slot_database_for_drop(
     admin_conn: &mut PgConnection,
     slot_name: &str,
     slot_url: &str,
-) -> TestResult<Option<PgConnection>> {
+) -> TestResult<SlotDropLockOutcome> {
     let mut slot_conn = match PgConnection::connect(slot_url).await {
         Ok(conn) => conn,
-        Err(error) => {
-            return Err(eyre!(
-                "failed to connect to slot database {slot_name} before pruning: {error}"
-            ));
-        }
+        Err(error) => match classify_slot_connection_error(admin_conn, slot_name, &error).await? {
+            SlotConnectionDisposition::Gone => return Ok(SlotDropLockOutcome::Gone),
+            SlotConnectionDisposition::Deferred => {
+                return Ok(SlotDropLockOutcome::Deferred);
+            }
+            SlotConnectionDisposition::Fatal => {
+                return Err(eyre!(
+                    "failed to connect to slot database {slot_name} before pruning: {error}"
+                ));
+            }
+        },
     };
 
     let lock_key = advisory_lock_key(slot_name);
@@ -570,7 +626,7 @@ async fn try_lock_slot_database_for_drop(
         .await?;
     if !slot_lock_acquired {
         slot_conn.close().await?;
-        return Ok(None);
+        return Ok(SlotDropLockOutcome::Locked);
     }
 
     let slot_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -593,7 +649,7 @@ async fn try_lock_slot_database_for_drop(
     .execute(&mut *admin_conn)
     .await?;
 
-    Ok(Some(slot_conn))
+    Ok(SlotDropLockOutcome::Acquired(slot_conn))
 }
 
 // ── DatabasePool ────────────────────────────────────────────────────────────
@@ -1698,6 +1754,111 @@ mod tests {
             !provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
             "schema-drifted lazy slot database should be removed"
         );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prune_stale_lazy_slot_databases_skips_transiently_unavailable_clean_slot()
+    -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_prune_deferred_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let meta = load_pool_meta(&mut admin_conn, &db_name)
+            .await?
+            .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
+
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+
+        let summary = prune_stale_lazy_slot_databases(
+            &config.admin_url,
+            std::slice::from_ref(&db_name),
+            &meta.fingerprint,
+            &meta.extensions,
+        )
+        .await?;
+        assert_eq!(
+            summary.pruned, 0,
+            "transiently unavailable clean slot should not be pruned"
+        );
+        assert!(
+            summary.locked_stale_slots.is_empty(),
+            "transient schema verification deferrals should stay silent"
+        );
+        assert!(
+            provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
+            "transiently unavailable clean slot database should remain present"
+        );
+
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_try_lock_slot_database_for_drop_returns_gone_for_missing_database()
+    -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_missing_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+
+        let outcome = try_lock_slot_database_for_drop(&mut admin_conn, &db_name, &slot_url).await?;
+        assert!(matches!(outcome, SlotDropLockOutcome::Gone));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_try_lock_slot_database_for_drop_defers_transiently_unavailable_database()
+    -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_busy_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+
+        let outcome = try_lock_slot_database_for_drop(&mut admin_conn, &db_name, &slot_url).await?;
+        assert!(matches!(outcome, SlotDropLockOutcome::Deferred));
+
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
 
         Ok(())
     }
