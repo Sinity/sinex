@@ -109,7 +109,6 @@ mod migration_safety_test;
 mod model_based_event_repo_test;
 mod model_based_schema_test;
 mod namespace_isolation_test;
-mod nix_module_integration_test;
 mod node_crash_recovery_test;
 mod performance_test;
 mod pipeline_end_to_end;

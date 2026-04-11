@@ -1,4 +1,4 @@
-//! Derived output type — replaces `OutputEvent<T>`.
+//! Derived output type for synthetic events.
 
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
@@ -6,9 +6,7 @@ use sinex_primitives::temporal::Timestamp;
 
 /// Output from a derived node's processing logic.
 ///
-/// Carries the full synthetic metadata required for replay-correct
-/// provenance chains. Replaces the old `OutputEvent<T>` which only
-/// had `payload`, `ts_orig`, and `source_event_ids`.
+/// Carries the full synthetic metadata required for replay-correct provenance chains.
 #[derive(Debug, Clone)]
 pub struct DerivedOutput<T> {
     /// The typed output payload.

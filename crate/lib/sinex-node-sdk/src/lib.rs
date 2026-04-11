@@ -6,19 +6,18 @@
 
 //! # Sinex Node SDK
 //!
-//! The Sinex Node SDK provides the core abstractions and runtime for building nodes in the Sinex ecosystem.
-//! It implements a **Unified Node Architecture**, where both **Ingestors** (data capturers) and
-//! **Automata** (derived-event evaluators) are unified as stateful stream nodes.
+//! The Sinex Node SDK provides the core abstractions and runtime for building
+//! ingestors and derived nodes in the Sinex ecosystem.
 //!
 //! ## Core Concepts
 //!
-//! ### Unified Node Interface
-//! All nodes implement the [`Node`] trait, which provides a single interface for point-in-time snapshots,
-//! historical gap-filling, and continuous real-time processing.
+//! ### Shared Runtime Surface
+//! The low-level [`Node`] trait and runtime support point-in-time snapshots,
+//! historical catch-up, and continuous real-time processing.
 //!
-//! ### Gen2 Patterns
-//! The SDK provides high-level traits like [`TransducerNode`], [`WindowedNode`],
-//! [`ScopeReconcilerNode`], and [`IngestorNode`] that automate:
+//! ### High-Level Node Traits
+//! The SDK provides higher-level traits like [`TransducerNode`],
+//! [`WindowedNode`], [`ScopeReconcilerNode`], and [`IngestorNode`] that automate:
 //! - **State Persistence**: Automatic checkpointing to NATS KV and local backup files.
 //! - **Hot Reload**: Fast state restoration from local files during development rebuilds.
 //! - **Graceful Lifecycle**: Cooperative shutdown patterns via [`WatcherHandle`] and `CancellationToken`.
@@ -35,7 +34,7 @@
 //! - **Graceful Handoff**: Zero-downtime version upgrades.
 //! - **Work Tracking**: Ensuring in-flight operations complete before shutdown.
 //!
-//! # Clock Skew Considerations (Issue 7)
+//! # Clock Skew Considerations
 //!
 //! Event ordering relies on `UUIDv7` timestamps. Clock skew between nodes can cause:
 //! - Out-of-order event processing
