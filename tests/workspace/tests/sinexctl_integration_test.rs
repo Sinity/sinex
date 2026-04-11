@@ -1,18 +1,10 @@
 use sinex_gateway::{ServiceContainer, rpc_server};
+use sinex_workspace_tests::built_binary;
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
 use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn sinexctl_binary() -> PathBuf {
-    repo_root().join(".sinex/target/debug/sinexctl")
-}
 
 fn reserve_port() -> color_eyre::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -131,7 +123,7 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
-    let output = std::process::Command::new(sinexctl_binary())
+    let output = std::process::Command::new(built_binary("sinexctl"))
         .arg("--token")
         .arg("test-token:admin")
         .arg("--insecure")
@@ -169,7 +161,7 @@ async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}", gw.port);
 
-    let mut child = std::process::Command::new(sinexctl_binary())
+    let mut child = std::process::Command::new(built_binary("sinexctl"))
         .arg("--token")
         .arg("test-token:admin")
         .arg("--insecure")
@@ -224,7 +216,7 @@ async fn sinexctl_dlq_peek_command_reports_entries(ctx: TestContext) -> color_ey
 
     // Test `dlq peek` as a distinct DLQ operation (no `dlq metrics` subcommand exists).
     // DLQ operations require NATS; use a short timeout and accept graceful failure.
-    let output = std::process::Command::new(sinexctl_binary())
+    let output = std::process::Command::new(built_binary("sinexctl"))
         .arg("--token")
         .arg("test-token:admin")
         .arg("--insecure")

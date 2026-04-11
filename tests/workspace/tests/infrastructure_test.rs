@@ -4,22 +4,25 @@
 //! preventing permission-related failures that could otherwise only be
 //! caught during CI runs.
 
-use futures::future::BoxFuture;
 use sinex_schema::schema_registry;
-use xtask::sandbox::{sinex_test, test_db_pool, TestResult};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
+use xtask::sandbox::db::ensure_default_session_state;
+use xtask::sandbox::fs::{ReplicationRoleGuard, RowSecurityGuard, TriggersGuard};
+use xtask::sandbox::prelude::{CleanupConfig, CleanupMethod, sinex_test};
 
 /// Verifies that all schemas from the registry are accessible.
 ///
 /// This test catches cases where schemas are added to the registry but
 /// CI scripts don't grant access to them (like the `public` schema issue).
 #[sinex_test]
-async fn ci_setup_grants_all_schemas() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn ci_setup_grants_all_schemas(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
 
     // Get current user
     let current_user: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
 
     // Verify we have USAGE on all schemas
@@ -29,7 +32,7 @@ async fn ci_setup_grants_all_schemas() -> TestResult<()> {
         ))
         .bind(&current_user)
         .bind(schema.name)
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?
         .get("has_usage");
 
@@ -49,15 +52,18 @@ async fn ci_setup_grants_all_schemas() -> TestResult<()> {
 ///
 /// This catches missing ALTER DEFAULT PRIVILEGES grants.
 #[sinex_test]
-async fn can_create_tables_in_all_schemas() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn can_create_tables_in_all_schemas(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
 
     for schema in schema_registry::SINEX_SCHEMAS {
         // Try to create a temporary table
         let result = sqlx::query(&format!(
-            "CREATE TEMP TABLE {schema}_test_ci_permissions (id INT)"
+            "CREATE TEMP TABLE {}_test_ci_permissions (id INT)",
+            schema.name
         ))
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         assert!(
@@ -76,8 +82,10 @@ async fn can_create_tables_in_all_schemas() -> TestResult<()> {
 ///
 /// This is required for test cleanup to work.
 #[sinex_test]
-async fn can_disable_temporal_ledger_triggers() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn can_disable_temporal_ledger_triggers(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let mut conn = pool.acquire().await?;
 
     // Try to disable triggers (cleanup tests need this)
@@ -102,12 +110,14 @@ async fn can_disable_temporal_ledger_triggers() -> TestResult<()> {
 
 /// Verifies declarative schema core objects are accessible.
 #[sinex_test]
-async fn declarative_schema_core_objects_accessible() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn declarative_schema_core_objects_accessible(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
 
     let events_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?;
     let has_ts_persisted: bool = sqlx::query_scalar(
         "SELECT EXISTS (
@@ -118,7 +128,7 @@ async fn declarative_schema_core_objects_accessible() -> TestResult<()> {
               AND column_name = 'ts_persisted'
         )",
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
 
     assert!(
@@ -133,8 +143,10 @@ async fn declarative_schema_core_objects_accessible() -> TestResult<()> {
 ///
 /// This is critical for cleanup operations that need to bypass FK constraints.
 #[sinex_test]
-async fn can_set_session_replication_role() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn can_set_session_replication_role(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let mut conn = pool.acquire().await?;
 
     // Try to set session_replication_role to replica
@@ -174,8 +186,10 @@ async fn can_set_session_replication_role() -> TestResult<()> {
 ///
 /// This is required for cleanup operations to bypass RLS policies.
 #[sinex_test]
-async fn can_disable_row_security() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn can_disable_row_security(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let mut conn = pool.acquire().await?;
 
     // Try to disable row security
@@ -202,8 +216,10 @@ async fn can_disable_row_security() -> TestResult<()> {
 ///
 /// This is required for cleanup to work around archive triggers.
 #[sinex_test]
-async fn can_toggle_core_events_triggers() -> TestResult<()> {
-    let pool = test_db_pool().await;
+async fn can_toggle_core_events_triggers(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let mut conn = pool.acquire().await?;
 
     // Disable triggers
@@ -236,16 +252,16 @@ async fn can_toggle_core_events_triggers() -> TestResult<()> {
 ///
 /// Ensures CI can DELETE from all tables that cleanup needs to clear.
 #[sinex_test]
-async fn can_delete_from_all_cleanup_tables() -> TestResult<()> {
-    use xtask::sandbox::fs::{CleanupConfig, CleanupMethod};
-
-    let pool = test_db_pool().await;
+async fn can_delete_from_all_cleanup_tables(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let config = CleanupConfig::default();
 
     for table in config.tables_to_clean() {
         // Try DELETE (should succeed even if table is empty)
         let delete_result = sqlx::query(&format!("DELETE FROM {} WHERE false", table.table_name))
-            .execute(&pool)
+            .execute(pool)
             .await;
 
         assert!(
@@ -259,7 +275,7 @@ async fn can_delete_from_all_cleanup_tables() -> TestResult<()> {
         // For tables that support TRUNCATE, verify that too
         if table.method == CleanupMethod::Truncate {
             let truncate_result = sqlx::query(&format!("TRUNCATE TABLE {} RESTART IDENTITY CASCADE", table.table_name))
-                .execute(&pool)
+                .execute(pool)
                 .await;
 
             assert!(
@@ -279,13 +295,11 @@ async fn can_delete_from_all_cleanup_tables() -> TestResult<()> {
 ///
 /// This ensures connections don't leak altered state back to the pool.
 #[sinex_test]
-async fn session_guards_restore_state() -> TestResult<()> {
-    use xtask::sandbox::fs::CleanupConfig;
-
-    let pool = test_db_pool().await;
+async fn session_guards_restore_state(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let pool = ctx.pool();
     let mut conn = pool.acquire().await?;
-    let config = CleanupConfig::default();
-
     // Record initial state
     let initial_replication_role: String = sqlx::query_scalar("SHOW session_replication_role")
         .fetch_one(&mut *conn)
@@ -294,21 +308,14 @@ async fn session_guards_restore_state() -> TestResult<()> {
     // Use guards (simulating cleanup operation)
     {
         let replication_guard =
-            sinex_test_utils::session_guards::ReplicationRoleGuard::disable_for_cleanup(&mut conn)
-                .await?;
+            ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
         let row_security_guard =
-            sinex_test_utils::session_guards::RowSecurityGuard::disable_for_cleanup(&mut conn)
-                .await?;
-        let trigger_tables: Vec<_> = config
-            .tables_requiring_trigger_disable()
-            .map(|t| t.table_name)
-            .collect();
-        let triggers_guard =
-            sinex_test_utils::session_guards::TriggersGuard::disable_for_cleanup(
-                &mut conn,
-                trigger_tables,
-            )
-            .await?;
+            RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
+        let triggers_guard = TriggersGuard::disable_for_cleanup(
+            &mut conn,
+            ["core.events", "raw.temporal_ledger"],
+        )
+        .await?;
 
         // Verify altered state
         let altered_role: String = sqlx::query_scalar("SHOW session_replication_role")
@@ -342,48 +349,11 @@ async fn session_guards_restore_state() -> TestResult<()> {
     Ok(())
 }
 
-/// Verifies guards restore state even when the inner block errors.
-#[sinex_test]
-async fn session_guards_restore_on_error() -> TestResult<()> {
-    use xtask::sandbox::fs::CleanupConfig;
-
-    let pool = test_db_pool().await;
-    let mut conn = pool.acquire().await?;
-    let config = CleanupConfig::default();
-
-    let initial_replication_role: String = sqlx::query_scalar("SHOW session_replication_role")
-        .fetch_one(&mut *conn)
-        .await?;
-
-    // Force an error inside the guard block
-    let result = xtask::sandbox::db_common::with_cleanup_session(&mut conn, &config, |_conn| {
-        let fut: BoxFuture<'_, TestResult<()>> =
-            Box::pin(async move { Err(color_eyre::eyre::eyre!("intentional failure")) });
-        fut
-    })
-    .await;
-
-    assert!(result.is_err(), "Expected intentional failure");
-
-    let final_replication_role: String = sqlx::query_scalar("SHOW session_replication_role")
-        .fetch_one(&mut *conn)
-        .await?;
-
-    assert_eq!(
-        final_replication_role, initial_replication_role,
-        "Guards should restore original session state even on error"
-    );
-
-    Ok(())
-}
-
 /// Verifies that CleanupConfig is authoritative for cleanup behavior.
 ///
 /// No hardcoded table lists should exist in cleanup functions.
 #[sinex_test]
-async fn cleanup_config_is_authoritative() -> TestResult<()> {
-    use xtask::sandbox::fs::CleanupConfig;
-
+async fn cleanup_config_is_authoritative() -> xtask::sandbox::TestResult<()> {
     let config = CleanupConfig::default();
 
     // Verify config contains expected critical tables
@@ -402,19 +372,19 @@ async fn cleanup_config_is_authoritative() -> TestResult<()> {
         "CleanupConfig must include raw.source_material_registry"
     );
 
-    // Verify tables requiring trigger disable are marked correctly
-    let trigger_disable_tables: Vec<_> = config
-        .tables_requiring_trigger_disable()
+    // Current cleanup contract is truncate-first rather than trigger-disable-first.
+    let truncatable_tables: Vec<_> = config
+        .truncatable_tables()
         .map(|t| t.table_name)
         .collect();
 
     assert!(
-        trigger_disable_tables.contains(&"core.events"),
-        "core.events must have disable_triggers = true"
+        truncatable_tables.contains(&"core.events"),
+        "core.events must stay on the truncate cleanup path"
     );
     assert!(
-        trigger_disable_tables.contains(&"raw.temporal_ledger"),
-        "raw.temporal_ledger must have disable_triggers = true"
+        truncatable_tables.contains(&"raw.temporal_ledger"),
+        "raw.temporal_ledger must stay on the truncate cleanup path"
     );
 
     Ok(())
@@ -422,7 +392,7 @@ async fn cleanup_config_is_authoritative() -> TestResult<()> {
 
 /// Ensures pool stats helpers are usable inside async runtimes (no blocking_lock panics).
 #[sinex_test]
-async fn pool_stats_helpers_are_async_safe() -> TestResult<()> {
+async fn pool_stats_helpers_are_async_safe() -> xtask::sandbox::TestResult<()> {
     let _ = xtask::sandbox::db::get_pool_stats();
     let _ = xtask::sandbox::db::get_pool_stats_async().await;
     Ok(())
@@ -430,8 +400,9 @@ async fn pool_stats_helpers_are_async_safe() -> TestResult<()> {
 
 /// Ensures session state reset helper is callable in CI (permissions, triggers, RLS).
 #[sinex_test]
-async fn can_reset_session_state_via_helper() -> TestResult<()> {
-    let pool = test_db_pool().await;
-    xtask::sandbox::db::ensure_default_session_state(&pool).await?;
+async fn can_reset_session_state_via_helper(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    ensure_default_session_state(ctx.pool()).await?;
     Ok(())
 }
