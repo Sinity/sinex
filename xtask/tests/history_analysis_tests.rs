@@ -1,8 +1,7 @@
 //! Mathematical unit tests for `HistoryAnalysis` heuristics.
 //!
-//! Phase 4.2: these tests seed exact known data into a temp `SQLite` DB and
-//! assert exact arithmetic — not JSON shape, not "greater than zero", but
-//! precise pass rates, diagnostic counts, and regression detection.
+//! These tests seed exact known data into a temp `SQLite` DB and assert exact
+//! arithmetic: precise pass rates, diagnostic counts, and regression detection.
 //!
 //! Each test is self-contained: creates a throwaway DB, seeds rows, calls
 //! `HistoryAnalysis`, asserts exact values. No Postgres, no NATS, no infra.

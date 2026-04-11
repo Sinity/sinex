@@ -47,12 +47,12 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-// test_status_summary_json_contract deleted (Phase 3b).
-// Superseded by snapshot_status_summary_json in cli_output_snapshots.rs —
-// the snapshot catches structural drift (field removed/renamed/retyped) that
+// test_status_summary_json_contract is covered by snapshot_status_summary_json in
+// cli_output_snapshots.rs.
+// The snapshot catches structural drift (field removed/renamed/retyped) that
 // field-presence asserts cannot detect.
 
-/// Phase 3: JSON contract for `xtask doctor --json`
+/// JSON contract for `xtask doctor --json`.
 /// Asserts the health-report envelope and per-component field presence.
 #[sinex_test]
 async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
@@ -121,7 +121,7 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-/// Phase 3: JSON contract for `xtask jobs list --json`
+/// JSON contract for `xtask jobs list --json`.
 /// Asserts the jobs array and per-job required fields.
 #[sinex_test]
 async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
@@ -154,7 +154,7 @@ async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-/// Phase 3: JSON contract for `xtask deps list --json`
+/// JSON contract for `xtask deps list --json`.
 /// Asserts the packages array and per-package required fields.
 #[sinex_test]
 async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {

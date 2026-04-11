@@ -1,0 +1,14 @@
+id: cargo-command-outside-process
+message: "Spawn cargo via xtask::process helpers, not ad-hoc Command::new(\"cargo\")"
+severity: error
+language: rust
+rule:
+  any:
+    - pattern: Command::new("cargo")
+    - pattern: std::process::Command::new("cargo")
+    - pattern: tokio::process::Command::new("cargo")
+ignores:
+  - "xtask/src/process.rs"
+note: |
+  Keep cargo spawning centralized in xtask::process::{cargo_command, cargo_tokio_command, ProcessBuilder::cargo}.
+  That keeps policy, diagnostics, and future behavior changes behind one seam.

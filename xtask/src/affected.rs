@@ -306,10 +306,10 @@ fn transitive_dependents(
     affected
 }
 
-/// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty (Q5).
+/// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty.
 ///
 /// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
-///   `xtask test --vm --category smoke`
+///   `xtask test vm --category smoke`
 pub fn nixos_modules_dirty() -> Result<bool> {
     let repo_root =
         std::env::current_dir().context("failed to determine current working directory")?;

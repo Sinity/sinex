@@ -4,12 +4,14 @@ use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+
+use crate::process::cargo_command;
 
 /// X3: Verify that `pid` still refers to a cargo or rustc process before SIGKILL.
 ///
@@ -198,7 +200,7 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     let timeout_secs =
         crate::parse_positive_u64_env_or_default("SINEX_CARGO_TIMEOUT", 600, "cargo timeout");
 
-    let mut child = Command::new("cargo")
+    let mut child = cargo_command()
         .args(cargo_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit()) // Stream compiler progress/errors to terminal in real-time
@@ -289,7 +291,7 @@ fn progress_target_packages(package_args: &[&str]) -> Option<std::collections::H
 
     if workspace_mode {
         // Use cargo metadata to count workspace packages (no rustc involved)
-        let output = match Command::new("cargo")
+        let output = match cargo_command()
             .args(["metadata", "--no-deps", "--format-version", "1"])
             .output()
         {
@@ -370,7 +372,7 @@ where
     let timeout_secs =
         crate::parse_positive_u64_env_or_default("SINEX_CARGO_TIMEOUT", 600, "cargo timeout");
 
-    let mut child = Command::new("cargo")
+    let mut child = cargo_command()
         .args(cargo_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

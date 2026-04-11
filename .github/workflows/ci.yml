@@ -59,5 +59,11 @@ jobs:
       shell: bash
       run: |
         nix develop --accept-flake-config --no-pure-eval --command \
-          xtask xtr ci postgres -- \
-          xtask xtr ci workspace
+          xtask ci postgres -- \
+          xtask ci workspace
+
+    - name: Verify generated command docs are current
+      shell: bash
+      run: |
+        nix develop --accept-flake-config --no-pure-eval --command \
+          xtask docs check

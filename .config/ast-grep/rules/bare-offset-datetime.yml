@@ -9,9 +9,12 @@ rule:
 # - Where context expects OffsetDateTime → keep OffsetDateTime::now_utc()
 # Manual review required for each case
 ignores:
-  # Exclude core infrastructure that legitimately uses OffsetDateTime
-  - "crate/lib/sinex-schema/src/primitives/timestamp.rs"
+  # Timestamp internals and xtask/tooling legitimately use OffsetDateTime directly.
+  - "xtask/**"
+  - "crate/cli/**"
+  - "crate/lib/sinex-primitives/src/primitives/timestamp.rs"
   - "crate/lib/sinex-primitives/src/temporal.rs"
+  - "crate/core/sinex-gateway/src/handlers/telemetry.rs"
 note: |
   The codebase uses Timestamp as the canonical time wrapper.
   Consider using Timestamp::now() instead of OffsetDateTime::now_utc()

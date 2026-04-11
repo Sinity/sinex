@@ -1,45 +1,21 @@
 # xtask
 
-`xtask` is the canonical task runner for the Sinex workspace. Use it instead of
-bare `cargo` for build, test, infra, history, and diagnostics workflows.
+`xtask` is the Sinex automation crate and CLI. Inside the project devShell, plain
+`xtask` is the default surface for local verification, infra management,
+generated agent/docs artifacts, and several workspace-specific analysis flows.
 
 ## Start Here
 
 ```bash
 xtask --help
-xtask check
-xtask test
-xtask ci workspace
-```
-
-## Common Commands
-
-```bash
-# Fast compile check
-xtask check
-
-# Compile + clippy
-xtask check --lint
-
-# Full lint / fmt / forbidden scan
-xtask check --full
-
-# Run tests
-xtask test
-
-# Start local infrastructure
-xtask infra start
-
-# Run core services
-xtask run core --logs
-
-# Health checks
-xtask doctor
-xtask status --summary
+xtask <command> --help
+xtask --list-commands --json
 ```
 
 ## Documentation
 
-- Command reference: `xtask/README.md`
+- Overview and doc map: `xtask/docs/README.md`
+- Selective command guide: `xtask/docs/command-guide.md`
+- Generated public command reference: `xtask/docs/command-reference.md`
 - Verification and perf contracts: `xtask/docs/verification.md`
 - Testing sandbox: `xtask/docs/sandbox/README.md`

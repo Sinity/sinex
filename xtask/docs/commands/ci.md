@@ -8,11 +8,12 @@ The `ci` command family provides reusable building blocks for CI/CD pipelines an
 pre-merge validation. The repository's main GitHub Actions gate currently runs the
 Postgres-backed workspace lane:
 
-`xtask xtr ci postgres -- xtask xtr ci workspace`
+`xtask ci postgres -- xtask ci workspace`
 
 This page documents that public `xtask ci` surface. Older references to
 `xtask verify` are stale; the public perf-verification entrypoint moved under
-`xtask test bench`.
+`xtask test bench`. For the authoritative option surface, use
+`xtask ci --help` and `xtask ci <subcommand> --help`.
 
 ## Subcommands
 
@@ -24,13 +25,20 @@ Postgres-backed workspace validation.
 1. Applies declarative schema to the target database
 2. Verifies required contract tables are present
 3. Runs `cargo deny check`
-4. Runs `xtask check` and `xtask lint-forbidden` in parallel
+4. Runs `xtask check` plus the internal forbidden-pattern lane in parallel
 5. Fails if the workspace is left dirty by generated output
 6. Runs `xtask test --fail-fast -p sinex-e2e-tests`
 7. Runs `xtask test --all --prime --exclude sinex-e2e-tests`
 
 This is the broadest Rust/package gate currently wired into GitHub Actions, but it
 still does **not** cover the NixOS VM suite under `tests/e2e/nixos-vm/`.
+
+The closest public local equivalent for that lane is `xtask check --forbidden`
+or `xtask check --full`. Internally, the CI workspace lane runs the same
+forbidden-pattern logic in parallel with `xtask check`. That logic also
+executes the repo `ast-grep` rule catalog, but only `error`-severity ast-grep
+findings are currently blocking; warning/hint findings remain advisory until
+the catalog is clean enough to tighten further.
 
 **Usage:**
 ```bash
@@ -57,6 +65,7 @@ xtask ci workspace --target-dir /tmp/ci-build
 **When NOT to use:**
 - **Quick local iteration** - Use `xtask check` instead (much faster)
 - **Schema-only checks** - Use `xtask ci schema-only`
+- **Refreshing the checked-in `schemas/` bundle** - Use `xtask docs schema-bundle`
 - **VM deployment-path coverage** - Use `tests/e2e/nixos-vm` separately
 
 ### `xtask ci postgres`
@@ -69,9 +78,6 @@ xtask ci postgres -- xtask ci workspace
 xtask ci postgres -- xtask ci schema-only
 ```
 
-The main CI workflow uses the `xtr` wrappers around these commands, but the command
-contract is the same.
-
 ### `xtask ci schema-only`
 
 Runs only the declarative schema apply + readiness check path:
@@ -82,6 +88,14 @@ xtask ci postgres -- xtask ci schema-only
 
 Use this when you need confidence in the schema bootstrap path without paying for the
 full workspace test suite.
+
+This does **not** regenerate the checked-in JSON schema bundle under `schemas/`.
+For that surface, use:
+
+```bash
+xtask docs schema-bundle
+xtask docs schema-bundle --check
+```
 
 ### `xtask ci check-ready`
 
@@ -106,8 +120,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Postgres-backed workspace gate
         run: |
-          xtask xtr ci postgres -- \
-          xtask xtr ci workspace
+          xtask ci postgres -- \
+          xtask ci workspace
 ```
 
 ## Performance Notes

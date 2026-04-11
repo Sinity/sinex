@@ -5,7 +5,7 @@
 //! - Certificate validation and verification
 //! - File permissions on generated certificates
 //! - Error cases (invalid paths, permission issues, missing CA)
-//! - CLI wrappers for `xtr tls` subcommands
+//! - Internal TLS helpers used by xtask commands
 
 use std::fs::{self, Permissions};
 #[cfg(unix)]
@@ -386,12 +386,10 @@ async fn test_generate_client_cert_missing_ca() -> ::xtask::sandbox::TestResult<
 }
 
 // ============================================================================
-// Library API Tests: generate_client_cert (replaces dissolved xtr tls CLI)
+// Library API Tests: generate_client_cert
 // ============================================================================
 //
-// The `xtr tls` CLI was dissolved in Group E; TLS commands moved to sinexctl.
-// The library functions remain in xtask::tls for internal use (doctor, reset).
-// These tests verify the library API directly.
+// These tests verify the TLS helper surface used internally by xtask.
 
 #[sinex_test]
 async fn test_tls_library_exports_client_cert_api() -> ::xtask::sandbox::TestResult<()> {

@@ -38,3 +38,15 @@
 ## Reference
 
 @.claude/includes/reference/_index.md
+
+---
+
+## Contributor Workflow
+
+@CONTRIBUTING.md
+
+---
+
+## Test Matrix
+
+@TESTING.md

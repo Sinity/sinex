@@ -806,7 +806,7 @@ async fn test_test_command_accepts_passthrough_args() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_db_reset_without_confirmation() -> TestResult<()> {
-    // `xtask reset` (top-level, moved from `infra reset` in Group N) requires --yes
+    // `xtask reset` requires --yes.
     let output = Command::new("xtask").arg("reset").output()?;
 
     assert!(!output.status.success(), "Command should fail");
@@ -866,7 +866,6 @@ async fn test_check_skip_options() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_completions_all_shells() -> TestResult<()> {
-    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     for shell in ["bash", "zsh", "fish"] {
         let output = Command::new("xtask")
             .arg("completions")
@@ -884,7 +883,6 @@ async fn test_completions_all_shells() -> TestResult<()> {
 #[sinex_test]
 async fn test_completions_power_shell() -> TestResult<()> {
     // Clap uses kebab-case 'power-shell' for the PowerShell variant.
-    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     let output = Command::new("xtask")
         .arg("completions")
         .arg("power-shell")

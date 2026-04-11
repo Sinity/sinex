@@ -1,7 +1,7 @@
 //! Fluent query builders for xtask history database.
 //!
-//! Instead of proliferating bespoke query methods, these builders compose arbitrary filter
-//! combinations into SQL WHERE clauses (no in-memory post-filtering).
+//! These builders compose arbitrary filter combinations into SQL WHERE clauses
+//! without in-memory post-filtering.
 //!
 //! # Usage
 //!
@@ -557,9 +557,9 @@ impl<'db> HistoryAnalysis<'db> {
         Ok(Some(passed as f64 / total as f64))
     }
 
-    // ── Group J: Analytics Subsystem ─────────────────────────────────────────
+    // ── Analytics subsystem ──────────────────────────────────────────────────
 
-    /// J1: Composite workspace health report (score 0-100).
+    /// Composite workspace health report (score 0-100).
     ///
     /// Score = build (50%) + test (30%) + velocity (20%).
     /// Build score = 100 - errors×10 - warnings×1, clamped.
@@ -1065,9 +1065,9 @@ impl<'db> HistoryAnalysis<'db> {
     }
 }
 
-// ─── Group J analytics output types ──────────────────────────────────────────
+// ─── Analytics output types ──────────────────────────────────────────────────
 
-/// Composite workspace health report (J1).
+/// Composite workspace health report.
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceHealthReport {
     pub score: u32,

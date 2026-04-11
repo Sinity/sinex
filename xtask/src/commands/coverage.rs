@@ -20,7 +20,7 @@ pub struct CoverageCommand {
 pub enum CoverageSubcommand {
     /// Generate HTML coverage report
     Html {
-        #[arg(short, long, default_value = "target/coverage")]
+        #[arg(short, long, default_value = ".sinex/coverage")]
         output: String,
         #[arg(long)]
         open: bool,
@@ -29,7 +29,7 @@ pub enum CoverageSubcommand {
     },
     /// Generate LCOV coverage report (for CI integration)
     Lcov {
-        #[arg(short, long, default_value = "lcov.info")]
+        #[arg(short, long, default_value = ".sinex/coverage/lcov.info")]
         output: String,
         #[arg(short, long)]
         package: Option<String>,
@@ -49,7 +49,7 @@ pub enum CoverageSubcommand {
         package: Option<String>,
         #[arg(long)]
         html: bool,
-        #[arg(short, long, default_value = "target/coverage")]
+        #[arg(short, long, default_value = ".sinex/coverage")]
         output: String,
     },
     /// Clean coverage artifacts
@@ -339,7 +339,7 @@ fn execute_clean(ctx: &CommandContext) -> Result<CommandResult> {
         .run()?;
 
     // Also remove the output directory
-    let coverage_dir = Path::new("target/coverage");
+    let coverage_dir = Path::new(".sinex/coverage");
     if coverage_dir.exists() {
         fs::remove_dir_all(coverage_dir)?;
         if ctx.is_human() {
@@ -407,7 +407,7 @@ mod tests {
             "coverage",
         );
 
-        let result = execute_enforce(150.0, None, false, "target/coverage/html", &ctx);
+        let result = execute_enforce(150.0, None, false, ".sinex/coverage/html", &ctx);
         assert!(result.is_err());
         assert!(
             result

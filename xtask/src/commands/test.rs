@@ -75,7 +75,7 @@ fn nextest_history<'a>(
     ctx.invocation_id().map(|invocation_id| (db, invocation_id))
 }
 
-/// Test command configuration
+/// Run the repo's primary nextest-backed test workflows.
 ///
 /// Bare `xtask test` runs nextest (the common case). Specialized workflows
 /// are subcommands: `test bench`, `test fuzz`, `test coverage`, `test mutants`, `test vm`.
@@ -137,8 +137,7 @@ pub struct TestCommand {
     #[arg(short, long)]
     pub all: bool,
 
-    /// Update insta snapshots (sets INSTA_UPDATE=always).
-    /// Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern.
+    /// Update insta snapshots (sets `INSTA_UPDATE=always`).
     #[arg(long)]
     pub update_snapshots: bool,
 
@@ -157,7 +156,7 @@ pub enum TestSubcommand {
     /// Run benchmarks with optional contract enforcement
     ///
     /// Sweep, refine, bisect, stress, or soak modes. Use --contracts to enforce
-    /// perf budgets from config/verify/perf-contracts.toml.
+    /// perf budgets from xtask/config/perf-contracts.toml.
     Bench(BenchArgs),
 
     /// Run fuzz tests (requires cargo-fuzz)
@@ -200,11 +199,11 @@ pub struct BenchArgs {
     #[arg(long, default_value = "workspace")]
     pub target: String,
 
-    /// Enforce perf contracts from config/verify/perf-contracts.toml
+    /// Enforce perf contracts from xtask/config/perf-contracts.toml
     #[arg(long)]
     pub contracts: bool,
 
-    /// Contract file path (default: config/verify/perf-contracts.toml)
+    /// Contract file path (default: xtask/config/perf-contracts.toml)
     #[arg(long)]
     pub contracts_file: Option<PathBuf>,
 
@@ -256,7 +255,7 @@ pub struct FuzzArgs {
 #[derive(Debug, Clone, clap::Args)]
 pub struct CoverageArgs {
     /// Output directory
-    #[arg(long, default_value = "target/coverage")]
+    #[arg(long, default_value = ".sinex/coverage")]
     pub output: String,
 
     /// Open HTML report in browser
@@ -307,7 +306,23 @@ pub struct VmArgs {
     #[arg(long)]
     pub parallel: bool,
 
-    /// Additional test arguments
+    /// Timeout per test in seconds
+    #[arg(long, default_value_t = crate::commands::vm::DEFAULT_TIMEOUT_SECS)]
+    pub timeout: u64,
+
+    /// Keep failed VM derivations for inspection
+    #[arg(long)]
+    pub keep_failed: bool,
+
+    /// List exported VM checks instead of running them
+    #[arg(long, short)]
+    pub list: bool,
+
+    /// Validate VM scenario files without running them
+    #[arg(long)]
+    pub validate: bool,
+
+    /// Specific exported VM checks to run
     #[arg(last = true)]
     pub args: Vec<String>,
 }
@@ -406,6 +421,18 @@ impl XtaskCommand for TestCommand {
                     }
                     if vm.parallel {
                         args.push("--parallel".to_string());
+                    }
+                    if vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS {
+                        args.push(format!("--timeout={}", vm.timeout));
+                    }
+                    if vm.keep_failed {
+                        args.push("--keep-failed".to_string());
+                    }
+                    if vm.list {
+                        args.push("--list".to_string());
+                    }
+                    if vm.validate {
+                        args.push("--validate".to_string());
                     }
                     if !vm.args.is_empty() {
                         args.push("--".to_string());
@@ -1168,10 +1195,10 @@ async fn execute_vm(vm: &VmArgs, ctx: &CommandContext) -> Result<CommandResult> 
         subcommand: crate::commands::vm::VmSubcommand::Test {
             category: vm.category.clone(),
             parallel: vm.parallel,
-            timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
-            keep_failed: false,
-            list: false,
-            validate: false,
+            timeout: vm.timeout,
+            keep_failed: vm.keep_failed,
+            list: vm.list,
+            validate: vm.validate,
             tests: vm.args.clone(),
         },
     };

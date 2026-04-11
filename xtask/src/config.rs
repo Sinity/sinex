@@ -1,7 +1,8 @@
 //! Environment-based configuration for xtask.
 //!
-//! Reads configuration from environment variables (typically set by devenv.nix)
-//! to ensure xtask and the development environment stay in sync.
+//! Reads configuration from environment variables exported by the sinex
+//! development shell (or compatible manual setup) so xtask and the checkout
+//! stay in sync.
 //!
 //! # User preferences
 //!
@@ -79,10 +80,10 @@ pub struct Config {
     pub test_results_dir: Option<PathBuf>,
     /// Hostname of the current machine
     pub hostname: String,
-    /// Toolchain identifier (e.g., "fenix(x86_64-linux)")
+    /// Toolchain identifier when exported by the development shell
     pub toolchain: Option<String>,
-    /// Whether we're inside a devenv shell
-    pub in_devenv: bool,
+    /// Whether we're inside the sinex development shell
+    pub in_dev_shell: bool,
     /// User preferences from `~/.config/xtask/preferences.toml` (W1).
     pub prefs: UserPreferences,
 }
@@ -114,8 +115,10 @@ impl Config {
             cache_dir,
             test_results_dir: env::var("SINEX_TEST_RESULTS_DIR").map(PathBuf::from).ok(),
             hostname,
-            toolchain: env::var("SINEX_DEVENV_TOOLCHAIN").ok(),
-            in_devenv: env::var("SINEX_DEVENV_SYSTEM").is_ok(),
+            toolchain: env::var("SINEX_DEV_TOOLCHAIN")
+                .ok()
+                .or_else(|| env::var("RUSTUP_TOOLCHAIN").ok()),
+            in_dev_shell: env::var("SINEX_DEV_ROOT").is_ok() || env::var("IN_NIX_SHELL").is_ok(),
             prefs: load_user_preferences(),
         }
     }
@@ -151,6 +154,18 @@ impl Default for Config {
     fn default() -> Self {
         Self::from_env()
     }
+}
+
+/// Repo-local state root used for checkout-scoped artifacts and caches.
+#[must_use]
+pub fn workspace_state_root() -> PathBuf {
+    workspace_root().join(".sinex")
+}
+
+/// Cargo target directory for this checkout.
+#[must_use]
+pub fn workspace_target_dir() -> PathBuf {
+    workspace_state_root().join("target")
 }
 
 /// Global configuration singleton.
@@ -235,6 +250,26 @@ pub fn workspace_root() -> PathBuf {
                 p.parent().map(std::path::Path::to_path_buf).unwrap_or(p)
             },
         )
+}
+
+/// Path to the repo-local ast-grep config root.
+pub fn ast_grep_root() -> PathBuf {
+    workspace_root().join(".config/ast-grep")
+}
+
+/// Path to the repo-local ast-grep config file.
+pub fn ast_grep_config_path() -> PathBuf {
+    ast_grep_root().join("sgconfig.yml")
+}
+
+/// Path to the repo-local ast-grep rules directory.
+pub fn ast_grep_rules_dir() -> PathBuf {
+    ast_grep_root().join("rules")
+}
+
+/// Path to the generated ast-grep rule catalog.
+pub fn ast_grep_catalog_path() -> PathBuf {
+    ast_grep_root().join("README.md")
 }
 
 #[cfg(test)]
