@@ -4172,6 +4172,7 @@ mod tests {
         let cert = temp.path().join("server.pem");
         let key = temp.path().join("server-key.pem");
         let db = temp.path().join("db-password");
+        let missing_admin = temp.path().join("missing-gateway-admin-token");
         std::fs::write(&cert, "cert")?;
         std::fs::write(&key, "key")?;
         std::fs::write(&db, "password")?;
@@ -4180,7 +4181,10 @@ mod tests {
         env.set("SINEX_GATEWAY_TLS_CERT", cert.display().to_string());
         env.set("SINEX_GATEWAY_TLS_KEY", key.display().to_string());
         env.set("SINEX_DATABASE_PASSWORD_FILE", db.display().to_string());
-        env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+        env.set(
+            "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+            missing_admin.display().to_string(),
+        );
 
         let item = check_secret_materials(None);
         assert_eq!(item.status, "fail");
