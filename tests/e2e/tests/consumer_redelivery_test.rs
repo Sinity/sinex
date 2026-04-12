@@ -18,6 +18,10 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
+const FAST_ACK_WAIT: Duration = Duration::from_millis(250);
+const FAST_FETCH_EXPIRES: Duration = Duration::from_millis(200);
+const FAST_REDELIVERY_DELAY: Duration = Duration::from_millis(50);
+
 fn is_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")
         || msg.contains("No Messages Available")
@@ -164,7 +168,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
             name: Some(consumer_name.to_string()),
             durable_name: Some(consumer_name.to_string()),
             ack_policy: jetstream::consumer::AckPolicy::Explicit,
-            ack_wait: Duration::from_secs(Timeouts::MEDIUM), // Short ack wait for test
+            ack_wait: FAST_ACK_WAIT,
             ..Default::default()
         })
         .await
@@ -177,7 +181,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
         let fetch_result = consumer
             .fetch()
             .max_messages(3)
-            .expires(Duration::from_secs(1))
+            .expires(FAST_FETCH_EXPIRES)
             .messages()
             .await;
 
@@ -195,57 +199,70 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
     // Drop consumer (simulates disconnect)
     drop(consumer);
 
-    // Wait for ack timeout
-    tokio::time::sleep(Duration::from_secs(Timeouts::MEDIUM)).await;
-
     // Reconnect and verify messages are redelivered
     let stream = js.get_stream(&stream_name).await.map_err(|e| eyre!(e))?;
-    let consumer = stream
-        .get_consumer(consumer_name)
-        .await
-        .map_err(|e| eyre!(e))?;
+    let consumer = Arc::new(
+        stream
+            .get_consumer(consumer_name)
+            .await
+            .map_err(|e| eyre!(e))?,
+    );
 
-    let mut redelivered_count = 0;
-    let start = std::time::Instant::now();
-    while redelivered_count < 3 && start.elapsed() < Duration::from_secs(Timeouts::SHORT) {
-        let fetch_result = consumer
-            .fetch()
-            .max_messages(5)
-            .expires(Duration::from_secs(Timeouts::MEDIUM))
-            .messages()
-            .await;
+    let redelivered_count = Arc::new(AtomicU32::new(0));
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let consumer = consumer.clone();
+                let redelivered_count = redelivered_count.clone();
+                move || {
+                    let consumer = consumer.clone();
+                    let redelivered_count = redelivered_count.clone();
+                    async move {
+                        let fetch_result = consumer
+                            .fetch()
+                            .max_messages(5)
+                            .expires(FAST_FETCH_EXPIRES)
+                            .messages()
+                            .await;
 
-        match fetch_result {
-            Ok(mut messages) => {
-                while let Some(item) = messages.next().await {
-                    match item {
-                        Ok(msg) => {
-                            msg.ack().await.map_err(|e| eyre!(e))?;
-                            redelivered_count += 1;
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if is_no_messages_error(&msg) {
-                                break;
+                        match fetch_result {
+                            Ok(mut messages) => {
+                                while let Some(item) = messages.next().await {
+                                    match item {
+                                        Ok(msg) => {
+                                            msg.ack().await.map_err(|e| eyre!(e))?;
+                                            redelivered_count.fetch_add(1, Ordering::SeqCst);
+                                        }
+                                        Err(e) => {
+                                            let msg = e.to_string();
+                                            if is_no_messages_error(&msg) {
+                                                break;
+                                            }
+                                            return Err(eyre!(e));
+                                        }
+                                    }
+                                }
+                                Ok(redelivered_count.load(Ordering::SeqCst) >= 3)
                             }
-                            return Err(eyre!(e));
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_no_messages_error(&msg) {
+                                    return Ok(false);
+                                }
+                                Err(eyre!(e))
+                            }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if is_no_messages_error(&msg) {
-                    continue;
-                }
-                return Err(eyre!(e));
-            }
-        }
-    }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
 
     assert!(
-        redelivered_count >= 3,
-        "Unacked messages should be redelivered: got {redelivered_count}"
+        redelivered_count.load(Ordering::SeqCst) >= 3,
+        "Unacked messages should be redelivered: got {}",
+        redelivered_count.load(Ordering::SeqCst)
     );
 
     // Cleanup
@@ -404,101 +421,131 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
             durable_name: Some(consumer_name.to_string()),
             ack_policy: jetstream::consumer::AckPolicy::Explicit,
             max_deliver: 3, // Only 3 delivery attempts
+            ack_wait: FAST_ACK_WAIT,
             ..Default::default()
         })
         .await
         .map_err(|e| eyre!(e))?;
 
     // NAK until max_deliver is exhausted
-    let mut delivery_attempts = 0;
-    let start = std::time::Instant::now();
+    let delivery_attempts = Arc::new(AtomicU32::new(0));
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let delivery_attempts = delivery_attempts.clone();
+                let consumer = consumer.clone();
+                move || {
+                    let delivery_attempts = delivery_attempts.clone();
+                    let consumer = consumer.clone();
+                    async move {
+                        let fetch_result = consumer
+                            .fetch()
+                            .max_messages(1)
+                            .expires(FAST_FETCH_EXPIRES)
+                            .messages()
+                            .await;
 
-    while delivery_attempts < 5 && start.elapsed() < Duration::from_secs(Timeouts::MEDIUM) {
-        let fetch_result = consumer
-            .fetch()
-            .max_messages(1)
-            .expires(Duration::from_secs(Timeouts::MEDIUM))
-            .messages()
-            .await;
-
-        match fetch_result {
-            Ok(mut messages) => {
-                let mut got_message = false;
-                while let Some(item) = messages.next().await {
-                    match item {
-                        Ok(msg) => {
-                            delivery_attempts += 1;
-                            got_message = true;
-                            // Always NAK (simulates persistent failure)
-                            msg.ack_with(async_nats::jetstream::AckKind::Nak(None))
-                                .await
-                                .map_err(|e| eyre!(e))?;
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if is_no_messages_error(&msg) {
-                                break;
+                        match fetch_result {
+                            Ok(mut messages) => {
+                                while let Some(item) = messages.next().await {
+                                    match item {
+                                        Ok(msg) => {
+                                            delivery_attempts.fetch_add(1, Ordering::SeqCst);
+                                            msg.ack_with(async_nats::jetstream::AckKind::Nak(
+                                                Some(FAST_REDELIVERY_DELAY),
+                                            ))
+                                                .await
+                                                .map_err(|e| eyre!(e))?;
+                                        }
+                                        Err(e) => {
+                                            let msg = e.to_string();
+                                            if is_no_messages_error(&msg) {
+                                                break;
+                                            }
+                                            return Err(eyre!(e));
+                                        }
+                                    }
+                                }
+                                Ok(delivery_attempts.load(Ordering::SeqCst) >= 3)
                             }
-                            return Err(eyre!(e));
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_no_messages_error(&msg) {
+                                    return Ok(false);
+                                }
+                                Err(eyre!(e))
+                            }
                         }
                     }
                 }
-                if !got_message {
-                    // No more messages - max_deliver exhausted
-                    break;
-                }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if is_no_messages_error(&msg) {
-                    // May indicate max_deliver exhausted
-                    break;
-                }
-                return Err(eyre!(e));
-            }
-        }
-    }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
 
     // Should have hit max_deliver limit
     assert_eq!(
-        delivery_attempts, 3,
-        "Should have exactly 3 delivery attempts (max_deliver=3), got {delivery_attempts}"
+        delivery_attempts.load(Ordering::SeqCst),
+        3,
+        "Should have exactly 3 delivery attempts (max_deliver=3), got {}",
+        delivery_attempts.load(Ordering::SeqCst)
     );
 
     // Message should no longer be available (exhausted max_deliver)
-    let fetch_result = timeout(
-        Duration::from_secs(Timeouts::MEDIUM),
-        consumer
-            .fetch()
-            .max_messages(1)
-            .expires(Duration::from_secs(Timeouts::MEDIUM))
-            .messages(),
-    )
-    .await;
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let consumer = consumer.clone();
+                move || {
+                    let consumer = consumer.clone();
+                    async move {
+                        let fetch_result = timeout(
+                            FAST_ACK_WAIT,
+                            consumer
+                                .fetch()
+                                .max_messages(1)
+                                .expires(FAST_FETCH_EXPIRES)
+                                .messages(),
+                        )
+                        .await;
 
-    match fetch_result {
-        Ok(Ok(mut messages)) => {
-            let msg = messages.next().await;
-            assert!(
-                msg.is_none()
-                    || msg.as_ref().is_some_and(|m| {
-                        m.as_ref()
-                            .is_err_and(|e| is_no_messages_error(&e.to_string()))
-                    }),
-                "Message should not be available after max_deliver exhausted"
-            );
-        }
-        Ok(Err(e)) => {
-            // Expected: no messages available
-            assert!(
-                is_no_messages_error(&e.to_string()),
-                "Expected 'no messages' error"
-            );
-        }
-        Err(_) => {
-            // Timeout is also acceptable
-        }
-    }
+                        match fetch_result {
+                            Ok(Ok(mut messages)) => {
+                                while let Some(item) = messages.next().await {
+                                    match item {
+                                        Ok(msg) => {
+                                            let info = msg.info().map_err(|e| eyre!(e))?;
+                                            let delivered = info.delivered;
+                                            msg.ack().await.map_err(|e| eyre!(e))?;
+                                            return Err(eyre!(
+                                                "message remained available after max_deliver exhausted (delivery #{delivered})"
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            let msg = e.to_string();
+                                            if is_no_messages_error(&msg) {
+                                                break;
+                                            }
+                                            return Err(eyre!(e));
+                                        }
+                                    }
+                                }
+                                Ok(true)
+                            }
+                            Ok(Err(e)) => {
+                                if is_no_messages_error(&e.to_string()) {
+                                    return Ok(true);
+                                }
+                                Err(eyre!(e))
+                            }
+                            Err(_) => Ok(false),
+                        }
+                    }
+                }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
 
     // Cleanup
     js.delete_stream(&stream_name).await?;
