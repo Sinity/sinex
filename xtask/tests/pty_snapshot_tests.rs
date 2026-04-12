@@ -58,6 +58,9 @@ fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
     let mut cmd = CommandBuilder::new(bin);
     cmd.cwd("/realm/project/sinex");
     cmd.env("SINEX_STATE_DIR", state_dir);
+    // PTY child xtask invocations must read the seeded fixture DB, not any
+    // suite-level XTASK_HISTORY_DB override inherited from the parent process.
+    cmd.env("XTASK_HISTORY_DB", history_db_path(state_dir));
     cmd.env("NO_COLOR", "1");
     for arg in args {
         cmd.arg(arg);
