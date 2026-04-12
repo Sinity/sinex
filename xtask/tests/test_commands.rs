@@ -12,7 +12,11 @@ use support::xtask_command;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
-use xtask::sandbox::sinex_test;
+use xtask::history::{
+    HistoryDb,
+    seed::{SeedOptions, seed_history},
+};
+use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 /// Invariant: `jobs list` on empty state returns an empty jobs array, not an error.
 ///
@@ -168,5 +172,56 @@ async fn test_analytics_all_subcommands_empty_db() -> ::xtask::sandbox::TestResu
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn test_xtask_command_prefers_state_dir_history_over_parent_override()
+-> ::xtask::sandbox::TestResult<()> {
+    let state_dir = tempfile::tempdir()?;
+    let seeded_history = state_dir.path().join("xtask-history.db");
+    let db = HistoryDb::open(&seeded_history)?;
+    seed_history(
+        &db,
+        &SeedOptions {
+            days: 3,
+            invocations: 6,
+        },
+    )?;
+
+    let poison_dir = tempfile::tempdir()?;
+    let poison_history = poison_dir.path().join("poison-history.db");
+    let _parent_history_override = EnvGuard::set_single("XTASK_HISTORY_DB", &poison_history);
+
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .args(["history", "list", "--json", "--limit", "1"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "history list should succeed with explicit SINEX_STATE_DIR; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut values = serde_json::Deserializer::from_str(&stdout).into_iter::<serde_json::Value>();
+    let history_rows = values
+        .next()
+        .ok_or_else(|| color_eyre::eyre::eyre!("no JSON rows returned from history list"))?
+        .map_err(|error| {
+            color_eyre::eyre::eyre!("invalid JSON from history list: {error}\nstdout: {stdout}")
+        })?;
+
+    let rows = history_rows
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("history list first JSON value must be an array"))?;
+    assert_eq!(
+        rows.len(),
+        1,
+        "history list should read the seeded state-dir DB instead of the parent XTASK_HISTORY_DB override"
+    );
+
     Ok(())
 }

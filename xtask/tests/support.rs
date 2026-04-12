@@ -27,5 +27,9 @@ pub fn xtask_command() -> color_eyre::eyre::Result<Command> {
         .ok_or_else(|| color_eyre::eyre::eyre!("failed to resolve workspace root"))?;
     let mut command = Command::new(xtask_bin()?);
     command.current_dir(workspace_root);
+    // Subprocess tests often seed a history DB under an explicit SINEX_STATE_DIR.
+    // Clear any suite-level XTASK_HISTORY_DB override so children use the state
+    // directory unless the caller opts into a specific history DB explicitly.
+    command.env_remove("XTASK_HISTORY_DB");
     Ok(command)
 }
