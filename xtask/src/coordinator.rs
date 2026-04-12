@@ -1523,7 +1523,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
-        let dir = tempfile::tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
         let error = tree_fingerprint_in(dir.path()).expect_err("expected non-repo to fail");
         assert!(
             error
@@ -1535,7 +1537,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_scoped_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
-        let dir = tempfile::tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
         let args = vec!["-p".into(), "xtask".into()];
         let error = scoped_tree_fingerprint_in(dir.path(), "check", &args)
             .expect_err("expected non-repo to fail");
