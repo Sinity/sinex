@@ -565,6 +565,28 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
+        self.try_with_history_db_using(crate::history::HistoryDb::open, f)
+    }
+
+    /// Execute a closure with the cached history DB opened in query mode.
+    ///
+    /// Use this for observational commands that only need to read historical
+    /// data and should not pay the writer-open cleanup/integrity path.
+    pub fn try_with_history_db_query<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        self.try_with_history_db_using(crate::history::HistoryDb::open_query, f)
+    }
+
+    fn try_with_history_db_using<F, R>(
+        &self,
+        opener: fn(&std::path::Path) -> Result<crate::history::HistoryDb>,
+        f: F,
+    ) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
         let mut guard = match self.history_db.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -576,7 +598,7 @@ impl CommandContext {
             }
         };
         if guard.is_none() {
-            match crate::history::HistoryDb::open(&self.db_path) {
+            match opener(&self.db_path) {
                 Ok(db) => {
                     *guard = Some(db);
                 }

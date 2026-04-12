@@ -375,7 +375,7 @@ impl XtaskCommand for HistoryCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
-        ctx.try_with_history_db(|db| {
+        ctx.try_with_history_db_query(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
                 HistorySubcommand::List {

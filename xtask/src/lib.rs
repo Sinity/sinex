@@ -414,7 +414,7 @@ pub async fn run_cli() -> Result<()> {
     let tracks_invocation = command_tracks_invocation(command_name);
     let preopens_history_db = command_preopens_history_db(command_name) || tracks_invocation;
     let (mut history_db, history_db_open_error) = if preopens_history_db {
-        match open_history_db() {
+        match open_history_db(command_name, tracks_invocation) {
             Ok(db) => {
                 // Emit synthetic warning before start_invocation() clears the marker (T3).
                 // This must happen here — start_invocation() removes the metadata row, so any
@@ -707,19 +707,26 @@ pub async fn run_cli() -> Result<()> {
     }
 }
 
-fn open_history_db() -> Result<HistoryDb> {
+fn open_history_db(command_name: &str, tracks_invocation: bool) -> Result<HistoryDb> {
     let cfg = config();
     cfg.ensure_state_dir()
         .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
-    HistoryDb::open(&cfg.history_db_path())
+    if tracks_invocation {
+        HistoryDb::open(&cfg.history_db_path())
+    } else {
+        match command_name {
+            "status" | "history" | "analytics" => HistoryDb::open_query(&cfg.history_db_path()),
+            _ => HistoryDb::open(&cfg.history_db_path()),
+        }
+    }
 }
 
 fn command_tracks_invocation(command_name: &str) -> bool {
-    !matches!(command_name, "completions" | "status")
+    !matches!(command_name, "completions" | "status" | "history" | "analytics")
 }
 
 fn command_preopens_history_db(command_name: &str) -> bool {
-    matches!(command_name, "status")
+    matches!(command_name, "status" | "history" | "analytics")
 }
 
 fn init_tracing(verbosity: u8) {
@@ -857,20 +864,22 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn command_tracks_invocation_skips_status_and_completions() -> TestResult<()> {
+    async fn command_tracks_invocation_skips_observational_commands() -> TestResult<()> {
         assert!(!command_tracks_invocation("status"));
         assert!(!command_tracks_invocation("completions"));
-        assert!(command_tracks_invocation("history"));
-        assert!(command_tracks_invocation("analytics"));
+        assert!(!command_tracks_invocation("history"));
+        assert!(!command_tracks_invocation("analytics"));
+        assert!(command_tracks_invocation("test"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn command_preopens_history_db_for_status_only() -> TestResult<()> {
+    async fn command_preopens_history_db_for_observational_commands() -> TestResult<()> {
         assert!(command_preopens_history_db("status"));
+        assert!(command_preopens_history_db("history"));
+        assert!(command_preopens_history_db("analytics"));
         assert!(!command_preopens_history_db("completions"));
-        assert!(!command_preopens_history_db("history"));
-        assert!(!command_preopens_history_db("analytics"));
+        assert!(!command_preopens_history_db("test"));
         Ok(())
     }
 
