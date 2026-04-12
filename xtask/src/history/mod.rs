@@ -23,7 +23,7 @@ pub use query::{
 };
 pub use seed::SeedOptions;
 pub use tests::{
-    Confidence, FailingTest, PackageTestStats, RegressionTest, TestOutputEntry, TestResult,
-    TestStatus,
+    Confidence, FailingTest, PackageTestStats, RegressionTest, ResolvedTestRun, TestOutputEntry,
+    TestResult, TestStatus,
 };
 pub use tracing_layer::{CURRENT_INVOCATION_ID, HistoryTracingLayer};

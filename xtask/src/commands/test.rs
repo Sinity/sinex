@@ -47,7 +47,14 @@ fn load_failing_test_details(
     ctx: &CommandContext,
     limit: usize,
 ) -> (Vec<crate::history::FailingTest>, Option<String>) {
-    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(limit)) {
+    let Some(invocation_id) = ctx.invocation_id() else {
+        return (
+            Vec::new(),
+            Some("Current test invocation ID unavailable".to_string()),
+        );
+    };
+
+    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(invocation_id, limit)) {
         Some(Ok(failures)) => (failures, None),
         Some(Err(error)) => (
             Vec::new(),
@@ -796,12 +803,17 @@ impl XtaskCommand for TestCommand {
                 ),
             })
             .with_data(serde_json::json!({
+                "invocation_id": ctx.invocation_id(),
                 "passed": stats.passed,
                 "failed": stats.failed,
                 "ignored": stats.ignored,
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
             }))
+            .with_detail(format!(
+                "Inspect with: xtask history tests analyze --invocation {}",
+                ctx.invocation_id().unwrap_or_default()
+            ))
             .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
@@ -846,6 +858,10 @@ impl XtaskCommand for TestCommand {
                 .with_message(format!(
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
+                ))
+                .with_detail(format!(
+                    "Inspect with: xtask history tests analyze --invocation {}",
+                    ctx.invocation_id().unwrap_or_default()
                 ))
                 .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
