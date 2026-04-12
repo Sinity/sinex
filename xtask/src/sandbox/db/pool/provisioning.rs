@@ -452,23 +452,23 @@ async fn ensure_pool_database_exists_inner(
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
     let db_url = url_with_db_name(&base_url, db_name)?;
-    let mut template_guard =
+    let mut lifecycle_admin_conn = connect_admin_with_retry(&admin_url).await?;
+    let start = std::time::Instant::now();
+    let Some(lock_id) =
+        acquire_slot_lifecycle_lock(&mut lifecycle_admin_conn, db_name, lock_mode).await?
+    else {
+        return Ok(EnsurePoolDatabaseOutcome::Deferred);
+    };
+    let template_guard =
         super::template::ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS)
             .await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
-    let start = std::time::Instant::now();
-    let Some(lock_id) =
-        acquire_slot_lifecycle_lock(&mut template_guard.admin_conn, db_name, lock_mode).await?
-    else {
-        template_guard.release().await?;
-        return Ok(EnsurePoolDatabaseOutcome::Deferred);
-    };
 
     let provision_result: TestResult<EnsurePoolDatabaseOutcome> = async {
-        if !database_exists_admin(&mut template_guard.admin_conn, db_name).await? {
+        if !database_exists_admin(&mut lifecycle_admin_conn, db_name).await? {
             match create_database_from_template_admin(
-                &mut template_guard.admin_conn,
+                &mut lifecycle_admin_conn,
                 db_name,
                 &template_name,
             )
@@ -486,7 +486,7 @@ async fn ensure_pool_database_exists_inner(
         grant_pool_database_permissions_checked(db_name).await?;
         converge_pool_database_schema(db_name, &db_url).await?;
         mark_pool_database_clean(
-            &mut template_guard.admin_conn,
+            &mut lifecycle_admin_conn,
             db_name,
             &db_url,
             &template_extensions,
@@ -501,7 +501,7 @@ async fn ensure_pool_database_exists_inner(
         Err(provision_error) => {
             eprintln!("  Slot provisioning failed for {db_name}; recreating slot from template");
             recreate_pool_database_locked(
-                &mut template_guard.admin_conn,
+                &mut lifecycle_admin_conn,
                 db_name,
                 &base_url,
                 &template_name,
@@ -517,7 +517,7 @@ async fn ensure_pool_database_exists_inner(
         }
     };
 
-    let unlock_result = release_slot_lifecycle_lock(&mut template_guard.admin_conn, lock_id).await;
+    let unlock_result = release_slot_lifecycle_lock(&mut lifecycle_admin_conn, lock_id).await;
     let release_result = template_guard.release().await;
     match provision_result {
         Ok(outcome) => {
