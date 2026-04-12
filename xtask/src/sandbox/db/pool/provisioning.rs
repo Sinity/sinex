@@ -315,7 +315,10 @@ async fn acquire_slot_lifecycle_lock(
     }
 }
 
-async fn release_slot_lifecycle_lock(admin_conn: &mut PgConnection, lock_id: i64) -> TestResult<()> {
+async fn release_slot_lifecycle_lock(
+    admin_conn: &mut PgConnection,
+    lock_id: i64,
+) -> TestResult<()> {
     sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(lock_id)
         .execute(&mut *admin_conn)
@@ -463,9 +466,13 @@ async fn ensure_pool_database_exists_inner(
     else {
         return Ok(EnsurePoolDatabaseOutcome::Deferred);
     };
-    let template_guard =
-        super::template::ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS)
-            .await?;
+    let template_guard = super::template::ensure_template_database_for_key(
+        &admin_url,
+        &base_url,
+        SLOT_MAX_CONNECTIONS,
+        db_name,
+    )
+    .await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
 
@@ -562,8 +569,7 @@ pub(super) async fn try_ensure_pool_database_exists(
 }
 
 pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResult<()> {
-    match ensure_pool_database_exists_inner(db_name, slot_url, SlotLifecycleLockMode::Wait).await?
-    {
+    match ensure_pool_database_exists_inner(db_name, slot_url, SlotLifecycleLockMode::Wait).await? {
         EnsurePoolDatabaseOutcome::Ensured => Ok(()),
         EnsurePoolDatabaseOutcome::Deferred => Ok(()),
     }
@@ -572,9 +578,13 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
 pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> TestResult<()> {
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
-    let mut template_guard =
-        super::template::ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS)
-            .await?;
+    let mut template_guard = super::template::ensure_template_database_for_key(
+        &admin_url,
+        &base_url,
+        SLOT_MAX_CONNECTIONS,
+        db_name,
+    )
+    .await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
     let lock_id = acquire_slot_lifecycle_lock(
@@ -1020,8 +1030,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held()
-    -> TestResult<()> {
+    async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held() -> TestResult<()>
+    {
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_deferred_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;

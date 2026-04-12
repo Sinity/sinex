@@ -11,10 +11,12 @@ use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::warn;
 
 use super::config::replace_db_name;
@@ -33,15 +35,21 @@ static OPTIONAL_EXTENSION_MISSING: std::sync::LazyLock<Mutex<HashMap<String, Str
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Template database name cached for the current test process
-static TEMPLATE_DB_NAME: OnceLock<String> = OnceLock::new();
+static TEMPLATE_DB_NAME: std::sync::LazyLock<Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
+const SHARED_TEMPLATE_BASE_NAME: &str = "sinex_test_template_shared";
+const SHARED_TEMPLATE_SHARD_COUNT: usize = 4;
 
 pub(crate) fn template_db_name() -> Option<String> {
-    TEMPLATE_DB_NAME.get().cloned()
+    TEMPLATE_DB_NAME.lock().clone()
 }
 
-/// Mutex to ensure only one thread creates the template database
-static TEMPLATE_CREATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+/// Per-template mutexes to avoid redundant rebuild work in a single process while still allowing
+/// distinct shared-template shards to progress concurrently.
+static TEMPLATE_CREATION_LOCKS: std::sync::LazyLock<
+    Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const CREATE_TEMPLATE_DB_TIMEOUT: Duration = Duration::from_secs(10);
 const APPLY_TEMPLATE_SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
@@ -102,8 +110,42 @@ fn invalidate_template_trust_stamp(template_name: &str) {
     let _ = std::fs::remove_file(path);
 }
 
+fn shared_template_name_for_shard(shard: usize) -> String {
+    debug_assert!(shard < SHARED_TEMPLATE_SHARD_COUNT);
+    if shard == 0 {
+        SHARED_TEMPLATE_BASE_NAME.to_string()
+    } else {
+        format!("{SHARED_TEMPLATE_BASE_NAME}_{shard}")
+    }
+}
+
+fn shared_template_name_for_key(key: &str) -> String {
+    if SHARED_TEMPLATE_SHARD_COUNT <= 1 {
+        return SHARED_TEMPLATE_BASE_NAME.to_string();
+    }
+
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    let shard = (hasher.finish() as usize) % SHARED_TEMPLATE_SHARD_COUNT;
+    shared_template_name_for_shard(shard)
+}
+
+fn shared_template_names() -> impl Iterator<Item = String> {
+    (0..SHARED_TEMPLATE_SHARD_COUNT).map(shared_template_name_for_shard)
+}
+
+fn template_creation_lock(template_name: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = TEMPLATE_CREATION_LOCKS.lock();
+    locks
+        .entry(template_name.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
 pub(super) fn invalidate_shared_template_trust() {
-    invalidate_template_trust_stamp("sinex_test_template_shared");
+    for template_name in shared_template_names() {
+        invalidate_template_trust_stamp(&template_name);
+    }
 }
 
 fn template_trust_matches(
@@ -248,11 +290,11 @@ mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
     use super::{
-        check_template_reuse, connect_admin_with_retry, ensure_template_database,
-        load_template_trust_stamp, schema_fingerprint, schema_fingerprint_sources,
-        schema_fingerprint_sources_in, store_template_trust_stamp,
-        store_template_meta,
-        template_trust_matches, template_trust_state_path_in,
+        SHARED_TEMPLATE_BASE_NAME, SHARED_TEMPLATE_SHARD_COUNT, check_template_reuse,
+        connect_admin_with_retry, ensure_template_database_for_key, load_template_trust_stamp,
+        schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
+        store_template_meta, store_template_trust_stamp, template_trust_matches,
+        template_trust_state_path_in,
     };
     use crate::sandbox::db::pool::PoolConfig;
     use crate::sandbox::db::pool::config::{SLOT_MAX_CONNECTIONS, replace_db_name};
@@ -304,9 +346,9 @@ mod tests {
     #[sinex_test]
     async fn template_trust_stamp_roundtrip_supports_fast_match() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
-        let path = template_trust_state_path_in(dir.path(), "sinex_test_template_shared");
+        let path = template_trust_state_path_in(dir.path(), SHARED_TEMPLATE_BASE_NAME);
         let stamp = super::TemplateTrustStamp {
-            template_name: "sinex_test_template_shared".to_string(),
+            template_name: SHARED_TEMPLATE_BASE_NAME.to_string(),
             fingerprint: Some("fingerprint-1".to_string()),
             extensions: HashMap::from([("timescaledb".to_string(), "2.18.0".to_string())]),
             trusted_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -316,7 +358,7 @@ mod tests {
         assert_eq!(load_template_trust_stamp(&path)?, Some(stamp.clone()));
         assert!(template_trust_matches(
             &path,
-            "sinex_test_template_shared",
+            SHARED_TEMPLATE_BASE_NAME,
             &stamp.fingerprint,
             &stamp.extensions,
         )?);
@@ -326,12 +368,32 @@ mod tests {
     #[sinex_test]
     async fn unreadable_template_trust_stamp_is_removed() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
-        let path = template_trust_state_path_in(dir.path(), "sinex_test_template_shared");
+        let path = template_trust_state_path_in(dir.path(), SHARED_TEMPLATE_BASE_NAME);
         std::fs::create_dir_all(path.parent().expect("template trust path should have parent"))?;
         std::fs::write(&path, "{ not-json }")?;
 
         assert!(load_template_trust_stamp(&path)?.is_none());
         assert!(!path.exists(), "unreadable trust stamp should be removed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shared_template_name_for_key_is_stable() -> TestResult<()> {
+        let first = super::shared_template_name_for_key("slot-alpha");
+        let second = super::shared_template_name_for_key("slot-alpha");
+        assert_eq!(first, second, "template sharding must be deterministic");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shared_template_name_for_key_spreads_across_available_shards() -> TestResult<()> {
+        let names = (0..64)
+            .map(|index| super::shared_template_name_for_key(&format!("slot-{index}")))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            names.len() >= SHARED_TEMPLATE_SHARD_COUNT.min(2),
+            "different keys should not all collapse onto one shared template shard"
+        );
         Ok(())
     }
 
@@ -347,8 +409,13 @@ mod tests {
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
         let shared_guard =
-            ensure_template_database(&config.admin_url, &config.base_url, SLOT_MAX_CONNECTIONS)
-                .await?;
+            ensure_template_database_for_key(
+                &config.admin_url,
+                &config.base_url,
+                SLOT_MAX_CONNECTIONS,
+                &template_name,
+            )
+            .await?;
         let shared_template_name = shared_guard.info.name.clone();
         let shared_extensions = shared_guard.info.extensions.clone();
         shared_guard.release().await?;
@@ -414,8 +481,13 @@ mod tests {
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
         let shared_guard =
-            ensure_template_database(&config.admin_url, &config.base_url, SLOT_MAX_CONNECTIONS)
-                .await?;
+            ensure_template_database_for_key(
+                &config.admin_url,
+                &config.base_url,
+                SLOT_MAX_CONNECTIONS,
+                &template_name,
+            )
+            .await?;
         let shared_template_name = shared_guard.info.name.clone();
         let shared_extensions = shared_guard.info.extensions.clone();
         shared_guard.release().await?;
@@ -511,16 +583,32 @@ pub(super) async fn ensure_template_database(
     _base_url: &str,
     slot_max_connections: u32,
 ) -> TestResult<TemplateGuard> {
-    let _lock = TEMPLATE_CREATION_LOCK.lock().await;
+    ensure_template_database_for_key(
+        admin_url,
+        _base_url,
+        slot_max_connections,
+        SHARED_TEMPLATE_BASE_NAME,
+    )
+    .await
+}
 
-    let template_name = "sinex_test_template_shared";
+pub(super) async fn ensure_template_database_for_key(
+    admin_url: &str,
+    _base_url: &str,
+    slot_max_connections: u32,
+    key: &str,
+) -> TestResult<TemplateGuard> {
+    let template_name = shared_template_name_for_key(key);
+    let creation_lock = template_creation_lock(&template_name);
+    let _lock = creation_lock.lock().await;
+
     eprintln!("🔧 Checking template database {template_name} ...");
     let template_start = std::time::Instant::now();
 
     let desired_fingerprint = Some(schema_fingerprint()?);
 
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-    let lock_key = advisory_lock_key(template_name);
+    let lock_key = advisory_lock_key(&template_name);
 
     let ensure_deadline = std::time::Instant::now() + Duration::from_secs(45);
     let mut backoff = Duration::from_millis(25);
@@ -531,16 +619,16 @@ pub(super) async fn ensure_template_database(
         if let Some(extensions) = check_template_reuse(
             &mut admin_conn,
             admin_url,
-            template_name,
+            &template_name,
             &desired_fingerprint,
             false,
         )
         .await?
         {
-            harden_template_database(&mut admin_conn, template_name).await?;
-            cache_template_name(template_name);
+            harden_template_database(&mut admin_conn, &template_name).await?;
+            cache_template_name(&template_name);
             return Ok(build_template_guard(
-                template_name,
+                &template_name,
                 extensions,
                 lock_key,
                 admin_conn,
@@ -574,17 +662,17 @@ pub(super) async fn ensure_template_database(
         if let Some(extensions) = check_template_reuse(
             &mut admin_conn,
             admin_url,
-            template_name,
+            &template_name,
             &desired_fingerprint,
             true,
         )
         .await?
         {
             downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
-            harden_template_database(&mut admin_conn, template_name).await?;
-            cache_template_name(template_name);
+            harden_template_database(&mut admin_conn, &template_name).await?;
+            cache_template_name(&template_name);
             return Ok(build_template_guard(
-                template_name,
+                &template_name,
                 extensions,
                 lock_key,
                 admin_conn,
@@ -594,7 +682,7 @@ pub(super) async fn ensure_template_database(
         // Rebuild the template from scratch
         let extensions = rebuild_template(
             &mut admin_conn,
-            template_name,
+            &template_name,
             admin_url,
             &desired_fingerprint,
             slot_max_connections,
@@ -603,9 +691,9 @@ pub(super) async fn ensure_template_database(
         .await?;
 
         downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
-        cache_template_name(template_name);
+        cache_template_name(&template_name);
         return Ok(build_template_guard(
-            template_name,
+            &template_name,
             extensions,
             lock_key,
             admin_conn,
@@ -1026,9 +1114,7 @@ async fn grant_template_permissions(template_pool: &DbPool) -> TestResult<()> {
 }
 
 fn cache_template_name(template_name: &str) {
-    if TEMPLATE_DB_NAME.get().is_none() {
-        let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
-    }
+    *TEMPLATE_DB_NAME.lock() = Some(template_name.to_string());
 }
 
 fn build_template_guard(
