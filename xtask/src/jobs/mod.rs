@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_job_read_stdout_errors_when_history_db_is_unavailable() -> TestResult<()> {
+    async fn test_job_read_stdout_errors_when_archived_stdout_is_absent() -> TestResult<()> {
         let dir = tempdir()?;
         let blocking_parent = dir.path().join("not-a-directory");
         fs::write(&blocking_parent, "occupied")?;
@@ -1038,8 +1038,9 @@ mod tests {
 
         let error = job
             .read_stdout()
-            .expect_err("missing archived logs should surface DB access failures");
-        assert!(error.to_string().contains("failed to open history DB"));
+            .expect_err("missing archived logs should surface an honest absence error");
+        let message = format!("{error:#}");
+        assert!(message.contains("no archived stdout content recorded"));
         Ok(())
     }
 
