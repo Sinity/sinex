@@ -51,6 +51,30 @@ async fn publish_raw_bytes(
     Ok(())
 }
 
+async fn publish_raw_bytes_burst(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payloads: impl IntoIterator<Item = Vec<u8>>,
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+
+    for payload in payloads {
+        nats_client.publish(subject.clone(), payload.into()).await?;
+    }
+    nats_client.flush().await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
     let ctx = TestContext::new().await?;
@@ -188,17 +212,17 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> TestResult<()> {
     let start_count = dlq_message_count(&js, &dlq_stream).await?.unwrap_or(0);
 
     let total = 25u64;
-    for idx in 0..total {
-        let payload = format!("{{bad:{idx}}}");
-        publish_raw_bytes(
-            &ctx.nats_client(),
-            &namespace,
-            "stress.dlq",
-            "burst.bad",
-            payload.as_bytes(),
-        )
-        .await?;
-    }
+    let payloads = (0..total)
+        .map(|idx| format!("{{bad:{idx}}}").into_bytes())
+        .collect::<Vec<_>>();
+    publish_raw_bytes_burst(
+        &ctx.nats_client(),
+        &namespace,
+        "stress.dlq",
+        "burst.bad",
+        payloads,
+    )
+    .await?;
 
     WaitHelpers::wait_for_condition(
         || {
@@ -244,22 +268,20 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResu
     let valid_total = 100usize;
     let invalid_total = 20u64;
 
-    for idx in 0..valid_total {
-        pipeline
-            .publish(DynamicPayload::new(source, event_type, json!({"seq": idx})))
-            .await?;
-    }
-    for idx in 0..invalid_total {
-        let payload = format!("{{bad:{idx}}}");
-        publish_raw_bytes(
-            &ctx.nats_client(),
-            &namespace,
-            source,
-            "mixed.bad",
-            payload.as_bytes(),
-        )
+    pipeline
+        .publish_batch_simple(valid_total, source, event_type)
         .await?;
-    }
+    let invalid_payloads = (0..invalid_total)
+        .map(|idx| format!("{{bad:{idx}}}").into_bytes())
+        .collect::<Vec<_>>();
+    publish_raw_bytes_burst(
+        &ctx.nats_client(),
+        &namespace,
+        source,
+        "mixed.bad",
+        invalid_payloads,
+    )
+    .await?;
 
     WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + valid_total, 20).await?;
     WaitHelpers::wait_for_condition(
