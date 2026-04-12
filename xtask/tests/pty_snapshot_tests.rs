@@ -88,10 +88,10 @@ fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
 
     let mut parser = vt100::Parser::new(ROWS, COLS, 0);
     parser.process(&bytes);
-    Ok(normalize_screen(parser.screen().contents()))
+    Ok(normalize_screen(&parser.screen().contents()))
 }
 
-fn normalize_screen(screen: String) -> String {
+fn normalize_screen(screen: &str) -> String {
     screen
         .lines()
         .map(str::trim_end)
