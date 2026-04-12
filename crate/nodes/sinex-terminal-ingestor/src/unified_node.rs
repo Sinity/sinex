@@ -895,23 +895,29 @@ impl HistoryWatcherContext {
     }
 
     async fn load_state(&self) -> NodeResult<Option<HistoryState>> {
-        let Some(path) = self.state_path.as_ref() else {
+        load_history_state(self.state_path.as_deref()).await
+    }
+}
+
+async fn load_history_state(path: Option<&std::path::Path>) -> NodeResult<Option<HistoryState>> {
+    let Some(path) = path else {
             return Ok(None);
         };
-        match fs::read(path).await {
-            Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
-                Ok(state) => Ok(Some(state)),
-                Err(error) => Err(SinexError::io("failed to decode history watcher state")
-                    .with_context("path", path.display().to_string())
-                    .with_std_error(&error)),
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(SinexError::io("failed to load history watcher state")
+    match fs::read(path).await {
+        Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
+            Ok(state) => Ok(Some(state)),
+            Err(error) => Err(SinexError::io("failed to decode history watcher state")
                 .with_context("path", path.display().to_string())
                 .with_std_error(&error)),
-        }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(SinexError::io("failed to load history watcher state")
+            .with_context("path", path.display().to_string())
+            .with_std_error(&error)),
     }
+}
 
+impl HistoryWatcherContext {
     async fn resolve_state(
         &self,
         state_override: Option<HistoryState>,
@@ -6507,19 +6513,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn load_state_surfaces_corrupt_state_files(ctx: TestContext) -> TestResult<()> {
-        let ctx = ctx.with_nats().dedicated().await?;
-        let fix = make_watcher(&ctx, "corrupt-state-load", 4096).await?;
-        let state_path = fix
-            .ctx
-            .state_path
-            .clone()
-            .ok_or_else(|| color_eyre::eyre::eyre!("watcher should have a state path"))?;
+    async fn load_state_surfaces_corrupt_state_files() -> TestResult<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let state_path = temp_dir.path().join("history_state.json");
         tokio::fs::write(&state_path, "{ definitely not valid json").await?;
 
-        let error = fix
-            .ctx
-            .load_state()
+        let error = load_history_state(Some(&state_path))
             .await
             .expect_err("corrupt state file should surface");
         let message = format!("{error:#}");
