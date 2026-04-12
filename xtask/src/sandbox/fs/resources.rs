@@ -9,7 +9,8 @@
 use super::path_validation::{create_test_temp_dir, validate_test_path};
 use crate::sandbox::prelude::*;
 use camino::{Utf8Path, Utf8PathBuf};
-
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -25,9 +26,8 @@ pub struct TestTempEnv {
 /// Redirect temporary-directory environment variables for the duration of a test.
 pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
     let temp_root = workspace_test_temp_root()?;
-    let safe_name = sanitize_filename(test_name);
     let dir = tempfile::Builder::new()
-        .prefix(&format!("sinex-test-{safe_name}-"))
+        .prefix(&short_test_temp_prefix(test_name))
         .tempdir_in(temp_root.as_std_path())
         .map_err(|e| eyre!(format!("Failed to create workspace-backed temp directory: {e}")))?;
 
@@ -167,6 +167,22 @@ fn sanitize_filename(filename: &str) -> String {
         .to_string()
 }
 
+fn short_test_temp_prefix(test_name: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    test_name.hash(&mut hasher);
+    let digest = hasher.finish();
+    let slug = sanitize_filename(test_name)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>();
+    if slug.is_empty() {
+        format!("st-{digest:016x}-")
+    } else {
+        format!("st-{slug}-{digest:016x}-")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +204,24 @@ mod tests {
         let _temp_path = temp_dir.path().to_path_buf();
         drop(temp_dir);
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_short_test_temp_prefix_keeps_unix_socket_paths_short()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = workspace_test_temp_root()?;
+        for test_name in [
+            "notify_preserves_socket_for_followup_messages",
+            "watchdog_task_emits_ping_when_enabled",
+        ] {
+            let socket_path = root.join(short_test_temp_prefix(test_name)).join("notify.sock");
+            assert!(
+                socket_path.as_str().len() < 108,
+                "socket path must stay below sockaddr_un::sun_path limit: {} ({socket_path})",
+                socket_path.as_str().len()
+            );
+        }
         Ok(())
     }
 
