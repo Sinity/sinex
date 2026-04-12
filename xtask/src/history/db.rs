@@ -362,6 +362,15 @@ enum StaleCleanupOutcome {
     SkippedLockHeld,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvocationSelector {
+    Latest,
+    Previous,
+    Current,
+    InvocationId(i64),
+    BackgroundJobId(i64),
+}
+
 impl HistoryDb {
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
@@ -3436,40 +3445,174 @@ impl HistoryDb {
         Ok(rows)
     }
 
-    /// Resolve an invocation identifier ('latest' or numeric ID string) to a concrete ID.
+    fn parse_invocation_selector(selector: &str) -> Result<InvocationSelector> {
+        if selector == "latest" {
+            return Ok(InvocationSelector::Latest);
+        }
+        if selector == "previous" {
+            return Ok(InvocationSelector::Previous);
+        }
+        if selector == "current" {
+            return Ok(InvocationSelector::Current);
+        }
+
+        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("background-job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("inv:") {
+            ("invocation", value)
+        } else if let Some(value) = selector.strip_prefix("invocation:") {
+            ("invocation", value)
+        } else {
+            ("invocation", selector)
+        };
+
+        let id = raw_id.parse::<i64>().map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "invalid invocation selector: '{selector}' (expected 'latest', 'previous', 'current', a numeric invocation ID, 'inv:<id>', or 'job:<id>')"
+            )
+        })?;
+
+        Ok(match kind {
+            "job" => InvocationSelector::BackgroundJobId(id),
+            _ => InvocationSelector::InvocationId(id),
+        })
+    }
+
+    fn resolve_completed_invocation_offset(
+        &self,
+        command: Option<&str>,
+        offset: usize,
+    ) -> Result<Option<i64>> {
+        let offset = offset as i64;
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND command = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
+                    params![cmd, offset],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      ORDER BY id DESC LIMIT 1 OFFSET ?1",
+                    params![offset],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    fn resolve_current_invocation(&self, command: Option<&str>) -> Result<Option<i64>> {
+        let host = crate::config::config().hostname.clone();
+        let cwd = capture_working_directory(std::env::current_dir());
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id
+                    FROM invocations
+                    WHERE host = ?1
+                      AND cwd = ?2
+                      AND command = ?3
+                    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
+                    LIMIT 1
+                    ",
+                    params![host, cwd, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id
+                    FROM invocations
+                    WHERE host = ?1
+                      AND cwd = ?2
+                    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
+                    LIMIT 1
+                    ",
+                    params![host, cwd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    fn resolve_background_job_invocation(
+        &self,
+        job_id: i64,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT invocation_id
+                    FROM background_jobs
+                    WHERE id = ?1
+                      AND command = ?2
+                    LIMIT 1
+                    ",
+                    params![job_id, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT invocation_id FROM background_jobs WHERE id = ?1 LIMIT 1",
+                    params![job_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    /// Resolve an invocation selector to a concrete invocation ID.
+    ///
+    /// Supports:
+    /// - `latest`: most recent completed invocation (`success` / `failed`)
+    /// - `previous`: invocation immediately before `latest`
+    /// - `current`: most recent invocation from the current checkout, preferring a running one
+    /// - numeric ID / `inv:<id>`: explicit invocation
+    /// - `job:<id>`: background job handle mapped back to its invocation
     pub fn resolve_invocation_id(
         &self,
         id_or_latest: &str,
         command: Option<&str>,
     ) -> Result<Option<i64>> {
-        if id_or_latest == "latest" {
-            let id = if let Some(cmd) = command {
-                self.conn
-                    .query_row(
-                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
-                          AND command = ?1 ORDER BY id DESC LIMIT 1",
-                        params![cmd],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-            } else {
-                self.conn
-                    .query_row(
-                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
-                          ORDER BY id DESC LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-            };
-            Ok(id)
-        } else {
-            let id = id_or_latest.parse::<i64>().map_err(|_| {
-                color_eyre::eyre::eyre!(
-                    "invalid invocation ID: '{id_or_latest}' (expected a number or 'latest')"
-                )
-            })?;
-            Ok(Some(id))
+        match Self::parse_invocation_selector(id_or_latest)? {
+            InvocationSelector::Latest => self.resolve_completed_invocation_offset(command, 0),
+            InvocationSelector::Previous => self.resolve_completed_invocation_offset(command, 1),
+            InvocationSelector::Current => self.resolve_current_invocation(command),
+            InvocationSelector::BackgroundJobId(job_id) => {
+                self.resolve_background_job_invocation(job_id, command)
+            }
+            InvocationSelector::InvocationId(invocation_id) => {
+                if id_or_latest.chars().all(|ch| ch.is_ascii_digit())
+                    && self
+                        .conn
+                        .query_row(
+                            r"SELECT 1 FROM invocations WHERE id = ?1 LIMIT 1",
+                            params![invocation_id],
+                            |_| Ok(()),
+                        )
+                        .optional()?
+                        .is_none()
+                {
+                    return self.resolve_background_job_invocation(invocation_id, command);
+                }
+                Ok(Some(invocation_id))
+            }
         }
     }
 
@@ -5013,6 +5156,100 @@ mod tests {
         // Get all 5
         let all = db.get_recent_background_jobs(10)?;
         assert_eq!(all.len(), 5);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_supports_current_previous_and_job_selectors()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selectors.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let first_check = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(first_check, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let second_check = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(second_check, InvocationStatus::Failed, Some(1), 0.2)?;
+
+        let stdout = dir.path().join("job-stdout.log");
+        let stderr = dir.path().join("job-stderr.log");
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+
+        assert_eq!(
+            db.resolve_invocation_id("latest", Some("check"))?,
+            Some(second_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("previous", Some("check"))?,
+            Some(first_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("current", Some("check"))?,
+            Some(second_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("current", Some("test"))?,
+            Some(running_test)
+        );
+        assert_eq!(
+            db.resolve_invocation_id(&format!("job:{job_id}"), None)?,
+            Some(running_test)
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_numeric_falls_back_to_background_job()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selector-job-fallback.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let stdout = dir.path().join("job-fallback-stdout.log");
+        let stderr = dir.path().join("job-fallback-stderr.log");
+
+        db.conn.execute(
+            "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES ('background_jobs', 99)",
+            [],
+        )?;
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+        assert_eq!(job_id, 100);
+        assert_eq!(running_test, 1);
+
+        assert_eq!(
+            db.resolve_invocation_id(&job_id.to_string(), None)?,
+            Some(running_test)
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_numeric_prefers_real_invocation_when_ambiguous()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selector-ambiguous-numeric.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        for _ in 0..5 {
+            let id = db.start_invocation("check", None, None, None)?;
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        }
+
+        let stdout = dir.path().join("job-ambiguous-stdout.log");
+        let stderr = dir.path().join("job-ambiguous-stderr.log");
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+        assert_eq!(job_id, 1);
+        assert_eq!(running_test, 6);
+
+        assert_eq!(db.resolve_invocation_id("1", None)?, Some(1));
+        assert_eq!(db.resolve_invocation_id("job:1", None)?, Some(running_test));
+
         Ok(())
     }
 
