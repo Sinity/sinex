@@ -5,6 +5,7 @@ use serde_json::Value;
 use sinex_node_sdk::preflight::{
     VerificationStatus, configuration, database, resources, services, verification,
 };
+use sinex_primitives::constants::timeouts;
 use sinex_primitives::{environment::SinexEnvironment, nats::JetStreamTopology};
 use std::env;
 use std::ffi::OsString;
@@ -16,7 +17,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -377,7 +377,7 @@ async fn test_phase1_database_connectivity_failure() -> TestResult<()> {
 async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
     with_database_url("postgresql://192.0.2.1:5432/test", || async {
         let result = timeout(
-            Duration::from_secs(Timeouts::SHORT),
+            timeouts::PREFLIGHT_DATABASE_TIMEOUT + Duration::from_secs(2),
             database::verify_database_connectivity(),
         )
         .await;

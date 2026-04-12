@@ -52,7 +52,7 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
 
     // Test connection with timeout
     let pool = match tokio::time::timeout(
-        timeouts::TEST_DATABASE_TIMEOUT,
+        timeouts::PREFLIGHT_DATABASE_TIMEOUT,
         PgPool::connect(&database_url),
     )
     .await
@@ -70,7 +70,7 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
         Err(_) => {
             messages.push(format!(
                 "✗ Database connection timeout against effective runtime database ({}s)",
-                timeouts::TEST_DATABASE_TIMEOUT.as_secs()
+                timeouts::PREFLIGHT_DATABASE_TIMEOUT.as_secs()
             ));
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
