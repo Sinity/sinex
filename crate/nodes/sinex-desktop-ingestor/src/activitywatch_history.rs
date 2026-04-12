@@ -10,6 +10,7 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::Timestamp;
 use std::io::{Error as IoError, ErrorKind};
+use tracing::warn;
 
 const WINDOW_BUCKET_PREFIX: &str = "aw-watcher-window_";
 const WEB_BUCKET_PREFIX: &str = "aw-watcher-web_";
@@ -70,26 +71,59 @@ pub fn read_activitywatch_history(
     from_row_id: i64,
     end_time: Option<Timestamp>,
 ) -> Result<(Vec<ActivityWatchHistoryEntry>, i64), rusqlite::Error> {
+    fn skip_row(
+        path: &Utf8PathBuf,
+        row_id: i64,
+        error: rusqlite::Error,
+    ) -> Option<ActivityWatchHistoryEntry> {
+        warn!(
+            path = %path,
+            row_id,
+            error = %error,
+            "Skipping malformed ActivityWatch history row"
+        );
+        None
+    }
+
     fn map_activitywatch_row(
+        path: &Utf8PathBuf,
         row: &rusqlite::Row<'_>,
-    ) -> Result<ActivityWatchHistoryEntry, rusqlite::Error> {
+    ) -> Result<Option<ActivityWatchHistoryEntry>, rusqlite::Error> {
         let row_id: i64 = row.get(0)?;
-        let bucket_id: String = row.get(1)?;
+        let bucket_id: String = match row.get(1) {
+            Ok(value) => value,
+            Err(error) => return Ok(skip_row(path, row_id, error)),
+        };
         let (kind, host) = classify_bucket(&bucket_id);
-        let start_ns: i64 = row.get(2)?;
-        let end_ns: i64 = row.get(3)?;
-        let started_at = parse_timestamp_ns(row_id, "starttime", 2, start_ns)?;
-        let ended_at = parse_timestamp_ns(row_id, "endtime", 3, end_ns)?;
+        let start_ns: i64 = match row.get(2) {
+            Ok(value) => value,
+            Err(error) => return Ok(skip_row(path, row_id, error)),
+        };
+        let end_ns: i64 = match row.get(3) {
+            Ok(value) => value,
+            Err(error) => return Ok(skip_row(path, row_id, error)),
+        };
+        let started_at = match parse_timestamp_ns(row_id, "starttime", 2, start_ns) {
+            Ok(value) => value,
+            Err(error) => return Ok(skip_row(path, row_id, error)),
+        };
+        let ended_at = match parse_timestamp_ns(row_id, "endtime", 3, end_ns) {
+            Ok(value) => value,
+            Err(error) => return Ok(skip_row(path, row_id, error)),
+        };
         let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
         let duration_ms = (duration_ns / 1_000_000) as u64;
 
-        let payload = row
-            .get::<_, Option<String>>(4)?
-            .map(|value| parse_activitywatch_payload(row_id, &value))
-            .transpose()?
-            .unwrap_or(JsonValue::Null);
+        let raw_payload = row.get::<_, Option<String>>(4)?;
+        let payload = match raw_payload {
+            Some(value) => match parse_activitywatch_payload(row_id, &value) {
+                Ok(payload) => payload,
+                Err(error) => return Ok(skip_row(path, row_id, error)),
+            },
+            None => JsonValue::Null,
+        };
 
-        Ok(ActivityWatchHistoryEntry {
+        Ok(Some(ActivityWatchHistoryEntry {
             row_id,
             bucket_id,
             kind,
@@ -98,12 +132,12 @@ pub fn read_activitywatch_history(
             ended_at,
             duration_ms,
             data: payload,
-        })
+        }))
     }
 
     if let Some(end_time) = end_time {
         let end_time_ns = encode_query_timestamp_ns(end_time)?;
-        read_rows_with_params(
+        let (entries, last_row_id) = read_rows_with_params(
             path,
             "SELECT
                 e.ROWID,
@@ -123,10 +157,11 @@ pub fn read_activitywatch_history(
              ORDER BY e.ROWID ASC",
             (from_row_id, end_time_ns),
             from_row_id,
-            map_activitywatch_row,
-        )
+            |row| map_activitywatch_row(path, row),
+        )?;
+        Ok((entries.into_iter().flatten().collect(), last_row_id))
     } else {
-        read_rows_after(
+        let (entries, last_row_id) = read_rows_after(
             path,
             "SELECT
                 e.ROWID,
@@ -144,8 +179,9 @@ pub fn read_activitywatch_history(
                )
              ORDER BY e.ROWID ASC",
             from_row_id,
-            map_activitywatch_row,
-        )
+            |row| map_activitywatch_row(path, row),
+        )?;
+        Ok((entries.into_iter().flatten().collect(), last_row_id))
     }
 }
 
