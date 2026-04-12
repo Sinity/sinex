@@ -201,7 +201,10 @@ async fn material_acquisition_reuses_logical_source_without_aliasing_material_id
             || {
                 let pool = ctx.pool.clone();
                 async move {
-                    let first = pool.source_materials().get_by_id(Id::from_uuid(first_id)).await?;
+                    let first = pool
+                        .source_materials()
+                        .get_by_id(Id::from_uuid(first_id))
+                        .await?;
                     let second = pool
                         .source_materials()
                         .get_by_id(Id::from_uuid(second_id))
@@ -867,25 +870,34 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     let material_ids = try_join_all(futures).await?;
     let pool = ctx.pool.clone();
 
-    for material_id in material_ids {
-        WaitHelpers::wait_for_condition(
-            || {
-                let pool = pool.clone();
-                async move {
-                    if let Some(material) = pool
+    let awaited_material_ids = material_ids.clone();
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            let material_ids = awaited_material_ids.clone();
+            async move {
+                for material_id in material_ids {
+                    let Some(material) = pool
                         .source_materials()
                         .get_by_id(Id::from_uuid(material_id))
                         .await?
-                    {
-                        return Ok::<bool, SinexError>(material.status.as_str() == "completed");
-                    }
-                    Ok::<bool, SinexError>(false)
-                }
-            },
-            INTEGRATION_WAIT_SECS,
-        )
-        .await?;
+                    else {
+                        return Ok::<bool, SinexError>(false);
+                    };
 
+                    if material.status.as_str() != "completed" {
+                        return Ok::<bool, SinexError>(false);
+                    }
+                }
+
+                Ok::<bool, SinexError>(true)
+            }
+        },
+        INTEGRATION_WAIT_SECS,
+    )
+    .await?;
+
+    for material_id in material_ids {
         let record = pool
             .source_materials()
             .get_by_id(Id::from_uuid(material_id))
