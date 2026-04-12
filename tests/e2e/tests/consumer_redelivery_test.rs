@@ -13,7 +13,7 @@ use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
@@ -58,67 +58,78 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
 
     // Create consumer with explicit ack
     let stream = js.get_stream(&stream_name).await.map_err(|e| eyre!(e))?;
-    let consumer = stream
-        .create_consumer(jetstream::consumer::pull::Config {
-            name: Some(consumer_name.to_string()),
-            durable_name: Some(consumer_name.to_string()),
-            ack_policy: jetstream::consumer::AckPolicy::Explicit,
-            max_deliver: 5,
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| eyre!(e))?;
+    let consumer = Arc::new(
+        stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                name: Some(consumer_name.to_string()),
+                durable_name: Some(consumer_name.to_string()),
+                ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: FAST_ACK_WAIT,
+                max_deliver: 5,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| eyre!(e))?,
+    );
 
-    // Fetch and NAK the message
     let delivery_count = Arc::new(AtomicU32::new(0));
-    let start = std::time::Instant::now();
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let delivery_count = delivery_count.clone();
+                let consumer = consumer.clone();
+                move || {
+                    let delivery_count = delivery_count.clone();
+                    let consumer = consumer.clone();
+                    async move {
+                        let fetch_result = consumer
+                            .fetch()
+                            .max_messages(1)
+                            .expires(FAST_FETCH_EXPIRES)
+                            .messages()
+                            .await;
 
-    while delivery_count.load(Ordering::SeqCst) < 2
-        && start.elapsed() < Duration::from_secs(Timeouts::SHORT)
-    {
-        let fetch_result = consumer
-            .fetch()
-            .max_messages(1)
-            .expires(Duration::from_secs(Timeouts::MEDIUM))
-            .messages()
-            .await;
-
-        match fetch_result {
-            Ok(mut messages) => {
-                while let Some(item) = messages.next().await {
-                    match item {
-                        Ok(msg) => {
-                            let count = delivery_count.fetch_add(1, Ordering::SeqCst);
-                            if count == 0 {
-                                // First delivery: NAK to trigger redelivery
-                                msg.ack_with(async_nats::jetstream::AckKind::Nak(None))
-                                    .await
-                                    .map_err(|e| eyre!(e))?;
-                            } else {
-                                // Second delivery: ACK to complete
-                                msg.ack().await.map_err(|e| eyre!(e))?;
+                        match fetch_result {
+                            Ok(mut messages) => {
+                                while let Some(item) = messages.next().await {
+                                    match item {
+                                        Ok(msg) => {
+                                            let count = delivery_count.fetch_add(1, Ordering::SeqCst);
+                                            if count == 0 {
+                                                msg.ack_with(async_nats::jetstream::AckKind::Nak(
+                                                    Some(FAST_REDELIVERY_DELAY),
+                                                ))
+                                                .await
+                                                .map_err(|e| eyre!(e))?;
+                                            } else {
+                                                msg.ack().await.map_err(|e| eyre!(e))?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let msg = e.to_string();
+                                            if is_no_messages_error(&msg) {
+                                                break;
+                                            }
+                                            return Err(eyre!(e));
+                                        }
+                                    }
+                                }
+                                Ok(delivery_count.load(Ordering::SeqCst) >= 2)
                             }
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if is_no_messages_error(&msg) {
-                                break;
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_no_messages_error(&msg) {
+                                    return Ok(false);
+                                }
+                                Err(eyre!(e))
                             }
-                            return Err(eyre!(e));
                         }
                     }
                 }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if is_no_messages_error(&msg) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-                return Err(eyre!(e));
-            }
-        }
-    }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
 
     assert!(
         delivery_count.load(Ordering::SeqCst) >= 2,
@@ -301,68 +312,87 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
 
     // Create consumer
     let stream = js.get_stream(&stream_name).await.map_err(|e| eyre!(e))?;
-    let consumer = stream
-        .create_consumer(jetstream::consumer::pull::Config {
-            name: Some(consumer_name.to_string()),
-            durable_name: Some(consumer_name.to_string()),
-            ack_policy: jetstream::consumer::AckPolicy::Explicit,
-            max_deliver: 10,
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| eyre!(e))?;
+    let consumer = Arc::new(
+        stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                name: Some(consumer_name.to_string()),
+                durable_name: Some(consumer_name.to_string()),
+                ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: FAST_ACK_WAIT,
+                max_deliver: 10,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| eyre!(e))?,
+    );
 
-    // NAK multiple times and track delivery count
-    let mut observed_counts = Vec::new();
-    let start = std::time::Instant::now();
+    let observed_counts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let observed_counts = observed_counts.clone();
+                let consumer = consumer.clone();
+                move || {
+                    let observed_counts = observed_counts.clone();
+                    let consumer = consumer.clone();
+                    async move {
+                        let fetch_result = consumer
+                            .fetch()
+                            .max_messages(1)
+                            .expires(FAST_FETCH_EXPIRES)
+                            .messages()
+                            .await;
 
-    while observed_counts.len() < 3 && start.elapsed() < Duration::from_secs(Timeouts::MEDIUM) {
-        let fetch_result = consumer
-            .fetch()
-            .max_messages(1)
-            .expires(Duration::from_secs(Timeouts::MEDIUM))
-            .messages()
-            .await;
+                        match fetch_result {
+                            Ok(mut messages) => {
+                                while let Some(item) = messages.next().await {
+                                    match item {
+                                        Ok(msg) => {
+                                            let delivery_count =
+                                                msg.info().map_err(|e| eyre!(e))?.delivered;
+                                            let observed_len = {
+                                                let mut observed_counts = observed_counts.lock().await;
+                                                observed_counts.push(delivery_count);
+                                                observed_counts.len()
+                                            };
 
-        match fetch_result {
-            Ok(mut messages) => {
-                while let Some(item) = messages.next().await {
-                    match item {
-                        Ok(msg) => {
-                            let info = msg.info().map_err(|e| eyre!(e))?;
-                            let delivery_count = info.delivered;
-                            observed_counts.push(delivery_count);
-
-                            if observed_counts.len() < 3 {
-                                // NAK to trigger redelivery
-                                msg.ack_with(async_nats::jetstream::AckKind::Nak(None))
-                                    .await
-                                    .map_err(|e| eyre!(e))?;
-                            } else {
-                                // ACK on final delivery
-                                msg.ack().await.map_err(|e| eyre!(e))?;
+                                            if observed_len < 3 {
+                                                msg.ack_with(async_nats::jetstream::AckKind::Nak(
+                                                    Some(FAST_REDELIVERY_DELAY),
+                                                ))
+                                                .await
+                                                .map_err(|e| eyre!(e))?;
+                                            } else {
+                                                msg.ack().await.map_err(|e| eyre!(e))?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let msg = e.to_string();
+                                            if is_no_messages_error(&msg) {
+                                                break;
+                                            }
+                                            return Err(eyre!(e));
+                                        }
+                                    }
+                                }
+                                Ok(observed_counts.lock().await.len() >= 3)
                             }
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if is_no_messages_error(&msg) {
-                                break;
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_no_messages_error(&msg) {
+                                    return Ok(false);
+                                }
+                                Err(eyre!(e))
                             }
-                            return Err(eyre!(e));
                         }
                     }
                 }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if is_no_messages_error(&msg) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-                return Err(eyre!(e));
-            }
-        }
-    }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
+
+    let observed_counts = observed_counts.lock().await.clone();
 
     // Verify delivery counts are incrementing
     assert!(
@@ -591,6 +621,7 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
                 name: Some(consumer_name.to_string()),
                 durable_name: Some(consumer_name.to_string()),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: FAST_ACK_WAIT,
                 max_deliver: 5,
                 ..Default::default()
             })
@@ -600,6 +631,7 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
 
     let acked = Arc::new(AtomicU32::new(0));
     let nacked = Arc::new(AtomicU32::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
 
     // Spawn multiple concurrent fetchers
     let mut handles = vec![];
@@ -607,44 +639,81 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
         let consumer = consumer.clone();
         let acked = acked.clone();
         let nacked = nacked.clone();
+        let stop = stop.clone();
 
-        let handle = tokio::spawn(async move {
-            let start = std::time::Instant::now();
-            while start.elapsed() < Duration::from_secs(Timeouts::QUICK) {
+        let handle: tokio::task::JoinHandle<TestResult<()>> = tokio::spawn(async move {
+            while !stop.load(Ordering::Relaxed) && acked.load(Ordering::SeqCst) < 10 {
                 let fetch_result = consumer
                     .fetch()
                     .max_messages(5)
-                    .expires(Duration::from_secs(1))
+                    .expires(FAST_FETCH_EXPIRES)
                     .messages()
                     .await;
 
-                if let Ok(mut messages) = fetch_result {
-                    while let Some(item) = messages.next().await {
-                        if let Ok(msg) = item {
-                            // Alternate NAK/ACK based on total count for variety
-                            let total =
-                                acked.load(Ordering::Relaxed) + nacked.load(Ordering::Relaxed);
-                            if total.is_multiple_of(2) {
-                                let _ = msg
-                                    .ack_with(async_nats::jetstream::AckKind::Nak(None))
-                                    .await;
-                                nacked.fetch_add(1, Ordering::SeqCst);
-                            } else {
-                                let _ = msg.ack().await;
-                                acked.fetch_add(1, Ordering::SeqCst);
+                match fetch_result {
+                    Ok(mut messages) => {
+                        while let Some(item) = messages.next().await {
+                            match item {
+                                Ok(msg) => {
+                                    let total = acked.load(Ordering::Relaxed)
+                                        + nacked.load(Ordering::Relaxed);
+                                    if total.is_multiple_of(2) {
+                                        msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                            FAST_REDELIVERY_DELAY,
+                                        )))
+                                        .await
+                                        .map_err(|e| eyre!(e))?;
+                                        nacked.fetch_add(1, Ordering::SeqCst);
+                                    } else {
+                                        msg.ack().await.map_err(|e| eyre!(e))?;
+                                        acked.fetch_add(1, Ordering::SeqCst);
+                                    }
+                                }
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    if is_no_messages_error(&msg) {
+                                        break;
+                                    }
+                                    return Err(eyre!(e));
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if is_no_messages_error(&msg) {
+                            continue;
+                        }
+                        return Err(eyre!(e));
+                    }
                 }
             }
+
+            Ok(())
         });
 
         handles.push(handle);
     }
 
-    // Wait for all fetchers
+    ctx.timing()
+        .wait_for_condition(
+            {
+                let acked = acked.clone();
+                move || {
+                    let acked = acked.clone();
+                    async move {
+                        Ok::<bool, color_eyre::Report>(acked.load(Ordering::SeqCst) >= 10)
+                    }
+                }
+            },
+            Timeouts::QUICK,
+        )
+        .await?;
+
+    stop.store(true, Ordering::SeqCst);
+
     for handle in handles {
-        let _ = handle.await;
+        handle.await.map_err(|e| eyre!(e))??;
     }
 
     let total_acked = acked.load(Ordering::SeqCst);
