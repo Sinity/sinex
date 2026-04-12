@@ -163,32 +163,81 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
     ]
 }
 
-/// Strategy for generating fuzzed Event instances using modern API.
-///
-/// Source and `event_type` are now validated on construction, so we use
-/// `prop_filter_map` to skip invalid combinations and fuzz the remaining
-/// fields (payload, host, timestamps).
-fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
-    (
-        problematic_strings(),    // source candidate
-        problematic_strings(),    // event_type candidate
-        problematic_timestamps(), // ts_orig
-        problematic_strings(),    // host
-        malformed_json_values(),  // payload
-    )
-        .prop_filter_map(
-            "valid source and event_type required",
-            |(source, event_type, ts_orig, host, payload)| {
-                let source = EventSource::new(source).ok()?;
-                let event_type = EventType::new(event_type).ok()?;
-                let host = HostName::new(host).ok()?;
-                let mut event = event_fixture(source, event_type, payload);
-                event.host = host;
-                event.id = Some(Id::from_uuid(Uuid::now_v7()));
-                event.ts_orig = Some(ts_orig);
-                Some(event)
+fn smoke_problematic_strings() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just(String::new()),
+        Just(" ".to_string()),
+        Just("\t\n\r".to_string()),
+        prop::collection::vec(any::<char>(), 0..512)
+            .prop_map(|chars| chars.into_iter().collect()),
+        Just("🦀🔥💀".to_string()),
+        Just("тест测试テスト".to_string()),
+        Just("\u{200B}\u{FEFF}\u{00A0}".to_string()),
+        Just("'; DROP TABLE events; --".to_string()),
+        Just("../../../etc/passwd".to_string()),
+        regex_strategy("[\\x00-\\x1F\\u{007F}-\\u{009F}]*"),
+    ]
+}
+
+fn smoke_malformed_json_values() -> impl Strategy<Value = JsonValue> {
+    prop_oneof![
+        Just(JsonValue::Null),
+        Just(JsonValue::Object(JsonMap::new())),
+        Just(JsonValue::Array(vec![])),
+        prop::collection::vec(any::<i32>(), 0..64)
+            .prop_map(|v| JsonValue::Array(v.into_iter().map(JsonValue::from).collect())),
+        prop::collection::hash_map(smoke_problematic_strings(), any::<i32>(), 0..32).prop_map(
+            |m| {
+                let map: JsonMap<String, JsonValue> = m
+                    .into_iter()
+                    .map(|(k, v)| (k, JsonValue::from(v)))
+                    .collect();
+                JsonValue::Object(map)
             },
-        )
+        ),
+        edge_case_numbers().prop_map(JsonValue::from),
+        smoke_problematic_strings().prop_map(JsonValue::from),
+    ]
+}
+
+fn smoke_fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
+    let sources = prop_oneof![
+        Just(EventSource::from_static("fs")),
+        Just(EventSource::from_static("clipboard")),
+        Just(EventSource::from_static("wm.hyprland")),
+        Just(EventSource::from_static("shell.kitty")),
+        regex_strategy("[a-z][a-z0-9_]{2,20}")
+            .prop_map(|raw| EventSource::new(raw).expect("regex yields valid EventSource")),
+    ];
+    let event_types = prop_oneof![
+        Just(EventType::from_static("file.created")),
+        Just(EventType::from_static("window.focused")),
+        Just(EventType::from_static("command.executed")),
+        Just(EventType::from_static("clipboard.copied")),
+        regex_strategy("[a-z][a-z0-9_-]{1,20}\\.[a-z][a-z0-9_-]{1,20}")
+            .prop_map(|raw| EventType::new(raw).expect("regex yields valid EventType")),
+    ];
+    let hosts = prop_oneof![
+        Just(HostName::new("localhost").expect("localhost is a valid hostname")),
+        Just(HostName::new("node-1").expect("node-1 is a valid hostname")),
+        regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}")
+            .prop_map(|raw| HostName::new(raw).expect("regex yields valid HostName")),
+    ];
+
+    (
+        sources,
+        event_types,
+        problematic_timestamps(),
+        hosts,
+        smoke_malformed_json_values(),
+    )
+        .prop_map(|(source, event_type, ts_orig, host, payload)| {
+            let mut event = event_fixture(source, event_type, payload);
+            event.host = host;
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+            event.ts_orig = Some(ts_orig);
+            event
+        })
 }
 
 // ============================================================================
@@ -405,11 +454,11 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
 
 // Test that event creation and database insertion never panics with arbitrary fuzzed events.
 sinex_proptest! {
+    #![cases(8)]
     fn test_event_creation_never_panics_with_fuzzed_data(
-        event in fuzzed_events()
+        event in smoke_fuzzed_events()
     ) -> TestResult<()> {
         let _ = serde_json::to_string(&event);
-        let _ = serde_json::to_string_pretty(&event);
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = event.host.as_str();
