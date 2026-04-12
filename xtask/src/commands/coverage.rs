@@ -90,6 +90,7 @@ impl XtaskCommand for CoverageCommand {
             timeout: Some(std::time::Duration::from_mins(5)), // 5 minutes
             modifies_state: false,
             track_in_history: true,
+            history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
 }

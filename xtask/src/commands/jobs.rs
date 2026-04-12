@@ -104,7 +104,18 @@ impl XtaskCommand for JobsCommand {
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::utility()
+        match self.subcommand {
+            JobsSubcommand::List { .. }
+            | JobsSubcommand::Status { .. }
+            | JobsSubcommand::Output { .. }
+            | JobsSubcommand::Wait { .. } => CommandMetadata::utility()
+                .with_history_access(crate::command::HistoryAccessMode::Query),
+            JobsSubcommand::Cancel { .. } | JobsSubcommand::Prune { .. } => {
+                CommandMetadata::utility()
+                    .with_state_mutation(true)
+                    .with_history_access(crate::command::HistoryAccessMode::ReadWrite)
+            }
+        }
     }
 }
 
@@ -712,8 +723,31 @@ mod tests {
             subcommand: JobsSubcommand::Prune { older_than: 7 },
         };
         let metadata = cmd.metadata();
+        assert!(metadata.modifies_state);
+        assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::ReadWrite
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_observational_jobs_metadata_uses_query_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let cmd = JobsCommand {
+            subcommand: JobsSubcommand::Status {
+                id: 42,
+                follow: false,
+            },
+        };
+        let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
         assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::Query
+        );
         Ok(())
     }
 
