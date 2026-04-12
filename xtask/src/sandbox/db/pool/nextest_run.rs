@@ -73,17 +73,21 @@ pub(super) async fn prepare_nextest_lazy_pool(
         .await;
     };
 
-    let locked_state = lock_preparation_state(&config().state_dir, &run_id)?;
-    if let Some(cached) = load_cached_preparation(&locked_state.state_path)?
-        && cached.matches_request(&slot_names, &expected_fingerprint)
+    let (state_path, _lock_path) = preparation_paths_in(&config().state_dir, &run_id);
+    if let Some(prepared) =
+        try_reuse_cached_preparation(&state_path, &slot_names, &expected_fingerprint)?
     {
-        return Ok(NextestLazyPoolPreparation {
-            expected_fingerprint: cached.expected_fingerprint,
-            expected_extensions: cached.expected_extensions,
-            slot_names: cached.slot_names,
-            prune_summary: LazySlotPruneSummary::default(),
-            reused: true,
-        });
+        return Ok(prepared);
+    }
+
+    let locked_state = lock_preparation_state(&config().state_dir, &run_id)?;
+    if let Some(prepared) = try_reuse_cached_preparation(
+        &locked_state.state_path,
+        &slot_names,
+        &expected_fingerprint,
+    )?
+    {
+        return Ok(prepared);
     }
 
     let prepared = prepare_without_cache(
@@ -103,6 +107,27 @@ pub(super) async fn prepare_nextest_lazy_pool(
     store_cached_preparation(&locked_state.state_path, &cached)?;
 
     Ok(prepared)
+}
+
+fn try_reuse_cached_preparation(
+    state_path: &Path,
+    slot_names: &[String],
+    expected_fingerprint: &Option<String>,
+) -> TestResult<Option<NextestLazyPoolPreparation>> {
+    let Some(cached) = load_cached_preparation(state_path)? else {
+        return Ok(None);
+    };
+    if !cached.matches_request(slot_names, expected_fingerprint) {
+        return Ok(None);
+    }
+
+    Ok(Some(NextestLazyPoolPreparation {
+        expected_fingerprint: cached.expected_fingerprint,
+        expected_extensions: cached.expected_extensions,
+        slot_names: cached.slot_names,
+        prune_summary: LazySlotPruneSummary::default(),
+        reused: true,
+    }))
 }
 
 async fn prepare_without_cache(
@@ -198,7 +223,10 @@ fn load_cached_preparation(path: &Path) -> TestResult<Option<CachedLazyPoolPrepa
 
 fn store_cached_preparation(path: &Path, cached: &CachedLazyPoolPreparation) -> TestResult<()> {
     let raw = serde_json::to_string_pretty(cached)?;
-    fs::write(path, raw).wrap_err_with(|| format!("failed to write {}", path.display()))?;
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, raw).wrap_err_with(|| format!("failed to write {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path)
+        .wrap_err_with(|| format!("failed to replace {}", path.display()))?;
     Ok(())
 }
 
@@ -258,6 +286,47 @@ mod tests {
         let loaded = load_cached_preparation(&state_path)?
             .ok_or_else(|| eyre!("cached preparation should load"))?;
         assert_eq!(loaded, cached);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn cached_preparation_reuse_does_not_wait_for_writer_lock() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let slot_names = vec!["sinex_test_pool_0".to_string(), "sinex_test_pool_1".to_string()];
+        let (state_path, lock_path) = preparation_paths_in(temp.path(), "run-456");
+        if let Some(parent) = state_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let cached = CachedLazyPoolPreparation {
+            expected_fingerprint: Some("fingerprint".to_string()),
+            expected_extensions: HashMap::from([("timescaledb".to_string(), "2.20".to_string())]),
+            slot_names: slot_names.clone(),
+            prepared_at_rfc3339: Timestamp::now().format_rfc3339(),
+        };
+        store_cached_preparation(&state_path, &cached)?;
+
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+
+        let reused = try_reuse_cached_preparation(
+            &state_path,
+            &slot_names,
+            &Some("fingerprint".to_string()),
+        )?
+        .ok_or_else(|| eyre!("cached preparation should be reusable"))?;
+
+        assert!(reused.reused);
+        assert_eq!(reused.slot_names, slot_names);
+        assert_eq!(
+            reused.expected_extensions.get("timescaledb"),
+            Some(&"2.20".to_string())
+        );
+        assert!(reused.prune_summary.pruned_slots.is_empty());
         Ok(())
     }
 
