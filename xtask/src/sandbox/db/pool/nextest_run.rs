@@ -19,10 +19,10 @@ use time::Duration as TimeDuration;
 
 use super::LazySlotPruneSummary;
 use super::eagerly_recreate_pruned_lazy_slot_databases;
-use super::ensure_template_database;
 use super::meta::TemplateInfo;
 use super::prune_stale_lazy_slot_databases;
 use super::schema_fingerprint;
+use super::template::ensure_shared_templates_for_keys;
 
 #[derive(Debug)]
 pub(super) struct NextestLazyPoolPreparation {
@@ -233,6 +233,7 @@ async fn prepare_without_cache(
         admin_url,
         base_url,
         slot_max_connections,
+        &slot_names,
     )
     .await?;
     let mut prune_summary =
@@ -252,12 +253,9 @@ async fn ensure_template_info(
     admin_url: &str,
     base_url: &str,
     slot_max_connections: u32,
+    slot_names: &[String],
 ) -> TestResult<TemplateInfo> {
-    let template_guard =
-        ensure_template_database(admin_url, base_url, slot_max_connections).await?;
-    let info = template_guard.info.clone();
-    template_guard.release().await?;
-    Ok(info)
+    ensure_shared_templates_for_keys(admin_url, base_url, slot_max_connections, slot_names).await
 }
 
 fn nextest_run_id() -> Option<String> {

@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
 use sqlx::Connection;
 use sqlx::postgres::PgConnection;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -44,12 +43,6 @@ const SHARED_TEMPLATE_SHARD_COUNT: usize = 4;
 pub(crate) fn template_db_name() -> Option<String> {
     TEMPLATE_DB_NAME.lock().clone()
 }
-
-/// Per-template mutexes to avoid redundant rebuild work in a single process while still allowing
-/// distinct shared-template shards to progress concurrently.
-static TEMPLATE_CREATION_LOCKS: std::sync::LazyLock<
-    Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const CREATE_TEMPLATE_DB_TIMEOUT: Duration = Duration::from_secs(10);
 const APPLY_TEMPLATE_SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
@@ -134,12 +127,12 @@ fn shared_template_names() -> impl Iterator<Item = String> {
     (0..SHARED_TEMPLATE_SHARD_COUNT).map(shared_template_name_for_shard)
 }
 
-fn template_creation_lock(template_name: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let mut locks = TEMPLATE_CREATION_LOCKS.lock();
-    locks
-        .entry(template_name.to_string())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
+pub(super) fn shared_template_names_for_keys(keys: &[String]) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for key in keys {
+        names.insert(shared_template_name_for_key(key));
+    }
+    names.into_iter().collect()
 }
 
 pub(super) fn invalidate_shared_template_trust() {
@@ -293,8 +286,8 @@ mod tests {
         SHARED_TEMPLATE_BASE_NAME, SHARED_TEMPLATE_SHARD_COUNT, check_template_reuse,
         connect_admin_with_retry, ensure_template_database_for_key, load_template_trust_stamp,
         schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
-        store_template_meta, store_template_trust_stamp, template_trust_matches,
-        template_trust_state_path_in,
+        shared_template_names_for_keys, store_template_meta, store_template_trust_stamp,
+        template_trust_matches, template_trust_state_path_in,
     };
     use crate::sandbox::db::pool::PoolConfig;
     use crate::sandbox::db::pool::config::{SLOT_MAX_CONNECTIONS, replace_db_name};
@@ -393,6 +386,24 @@ mod tests {
         assert!(
             names.len() >= SHARED_TEMPLATE_SHARD_COUNT.min(2),
             "different keys should not all collapse onto one shared template shard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shared_template_names_for_keys_deduplicates_shards() -> TestResult<()> {
+        let keys = vec![
+            "slot-alpha".to_string(),
+            "slot-alpha".to_string(),
+            "slot-beta".to_string(),
+            "slot-gamma".to_string(),
+        ];
+        let names = shared_template_names_for_keys(&keys);
+        let unique = names.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "shared template warming should only visit each shard once"
         );
         Ok(())
     }
@@ -583,7 +594,7 @@ pub(super) async fn ensure_template_database(
     _base_url: &str,
     slot_max_connections: u32,
 ) -> TestResult<TemplateGuard> {
-    ensure_template_database_for_key(
+    ensure_template_database_named(
         admin_url,
         _base_url,
         slot_max_connections,
@@ -599,9 +610,55 @@ pub(super) async fn ensure_template_database_for_key(
     key: &str,
 ) -> TestResult<TemplateGuard> {
     let template_name = shared_template_name_for_key(key);
-    let creation_lock = template_creation_lock(&template_name);
-    let _lock = creation_lock.lock().await;
+    ensure_template_database_named(
+        admin_url,
+        _base_url,
+        slot_max_connections,
+        &template_name,
+    )
+    .await
+}
 
+pub(super) async fn ensure_shared_templates_for_keys(
+    admin_url: &str,
+    _base_url: &str,
+    slot_max_connections: u32,
+    keys: &[String],
+) -> TestResult<TemplateInfo> {
+    let mut warmed_info: Option<TemplateInfo> = None;
+    for template_name in shared_template_names_for_keys(keys) {
+        let template_guard = ensure_template_database_named(
+            admin_url,
+            _base_url,
+            slot_max_connections,
+            &template_name,
+        )
+        .await?;
+        let info = template_guard.info.clone();
+        template_guard.release().await?;
+
+        if let Some(existing) = &warmed_info {
+            if existing.extensions != info.extensions {
+                return Err(eyre!(
+                    "shared template shards diverged on extension metadata: {} vs {}",
+                    existing.name,
+                    info.name,
+                ));
+            }
+        } else {
+            warmed_info = Some(info);
+        }
+    }
+
+    warmed_info.ok_or_else(|| eyre!("shared template warming requires at least one key"))
+}
+
+async fn ensure_template_database_named(
+    admin_url: &str,
+    _base_url: &str,
+    slot_max_connections: u32,
+    template_name: &str,
+) -> TestResult<TemplateGuard> {
     eprintln!("🔧 Checking template database {template_name} ...");
     let template_start = std::time::Instant::now();
 
