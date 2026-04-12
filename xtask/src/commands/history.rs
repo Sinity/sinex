@@ -280,6 +280,9 @@ pub enum HistoryTestsSubcommand {
     Slowest {
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long)]
+        invocation: Option<String>,
     },
     Flaky {
         #[arg(long, default_value = "10")]
@@ -986,7 +989,9 @@ fn execute_tests(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     match tests_cmd {
-        HistoryTestsSubcommand::Slowest { limit } => execute_tests_slowest(db, *limit, ctx),
+        HistoryTestsSubcommand::Slowest { limit, invocation } => {
+            execute_tests_slowest(db, invocation.as_deref(), *limit, ctx)
+        }
         HistoryTestsSubcommand::Flaky { limit } => execute_tests_flaky(db, *limit, ctx),
         HistoryTestsSubcommand::GettingSlower {
             threshold_pct,
@@ -1042,9 +1047,64 @@ fn describe_test_run(run: &crate::history::ResolvedTestRun) -> String {
 
 fn execute_tests_slowest(
     db: &HistoryDb,
+    invocation: Option<&str>,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    if let Some(invocation) = invocation {
+        let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+            if ctx.is_human() {
+                println!("No test run data found.");
+            }
+            return Ok(CommandResult::success()
+                .with_message("No test run data")
+                .with_duration(ctx.elapsed()));
+        };
+        let tests = db.get_slowest_tests_for_invocation(test_run.invocation_id, limit)?;
+
+        if ctx.is_human() {
+            if tests.is_empty() {
+                println!(
+                    "No test timing rows found for {}.",
+                    describe_test_run(&test_run)
+                );
+            } else {
+                println!(
+                    "{}, started {}",
+                    describe_test_run(&test_run),
+                    test_run.started_at
+                );
+                println!(
+                    "{:<50} {:<20} {:<10} {:>10}",
+                    "TEST", "PACKAGE", "STATUS", "DURATION"
+                );
+                for test in &tests {
+                    let display_name = if test.test_name.len() > 48 {
+                        format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                    } else {
+                        test.test_name.clone()
+                    };
+                    println!(
+                        "{display_name:<50} {:<20} {:<10} {:>10.3}",
+                        test.package, test.status, test.duration_secs
+                    );
+                }
+            }
+        } else {
+            let json = serde_json::to_string_pretty(&tests)?;
+            println!("{json}");
+        }
+
+        return Ok(CommandResult::success()
+            .with_message(format!(
+                "Found {} slowest tests for {}",
+                tests.len(),
+                describe_test_run(&test_run)
+            ))
+            .with_data(serde_json::to_value(&tests)?)
+            .with_duration(ctx.elapsed()));
+    }
+
     let tests = db.get_slowest_tests(limit)?;
 
     if ctx.is_human() {
@@ -1055,13 +1115,16 @@ fn execute_tests_slowest(
                 "{:<50} {:<20} {:>10} {:>6}",
                 "TEST", "PACKAGE", "AVG (s)", "RUNS"
             );
-            for (name, package, avg, runs) in &tests {
-                let display_name = if name.len() > 48 {
-                    format!("...{}", &name[name.len() - 45..])
+            for test in &tests {
+                let display_name = if test.test_name.len() > 48 {
+                    format!("...{}", &test.test_name[test.test_name.len() - 45..])
                 } else {
-                    name.clone()
+                    test.test_name.clone()
                 };
-                println!("{display_name:<50} {package:<20} {avg:>10.3} {runs:>6}");
+                println!(
+                    "{display_name:<50} {:<20} {:>10.3} {:>6}",
+                    test.package, test.avg_duration_secs, test.passing_runs
+                );
             }
         }
     } else {
@@ -1071,6 +1134,7 @@ fn execute_tests_slowest(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} slowest tests", tests.len()))
+        .with_data(serde_json::to_value(&tests)?)
         .with_duration(ctx.elapsed()))
 }
 
@@ -1860,6 +1924,28 @@ fn execute_tests_analyze(
                         let bar = "█".repeat(std::cmp::min(bucket.count, 50));
                         println!("  {:>8} │ {:>4} │ {}", bucket.label, bucket.count, bar);
                     }
+                }
+
+                if !analysis.slowest_tests.is_empty() {
+                    println!("\n{}", style("Slowest Tests:").bold());
+                    let mut builder = Builder::new();
+                    builder.push_record(["TEST", "PACKAGE", "STATUS", "DURATION"]);
+                    for test in &analysis.slowest_tests {
+                        let display_name = if test.test_name.len() > 48 {
+                            format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                        } else {
+                            test.test_name.clone()
+                        };
+                        builder.push_record([
+                            display_name,
+                            test.package.clone(),
+                            test.status.clone(),
+                            format!("{:.3}s", test.duration_secs),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
                 }
 
                 // Probable timeouts
@@ -4187,6 +4273,72 @@ mod tests {
             format!("Analysis for invocation #{invocation_id} (job #{job_id}): 1 passed, 0 failed");
 
         assert_eq!(resolved_invocation_id, invocation_id);
+        assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_tests_slowest_accepts_explicit_invocation()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-slowest-explicit.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 4.0)?;
+        db.store_test_results(
+            older,
+            &[
+                StoredTestResult {
+                    test_name: "older_slowest".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Fail,
+                    duration_secs: Some(4.0),
+                    attempt: 1,
+                    output: Some("boom".into()),
+                },
+                StoredTestResult {
+                    test_name: "older_fast".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(0.2),
+                    attempt: 1,
+                    output: None,
+                },
+            ],
+        )?;
+
+        let newer = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(newer, InvocationStatus::Success, Some(0), 20.0)?;
+        db.store_test_results(
+            newer,
+            &[StoredTestResult {
+                test_name: "newer_only".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(20.0),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let result = execute_tests_slowest(&db, Some(&older.to_string()), 10, &ctx)?;
+        let data = result.data.expect("slowest test data should be present");
+        let tests = data
+            .as_array()
+            .expect("run-scoped slowest data should be an array");
+        let expected_message = format!("Found 2 slowest tests for invocation #{older}");
+
+        assert_eq!(tests.len(), 2);
+        assert_eq!(
+            tests[0]
+                .get("test_name")
+                .and_then(serde_json::Value::as_str),
+            Some("older_slowest")
+        );
+        assert_eq!(
+            tests[0].get("status").and_then(serde_json::Value::as_str),
+            Some("fail")
+        );
         assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
         Ok(())
     }

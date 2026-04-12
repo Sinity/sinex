@@ -372,7 +372,7 @@ impl HistoryDb {
     ///
     /// Only counts passing tests — failed/timed-out tests would inflate durations
     /// with timeout ceilings rather than reflecting real execution time.
-    pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<(String, String, f64, i64)>> {
+    pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<HistoricalSlowTest>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
@@ -386,11 +386,45 @@ impl HistoryDb {
         )?;
 
         let rows = stmt.query_map([limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok(HistoricalSlowTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                avg_duration_secs: row.get(2)?,
+                passing_runs: row.get(3)?,
+            })
         })?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect slowest tests")
+    }
+
+    /// Get the slowest concrete test results from one invocation.
+    pub fn get_slowest_tests_for_invocation(
+        &self,
+        invocation_id: i64,
+        limit: usize,
+    ) -> Result<Vec<RunSlowTest>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT test_name, package, status, COALESCE(duration_secs, 0) as duration
+            FROM test_results
+            WHERE invocation_id = ?1
+            ORDER BY duration DESC, package, test_name
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![invocation_id, limit as i64], |row| {
+            Ok(RunSlowTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                status: row.get(2)?,
+                duration_secs: row.get(3)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect slowest tests for invocation")
     }
 
     /// Get tests that are getting slower over time.
@@ -613,6 +647,8 @@ impl HistoryDb {
 pub struct TestSuiteAnalysis {
     /// Duration distribution buckets
     pub duration_buckets: Vec<DurationBucket>,
+    /// Slowest concrete tests in this invocation, ordered by observed duration
+    pub slowest_tests: Vec<RunSlowTest>,
     /// Tests that appear to have timed out (failed with duration near a timeout ceiling)
     pub probable_timeouts: Vec<ProbableTimeout>,
     /// Failure summary grouped by package
@@ -654,6 +690,24 @@ pub struct PackageFailureSummary {
     pub passed_count: usize,
     pub failure_rate_pct: f64,
     pub failed_tests: Vec<String>,
+}
+
+/// A historically slow test aggregated across passing runs.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct HistoricalSlowTest {
+    pub test_name: String,
+    pub package: String,
+    pub avg_duration_secs: f64,
+    pub passing_runs: i64,
+}
+
+/// A slow test result from one concrete invocation.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RunSlowTest {
+    pub test_name: String,
+    pub package: String,
+    pub status: String,
+    pub duration_secs: f64,
 }
 
 /// A concrete test-run invocation resolved from stored history.
@@ -879,6 +933,16 @@ impl HistoryDb {
             .filter(|r| matches!(r.status.as_str(), "ignored" | "skip"))
             .count();
         let total_duration_secs: f64 = rows.iter().map(|r| r.duration).sum();
+        let slowest_tests: Vec<RunSlowTest> = rows
+            .iter()
+            .take(10)
+            .map(|row| RunSlowTest {
+                test_name: row.test_name.clone(),
+                package: row.package.clone(),
+                status: row.status.clone(),
+                duration_secs: row.duration,
+            })
+            .collect();
 
         // Duration buckets
         let bucket_defs = [
@@ -963,6 +1027,7 @@ impl HistoryDb {
 
         Ok(Some(TestSuiteAnalysis {
             duration_buckets,
+            slowest_tests,
             probable_timeouts,
             failure_summary,
             total_passed,
@@ -1891,9 +1956,62 @@ mod tests {
 
         let slowest = db.get_slowest_tests(10)?;
         assert_eq!(slowest.len(), 2, "Failed test should be excluded");
-        assert_eq!(slowest[0].0, "test_slow");
-        assert!(slowest[0].2 > 4.0); // avg duration > 4s
-        assert_eq!(slowest[1].0, "test_fast");
+        assert_eq!(slowest[0].test_name, "test_slow");
+        assert!(slowest[0].avg_duration_secs > 4.0); // avg duration > 4s
+        assert_eq!(slowest[1].test_name, "test_fast");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_slowest_tests_for_invocation_keeps_run_scope() -> TestResult<()> {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+
+        db.store_test_results(
+            first_inv,
+            &[
+                TestResult {
+                    test_name: "test_medium".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(2.0),
+                    attempt: 1,
+                    output: None,
+                },
+                TestResult {
+                    test_name: "test_slowest".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Fail,
+                    duration_secs: Some(8.0),
+                    attempt: 1,
+                    output: Some("boom".into()),
+                },
+            ],
+        )?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            second_inv,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_other_run".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(20.0),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let slowest = db.get_slowest_tests_for_invocation(first_inv, 10)?;
+        assert_eq!(slowest.len(), 2);
+        assert_eq!(slowest[0].test_name, "test_slowest");
+        assert_eq!(slowest[0].status, "fail");
+        assert_eq!(slowest[1].test_name, "test_medium");
         Ok(())
     }
 
@@ -1934,6 +2052,9 @@ mod tests {
         assert_eq!(analysis.total_failed, 1);
         assert_eq!(analysis.total_ignored, 1);
         assert_eq!(analysis.invocation_id, inv_id);
+        assert_eq!(analysis.slowest_tests.len(), 3);
+        assert_eq!(analysis.slowest_tests[0].test_name, "test_two");
+        assert_eq!(analysis.slowest_tests[0].status, "fail");
 
         // Failure summary should have pkg-a with 1 failure
         assert_eq!(analysis.failure_summary.len(), 1);
