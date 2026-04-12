@@ -13,6 +13,35 @@ use camino::{Utf8Path, Utf8PathBuf};
 use std::path::Path;
 use tempfile::TempDir;
 
+/// Per-test temporary directory redirect.
+///
+/// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on a
+/// checkout-backed `.sinex/test-tmp` tree instead of the host `/tmp`.
+pub struct TestTempEnv {
+    _env: super::EnvGuard,
+    _dir: TempDir,
+}
+
+/// Redirect temporary-directory environment variables for the duration of a test.
+pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
+    let temp_root = workspace_test_temp_root()?;
+    let safe_name = sanitize_filename(test_name);
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("sinex-test-{safe_name}-"))
+        .tempdir_in(temp_root.as_std_path())
+        .map_err(|e| eyre!(format!("Failed to create workspace-backed temp directory: {e}")))?;
+
+    let mut env = super::EnvGuard::with_keys(&["TMPDIR", "TMP", "TEMP"]);
+    env.set("TMPDIR", dir.path());
+    env.set("TMP", dir.path());
+    env.set("TEMP", dir.path());
+
+    Ok(TestTempEnv {
+        _env: env,
+        _dir: dir,
+    })
+}
+
 /// Create a secure temporary directory for test operations
 ///
 /// This function creates a temporary directory using the system's temporary
@@ -108,6 +137,34 @@ pub fn create_test_binary_file(
 /// for use in test resource management.
 pub fn verify_test_path_safety(path: &str) -> TestResult<()> {
     validate_test_path(path).map(|_| ()).map_err(Error::from)
+}
+
+fn workspace_test_temp_root() -> TestResult<Utf8PathBuf> {
+    let manifest_dir = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .ok_or_else(|| eyre!("xtask manifest directory has no workspace parent"))?;
+    let temp_root = workspace_root.join(".sinex/test-tmp");
+    std::fs::create_dir_all(temp_root.as_std_path()).map_err(|e| {
+        eyre!(format!(
+            "Failed to create workspace-backed test temp root {}: {e}",
+            temp_root
+        ))
+    })?;
+    Ok(temp_root)
+}
+
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_string()
 }
 
 #[cfg(test)]
