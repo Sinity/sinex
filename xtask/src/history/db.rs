@@ -1,5 +1,6 @@
 //! `SQLite` database operations for xtask history.
 
+use super::query::InvocationQuery;
 use color_eyre::eyre::{Result, WrapErr};
 
 /// Opening half of the package-scoped supersession CTE used by diagnostic queries.
@@ -33,6 +34,32 @@ const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
 const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
 const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryDbOpenMode {
+    Persistent,
+    Ephemeral,
+}
+
+impl HistoryDbOpenMode {
+    fn pragmas(self) -> &'static str {
+        match self {
+            Self::Persistent => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA journal_mode=WAL;
+                 PRAGMA synchronous=NORMAL;
+                 PRAGMA busy_timeout=5000;"
+            }
+            Self::Ephemeral => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA journal_mode=MEMORY;
+                 PRAGMA synchronous=OFF;
+                 PRAGMA temp_store=MEMORY;
+                 PRAGMA busy_timeout=5000;"
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct GitSnapshot {
@@ -320,10 +347,40 @@ enum StaleCleanupOutcome {
 impl HistoryDb {
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_schema_version_probe(path, Self::schema_version)
+        Self::open_with_schema_version_probe(
+            path,
+            HistoryDbOpenMode::Persistent,
+            Self::schema_version,
+        )
     }
 
-    fn open_with_schema_version_probe<F>(path: &Path, schema_version_probe: F) -> Result<Self>
+    /// Open an isolated in-memory history database.
+    ///
+    /// This keeps test and scratch workflows off the filesystem durability
+    /// path while still exercising the real schema and query logic.
+    pub fn open_in_memory() -> Result<Self> {
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory history database")?;
+        Self::configure_connection(&conn, HistoryDbOpenMode::Ephemeral)?;
+        let db = Self {
+            conn,
+            is_synthetic: false,
+        };
+        db.init_schema()?;
+        db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+        Ok(db)
+    }
+
+    fn configure_connection(conn: &Connection, mode: HistoryDbOpenMode) -> Result<()> {
+        conn.execute_batch(mode.pragmas())
+            .context("failed to configure history database connection")
+    }
+
+    fn open_with_schema_version_probe<F>(
+        path: &Path,
+        mode: HistoryDbOpenMode,
+        schema_version_probe: F,
+    ) -> Result<Self>
     where
         F: FnOnce(&Self) -> Result<i32>,
     {
@@ -360,13 +417,7 @@ impl HistoryDb {
             format!("failed to open history database: {path_display}")
         })?;
 
-        // WAL mode enables concurrent readers during writes (critical for
-        // querying test history while a test run is in progress).
-        // busy_timeout prevents SQLITE_BUSY on concurrent access from parallel xtask processes.
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA busy_timeout=5000;",
-        )?;
+        Self::configure_connection(&conn, mode)?;
 
         // Fresh databases do not need integrity sweeps, schema-version probing,
         // or stale-invocation cleanup. This fast path keeps temp/ephemeral
@@ -410,10 +461,7 @@ impl HistoryDb {
             let conn = Connection::open(path).with_context(|| {
                 format!("failed to recreate history database: {}", path.display())
             })?;
-            conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
-                 PRAGMA busy_timeout=5000;",
-            )?;
+            Self::configure_connection(&conn, mode)?;
             let db = Self {
                 conn,
                 is_synthetic: false,
@@ -464,10 +512,7 @@ impl HistoryDb {
                         path.display()
                     )
                 })?;
-                conn.execute_batch(
-                    "PRAGMA journal_mode=WAL;
-                     PRAGMA busy_timeout=5000;",
-                )?;
+                Self::configure_connection(&conn, mode)?;
                 let recreated = Self {
                     conn,
                     is_synthetic: false,
@@ -1423,35 +1468,11 @@ impl HistoryDb {
         limit: usize,
         command_filter: Option<&str>,
     ) -> Result<Vec<Invocation>> {
-        let sql = if command_filter.is_some() {
-            r"
-            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
-            FROM invocations
-            WHERE command = ?1
-            ORDER BY started_at DESC
-            LIMIT ?2
-            "
-        } else {
-            r"
-            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
-            FROM invocations
-            ORDER BY started_at DESC
-            LIMIT ?1
-            "
-        };
-
-        let mut stmt = self.conn.prepare(sql)?;
-
-        let rows = if let Some(cmd) = command_filter {
-            stmt.query_map(params![cmd, limit], row_to_invocation)?
-        } else {
-            stmt.query_map(params![limit], row_to_invocation)?
-        };
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .context("failed to collect invocations")
+        let mut query = InvocationQuery::new().limit(limit);
+        if let Some(command_filter) = command_filter {
+            query = query.command(command_filter);
+        }
+        query.run(self)
     }
 
     /// Get recent invocations with filtering, sorting, and pagination (G5).
@@ -1467,56 +1488,36 @@ impl HistoryDb {
         since_rfc3339: Option<&str>,
         sort_by: &str,
     ) -> Result<Vec<Invocation>> {
-        let order = match sort_by {
-            "duration" => "duration_secs DESC NULLS LAST",
-            "status" => "status ASC",
-            _ => "started_at DESC",
-        };
-
-        let mut conditions: Vec<String> = Vec::new();
-        if command_filter.is_some() {
-            conditions.push("command = ?1".into());
+        let mut query = InvocationQuery::new().limit(limit).offset(offset);
+        if let Some(command_filter) = command_filter {
+            query = query.command(command_filter);
         }
-        if since_rfc3339.is_some() {
-            let n = conditions.len() + 1;
-            conditions.push(format!("started_at >= ?{n}"));
+        if let Some(since_rfc3339) = since_rfc3339 {
+            query = query.since_rfc3339(since_rfc3339);
         }
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
+        query = match sort_by {
+            "duration" => query.sort_duration(),
+            "status" => query.sort_status(),
+            _ => query.sort_started(),
         };
+        query.run(self)
+    }
 
-        let offset_n = conditions.len() + 1;
-        let limit_n = conditions.len() + 2;
-        let sql = format!(
+    /// Get a specific invocation by database ID.
+    pub fn get_invocation(&self, invocation_id: i64) -> Result<Option<Invocation>> {
+        let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
-            {where_clause}
-            ORDER BY {order}
-            LIMIT ?{limit_n} OFFSET ?{offset_n}
-            "
-        );
+            WHERE id = ?1
+            LIMIT 1
+            ",
+        )?;
 
-        let mut stmt = self.conn.prepare(&sql)?;
-
-        // Build params dynamically
-        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(cmd) = command_filter {
-            param_values.push(Box::new(cmd.to_string()));
-        }
-        if let Some(since) = since_rfc3339 {
-            param_values.push(Box::new(since.to_string()));
-        }
-        param_values.push(Box::new(offset as i64));
-        param_values.push(Box::new(limit as i64));
-
-        let refs: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt.query_map(refs.as_slice(), row_to_invocation)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .context("failed to collect filtered invocations")
+        stmt.query_row(params![invocation_id], row_to_invocation)
+            .optional()
+            .context("failed to get invocation by id")
     }
 
     /// Get diagnostic error/warning counts for a specific invocation (G5 --with-diagnostics).
@@ -4237,19 +4238,23 @@ mod tests {
         db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 0.1)?;
         drop(db);
 
-        let reopened = HistoryDb::open_with_schema_version_probe(&db_path, |_db| {
-            Err::<i32, color_eyre::Report>(
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Integer,
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "synthetic schema version read failure",
-                    )),
+        let reopened = HistoryDb::open_with_schema_version_probe(
+            &db_path,
+            HistoryDbOpenMode::Persistent,
+            |_db| {
+                Err::<i32, color_eyre::Report>(
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Integer,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "synthetic schema version read failure",
+                        )),
+                    )
+                    .into(),
                 )
-                .into(),
-            )
-        })?;
+            },
+        )?;
 
         assert_eq!(reopened.schema_version()?, HISTORY_DB_SCHEMA_VERSION);
         let recent = reopened.get_recent(10, None)?;
