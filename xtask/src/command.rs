@@ -641,6 +641,18 @@ impl CommandContext {
         matches!(self.writer.format(), crate::output::OutputFormat::Human)
     }
 
+    /// Whether this command execution may launch interactive convenience work
+    /// that has side effects outside the command's primary contract.
+    ///
+    /// This is intentionally stricter than "foreground": machine-oriented
+    /// executions (`--json`, compact, silent) should be observational and
+    /// deterministic, not consult ambient workstation history to start helper
+    /// subprocesses.
+    #[must_use]
+    pub fn allows_ambient_optimizations(&self) -> bool {
+        !self.is_background() && self.is_human()
+    }
+
     /// Check if output format is JSON.
     #[must_use]
     pub fn is_json(&self) -> bool {
