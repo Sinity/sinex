@@ -818,10 +818,9 @@ pub(super) fn advisory_lock_key(name: &str) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::db::pool::acquire_pool_test_guard;
     use crate::sandbox::db::pool::config::PoolConfig;
     use crate::sandbox::db::pool::reset;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{sinex_serial_test, sinex_test};
 
     #[sinex_test]
     async fn test_sqlstate_classifiers() -> TestResult<()> {
@@ -908,9 +907,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_recreate_pool_database_converges_schema_before_marking_clean() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_recreate_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -975,9 +973,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_reconcile_existing_pool_database_refreshes_stale_metadata() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_reconcile_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1040,9 +1037,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_mark_pool_database_clean_rejects_residual_schema_drift() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_mark_clean_drift_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;

@@ -1559,7 +1559,7 @@ impl DatabasePool {
 mod tests {
     use super::*;
     use crate::sandbox::EnvGuard;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{sinex_serial_test, sinex_test};
 
     #[sinex_test]
     async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()>
@@ -1613,9 +1613,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_drops_mismatched_unlocked_db() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_{}", std::process::id());
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
@@ -1657,9 +1656,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_keeps_locked_db() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_locked_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1721,10 +1719,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_clean_metadata()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_schema_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1782,10 +1779,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_skips_transiently_unavailable_clean_slot()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_deferred_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1836,10 +1832,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_lazy_slot_schema_drift_reason_skips_clean_slot_when_schema_probe_loses_connection()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_probe_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1901,10 +1896,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_try_lock_slot_database_for_drop_returns_gone_for_missing_database()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_missing_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1919,10 +1913,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_try_lock_slot_database_for_drop_defers_transiently_unavailable_database()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_busy_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
