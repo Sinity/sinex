@@ -11,6 +11,7 @@
 
 use async_nats::jetstream;
 use camino::Utf8PathBuf;
+use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
@@ -456,14 +457,19 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
 
     // Wait for all to complete
     let shutdown_start = std::time::Instant::now();
-    for handle in handles {
-        let _ = timeout(Duration::from_secs(Timeouts::QUICK), handle).await;
-    }
+    let join_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
+        join_all(handles).await
+    })
+    .await;
     let shutdown_duration = shutdown_start.elapsed();
 
     tracing::info!("Concurrent shutdown took {:?}", shutdown_duration);
 
     // All should have shutdown within timeout
+    assert!(
+        join_result.is_ok(),
+        "all consumer tasks should complete within the shared shutdown timeout"
+    );
     assert_eq!(
         active_count.load(Ordering::SeqCst),
         0,
