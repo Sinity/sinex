@@ -2608,6 +2608,19 @@ impl TerminalNode {
         Ok(self.runtime()?.service_info())
     }
 
+    async fn bootstrap_streams_for_runtime(runtime: &NodeRuntimeState) -> NodeResult<()> {
+        if runtime.service_info().dry_run() {
+            return Ok(());
+        }
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+        Ok(())
+    }
+
     #[allow(dead_code)] // Used by runtime initialization
     async fn initialise_from_runtime(
         &mut self,
@@ -2623,11 +2636,7 @@ impl TerminalNode {
 
         config.validate_config()?;
 
-        let publisher = match runtime.transport() {
-            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
-        };
-
-        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+        Self::bootstrap_streams_for_runtime(&runtime).await?;
 
         let mut state_dir = service_info.work_dir().clone();
         state_dir.push("terminal-history");
@@ -2898,11 +2907,7 @@ impl IngestorNode for TerminalNode {
             SinexError::configuration("Terminal configuration validation failed").with_source(e)
         })?;
 
-        let publisher = match runtime.transport() {
-            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
-        };
-
-        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+        Self::bootstrap_streams_for_runtime(runtime).await?;
 
         let mut state_dir = service_info.work_dir().clone();
         state_dir.push("terminal-history");
