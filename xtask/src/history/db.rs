@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::LazyLock;
 use std::time::Duration;
 use time::OffsetDateTime;
 
@@ -32,6 +33,17 @@ const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
 const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
 const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone)]
+struct GitSnapshot {
+    commit: Option<String>,
+    dirty: bool,
+}
+
+static CURRENT_PROCESS_GIT_SNAPSHOT: LazyLock<GitSnapshot> = LazyLock::new(|| GitSnapshot {
+    commit: get_git_commit_uncached(),
+    dirty: is_git_dirty_uncached(),
+});
 
 fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
     match std::fs::remove_file(path) {
@@ -323,10 +335,12 @@ impl HistoryDb {
             })?;
         }
 
+        let mut db_existed = path.exists();
+
         // Detect and recover from corrupted (0-byte) database files.
         // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
         // setup may leave it in an inconsistent state. Delete and recreate.
-        if path.exists()
+        if db_existed
             && let Ok(meta) = std::fs::metadata(path)
             && meta.len() == 0
         {
@@ -338,6 +352,7 @@ impl HistoryDb {
                 path,
                 "failed to remove empty history database before recreation",
             )?;
+            db_existed = false;
         }
 
         let conn = Connection::open(path).with_context(|| {
@@ -352,6 +367,19 @@ impl HistoryDb {
             "PRAGMA journal_mode=WAL;
              PRAGMA busy_timeout=5000;",
         )?;
+
+        // Fresh databases do not need integrity sweeps, schema-version probing,
+        // or stale-invocation cleanup. This fast path keeps temp/ephemeral
+        // history stores cheap and deterministic.
+        if !db_existed {
+            let db = Self {
+                conn,
+                is_synthetic: false,
+            };
+            db.init_schema()?;
+            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+            return Ok(db);
+        }
 
         // Fast path: quick_check is materially cheaper on large history DBs and
         // catches the common corruption cases. If it reports a problem, fall back
@@ -845,8 +873,9 @@ impl HistoryDb {
         profile: Option<&str>,
         args_json: Option<&str>,
     ) -> Result<i64> {
-        let git_commit = get_git_commit();
-        let git_dirty = is_git_dirty();
+        let git_snapshot = current_git_snapshot();
+        let git_commit = git_snapshot.commit.clone();
+        let git_dirty = git_snapshot.dirty;
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
@@ -1958,8 +1987,9 @@ impl HistoryDb {
         stderr_path: &Path,
     ) -> Result<(i64, i64)> {
         let args_json = serde_json::to_string(args)?;
-        let git_commit = get_git_commit();
-        let git_dirty = is_git_dirty();
+        let git_snapshot = current_git_snapshot();
+        let git_commit = git_snapshot.commit.clone();
+        let git_dirty = git_snapshot.dirty;
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
@@ -3833,7 +3863,11 @@ pub(super) fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocat
 }
 
 /// Get current git commit hash (short form).
-fn get_git_commit() -> Option<String> {
+fn current_git_snapshot() -> &'static GitSnapshot {
+    &CURRENT_PROCESS_GIT_SNAPSHOT
+}
+
+fn get_git_commit_uncached() -> Option<String> {
     std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
@@ -3843,7 +3877,7 @@ fn get_git_commit() -> Option<String> {
 }
 
 /// Check if the git working directory has uncommitted changes.
-fn is_git_dirty() -> bool {
+fn is_git_dirty_uncached() -> bool {
     std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .output()
