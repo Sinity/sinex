@@ -138,6 +138,35 @@ async fn recv_timeout(
         .flatten()
 }
 
+async fn drain_until_idle<F>(
+    rx: &mut tokio::sync::mpsc::Receiver<SseMessage>,
+    idle_timeout: Duration,
+    mut on_message: F,
+) where
+    F: FnMut(SseMessage),
+{
+    while let Some(message) = recv_timeout(rx, idle_timeout).await {
+        on_message(message);
+    }
+}
+
+async fn assert_task_stays_running(
+    task: &tokio::task::JoinHandle<()>,
+    window: Duration,
+    context: &str,
+) -> color_eyre::Result<()> {
+    let finished = tokio::time::timeout(window, async {
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+
+    assert!(!finished, "{context}");
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Tests: Bus bookkeeping
 // ─────────────────────────────────────────────────────────────────────
@@ -238,11 +267,12 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(
-        !bus_task.is_finished(),
-        "initial subscribe failure should keep the bus retrying instead of exiting"
-    );
+    assert_task_stays_running(
+        &bus_task,
+        Duration::from_millis(250),
+        "initial subscribe failure should keep the bus retrying instead of exiting",
+    )
+    .await?;
 
     let _ = shutdown_tx.send(true);
     tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
@@ -263,11 +293,12 @@ async fn bus_retries_when_subscription_closes_after_startup(
 
     ctx.nats_handle()?.shutdown().await?;
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    assert!(
-        !bus_task.is_finished(),
-        "closing the live NATS subscription should keep the bus in reconnect mode instead of exiting"
-    );
+    assert_task_stays_running(
+        &bus_task,
+        Duration::from_secs(1),
+        "closing the live NATS subscription should keep the bus in reconnect mode instead of exiting",
+    )
+    .await?;
 
     let _ = shutdown_tx.send(true);
     tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
@@ -389,14 +420,12 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
             Some(_) => {} // heartbeat or gap
             None => {
                 if !received.is_empty() {
-                    // Got at least one event; wait a bit more for any stragglers.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    // Drain remaining.
-                    while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                    drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                         if let SseMessage::Event { event, .. } = msg {
                             received.push(event.source.as_str().to_string());
                         }
-                    }
+                    })
+                    .await;
                     break;
                 }
             }
@@ -467,12 +496,12 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
             }
             Some(_) => {}
             None if !received_types.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg {
                         received_types.push(event.event_type.as_str().to_string());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
@@ -544,14 +573,14 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
             }
             Some(_) => {}
             None if !received_ids.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg
                         && let Some(id) = &event.id
                     {
                         received_ids.push(*id.as_uuid());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
@@ -611,14 +640,14 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
             }
             Some(_) => {}
             None if !received.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg
                         && let Some(id) = &event.id
                     {
                         received.push(*id.as_uuid());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
