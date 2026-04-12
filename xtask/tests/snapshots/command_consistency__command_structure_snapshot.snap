@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 28
 expression: json
 ---
 {
@@ -2289,7 +2288,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Invocation ID or `latest`",
+                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2306,7 +2305,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Invocation ID or `latest`",
+                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2333,7 +2332,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Invocation ID or `latest`",
+                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2376,7 +2375,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Invocation ID or `latest`",
+                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2393,7 +2392,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Invocation ID or `latest`",
+                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],

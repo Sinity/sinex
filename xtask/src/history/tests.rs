@@ -661,14 +661,102 @@ pub struct PackageFailureSummary {
 pub struct ResolvedTestRun {
     pub invocation_id: i64,
     pub started_at: String,
+    pub job_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestRunSelector {
+    Latest,
+    InvocationId(i64),
+    BackgroundJobId(i64),
 }
 
 impl HistoryDb {
+    fn parse_test_run_selector(selector: &str) -> Result<TestRunSelector> {
+        if selector == "latest" {
+            return Ok(TestRunSelector::Latest);
+        }
+
+        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("background-job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("inv:") {
+            ("invocation", value)
+        } else if let Some(value) = selector.strip_prefix("invocation:") {
+            ("invocation", value)
+        } else {
+            ("invocation", selector)
+        };
+
+        let id = raw_id.parse::<i64>().map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "invalid test run selector: '{selector}' (expected 'latest', an invocation ID, 'inv:<id>', or 'job:<id>')"
+            )
+        })?;
+
+        Ok(match kind {
+            "job" => TestRunSelector::BackgroundJobId(id),
+            _ => TestRunSelector::InvocationId(id),
+        })
+    }
+
+    fn resolve_test_run_invocation(&self, invocation_id: i64) -> Result<Option<ResolvedTestRun>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT i.id, i.started_at
+                FROM invocations i
+                WHERE i.id = ?1
+                  AND i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+                LIMIT 1
+                ",
+                [invocation_id],
+                |row| {
+                    Ok(ResolvedTestRun {
+                        invocation_id: row.get(0)?,
+                        started_at: row.get(1)?,
+                        job_id: None,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn resolve_test_run_background_job(&self, job_id: i64) -> Result<Option<ResolvedTestRun>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT i.id, i.started_at
+                FROM background_jobs bj
+                JOIN invocations i ON i.id = bj.invocation_id
+                WHERE bj.id = ?1
+                  AND i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+                LIMIT 1
+                ",
+                [job_id],
+                |row| {
+                    Ok(ResolvedTestRun {
+                        invocation_id: row.get(0)?,
+                        started_at: row.get(1)?,
+                        job_id: Some(job_id),
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     /// Resolve a test-run selector to a concrete invocation with stored test results.
     ///
     /// `None` and `"latest"` both select the most recent completed test invocation
-    /// that actually recorded test results. Numeric selectors must reference a
-    /// test invocation with stored results.
+    /// that actually recorded test results. Explicit selectors also accept
+    /// `job:<id>`/`background-job:<id>`. Plain numeric selectors prefer
+    /// invocation IDs, but fall back to matching background job IDs when the
+    /// numeric invocation has no stored test results.
     pub fn resolve_test_run(&self, selector: Option<&str>) -> Result<Option<ResolvedTestRun>> {
         let latest = || {
             self.conn
@@ -687,6 +775,7 @@ impl HistoryDb {
                         Ok(ResolvedTestRun {
                             invocation_id: row.get(0)?,
                             started_at: row.get(1)?,
+                            job_id: None,
                         })
                     },
                 )
@@ -696,38 +785,32 @@ impl HistoryDb {
 
         match selector {
             None | Some("latest") => latest(),
-            Some(id_or_latest) => {
-                let invocation_id = self
-                    .resolve_invocation_id(id_or_latest, Some("test"))?
-                    .ok_or_else(|| {
-                        color_eyre::eyre::eyre!("No test invocation found for '{id_or_latest}'")
-                    })?;
-
-                self.conn
-                    .query_row(
-                        r"
-                        SELECT i.id, i.started_at
-                        FROM invocations i
-                        WHERE i.id = ?1
-                          AND i.command = 'test'
-                          AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-                        LIMIT 1
-                        ",
-                        [invocation_id],
-                        |row| {
-                            Ok(ResolvedTestRun {
-                                invocation_id: row.get(0)?,
-                                started_at: row.get(1)?,
-                            })
-                        },
-                    )
-                    .optional()?
+            Some(raw_selector) => match Self::parse_test_run_selector(raw_selector)? {
+                TestRunSelector::Latest => latest(),
+                TestRunSelector::BackgroundJobId(job_id) => self
+                    .resolve_test_run_background_job(job_id)?
                     .ok_or_else(|| {
                         color_eyre::eyre::eyre!(
-                            "Invocation #{invocation_id} has no stored test results"
+                            "Background job #{job_id} does not map to a completed test run with stored results"
                         )
                     })
-                    .map(Some)
+                    .map(Some),
+                TestRunSelector::InvocationId(invocation_id) => {
+                    if let Some(resolved) = self.resolve_test_run_invocation(invocation_id)? {
+                        return Ok(Some(resolved));
+                    }
+
+                    if raw_selector.chars().all(|ch| ch.is_ascii_digit())
+                        && let Some(resolved) =
+                            self.resolve_test_run_background_job(invocation_id)?
+                    {
+                        return Ok(Some(resolved));
+                    }
+
+                    Err(color_eyre::eyre::eyre!(
+                        "Invocation #{invocation_id} has no stored test results"
+                    ))
+                }
             }
         }
     }
@@ -1440,6 +1523,7 @@ mod tests {
             .resolve_test_run(None)?
             .expect("latest completed run with results should resolve");
         assert_eq!(resolved.invocation_id, inv_with_results);
+        assert_eq!(resolved.job_id, None);
 
         let error = db
             .resolve_test_run(Some(&inv_without_results.to_string()))
@@ -1448,6 +1532,50 @@ mod tests {
             error.to_string().contains("has no stored test results"),
             "{error:#}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_test_run_accepts_background_job_selectors() -> TestResult<()> {
+        let (_dir, db, _first_inv) = test_db_with_invocation()?;
+
+        let (background_invocation, background_job) = db.start_background_job(
+            "test",
+            &[],
+            None,
+            std::path::Path::new(""),
+            std::path::Path::new(""),
+        )?;
+        db.finish_invocation(
+            background_invocation,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            background_invocation,
+            &[TestResult {
+                test_name: "test_from_job".into(),
+                package: "pkg-job".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let resolved_from_prefix = db
+            .resolve_test_run(Some(&format!("job:{background_job}")))?
+            .expect("job selector should resolve");
+        assert_eq!(resolved_from_prefix.invocation_id, background_invocation);
+        assert_eq!(resolved_from_prefix.job_id, Some(background_job));
+
+        let resolved_from_numeric = db
+            .resolve_test_run(Some(&background_job.to_string()))?
+            .expect("plain numeric selector should fall back to background job id");
+        assert_eq!(resolved_from_numeric.invocation_id, background_invocation);
+        assert_eq!(resolved_from_numeric.job_id, Some(background_job));
+
         Ok(())
     }
 
