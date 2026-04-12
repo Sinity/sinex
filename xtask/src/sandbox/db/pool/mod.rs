@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 mod cleanup;
 mod config;
 mod health;
+mod nextest_run;
 mod provisioning;
 mod reset;
 mod slot;
@@ -43,6 +44,7 @@ pub use test_database::TestDatabase;
 
 use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
+use nextest_run::prepare_nextest_lazy_pool;
 use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     converge_pool_database_schema, create_database_from_template, database_exists,
@@ -742,54 +744,49 @@ impl DatabasePool {
             eprintln!("⚙️  Forcing eager pool provisioning for this run");
         }
         if is_nextest && !force_eager {
-            let template_guard = ensure_template_database(
+            let prepared = prepare_nextest_lazy_pool(
                 &config.admin_url,
                 &config.base_url,
                 config.slot_max_connections,
+                config.size,
             )
             .await?;
-            let expected_extensions = template_guard.info.extensions.clone();
-            template_guard.release().await?;
-            let expected_fingerprint = Some(schema_fingerprint()?);
-            let slot_names: Vec<String> = (0..config.size)
-                .map(|i| format!("sinex_test_pool_{i}"))
-                .collect();
-            let prune_summary = prune_stale_lazy_slot_databases(
-                &config.admin_url,
-                &slot_names,
-                &expected_fingerprint,
-                &expected_extensions,
-            )
-            .await?;
-            if prune_summary.pruned > 0 {
-                eprintln!(
-                    "♻️  Pruned {} stale lazy pool database(s) before acquisition",
-                    prune_summary.pruned
-                );
-            }
-            if !prune_summary.locked_stale_slots.is_empty() {
-                let preview_limit = 3usize;
-                let preview = prune_summary
-                    .locked_stale_slots
-                    .iter()
-                    .take(preview_limit)
-                    .map(|(slot_name, stale_reason)| format!("{slot_name} ({stale_reason})"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let remaining = prune_summary
-                    .locked_stale_slots
-                    .len()
-                    .saturating_sub(preview_limit);
-                if remaining == 0 {
+            let expected_extensions = prepared.expected_extensions;
+            let expected_fingerprint = prepared.expected_fingerprint;
+            let slot_names = prepared.slot_names;
+
+            if !prepared.reused {
+                let prune_summary = prepared.prune_summary;
+                if prune_summary.pruned > 0 {
                     eprintln!(
-                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}",
-                        prune_summary.locked_stale_slots.len()
+                        "♻️  Pruned {} stale lazy pool database(s) before acquisition",
+                        prune_summary.pruned
                     );
-                } else {
-                    eprintln!(
-                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}, +{remaining} more",
-                        prune_summary.locked_stale_slots.len()
-                    );
+                }
+                if !prune_summary.locked_stale_slots.is_empty() {
+                    let preview_limit = 3usize;
+                    let preview = prune_summary
+                        .locked_stale_slots
+                        .iter()
+                        .take(preview_limit)
+                        .map(|(slot_name, stale_reason)| format!("{slot_name} ({stale_reason})"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let remaining = prune_summary
+                        .locked_stale_slots
+                        .len()
+                        .saturating_sub(preview_limit);
+                    if remaining == 0 {
+                        eprintln!(
+                            "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}",
+                            prune_summary.locked_stale_slots.len()
+                        );
+                    } else {
+                        eprintln!(
+                            "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}, +{remaining} more",
+                            prune_summary.locked_stale_slots.len()
+                        );
+                    }
                 }
             }
 
