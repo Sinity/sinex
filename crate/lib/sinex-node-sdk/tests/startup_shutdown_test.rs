@@ -12,6 +12,7 @@
 
 use sinex_db::{DbPoolExt, apply_schema};
 use sinex_primitives::DynamicPayload;
+use tokio::sync::oneshot;
 use std::time::Instant;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
@@ -147,64 +148,25 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         .register_in_flight("shutdown.test", Some("/test"), json!({}))
         .await?;
 
-    // Hold a couple of connections to simulate active usage.
-    // Test pool slots have max_connections=4, so hold 2 to leave headroom
-    // for repository operations and transactions.
-    let mut connections = Vec::new();
-    for i in 0..2 {
-        match pool.acquire().await {
-            Ok(conn) => {
-                connections.push(conn);
-                tracing::info!("Acquired connection {}", i + 1);
-            }
-            Err(e) => {
-                tracing::info!("Failed to acquire connection {}: {}", i + 1, e);
-                break;
-            }
-        }
-    }
+    // Step 1: Commit an in-flight transaction within a bounded shutdown window.
+    let mut tx = pool.begin().await?;
+    let event = DynamicPayload::new(
+        "shutdown.test",
+        "active_transaction",
+        json!({"tx_id": 0, "shutdown_test": true}),
+    )
+    .from_material(material.id)
+    .build()?;
+    pool.events().insert_with_tx(&mut tx, event).await?;
 
-    // Simulate ongoing transactions (drop held connections first to free pool)
-    drop(connections);
-    let mut transactions = Vec::new();
-    for i in 0..3 {
-        if let Ok(mut tx) = pool.begin().await {
-            let event = DynamicPayload::new(
-                "shutdown.test",
-                "active_transaction",
-                json!({"tx_id": i, "shutdown_test": true}),
-            )
-            .from_material(material.id)
-            .build()?;
-
-            pool.events().insert_with_tx(&mut tx, event).await.ok();
-
-            transactions.push(tx);
-            tracing::info!("Started transaction {i}");
-        }
-    }
-
-    // Step 1: Complete active transactions
     let transaction_completion_start = Instant::now();
-    for (i, tx) in transactions.into_iter().enumerate() {
-        match timeout(Duration::from_secs(Timeouts::SHORT), tx.commit()).await {
-            Ok(Ok(())) => {
-                tracing::info!("Transaction {i} committed gracefully");
-            }
-            Ok(Err(e)) => {
-                tracing::warn!("Transaction {i} failed to commit: {e}");
-            }
-            Err(_) => {
-                tracing::warn!("Transaction {i} commit timed out");
-            }
-        }
-    }
+    timeout(Duration::from_secs(Timeouts::SHORT), tx.commit()).await??;
     let transaction_completion_duration = transaction_completion_start.elapsed();
 
     // Step 2: Verify database state after shutdown
     let verification_pool = ctx.pool();
     let committed_events =
-        WaitHelpers::wait_for_source_events(verification_pool, "shutdown.test", 3, Timeouts::QUICK)
+        WaitHelpers::wait_for_source_events(verification_pool, "shutdown.test", 1, Timeouts::QUICK)
             .await
             .unwrap_or(0);
 
@@ -218,8 +180,8 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     );
 
     assert!(
-        committed_events >= 3,
-        "Transactions should be committed before shutdown"
+        committed_events >= 1,
+        "The in-flight transaction should commit before shutdown"
     );
     assert!(
         db_check == Some(1),
@@ -234,42 +196,46 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         .await?;
     let interrupt_material_id = interrupt_material.id;
 
+    let (first_insert_tx, first_insert_rx) = oneshot::channel();
     let long_operation = {
         let pool = ctx.pool().clone();
         tokio::spawn(async move {
-            for i in 0..1000 {
-                let event = DynamicPayload::new(
-                    "interrupted.shutdown",
-                    "long_operation",
-                    json!({"batch_item": i, "operation": "long_running"}),
-                )
-                .from_material(interrupt_material_id)
-                .build()?;
+            let event = DynamicPayload::new(
+                "interrupted.shutdown",
+                "long_operation",
+                json!({"batch_item": 0, "operation": "long_running"}),
+            )
+            .from_material(interrupt_material_id)
+            .build()?;
 
-                pool.events().insert(event).await?;
+            pool.events().insert(event).await?;
+            let _ = first_insert_tx.send(());
 
-                if i % 100 == 0 {
-                    tokio::task::yield_now().await;
-                }
-            }
-
+            std::future::pending::<()>().await;
+            #[allow(unreachable_code)]
             Ok::<(), color_eyre::eyre::Error>(())
         })
     };
 
-    // Let operation start then abort
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    timeout(Duration::from_secs(Timeouts::SHORT), first_insert_rx).await??;
     long_operation.abort();
+    let join_result = long_operation.await;
+    assert!(
+        matches!(&join_result, Err(error) if error.is_cancelled()),
+        "interrupted shutdown task should be cancelled cleanly: {join_result:?}"
+    );
 
     // Verify system remains stable after interrupt
     let health_check: Option<i32> = sqlx::query_scalar!("SELECT 1")
         .fetch_one(ctx.pool())
         .await?;
 
-    let partial_events =
-        WaitHelpers::wait_for_source_events(ctx.pool(), "interrupted.shutdown", 0, Timeouts::QUICK)
-            .await
-            .unwrap_or(0);
+    let partial_events: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint FROM core.events WHERE source = 'interrupted.shutdown'"
+    )
+    .fetch_one(ctx.pool())
+    .await?
+    .unwrap_or(0);
 
     tracing::info!(
         "System stable after interrupt: health={}, partial_events={partial_events}",
@@ -281,8 +247,8 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         "Database should remain healthy after interrupt"
     );
     assert!(
-        partial_events < 1000,
-        "Operation should have been interrupted"
+        partial_events == 1,
+        "Interrupted operation should stop after the first persisted event"
     );
 
     Ok(())
