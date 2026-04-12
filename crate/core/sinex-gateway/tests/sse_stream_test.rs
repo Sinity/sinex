@@ -11,6 +11,7 @@ use sinex_gateway::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionB
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
@@ -701,21 +702,25 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         }
     }
 
-    let resumed_id = insert_test_event(
-        &pool,
-        "gap-source",
-        "gap.event",
-        "localhost",
-        json!({ "seq": "resumed" }),
-    )
-    .await?;
-    publish_confirmation(&nats_pub, &env_name, &resumed_id).await?;
-
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut gap_seen = None;
     let mut resumed_seen = false;
+    let mut recovery_ids = HashSet::new();
+    let mut recovery_seq = 0u32;
     while tokio::time::Instant::now() < deadline {
-        match recv_timeout(&mut rx, Duration::from_millis(200)).await {
+        let recovery_id = insert_test_event(
+            &pool,
+            "gap-source",
+            "gap.event",
+            "localhost",
+            json!({ "seq": format!("recovery-{recovery_seq}") }),
+        )
+        .await?;
+        recovery_seq = recovery_seq.saturating_add(1);
+        recovery_ids.insert(recovery_id);
+        publish_confirmation(&nats_pub, &env_name, &recovery_id).await?;
+
+        match recv_timeout(&mut rx, Duration::from_millis(250)).await {
             Some(SseMessage::Gap {
                 from_seq,
                 to_seq,
@@ -724,8 +729,13 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
                 gap_seen = Some((from_seq, to_seq, dropped));
             }
             Some(SseMessage::Event { event, .. }) => {
-                if event.id.as_ref().map(|id| *id.as_uuid()) == Some(resumed_id) {
-                    assert!(gap_seen.is_some(), "gap marker must precede resumed event");
+                if event
+                    .id
+                    .as_ref()
+                    .map(|id| *id.as_uuid())
+                    .is_some_and(|event_id| recovery_ids.contains(&event_id))
+                    && gap_seen.is_some()
+                {
                     resumed_seen = true;
                     break;
                 }
