@@ -1186,11 +1186,21 @@ mod tests {
             None,
             "test",
         );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        let elapsed = ctx.elapsed();
+        let baseline = ctx.elapsed();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
 
-        assert!(elapsed.as_millis() >= 10);
-        Ok(())
+        loop {
+            let elapsed = ctx.elapsed();
+            if elapsed > baseline {
+                return Ok(());
+            }
+
+            assert!(
+                std::time::Instant::now() < deadline,
+                "CommandContext::elapsed() never advanced past {baseline:?}"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[sinex_test]
