@@ -10,6 +10,7 @@ use super::path_validation::{create_test_temp_dir, validate_test_path};
 use crate::sandbox::prelude::*;
 use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tempfile::TempDir;
@@ -19,7 +20,7 @@ use tempfile::TempDir;
 /// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on a
 /// checkout-backed `.sinex/test-tmp` tree instead of the host `/tmp`.
 pub struct TestTempEnv {
-    _env: super::EnvGuard,
+    original: [(&'static str, Option<OsString>); 3],
     _dir: TempDir,
 }
 
@@ -31,15 +32,39 @@ pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
         .tempdir_in(temp_root.as_std_path())
         .map_err(|e| eyre!(format!("Failed to create workspace-backed temp directory: {e}")))?;
 
-    let mut env = super::EnvGuard::with_keys(&["TMPDIR", "TMP", "TEMP"]);
-    env.set("TMPDIR", dir.path());
-    env.set("TMP", dir.path());
-    env.set("TEMP", dir.path());
+    // Nextest executes each test case in its own process, so we can redirect the
+    // temp-directory variables for the full test lifetime without holding the
+    // process-wide EnvGuard lock and deadlocking nested EnvGuard users.
+    let original = [
+        ("TMPDIR", std::env::var_os("TMPDIR")),
+        ("TMP", std::env::var_os("TMP")),
+        ("TEMP", std::env::var_os("TEMP")),
+    ];
+
+    unsafe {
+        std::env::set_var("TMPDIR", dir.path());
+        std::env::set_var("TMP", dir.path());
+        std::env::set_var("TEMP", dir.path());
+    }
 
     Ok(TestTempEnv {
-        _env: env,
+        original,
         _dir: dir,
     })
+}
+
+impl Drop for TestTempEnv {
+    fn drop(&mut self) {
+        unsafe {
+            for (key, previous) in &self.original {
+                if let Some(value) = previous {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
 }
 
 /// Create a secure temporary directory for test operations
