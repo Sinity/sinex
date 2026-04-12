@@ -6,7 +6,9 @@
 //! Tests assert behavioral invariants visible to users, not implementation details.
 //! "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.
 
-use std::process::Command;
+mod support;
+
+use support::xtask_command;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
@@ -20,7 +22,7 @@ use xtask::sandbox::sinex_test;
 async fn test_jobs_list_empty_state_returns_empty_array() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         .args(["jobs", "list", "--json"])
@@ -77,7 +79,7 @@ async fn test_jobs_command_name() -> ::xtask::sandbox::TestResult<()> {
 async fn test_jobs_prune_empty_state_removes_zero() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         .args(["jobs", "prune", "--json"])
@@ -124,7 +126,7 @@ async fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_analytics_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("analytics")
         .arg("--help")
         .output()?;
@@ -154,7 +156,7 @@ async fn test_analytics_all_subcommands_empty_db() -> ::xtask::sandbox::TestResu
     ];
 
     for sub in subcommands {
-        let output = Command::new("xtask")
+        let output = xtask_command()?
             .env("XTASK_HISTORY_DB", db_path.to_str().unwrap())
             .arg("analytics")
             .arg(sub)

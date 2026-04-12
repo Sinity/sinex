@@ -7,9 +7,11 @@
 //! - D11.4: `xtask status --summary --json` reports ingestd health
 //! - D11.6: binaries started with `--log-format json` produce valid JSON logs
 
+mod support;
+
 use serde_json::Value;
 use sinex_primitives::prelude::*;
-use std::process::Command;
+use support::xtask_command;
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
@@ -123,8 +125,14 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
 /// surface either a missing heartbeat (`ingestd:down`) or a stale heartbeat
 /// (`ingestd:stale`), and lag / batch fields should remain unavailable.
 #[sinex_test]
-async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+async fn test_ingestd_runtime_health_when_down(
+    ctx: TestContext,
+) -> ::xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", dir.path())
+        .env("DATABASE_URL", ctx.database_url())
+        .env("NO_COLOR", "1")
         .args(["status", "--summary", "--json"])
         .output()?;
 
