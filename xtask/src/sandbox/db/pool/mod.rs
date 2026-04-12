@@ -73,12 +73,17 @@ static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 const SLOT_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(15);
 const SERIAL_TEST_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+/// Guard that keeps the process-local serial-test lock held for the lifetime of a test.
+pub struct ProcessSerialTestGuard {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
 /// Guard that keeps the repo-local serial-test lock held for the lifetime of a test.
 ///
 /// The in-process mutex prevents same-process stampedes. The file lock extends the
-/// guarantee across nextest child processes so `#[sinex_serial_test]` actually
-/// serializes the test at workspace scope.
-pub struct SerialTestGuard {
+/// guarantee across nextest child processes so explicitly workspace-scoped serial
+/// tests really serialize at workspace scope.
+pub struct WorkspaceSerialTestGuard {
     _process_guard: tokio::sync::MutexGuard<'static, ()>,
     _lock_file: std::fs::File,
 }
@@ -90,8 +95,16 @@ fn serial_test_lock_path() -> PathBuf {
         .join("db-pool-serial.lock")
 }
 
-/// Acquire a global guard to run database pool tests exclusively.
-pub async fn acquire_pool_test_guard() -> TestResult<SerialTestGuard> {
+/// Acquire a process-local guard for serial tests.
+pub async fn acquire_process_test_guard() -> ProcessSerialTestGuard {
+    ProcessSerialTestGuard {
+        _guard: DATABASE_POOL_TEST_LOCK.lock().await,
+    }
+}
+
+/// Acquire a workspace-wide guard for serial tests that must exclude other
+/// nextest child processes as well as same-process peers.
+pub async fn acquire_workspace_test_guard() -> TestResult<WorkspaceSerialTestGuard> {
     let process_guard = DATABASE_POOL_TEST_LOCK.lock().await;
     let lock_path = serial_test_lock_path();
 
@@ -120,7 +133,7 @@ pub async fn acquire_pool_test_guard() -> TestResult<SerialTestGuard> {
         }
     }
 
-    Ok(SerialTestGuard {
+    Ok(WorkspaceSerialTestGuard {
         _process_guard: process_guard,
         _lock_file: lock_file,
     })
@@ -1681,9 +1694,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_acquire_pool_test_guard_serializes_same_process_waiters() -> TestResult<()> {
-        let first_guard = acquire_pool_test_guard().await?;
-        let waiter = tokio::spawn(async { acquire_pool_test_guard().await });
+    async fn test_acquire_process_test_guard_serializes_same_process_waiters() -> TestResult<()> {
+        let first_guard = acquire_process_test_guard().await;
+        let waiter = tokio::spawn(async { acquire_process_test_guard().await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
@@ -1694,7 +1707,8 @@ mod tests {
         drop(first_guard);
         let second_guard = tokio::time::timeout(Duration::from_secs(5), waiter)
             .await
-            .map_err(|_| eyre!("timed out waiting for second serial guard acquisition"))??;
+            .map_err(|_| eyre!("timed out waiting for second serial guard acquisition"))?;
+        let second_guard = second_guard?;
         drop(second_guard);
         Ok(())
     }
