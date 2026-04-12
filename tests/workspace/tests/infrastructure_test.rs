@@ -227,23 +227,38 @@ async fn can_toggle_core_events_triggers(
         .execute(&mut *conn)
         .await;
 
-    assert!(
-        disable_result.is_ok(),
-        "Cannot disable triggers on core.events: {:?}\n\
-         Test cleanup requires the ability to disable archive triggers.",
-        disable_result.err()
-    );
+    match disable_result {
+        Ok(_) => {
+            let enable_result = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+                .execute(&mut *conn)
+                .await;
 
-    // Re-enable triggers
-    let enable_result = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(&mut *conn)
-        .await;
+            assert!(
+                enable_result.is_ok(),
+                "Cannot re-enable triggers on core.events: {:?}",
+                enable_result.err()
+            );
+        }
+        Err(error) => {
+            let error_string = error.to_string();
+            assert!(
+                error_string.contains("hypertables do not support  enabling or disabling triggers"),
+                "Unexpected trigger toggle failure on core.events: {error:#?}",
+            );
 
-    assert!(
-        enable_result.is_ok(),
-        "Cannot re-enable triggers on core.events: {:?}",
-        enable_result.err()
-    );
+            let role_result = sqlx::query("SET session_replication_role = 'replica'")
+                .execute(&mut *conn)
+                .await;
+            assert!(
+                role_result.is_ok(),
+                "Cleanup fallback must still be available when hypertable trigger toggling is unsupported: {:?}",
+                role_result.err()
+            );
+            sqlx::query("SET session_replication_role = 'origin'")
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
 
     Ok(())
 }
