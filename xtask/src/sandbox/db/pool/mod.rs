@@ -63,7 +63,7 @@ use provisioning::{
     wait_for_database_absence, wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
-use template::{ensure_template_database, template_db_name};
+use template::{ensure_template_database, invalidate_shared_template_trust, template_db_name};
 
 // ── Pool test guard ─────────────────────────────────────────────────────────
 
@@ -677,6 +677,10 @@ async fn prune_stale_lazy_slot_databases(
         drop_result?;
         summary.pruned += 1;
         summary.pruned_slots.push(slot_name.clone());
+    }
+
+    if summary.pruned > 0 {
+        invalidate_shared_template_trust();
     }
 
     Ok(summary)
@@ -1416,6 +1420,7 @@ impl DatabasePool {
                         slot = slot.name,
                         reason = reason
                     );
+                    invalidate_shared_template_trust();
                     return self
                         .recreate_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
                         .await;
@@ -1473,6 +1478,7 @@ impl DatabasePool {
                             slot = slot.name,
                             reason = reason
                         );
+                        invalidate_shared_template_trust();
                         return self
                             .clean_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
                             .await;
