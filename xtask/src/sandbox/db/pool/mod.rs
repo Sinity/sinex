@@ -46,14 +46,14 @@ use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
 use nextest_run::prepare_nextest_lazy_pool;
 use provisioning::{
-    CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
+    CreateDatabaseOutcome, EnsurePoolDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     converge_pool_database_schema, create_database_from_template, database_exists,
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
-    ensure_pool_database_exists, grant_pool_database_permissions_checked,
-    is_missing_database_error, is_retryable_connection_error, is_retryable_connection_report,
+    grant_pool_database_permissions_checked, is_missing_database_error,
+    is_retryable_connection_error, is_retryable_connection_report,
     is_timescaledb_missing_library_error, load_pool_meta, mark_pool_database_clean, quote_ident,
     reconcile_existing_pool_database, recreate_pool_database, store_pool_meta,
-    store_pool_meta_checked, url_with_db_name, wait_for_database_absence,
+    store_pool_meta_checked, try_ensure_pool_database_exists, url_with_db_name, wait_for_database_absence,
     wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
@@ -261,9 +261,13 @@ async fn try_recover_slot_connection(
     slot_max_connections: u32,
 ) -> Option<sinex_db::DbPool> {
     if is_missing_database_error(&err) {
-        if let Err(e) = ensure_pool_database_exists(&slot.name, &slot.url).await {
-            slog!(Level::Warn, "provision_failed", slot = slot.name, error = e);
-            return None;
+        match try_ensure_pool_database_exists(&slot.name, &slot.url).await {
+            Ok(EnsurePoolDatabaseOutcome::Ensured) => {}
+            Ok(EnsurePoolDatabaseOutcome::Deferred) => return None,
+            Err(e) => {
+                slog!(Level::Warn, "provision_failed", slot = slot.name, error = e);
+                return None;
+            }
         }
         let connect = || {
             slot_pool_options(slot_max_connections, SLOT_POOL_ACQUIRE_TIMEOUT).connect(&slot.url)

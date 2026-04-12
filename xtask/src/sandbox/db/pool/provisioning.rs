@@ -26,6 +26,18 @@ pub(super) enum CreateDatabaseOutcome {
     AlreadyExists,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EnsurePoolDatabaseOutcome {
+    Ensured,
+    Deferred,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlotLifecycleLockMode {
+    Wait,
+    SkipIfLocked,
+}
+
 // ── Existence checks ────────────────────────────────────────────────────────
 
 pub(super) async fn database_exists(
@@ -261,6 +273,74 @@ pub(super) async fn grant_pool_database_permissions_checked(db_name: &str) -> Te
         .wrap_err_with(|| format!("failed to grant pool database permissions for {db_name}"))
 }
 
+fn slot_lifecycle_lock_key(db_name: &str) -> i64 {
+    advisory_lock_key(&format!("{db_name}::lifecycle"))
+}
+
+async fn acquire_slot_lifecycle_lock(
+    admin_conn: &mut PgConnection,
+    db_name: &str,
+    mode: SlotLifecycleLockMode,
+) -> TestResult<Option<i64>> {
+    let lock_id = slot_lifecycle_lock_key(db_name);
+    match mode {
+        SlotLifecycleLockMode::SkipIfLocked => {
+            let got_lock: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                .bind(lock_id)
+                .fetch_one(&mut *admin_conn)
+                .await?;
+            Ok(got_lock.then_some(lock_id))
+        }
+        SlotLifecycleLockMode::Wait => {
+            let deadline = std::time::Instant::now() + Duration::from_mins(1);
+            let mut backoff = Duration::from_millis(25);
+            loop {
+                let got_lock: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                    .bind(lock_id)
+                    .fetch_one(&mut *admin_conn)
+                    .await?;
+                if got_lock {
+                    return Ok(Some(lock_id));
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(eyre!(
+                        "Could not acquire slot lifecycle lock for {db_name} within 60s. \
+                         Another process may be provisioning or recreating it."
+                    ));
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_millis(250));
+            }
+        }
+    }
+}
+
+async fn release_slot_lifecycle_lock(admin_conn: &mut PgConnection, lock_id: i64) -> TestResult<()> {
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_id)
+        .execute(&mut *admin_conn)
+        .await?;
+    Ok(())
+}
+
+async fn recreate_pool_database_locked(
+    admin_conn: &mut PgConnection,
+    db_name: &str,
+    base_url: &str,
+    template_name: &str,
+    template_extensions: &HashMap<String, String>,
+) -> TestResult<()> {
+    drop_database_if_exists_admin(admin_conn, db_name).await?;
+    wait_for_database_absence_admin(admin_conn, db_name).await?;
+
+    create_database_from_template_admin(admin_conn, db_name, template_name).await?;
+    grant_pool_database_permissions_checked(db_name).await?;
+    let db_url = url_with_db_name(base_url, db_name)?;
+    converge_pool_database_schema(db_name, &db_url).await?;
+    mark_pool_database_clean(admin_conn, db_name, &db_url, template_extensions).await?;
+    Ok(())
+}
+
 // ── Create from template ────────────────────────────────────────────────────
 
 pub(super) async fn create_database_from_template(
@@ -364,7 +444,11 @@ pub(super) async fn create_database_from_template_admin(
 
 // ── Lazy provisioning / recreation ──────────────────────────────────────────
 
-pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResult<()> {
+async fn ensure_pool_database_exists_inner(
+    db_name: &str,
+    slot_url: &str,
+    lock_mode: SlotLifecycleLockMode,
+) -> TestResult<EnsurePoolDatabaseOutcome> {
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
     let db_url = url_with_db_name(&base_url, db_name)?;
@@ -374,8 +458,14 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
     let start = std::time::Instant::now();
+    let Some(lock_id) =
+        acquire_slot_lifecycle_lock(&mut template_guard.admin_conn, db_name, lock_mode).await?
+    else {
+        template_guard.release().await?;
+        return Ok(EnsurePoolDatabaseOutcome::Deferred);
+    };
 
-    let provision_result: TestResult<()> = async {
+    let provision_result: TestResult<EnsurePoolDatabaseOutcome> = async {
         if !database_exists_admin(&mut template_guard.admin_conn, db_name).await? {
             match create_database_from_template_admin(
                 &mut template_guard.admin_conn,
@@ -402,33 +492,71 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
             &template_extensions,
         )
         .await?;
-        Ok(())
+        Ok(EnsurePoolDatabaseOutcome::Ensured)
     }
     .await;
 
+    let provision_result = match provision_result {
+        Ok(outcome) => Ok(outcome),
+        Err(provision_error) => {
+            eprintln!("  Slot provisioning failed for {db_name}; recreating slot from template");
+            recreate_pool_database_locked(
+                &mut template_guard.admin_conn,
+                db_name,
+                &base_url,
+                &template_name,
+                &template_extensions,
+            )
+            .await
+            .map_err(|recreate_err| {
+                eyre!(format!(
+                    "slot provisioning failed for {db_name}: {provision_error}; recreate failed: {recreate_err}"
+                ))
+            })?;
+            Ok(EnsurePoolDatabaseOutcome::Ensured)
+        }
+    };
+
+    let unlock_result = release_slot_lifecycle_lock(&mut template_guard.admin_conn, lock_id).await;
     let release_result = template_guard.release().await;
     match provision_result {
-        Ok(()) => {
+        Ok(outcome) => {
+            unlock_result.wrap_err_with(|| {
+                format!("failed to release slot lifecycle lock after provisioning {db_name}")
+            })?;
             release_result.wrap_err_with(|| {
                 format!("failed to release template guard after provisioning {db_name}")
             })?;
-            Ok(())
+            Ok(outcome)
         }
         Err(provision_error) => {
-            // Deterministic recovery: if convergence of an existing slot fails for any reason,
-            // release template guard and recreate the slot from the canonical template once.
-            release_result.wrap_err_with(|| {
-                format!("slot provisioning failed for {db_name}: {provision_error}")
+            unlock_result.wrap_err_with(|| {
+                format!(
+                    "failed to release slot lifecycle lock after provisioning {db_name}: {provision_error}"
+                )
             })?;
-            eprintln!("  Slot provisioning failed for {db_name}; recreating slot from template");
-            recreate_pool_database(db_name, slot_url)
-                .await
-                .map_err(|recreate_err| {
-                    eyre!(format!(
-                        "slot provisioning failed for {db_name}: {provision_error}; recreate failed: {recreate_err}"
-                    ))
-                })
+            release_result.wrap_err_with(|| {
+                format!(
+                    "failed to release template guard after provisioning {db_name}: {provision_error}"
+                )
+            })?;
+            Err(provision_error)
         }
+    }
+}
+
+pub(super) async fn try_ensure_pool_database_exists(
+    db_name: &str,
+    slot_url: &str,
+) -> TestResult<EnsurePoolDatabaseOutcome> {
+    ensure_pool_database_exists_inner(db_name, slot_url, SlotLifecycleLockMode::SkipIfLocked).await
+}
+
+pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResult<()> {
+    match ensure_pool_database_exists_inner(db_name, slot_url, SlotLifecycleLockMode::Wait).await?
+    {
+        EnsurePoolDatabaseOutcome::Ensured => Ok(()),
+        EnsurePoolDatabaseOutcome::Deferred => Ok(()),
     }
 }
 
@@ -440,66 +568,41 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
             .await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
+    let lock_id = acquire_slot_lifecycle_lock(
+        &mut template_guard.admin_conn,
+        db_name,
+        SlotLifecycleLockMode::Wait,
+    )
+    .await?
+    .expect("wait mode always returns a lifecycle lock");
 
-    let recreate_result: TestResult<()> = async {
-        // Prevent multiple processes from concurrently dropping/recreating the same pool DB.
-        // We rely on closing `template_guard.admin_conn` to release this lock.
-        // Use pg_try_advisory_lock with a 60s deadline to avoid blocking indefinitely
-        // if another process is stuck (mirrors the template lock pattern in template.rs).
-        let recreate_lock_id = advisory_lock_key(&format!("{db_name}::recreate"));
-        let recreate_deadline = std::time::Instant::now() + Duration::from_mins(1);
-        let mut backoff = Duration::from_millis(25);
-        loop {
-            let got_lock: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-                .bind(recreate_lock_id)
-                .fetch_one(&mut template_guard.admin_conn)
-                .await?;
-            if got_lock {
-                break;
-            }
-            if std::time::Instant::now() >= recreate_deadline {
-                return Err(eyre!(
-                    "Could not acquire recreate lock for {db_name} within 60s. \
-                     Another process may be stuck. \
-                     Check pg_stat_activity for advisory lock holders."
-                ));
-            }
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(Duration::from_millis(250));
-        }
-
-        drop_database_if_exists_admin(&mut template_guard.admin_conn, db_name).await?;
-        wait_for_database_absence_admin(&mut template_guard.admin_conn, db_name).await?;
-
-        create_database_from_template_admin(
-            &mut template_guard.admin_conn,
-            db_name,
-            &template_name,
-        )
-        .await?;
-        grant_pool_database_permissions_checked(db_name).await?;
-        let db_url = url_with_db_name(&base_url, db_name)?;
-        converge_pool_database_schema(db_name, &db_url).await?;
-        mark_pool_database_clean(
-            &mut template_guard.admin_conn,
-            db_name,
-            &db_url,
-            &template_extensions,
-        )
-        .await?;
-        Ok(())
-    }
+    let recreate_result = recreate_pool_database_locked(
+        &mut template_guard.admin_conn,
+        db_name,
+        &base_url,
+        &template_name,
+        &template_extensions,
+    )
     .await;
 
+    let unlock_result = release_slot_lifecycle_lock(&mut template_guard.admin_conn, lock_id).await;
     let release_result = template_guard.release().await;
     match recreate_result {
         Ok(()) => {
+            unlock_result.wrap_err_with(|| {
+                format!("failed to release slot lifecycle lock after recreating {db_name}")
+            })?;
             release_result.wrap_err_with(|| {
                 format!("failed to release template guard after recreating {db_name}")
             })?;
             Ok(())
         }
         Err(recreate_error) => {
+            unlock_result.wrap_err_with(|| {
+                format!(
+                    "failed to release slot lifecycle lock after recreating {db_name}: {recreate_error}"
+                )
+            })?;
             release_result.wrap_err_with(|| {
                 format!(
                     "failed to release template guard after recreating {db_name}: {recreate_error}"
@@ -903,6 +1006,40 @@ mod tests {
             err.to_string()
                 .contains("failed to parse pool database metadata comment"),
             "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held()
+    -> TestResult<()> {
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_deferred_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+
+        let lock_id = slot_lifecycle_lock_key(&db_name);
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(lock_id)
+            .execute(&mut admin_conn)
+            .await?;
+
+        let start = std::time::Instant::now();
+        let outcome = try_ensure_pool_database_exists(&db_name, &slot_url).await?;
+        let elapsed = start.elapsed();
+
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(lock_id)
+            .execute(&mut admin_conn)
+            .await;
+
+        assert_eq!(outcome, EnsurePoolDatabaseOutcome::Deferred);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "skip-locked provisioning should defer quickly, took {elapsed:?}"
         );
         Ok(())
     }
