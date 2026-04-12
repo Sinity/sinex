@@ -53,7 +53,7 @@ impl Job {
     fn read_archived_stream(&self, stream_name: &str) -> Result<String> {
         let cfg = config();
         let history_db_path = cfg.history_db_path();
-        let db = HistoryDb::open(&history_db_path).with_context(|| {
+        let db = HistoryDb::open_query(&history_db_path).with_context(|| {
             format!(
                 "failed to open history DB at {} while reading {stream_name} for job {}",
                 history_db_path.display(),
@@ -217,6 +217,113 @@ pub(crate) fn snapshot_recent_and_active_from_history_db(
     Ok((active, recent))
 }
 
+fn terminal_status_from_exit_code_file(job_dir: &Path) -> Result<(InvocationStatus, Option<i32>)> {
+    let exit_code_path = job_dir.join("exit_code");
+    match fs::read_to_string(&exit_code_path) {
+        Ok(content) => {
+            let code = content.trim().parse::<i32>().with_context(|| {
+                format!(
+                    "failed to parse stale background job exit code from {}",
+                    exit_code_path.display()
+                )
+            })?;
+            if code == 0 {
+                Ok((InvocationStatus::Success, Some(0)))
+            } else if code == 124 {
+                Ok((InvocationStatus::Cancelled, Some(124)))
+            } else {
+                Ok((InvocationStatus::Failed, Some(code)))
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok((InvocationStatus::Failed, None))
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to read stale background job exit code from {}",
+                exit_code_path.display()
+            )
+        }),
+    }
+}
+
+fn synthesize_job_for_query(bg: BackgroundJob, jobs_dir: &Path) -> Result<Job> {
+    let mut job = Job::from_background_job(bg, jobs_dir);
+    if matches!(job.job_status, JobLifecycleStatus::Running) && !job.is_alive() {
+        let job_dir = jobs_dir.join(job.id.to_string());
+        let (invocation_status, exit_code) = terminal_status_from_exit_code_file(&job_dir)?;
+        job.job_status = if exit_code.is_some() {
+            JobLifecycleStatus::from_invocation_status(invocation_status)
+        } else {
+            JobLifecycleStatus::Orphaned
+        };
+        job.exit_code = exit_code;
+    }
+    Ok(job)
+}
+
+/// Read-only job catalog for observational commands.
+///
+/// This opens the history DB in query mode so status/list/output surfaces remain
+/// responsive while a writer is actively recording live progress.
+pub struct JobQueryManager {
+    jobs_dir: PathBuf,
+    db: HistoryDb,
+}
+
+impl JobQueryManager {
+    pub fn new(jobs_dir: PathBuf) -> Result<Self> {
+        fs::create_dir_all(&jobs_dir).context("failed to create jobs directory")?;
+        let cfg = config();
+        cfg.ensure_jobs_dir()?;
+        let db = HistoryDb::open_query(&cfg.history_db_path())?;
+        Ok(Self { jobs_dir, db })
+    }
+
+    pub fn get(&self, id: i64) -> Result<Option<Job>> {
+        let Some(bg) = self.db.get_background_job_by_id(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(synthesize_job_for_query(bg, &self.jobs_dir)?))
+    }
+
+    pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
+        self.db
+            .get_recent_background_jobs(limit)?
+            .into_iter()
+            .map(|bg| synthesize_job_for_query(bg, &self.jobs_dir))
+            .collect()
+    }
+
+    pub fn list_active(&self) -> Result<Vec<Job>> {
+        self.db
+            .get_active_background_jobs()?
+            .into_iter()
+            .filter(background_job_is_live)
+            .map(|bg| synthesize_job_for_query(bg, &self.jobs_dir))
+            .collect()
+    }
+
+    pub async fn wait(&self, id: i64, timeout: Option<Duration>) -> Result<Job> {
+        let start = std::time::Instant::now();
+
+        loop {
+            let job = self.get(id)?.ok_or_else(|| eyre!("job {id} not found"))?;
+            if job.is_terminal() {
+                return Ok(job);
+            }
+
+            if let Some(timeout) = timeout
+                && start.elapsed() > timeout
+            {
+                bail!("timeout waiting for job {id}");
+            }
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+}
+
 /// Manager for background jobs.
 ///
 /// This is a thin wrapper that handles process spawning and log file creation.
@@ -227,41 +334,9 @@ pub struct JobManager {
 }
 
 impl JobManager {
-    fn terminal_status_from_exit_code_file(
-        job_dir: &Path,
-    ) -> Result<(InvocationStatus, Option<i32>)> {
-        let exit_code_path = job_dir.join("exit_code");
-        match fs::read_to_string(&exit_code_path) {
-            Ok(content) => {
-                let code = content.trim().parse::<i32>().with_context(|| {
-                    format!(
-                        "failed to parse stale background job exit code from {}",
-                        exit_code_path.display()
-                    )
-                })?;
-                if code == 0 {
-                    Ok((InvocationStatus::Success, Some(0)))
-                } else if code == 124 {
-                    Ok((InvocationStatus::Cancelled, Some(124)))
-                } else {
-                    Ok((InvocationStatus::Failed, Some(code)))
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok((InvocationStatus::Failed, None))
-            }
-            Err(error) => Err(error).with_context(|| {
-                format!(
-                    "failed to read stale background job exit code from {}",
-                    exit_code_path.display()
-                )
-            }),
-        }
-    }
-
     fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) -> Result<()> {
         let job_dir = self.jobs_dir.join(job.id.to_string());
-        let (inv_status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir)?;
+        let (inv_status, exit_code) = terminal_status_from_exit_code_file(&job_dir)?;
         let job_status = if exit_code.is_some() {
             JobLifecycleStatus::from_invocation_status(inv_status)
         } else {
@@ -907,12 +982,12 @@ mod tests {
     async fn test_terminal_status_from_exit_code_file() -> TestResult<()> {
         let dir = tempdir()?;
         fs::write(dir.path().join("exit_code"), "124\n")?;
-        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path())?;
+        let (status, code) = terminal_status_from_exit_code_file(dir.path())?;
         assert!(matches!(status, InvocationStatus::Cancelled));
         assert_eq!(code, Some(124));
 
         fs::write(dir.path().join("exit_code"), "0\n")?;
-        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path())?;
+        let (status, code) = terminal_status_from_exit_code_file(dir.path())?;
         assert!(matches!(status, InvocationStatus::Success));
         assert_eq!(code, Some(0));
         // Verify conversion to JobLifecycleStatus
@@ -920,7 +995,7 @@ mod tests {
         assert!(matches!(job_status, JobLifecycleStatus::Completed));
 
         fs::write(dir.path().join("exit_code"), "1\n")?;
-        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path())?;
+        let (status, code) = terminal_status_from_exit_code_file(dir.path())?;
         assert!(matches!(status, InvocationStatus::Failed));
         assert_eq!(code, Some(1));
         assert!(matches!(
@@ -929,7 +1004,7 @@ mod tests {
         ));
 
         fs::write(dir.path().join("exit_code"), "not-a-number\n")?;
-        let error = JobManager::terminal_status_from_exit_code_file(dir.path())
+        let error = terminal_status_from_exit_code_file(dir.path())
             .expect_err("malformed stale exit code should surface");
         assert!(
             error
@@ -1174,6 +1249,51 @@ mod tests {
             .ok_or_else(|| eyre!("missing invocation after reaping stale job"))?;
         assert_eq!(invocation.invocation.status, InvocationStatus::Failed);
         assert!(invocation.invocation.finished_at.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_query_manager_synthesizes_stale_running_status_without_mutation() -> TestResult<()>
+    {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+
+        let mut history_db_guard = EnvGuard::new();
+        history_db_guard.set("XTASK_HISTORY_DB", &db_path);
+
+        let db = HistoryDb::open(&db_path)?;
+        let stdout_path = jobs_dir.join("99").join("stdout.log");
+        let stderr_path = jobs_dir.join("99").join("stderr.log");
+        if let Some(parent) = stdout_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let (invocation_id, job_id) =
+            db.start_background_job("check", &[], None, &stdout_path, &stderr_path)?;
+        let job_dir = jobs_dir.join(job_id.to_string());
+        fs::create_dir_all(&job_dir)?;
+        fs::write(job_dir.join("exit_code"), "0\n")?;
+
+        let query = JobQueryManager::new(jobs_dir.clone())?;
+        let job = query
+            .get(job_id)?
+            .ok_or_else(|| eyre!("query manager should return the synthesized job"))?;
+        assert!(matches!(job.job_status, JobLifecycleStatus::Completed));
+        assert_eq!(job.exit_code, Some(0));
+
+        let stored_job = db
+            .get_background_job_by_id(job_id)?
+            .ok_or_else(|| eyre!("stored background job should remain present"))?;
+        assert!(matches!(stored_job.job_status, JobLifecycleStatus::Running));
+
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| eyre!("missing invocation after query read"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Running);
+        assert!(invocation.invocation.finished_at.is_none());
+
         Ok(())
     }
 
