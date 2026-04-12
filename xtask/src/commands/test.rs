@@ -893,10 +893,17 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     fn test_context(db_path: std::path::PathBuf) -> CommandContext {
+        test_context_with_invocation(db_path, None)
+    }
+
+    fn test_context_with_invocation(
+        db_path: std::path::PathBuf,
+        invocation_id: Option<i64>,
+    ) -> CommandContext {
         CommandContext::new_with_db_override(
             OutputWriter::new(OutputFormat::Silent),
             false,
-            None,
+            invocation_id,
             "test",
             db_path,
         )
@@ -911,7 +918,8 @@ mod tests {
         let conn = rusqlite::Connection::open(&db_path)?;
         conn.execute("DROP TABLE test_results", [])?;
 
-        let (_failures, issue) = load_failing_test_details(&test_context(db_path.clone()), 50);
+        let (_failures, issue) =
+            load_failing_test_details(&test_context_with_invocation(db_path.clone(), Some(1)), 50);
         let issue = issue.expect("query failure should surface");
         assert!(issue.contains("Failed to read failing-test details"));
         assert!(issue.contains(&db_path.display().to_string()));
