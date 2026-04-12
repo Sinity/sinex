@@ -17,6 +17,7 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use super::LazySlotPruneSummary;
+use super::eagerly_recreate_pruned_lazy_slot_databases;
 use super::ensure_template_database;
 use super::meta::TemplateInfo;
 use super::prune_stale_lazy_slot_databases;
@@ -117,13 +118,10 @@ async fn prepare_without_cache(
         slot_max_connections,
     )
     .await?;
-    let prune_summary = prune_stale_lazy_slot_databases(
-        admin_url,
-        &slot_names,
-        &expected_fingerprint,
-        &extensions,
-    )
-    .await?;
+    let mut prune_summary =
+        prune_stale_lazy_slot_databases(admin_url, &slot_names, &expected_fingerprint, &extensions)
+            .await?;
+    eagerly_recreate_pruned_lazy_slot_databases(admin_url, &mut prune_summary).await?;
 
     Ok(NextestLazyPoolPreparation {
         expected_fingerprint,
