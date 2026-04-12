@@ -933,7 +933,7 @@ fn has_result_return_type(output: &syn::ReturnType) -> bool {
 fn serial_guard_tokens(enable_serial: bool) -> proc_macro2::TokenStream {
     if enable_serial {
         quote! {
-            let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
+            let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await?;
         }
     } else {
         quote! {}
@@ -1013,7 +1013,6 @@ fn expand_rstest_variant(
         #(#other_attrs)*
         #[tokio::test]
         #fn_vis #new_sig {
-            #serial_guard
             let test_name = stringify!(#fn_name);
             let start = ::std::time::Instant::now();
             eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
@@ -1059,11 +1058,11 @@ fn expand_async_context_test(
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-            #serial_guard
             let test_future = async {
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                #serial_guard
                 let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
                 let ctx = ::xtask::Sandbox::with_name(test_name).await?;
@@ -1138,35 +1137,39 @@ fn expand_simple_async_test(
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-            #serial_guard
-            let test_name = stringify!(#fn_name);
-            let start = std::time::Instant::now();
-            eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
+            let test_future = async {
+                let test_name = stringify!(#fn_name);
+                let start = std::time::Instant::now();
+                eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                #serial_guard
+                let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(#timeout_secs),
-                async {
+                let result = async {
                     #fn_body
-                }
-            ).await
-            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+                }.await;
 
-            let elapsed = start.elapsed();
-            match &result {
-                Ok(_) => {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                let elapsed = start.elapsed();
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
+                        );
+                    }
                 }
-                Err(err) => {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    ::xtask::sandbox::snapshot_helper::persist_failure(
-                        test_name,
-                        format!("{err:?}"),
-                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                    );
-                }
-            }
-            result
+                result
+            };
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(#timeout_secs),
+                test_future
+            ).await
+            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
         }
     }
 }
@@ -1472,8 +1475,12 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_sinex_test_attrs_tokens;
+    use super::{
+        expand_async_context_test, expand_simple_async_test, parse_sinex_test_attrs_tokens,
+        serial_guard_tokens,
+    };
     use quote::quote;
+    use syn::{ItemFn, parse2};
 
     fn parse_ok(tokens: proc_macro2::TokenStream) -> super::SinexTestConfig {
         parse_sinex_test_attrs_tokens(tokens).expect("attributes should parse")
@@ -1513,5 +1520,66 @@ mod tests {
         let error = parse_err(quote!(timout = 30));
         assert!(error.contains("unknown sinex_test attribute"));
         assert!(error.contains("timout"));
+    }
+
+    fn parse_item_fn(tokens: proc_macro2::TokenStream) -> ItemFn {
+        parse2(tokens).expect("test function should parse")
+    }
+
+    fn count_occurrences(haystack: &str, needle: &str) -> usize {
+        haystack.match_indices(needle).count()
+    }
+
+    #[test]
+    fn serial_guard_tokens_propagate_lock_acquisition_failures() {
+        let rendered = serial_guard_tokens(true).to_string();
+        assert!(rendered.contains("acquire_pool_test_guard"));
+        assert!(
+            rendered.contains(". await ?"),
+            "rendered tokens: {rendered}"
+        );
+    }
+
+    #[test]
+    fn async_context_expansion_keeps_single_serial_guard_inside_timed_future() {
+        let input = parse_item_fn(quote! {
+            async fn serial_context_test(ctx: ::xtask::sandbox::TestContext) -> ::xtask::sandbox::TestResult<()> {
+                let _ = ctx;
+                Ok(())
+            }
+        });
+
+        let rendered = expand_async_context_test(&input, &[], &input.block, 30, true).to_string();
+        assert_eq!(
+            count_occurrences(&rendered, "acquire_pool_test_guard"),
+            1,
+            "rendered tokens: {rendered}"
+        );
+        assert!(
+            rendered.contains("let test_future = async"),
+            "rendered tokens: {rendered}"
+        );
+        assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
+    }
+
+    #[test]
+    fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
+        let input = parse_item_fn(quote! {
+            async fn serial_simple_test() -> ::xtask::sandbox::TestResult<()> {
+                Ok(())
+            }
+        });
+
+        let rendered = expand_simple_async_test(&input, &[], &input.block, 30, true).to_string();
+        assert_eq!(
+            count_occurrences(&rendered, "acquire_pool_test_guard"),
+            1,
+            "rendered tokens: {rendered}"
+        );
+        assert!(
+            rendered.contains("let test_future = async"),
+            "rendered tokens: {rendered}"
+        );
+        assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
     }
 }
