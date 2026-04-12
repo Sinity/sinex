@@ -673,14 +673,16 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
     let env = ctx.env().clone();
     let env_name = env.name().to_string();
 
-    let bus = Arc::new(SubscriptionBus::new());
+    let bus = Arc::new(SubscriptionBus::with_channel_capacity(2));
     let (_, mut rx) = bus
         .register(SubscriptionFilter::default(), None)
         .expect("test subscription should register");
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    for i in 0..300 {
+    // Hit the bus's immediate flush threshold in a single wave so the initial
+    // overflow is deterministic and the later publish becomes the recovery trigger.
+    for i in 0..32 {
         let id = insert_test_event(
             &pool,
             "gap-source",
@@ -691,8 +693,6 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         .await?;
         publish_confirmation(&nats_pub, &env_name, &id).await?;
     }
-
-    tokio::time::sleep(Duration::from_millis(250)).await;
 
     for _ in 0..2 {
         match recv_timeout(&mut rx, Duration::from_secs(2)).await {
@@ -711,7 +711,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
     .await?;
     publish_confirmation(&nats_pub, &env_name, &resumed_id).await?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut gap_seen = None;
     let mut resumed_seen = false;
     while tokio::time::Instant::now() < deadline {

@@ -134,8 +134,9 @@ impl SubscriptionSlot {
     fn new(
         filter: SubscriptionFilter,
         resume_from: Option<Id<Event<JsonValue>>>,
+        channel_capacity: usize,
     ) -> (Arc<Self>, mpsc::Receiver<SseMessage>) {
-        let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(channel_capacity);
         let mut state = SubscriptionState {
             next_seq: 1,
             gap_start: None,
@@ -217,6 +218,7 @@ impl SubscriptionSlot {
 
 /// Fan-out bus from NATS confirmations → per-client SSE streams.
 pub struct SubscriptionBus {
+    channel_capacity: usize,
     subscriptions: DashMap<u64, Arc<SubscriptionSlot>>,
     next_sub_id: AtomicU64,
     active_subscriptions: AtomicUsize,
@@ -226,7 +228,18 @@ impl SubscriptionBus {
     /// Create a new subscription bus.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_channel_capacity(CLIENT_CHANNEL_CAPACITY)
+    }
+
+    /// Create a bus with a specific per-client buffer size.
+    #[must_use]
+    pub fn with_channel_capacity(channel_capacity: usize) -> Self {
+        assert!(
+            channel_capacity > 0,
+            "SSE subscription channel capacity must be positive"
+        );
         Self {
+            channel_capacity,
             subscriptions: DashMap::new(),
             next_sub_id: AtomicU64::new(1),
             active_subscriptions: AtomicUsize::new(0),
@@ -250,7 +263,7 @@ impl SubscriptionBus {
         }
 
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        let (slot, rx) = SubscriptionSlot::new(filter, resume_from);
+        let (slot, rx) = SubscriptionSlot::new(filter, resume_from, self.channel_capacity);
         self.subscriptions.insert(id, slot);
         debug!(sub_id = id, "SSE subscription registered");
         Some((id, rx))
@@ -570,7 +583,9 @@ impl SubscriptionBus {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeliveryOutcome, SseMessage, SubscriptionBus, SubscriptionSlot};
+    use super::{
+        CLIENT_CHANNEL_CAPACITY, DeliveryOutcome, SseMessage, SubscriptionBus, SubscriptionSlot,
+    };
     use serde_json::json;
     use sinex_db::DbPoolExt;
     use sinex_primitives::events::{DynamicPayload, Event};
@@ -716,7 +731,8 @@ mod tests {
 
     #[sinex_test]
     async fn deliver_suppresses_recently_redelivered_events() -> TestResult<()> {
-        let (slot, mut rx) = SubscriptionSlot::new(SubscriptionFilter::default(), None);
+        let (slot, mut rx) =
+            SubscriptionSlot::new(SubscriptionFilter::default(), None, CLIENT_CHANNEL_CAPACITY);
         let mut event = DynamicPayload::new("sse-test", "sse.event", json!({"value": 1}))
             .from_material(Id::from_uuid(Uuid::now_v7()))
             .build()?;
