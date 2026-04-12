@@ -172,12 +172,15 @@ mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
     use super::{
-        check_template_reuse, connect_admin_with_retry, create_template_db,
-        run_template_schema_apply, schema_fingerprint, schema_fingerprint_sources,
-        schema_fingerprint_sources_in, store_template_meta,
+        check_template_reuse, connect_admin_with_retry, ensure_template_database,
+        schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
+        store_template_meta,
     };
-    use crate::sandbox::db::pool::config::replace_db_name;
+    use crate::sandbox::db::pool::config::{SLOT_MAX_CONNECTIONS, replace_db_name};
     use crate::sandbox::db::pool::meta::TemplateMeta;
+    use crate::sandbox::db::pool::provisioning::{
+        create_database_from_template_admin, wait_for_database_absence_admin,
+    };
     use crate::sandbox::db::pool::PoolConfig;
     use std::fs;
     use xtask::sandbox::{sinex_serial_test, sinex_test};
@@ -227,13 +230,18 @@ mod tests {
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
         let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
-        create_template_db(&mut admin_conn, &template_name).await?;
-        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
-        let template_pool_max = config.slot_max_connections.max(1).saturating_mul(2).max(4);
-        let extensions =
-            run_template_schema_apply(&template_name, &template_admin_url, template_pool_max)
+        let shared_guard =
+            ensure_template_database(&config.admin_url, &config.base_url, SLOT_MAX_CONNECTIONS)
                 .await?;
+        let shared_template_name = shared_guard.info.name.clone();
+        let shared_extensions = shared_guard.info.extensions.clone();
+        shared_guard.release().await?;
+
+        create_database_from_template_admin(&mut admin_conn, &template_name, &shared_template_name)
+            .await?;
+        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
         store_template_meta(
             &mut admin_conn,
             &template_name,
@@ -241,7 +249,7 @@ mod tests {
                 fingerprint: desired_fingerprint
                     .clone()
                     .expect("desired fingerprint must be present"),
-                extensions,
+                extensions: shared_extensions,
             },
         )
         .await?;
@@ -291,13 +299,18 @@ mod tests {
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
         let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
-        create_template_db(&mut admin_conn, &template_name).await?;
-        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
-        let template_pool_max = config.slot_max_connections.max(1).saturating_mul(2).max(4);
-        let extensions =
-            run_template_schema_apply(&template_name, &template_admin_url, template_pool_max)
+        let shared_guard =
+            ensure_template_database(&config.admin_url, &config.base_url, SLOT_MAX_CONNECTIONS)
                 .await?;
+        let shared_template_name = shared_guard.info.name.clone();
+        let shared_extensions = shared_guard.info.extensions.clone();
+        shared_guard.release().await?;
+
+        create_database_from_template_admin(&mut admin_conn, &template_name, &shared_template_name)
+            .await?;
+        let template_admin_url = replace_db_name(&config.admin_url, &template_name);
         store_template_meta(
             &mut admin_conn,
             &template_name,
@@ -305,7 +318,7 @@ mod tests {
                 fingerprint: desired_fingerprint
                     .clone()
                     .expect("desired fingerprint must be present"),
-                extensions,
+                extensions: shared_extensions,
             },
         )
         .await?;
