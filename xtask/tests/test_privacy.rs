@@ -17,6 +17,7 @@ use std::process::Output;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
+use xtask::sandbox::sinex_test;
 use support::xtask_command;
 
 fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
@@ -28,7 +29,7 @@ fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
 // Catalog Subcommand Tests
 // ============================================================================
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_catalog_lists_rules() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
@@ -81,7 +82,7 @@ async fn test_catalog_lists_rules() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_catalog_filters_by_category() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
@@ -112,7 +113,7 @@ async fn test_catalog_filters_by_category() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_catalog_filters_pii_category() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
@@ -136,7 +137,7 @@ async fn test_catalog_filters_pii_category() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_catalog_unknown_category_returns_empty() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
@@ -157,7 +158,7 @@ async fn test_catalog_unknown_category_returns_empty() -> Result<()> {
 // Test Subcommand Tests
 // ============================================================================
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_process_clean_input() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
@@ -181,7 +182,7 @@ async fn test_process_clean_input() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_process_sensitive_input_github_token() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
@@ -211,7 +212,7 @@ async fn test_process_sensitive_input_github_token() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_process_sensitive_input_database_url() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
@@ -236,7 +237,7 @@ async fn test_process_sensitive_input_database_url() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[sinex_test]
 async fn test_process_private_key_causes_suppression() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {

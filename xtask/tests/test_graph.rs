@@ -12,10 +12,10 @@
 
 mod support;
 
-use color_eyre::eyre::Result;
 use std::fs;
 use support::xtask_command;
 use tempfile::tempdir;
+use xtask::sandbox::sinex_test;
 
 type RenderCheck = fn(&str) -> bool;
 type FormatCheck<'a> = (&'a str, RenderCheck);
@@ -25,8 +25,8 @@ type FormatMarker<'a> = (&'a str, &'a str, RenderCheck);
 // Format Tests: parameterized over all formats
 // ============================================================================
 
-#[test]
-fn test_graph_deps_formats_render_correctly() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_formats_render_correctly() -> ::xtask::sandbox::TestResult<()> {
     let format_checks: &[FormatCheck<'_>] = &[
         ("ascii", |s| s.contains("─") || s.contains("├")),
         ("dot", |s| {
@@ -60,8 +60,8 @@ fn test_graph_deps_formats_render_correctly() -> Result<()> {
 // JSON structural depth tests (unique — check id/label and source/target fields)
 // ============================================================================
 
-#[test]
-fn test_graph_deps_json_structure() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_json_structure() -> ::xtask::sandbox::TestResult<()> {
     // Single invocation — check both node and edge structure rather than spawning twice.
     let output = xtask_command()?
         .arg("deps")
@@ -101,8 +101,8 @@ fn test_graph_deps_json_structure() -> Result<()> {
 // Focus Mode Tests
 // ============================================================================
 
-#[test]
-fn test_graph_deps_focus_reverse_mode() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_focus_reverse_mode() -> ::xtask::sandbox::TestResult<()> {
     // Reverse mode: show packages that depend on the focus package
     let output = xtask_command()?
         .arg("deps")
@@ -127,8 +127,8 @@ fn test_graph_deps_focus_reverse_mode() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_graph_deps_all_formats_with_focus() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_all_formats_with_focus() -> ::xtask::sandbox::TestResult<()> {
     let formats = vec!["ascii", "dot", "json"];
 
     for format in formats {
@@ -154,8 +154,8 @@ fn test_graph_deps_all_formats_with_focus() -> Result<()> {
 // Depth Limiting Tests
 // ============================================================================
 
-#[test]
-fn test_graph_deps_depth_parameter_accepted() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_depth_parameter_accepted() -> ::xtask::sandbox::TestResult<()> {
     for depth in [2usize, 0, 100] {
         let output = xtask_command()?
             .arg("deps")
@@ -179,8 +179,8 @@ fn test_graph_deps_depth_parameter_accepted() -> Result<()> {
 // File Output Tests
 // ============================================================================
 
-#[test]
-fn test_graph_deps_output_to_file_all_formats() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_output_to_file_all_formats() -> ::xtask::sandbox::TestResult<()> {
     let format_markers: &[FormatMarker<'_>] = &[
         ("ascii", "graph.txt", |s| {
             s.contains("─") || s.contains("├") || s.contains("└")
@@ -226,8 +226,8 @@ fn test_graph_deps_output_to_file_all_formats() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_graph_deps_output_to_nested_directory() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_output_to_nested_directory() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("subdir").join("graph.dot");
     std::fs::create_dir_all(output_path.parent().unwrap()).expect("Failed to create subdirectory");
@@ -259,8 +259,8 @@ fn test_graph_deps_output_to_nested_directory() -> Result<()> {
 // Combination Tests
 // ============================================================================
 
-#[test]
-fn test_graph_deps_focus_and_depth() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_focus_and_depth() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("graph")
@@ -282,8 +282,8 @@ fn test_graph_deps_focus_and_depth() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_graph_deps_focus_reverse_and_output() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_focus_reverse_and_output() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph_rev.dot");
 
@@ -320,8 +320,8 @@ fn test_graph_deps_focus_reverse_and_output() -> Result<()> {
 // Impact Analysis Tests (deps impact command)
 // ============================================================================
 
-#[test]
-fn test_deps_impact_invocations() -> Result<()> {
+#[sinex_test]
+async fn test_deps_impact_invocations() -> ::xtask::sandbox::TestResult<()> {
     // Merged: --help + all-packages + single-package in one test to avoid
     // 3x cargo-metadata subprocess spawns for the same command.
     let cases: &[&[&str]] = &[
@@ -359,8 +359,8 @@ fn test_deps_impact_invocations() -> Result<()> {
 // Error Handling Tests
 // ============================================================================
 
-#[test]
-fn test_graph_deps_invalid_format() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_invalid_format() -> ::xtask::sandbox::TestResult<()> {
     // Invalid format falls back to ASCII (graceful handling)
     // Both success and failure are acceptable
     let output = xtask_command()?
@@ -378,8 +378,8 @@ fn test_graph_deps_invalid_format() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_graph_deps_invalid_focus_package() -> Result<()> {
+#[sinex_test]
+async fn test_graph_deps_invalid_focus_package() -> ::xtask::sandbox::TestResult<()> {
     // Should fail gracefully with error message
     let output = xtask_command()?
         .arg("deps")

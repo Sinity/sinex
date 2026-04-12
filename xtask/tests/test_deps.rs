@@ -2,11 +2,11 @@
 
 mod support;
 
-use color_eyre::eyre::Result;
 use support::xtask_command;
+use xtask::sandbox::sinex_test;
 
-#[test]
-fn test_deps_list_non_tty() -> Result<()> {
+#[sinex_test]
+async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
     // Tests run in non-TTY → JSON is the natural output. Verify JSON structure.
     let output = xtask_command()?.arg("deps").arg("list").output()?;
 
@@ -31,8 +31,8 @@ fn test_deps_list_non_tty() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_list_json() -> Result<()> {
+#[sinex_test]
+async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("list")
@@ -58,8 +58,8 @@ fn test_deps_list_json() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_tree_no_package() -> Result<()> {
+#[sinex_test]
+async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?.arg("deps").arg("tree").output()?;
 
     assert!(output.status.success(), "Command should succeed");
@@ -80,8 +80,8 @@ fn test_deps_tree_no_package() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_tree_with_valid_package() -> Result<()> {
+#[sinex_test]
+async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("tree")
@@ -103,8 +103,8 @@ fn test_deps_tree_with_valid_package() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_tree_with_invalid_package() -> Result<()> {
+#[sinex_test]
+async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("tree")
@@ -125,8 +125,8 @@ fn test_deps_tree_with_invalid_package() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_default() -> Result<()> {
+#[sinex_test]
+async fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?.arg("deps").arg("duplicates").output()?;
 
     assert!(output.status.success(), "Command should succeed");
@@ -135,8 +135,8 @@ fn test_deps_duplicates_default() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_custom_threshold() -> Result<()> {
+#[sinex_test]
+async fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("duplicates")
