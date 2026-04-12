@@ -183,7 +183,7 @@ mod tests {
     };
     use crate::sandbox::db::pool::PoolConfig;
     use std::fs;
-    use xtask::sandbox::{sinex_serial_test, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn schema_fingerprint_includes_convergence_inputs() -> TestResult<()> {
@@ -221,8 +221,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
-    async fn template_reuse_rejects_actual_schema_drift(_ctx: TestContext) -> TestResult<()> {
+    #[sinex_test]
+    async fn template_reuse_rejects_actual_schema_drift() -> TestResult<()> {
         let config = PoolConfig::default();
         let template_name = format!("sinex_test_template_drift_{}", std::process::id());
         let desired_fingerprint = Some(schema_fingerprint()?);
@@ -288,10 +288,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
-    async fn template_reuse_rejects_actual_schema_drift_on_shared_fast_path(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    #[sinex_test]
+    async fn template_reuse_rejects_actual_schema_drift_on_shared_fast_path() -> TestResult<()> {
         let config = PoolConfig::default();
         let template_name = format!("sinex_test_template_shared_drift_{}", std::process::id());
         let desired_fingerprint = Some(schema_fingerprint()?);
