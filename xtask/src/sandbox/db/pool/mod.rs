@@ -48,10 +48,11 @@ use provisioning::{
     converge_pool_database_schema, create_database_from_template, database_exists,
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
     ensure_pool_database_exists, grant_pool_database_permissions_checked,
-    is_missing_database_error, is_retryable_connection_error, is_timescaledb_missing_library_error,
-    load_pool_meta, mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
-    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
-    wait_for_database_absence, wait_for_database_absence_admin,
+    is_missing_database_error, is_retryable_connection_error, is_retryable_connection_report,
+    is_timescaledb_missing_library_error, load_pool_meta, mark_pool_database_clean, quote_ident,
+    reconcile_existing_pool_database, recreate_pool_database, store_pool_meta,
+    store_pool_meta_checked, url_with_db_name, wait_for_database_absence,
+    wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -548,9 +549,10 @@ async fn prune_stale_lazy_slot_databases(
                         }
                     }
                 };
-                let schema_drift = reset::schema_mismatch_reason(&slot_pool).await?;
+                let schema_drift =
+                    lazy_slot_schema_drift_reason(&mut admin_conn, slot_name, &slot_pool).await?;
                 slot_pool.close().await;
-                schema_drift.map(|reason| format!("actual schema drift ({reason})"))
+                schema_drift
             }
             Ok(Some(meta)) => Some(format!(
                 "pool metadata mismatch (fingerprint={:?}, extensions={:?})",
@@ -600,6 +602,27 @@ async fn prune_stale_lazy_slot_databases(
     }
 
     Ok(summary)
+}
+
+async fn lazy_slot_schema_drift_reason(
+    admin_conn: &mut PgConnection,
+    slot_name: &str,
+    slot_pool: &DbPool,
+) -> TestResult<Option<String>> {
+    match reset::schema_mismatch_reason(slot_pool).await {
+        Ok(drift) => Ok(drift.map(|reason| format!("actual schema drift ({reason})"))),
+        Err(error) => {
+            if !provisioning::database_exists_admin(admin_conn, slot_name).await? {
+                return Ok(None);
+            }
+            if is_retryable_connection_report(&error) {
+                return Ok(None);
+            }
+            Err(eyre!(
+                "failed to verify lazy slot schema for {slot_name}: {error}"
+            ))
+        }
+    }
 }
 
 async fn try_lock_slot_database_for_drop(
@@ -1710,11 +1733,9 @@ mod tests {
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
         wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
         recreate_pool_database(&db_name, &slot_url).await?;
-
         let meta = load_pool_meta(&mut admin_conn, &db_name)
             .await?
             .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
-
         let slot_pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
             .connect(&slot_url)
@@ -1804,6 +1825,71 @@ mod tests {
             provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
             "transiently unavailable clean slot database should remain present"
         );
+
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_lazy_slot_schema_drift_reason_skips_clean_slot_when_schema_probe_loses_connection()
+    -> TestResult<()> {
+        let _guard = acquire_pool_test_guard().await;
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_prune_probe_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let slot_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&slot_url)
+            .await?;
+        let slot_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&slot_pool)
+            .await?;
+
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        sqlx::query("SELECT pg_terminate_backend($1)")
+            .bind(slot_backend_pid)
+            .execute(&mut admin_conn)
+            .await?;
+
+        let probe_error = reset::schema_mismatch_reason(&slot_pool)
+            .await
+            .expect_err("schema probe should fail after the slot stops accepting connections");
+        assert!(
+            is_retryable_connection_report(&probe_error)
+                || probe_error
+                    .to_string()
+                    .contains("not currently accepting connections"),
+            "unexpected schema probe error: {probe_error:#}"
+        );
+
+        let stale_reason =
+            lazy_slot_schema_drift_reason(&mut admin_conn, &db_name, &slot_pool).await?;
+        assert!(
+            stale_reason.is_none(),
+            "transient schema verification loss should be treated as clean/deferred, got {stale_reason:?}"
+        );
+        assert!(
+            provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
+            "clean slot database should remain present after transient schema probe loss"
+        );
+        slot_pool.close().await;
 
         sqlx::query(&format!(
             "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
