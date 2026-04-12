@@ -15,16 +15,12 @@ async fn advisory_lock_tracks_state_and_releases_after_drop(ctx: TestContext) ->
     assert!(AdvisoryLock::is_locked(&ctx.pool, &key).await?);
     assert!(AdvisoryLock::try_acquire(&ctx.pool, &key).await?.is_none());
 
-    drop(guard);
+    guard.cleanup_now().await;
 
-    ctx.timing()
-        .wait_for_condition(
-            || async {
-                Ok::<bool, color_eyre::Report>(!AdvisoryLock::is_locked(&ctx.pool, &key).await?)
-            },
-            10,
-        )
-        .await?;
+    assert!(
+        !AdvisoryLock::is_locked(&ctx.pool, &key).await?,
+        "cleanup_now should synchronously release the advisory lock"
+    );
 
     Ok(())
 }
@@ -41,12 +37,21 @@ async fn advisory_lock_waiter_acquires_after_prior_holder_drops(
 
     let pool = ctx.pool.clone();
     let waiter_key = key.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let waiter = tokio::spawn(async move {
+        let _ = started_tx.send(());
         AdvisoryLock::acquire_or_wait(&pool, &waiter_key, std::time::Duration::from_secs(1)).await
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drop(first_guard);
+    started_rx
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("waiter start signal failed: {error}"))?;
+    tokio::task::yield_now().await;
+    assert!(
+        !waiter.is_finished(),
+        "waiter should still be blocked while the first guard is held"
+    );
+    first_guard.cleanup_now().await;
 
     let second_guard = waiter
         .await
@@ -54,16 +59,12 @@ async fn advisory_lock_waiter_acquires_after_prior_holder_drops(
 
     assert!(AdvisoryLock::is_locked(&ctx.pool, &key).await?);
 
-    drop(second_guard);
+    second_guard.cleanup_now().await;
 
-    ctx.timing()
-        .wait_for_condition(
-            || async {
-                Ok::<bool, color_eyre::Report>(!AdvisoryLock::is_locked(&ctx.pool, &key).await?)
-            },
-            10,
-        )
-        .await?;
+    assert!(
+        !AdvisoryLock::is_locked(&ctx.pool, &key).await?,
+        "cleanup_now should synchronously release the waiter advisory lock"
+    );
 
     Ok(())
 }
