@@ -264,26 +264,18 @@ impl XtaskCommand for CheckCommand {
                 args.push(p.clone());
             }
 
-            return crate::coordinator::coordinate_and_spawn("check", &args, ctx);
+            let (_, workload_scope) = this.build_package_args(true, false)?;
+            let coordination_args = this.semantic_invocation_args(&workload_scope);
+            return crate::coordinator::coordinate_and_spawn_with_scope(
+                "check",
+                &args,
+                &coordination_args,
+                ctx,
+            );
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
-
-        // Record fingerprint+scope for coordinator freshness detection.
-        // Check scope includes -p/--all flags so narrow checks don't
-        // satisfy broader scopes.
-        {
-            let mut scope_args = Vec::new();
-            for p in &this.packages {
-                scope_args.push("-p".to_string());
-                scope_args.push(p.clone());
-            }
-            if this.all {
-                scope_args.push("--all".to_string());
-            }
-            ctx.record_coordination_fingerprint("check", &scope_args);
-        }
 
         // Resource warning before heavy operation
         if ctx.is_human() {
@@ -314,7 +306,9 @@ impl XtaskCommand for CheckCommand {
         }
 
         let (package_args, workload_scope) = this.build_package_args(true, ctx.is_human())?;
-        ctx.record_invocation_args(&this.semantic_invocation_args(&workload_scope));
+        let coordination_args = this.semantic_invocation_args(&workload_scope);
+        ctx.record_coordination_fingerprint("check", &coordination_args);
+        ctx.record_invocation_args(&coordination_args);
 
         // 1. Formatting (optional, off by default)
         if this.fmt {
