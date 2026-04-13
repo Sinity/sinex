@@ -22,7 +22,7 @@ use super::eagerly_recreate_pruned_lazy_slot_databases;
 use super::meta::TemplateInfo;
 use super::prune_stale_lazy_slot_databases;
 use super::schema_fingerprint;
-use super::template::ensure_shared_templates_for_keys;
+use super::template::ensure_templates_for_keys;
 
 #[derive(Debug)]
 pub(super) struct NextestLazyPoolPreparation {
@@ -51,7 +51,11 @@ struct CachedLazyPoolPreparation {
 }
 
 impl CachedLazyPoolPreparation {
-    fn matches_request(&self, slot_names: &[String], expected_fingerprint: &Option<String>) -> bool {
+    fn matches_request(
+        &self,
+        slot_names: &[String],
+        expected_fingerprint: &Option<String>,
+    ) -> bool {
         self.slot_names == slot_names && self.expected_fingerprint == *expected_fingerprint
     }
 
@@ -68,10 +72,7 @@ impl CachedLazyPoolPreparation {
         cached
     }
 
-    fn into_preparation(
-        self,
-        prune_summary: LazySlotPruneSummary,
-    ) -> NextestLazyPoolPreparation {
+    fn into_preparation(self, prune_summary: LazySlotPruneSummary) -> NextestLazyPoolPreparation {
         NextestLazyPoolPreparation {
             expected_fingerprint: self.expected_fingerprint,
             expected_extensions: self.expected_extensions,
@@ -198,7 +199,9 @@ fn try_reuse_cached_preparation(
         return Ok(None);
     }
 
-    Ok(Some(cached.into_preparation(LazySlotPruneSummary::default())))
+    Ok(Some(
+        cached.into_preparation(LazySlotPruneSummary::default()),
+    ))
 }
 
 async fn retry_deferred_stale_slots(
@@ -229,13 +232,8 @@ async fn prepare_without_cache(
     slot_names: Vec<String>,
     expected_fingerprint: Option<String>,
 ) -> TestResult<NextestLazyPoolPreparation> {
-    let TemplateInfo { extensions, .. } = ensure_template_info(
-        admin_url,
-        base_url,
-        slot_max_connections,
-        &slot_names,
-    )
-    .await?;
+    let TemplateInfo { extensions, .. } =
+        ensure_template_info(admin_url, base_url, slot_max_connections, &slot_names).await?;
     let mut prune_summary =
         prune_stale_lazy_slot_databases(admin_url, &slot_names, &expected_fingerprint, &extensions)
             .await?;
@@ -255,7 +253,7 @@ async fn ensure_template_info(
     slot_max_connections: u32,
     slot_names: &[String],
 ) -> TestResult<TemplateInfo> {
-    ensure_shared_templates_for_keys(admin_url, base_url, slot_max_connections, slot_names).await
+    ensure_templates_for_keys(admin_url, base_url, slot_max_connections, slot_names).await
 }
 
 fn nextest_run_id() -> Option<String> {
@@ -292,8 +290,7 @@ fn load_cached_preparation(path: &Path) -> TestResult<Option<CachedLazyPoolPrepa
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error)
-                .wrap_err_with(|| format!("failed to read {}", path.display()));
+            return Err(error).wrap_err_with(|| format!("failed to read {}", path.display()));
         }
     };
 
@@ -313,7 +310,8 @@ fn load_cached_preparation(path: &Path) -> TestResult<Option<CachedLazyPoolPrepa
 fn store_cached_preparation(path: &Path, cached: &CachedLazyPoolPreparation) -> TestResult<()> {
     let raw = serde_json::to_string_pretty(cached)?;
     let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, raw).wrap_err_with(|| format!("failed to write {}", tmp_path.display()))?;
+    fs::write(&tmp_path, raw)
+        .wrap_err_with(|| format!("failed to write {}", tmp_path.display()))?;
     fs::rename(&tmp_path, path)
         .wrap_err_with(|| format!("failed to replace {}", path.display()))?;
     Ok(())
@@ -333,7 +331,10 @@ mod tests {
 
     #[sinex_test]
     async fn cached_lazy_pool_preparation_matches_identical_request() -> TestResult<()> {
-        let slot_names = vec!["sinex_test_pool_0".to_string(), "sinex_test_pool_1".to_string()];
+        let slot_names = vec![
+            "sinex_test_pool_0".to_string(),
+            "sinex_test_pool_1".to_string(),
+        ];
         let cached = CachedLazyPoolPreparation {
             expected_fingerprint: Some("abc".to_string()),
             expected_extensions: HashMap::from([("timescaledb".to_string(), "2.20".to_string())]),
@@ -385,7 +386,10 @@ mod tests {
     #[sinex_test]
     async fn cached_preparation_reuse_does_not_wait_for_writer_lock() -> TestResult<()> {
         let temp = tempfile::tempdir()?;
-        let slot_names = vec!["sinex_test_pool_0".to_string(), "sinex_test_pool_1".to_string()];
+        let slot_names = vec![
+            "sinex_test_pool_0".to_string(),
+            "sinex_test_pool_1".to_string(),
+        ];
         let (state_path, lock_path) = preparation_paths_in(temp.path(), "run-456");
         if let Some(parent) = state_path.parent() {
             fs::create_dir_all(parent)?;
@@ -498,7 +502,10 @@ mod tests {
         .execute(&slot_pool)
         .await?;
         let drift = reset::schema_mismatch_reason(&slot_pool).await?;
-        assert!(drift.is_some(), "test fixture should create real schema drift");
+        assert!(
+            drift.is_some(),
+            "test fixture should create real schema drift"
+        );
         slot_pool.close().await;
 
         let mut cached = CachedLazyPoolPreparation {
@@ -547,7 +554,10 @@ mod tests {
         fs::write(&state_path, "{ definitely-not-json")?;
 
         let loaded = load_cached_preparation(&state_path)?;
-        assert!(loaded.is_none(), "corrupt preparation state should be ignored");
+        assert!(
+            loaded.is_none(),
+            "corrupt preparation state should be ignored"
+        );
         assert!(
             !state_path.exists(),
             "corrupt preparation state should be removed for a clean retry"
