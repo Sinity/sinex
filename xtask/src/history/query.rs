@@ -211,6 +211,20 @@ impl DiagnosticQuery {
 pub struct InvocationQuery {
     base: QueryBase,
     status_filter: Option<InvocationStatus>,
+    invocation_id: Option<i64>,
+    after_invocation_id: Option<i64>,
+    before_invocation_id: Option<i64>,
+    since_rfc3339: Option<String>,
+    offset: usize,
+    sort_by: InvocationSort,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum InvocationSort {
+    #[default]
+    Started,
+    Duration,
+    Status,
 }
 
 impl InvocationQuery {
@@ -269,6 +283,61 @@ impl InvocationQuery {
     #[must_use]
     pub fn status(mut self, s: InvocationStatus) -> Self {
         self.status_filter = Some(s);
+        self
+    }
+
+    /// Only return the invocation with this exact database ID.
+    #[must_use]
+    pub fn for_invocation(mut self, id: i64) -> Self {
+        self.invocation_id = Some(id);
+        self
+    }
+
+    /// Only return invocations recorded after this database ID.
+    #[must_use]
+    pub fn after_invocation(mut self, id: i64) -> Self {
+        self.after_invocation_id = Some(id);
+        self
+    }
+
+    /// Only return invocations recorded before this database ID.
+    #[must_use]
+    pub fn before_invocation(mut self, id: i64) -> Self {
+        self.before_invocation_id = Some(id);
+        self
+    }
+
+    /// Only return invocations started on or after this RFC3339 timestamp.
+    pub fn since_rfc3339(mut self, timestamp: impl Into<String>) -> Self {
+        self.since_rfc3339 = Some(timestamp.into());
+        self
+    }
+
+    /// Skip N matching invocations after sorting.
+    #[must_use]
+    pub fn offset(mut self, n: usize) -> Self {
+        self.offset = n;
+        self
+    }
+
+    /// Sort by newest started time (default).
+    #[must_use]
+    pub fn sort_started(mut self) -> Self {
+        self.sort_by = InvocationSort::Started;
+        self
+    }
+
+    /// Sort by descending duration, leaving incomplete invocations last.
+    #[must_use]
+    pub fn sort_duration(mut self) -> Self {
+        self.sort_by = InvocationSort::Duration;
+        self
+    }
+
+    /// Sort by status then ID.
+    #[must_use]
+    pub fn sort_status(mut self) -> Self {
+        self.sort_by = InvocationSort::Status;
         self
     }
 
@@ -1622,15 +1691,15 @@ impl HistoryDb {
     pub(crate) fn run_invocation_query(&self, q: &InvocationQuery) -> Result<Vec<Invocation>> {
         let conn = &self.conn;
         let mut where_clauses = Vec::<String>::new();
-        let mut bound_params: Vec<String> = Vec::new();
+        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(cmd) = &q.base.command_filter {
             where_clauses.push("i.command = ?".into());
-            bound_params.push(cmd.clone());
+            bound_params.push(Box::new(cmd.clone()));
         }
         if let Some(status) = &q.status_filter {
             where_clauses.push("i.status = ?".into());
-            bound_params.push(status.as_str().into());
+            bound_params.push(Box::new(status.as_str().to_string()));
         }
         if let Some(days) = q.base.days {
             where_clauses.push(format!("i.started_at > datetime('now', '-{days} days')"));
@@ -1640,7 +1709,23 @@ impl HistoryDb {
             where_clauses.push(
                 "EXISTS (SELECT 1 FROM invocation_packages ip WHERE ip.invocation_id = i.id AND ip.package = ?)".into()
             );
-            bound_params.push(pkg.clone());
+            bound_params.push(Box::new(pkg.clone()));
+        }
+        if let Some(invocation_id) = q.invocation_id {
+            where_clauses.push("i.id = ?".into());
+            bound_params.push(Box::new(invocation_id));
+        }
+        if let Some(after_invocation_id) = q.after_invocation_id {
+            where_clauses.push("i.id > ?".into());
+            bound_params.push(Box::new(after_invocation_id));
+        }
+        if let Some(before_invocation_id) = q.before_invocation_id {
+            where_clauses.push("i.id < ?".into());
+            bound_params.push(Box::new(before_invocation_id));
+        }
+        if let Some(since_rfc3339) = &q.since_rfc3339 {
+            where_clauses.push("i.started_at >= ?".into());
+            bound_params.push(Box::new(since_rfc3339.clone()));
         }
 
         let where_sql = if where_clauses.is_empty() {
@@ -1649,19 +1734,26 @@ impl HistoryDb {
             format!(" WHERE {}", where_clauses.join(" AND "))
         };
 
+        let order_sql = match q.sort_by {
+            InvocationSort::Started => "i.id DESC",
+            InvocationSort::Duration => "i.duration_secs DESC NULLS LAST, i.id DESC",
+            InvocationSort::Status => "i.status ASC, i.id DESC",
+        };
+
         let sql = format!(
             "SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty, \
             started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage \
             FROM invocations i{where_sql} \
-            ORDER BY i.id DESC LIMIT {}",
-            q.base.limit
+            ORDER BY {order_sql} LIMIT ? OFFSET ?"
         );
 
+        bound_params.push(Box::new(q.base.limit as i64));
+        bound_params.push(Box::new(q.offset as i64));
+
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(bound_params.iter()),
-            row_to_invocation,
-        )?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            bound_params.iter().map(|value| value.as_ref()).collect();
+        let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), row_to_invocation)?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -1845,6 +1937,64 @@ mod tests {
             .run(&db)
             .expect_err("invalid finished_at should surface from invocation queries");
         assert!(format!("{error:#}").contains("invalid invocation finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_invocation_query_supports_exact_and_bounded_scopes() -> TestResult<()> {
+        let db = HistoryDb::open_in_memory()?;
+
+        let oldest = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(oldest, InvocationStatus::Success, Some(0), 0.1)?;
+        let middle = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(middle, InvocationStatus::Success, Some(0), 0.2)?;
+        let newest = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(newest, InvocationStatus::Failed, Some(1), 0.3)?;
+
+        let exact = InvocationQuery::new().for_invocation(middle).run(&db)?;
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].id, middle);
+
+        let after_middle = InvocationQuery::new().after_invocation(middle).run(&db)?;
+        assert_eq!(
+            after_middle.iter().map(|inv| inv.id).collect::<Vec<_>>(),
+            vec![newest]
+        );
+
+        let before_newest = InvocationQuery::new().before_invocation(newest).run(&db)?;
+        assert_eq!(
+            before_newest.iter().map(|inv| inv.id).collect::<Vec<_>>(),
+            vec![middle, oldest]
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_invocation_query_offset_and_sort_controls() -> TestResult<()> {
+        let db = HistoryDb::open_in_memory()?;
+
+        let fast = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(fast, InvocationStatus::Success, Some(0), 0.1)?;
+        let medium = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(medium, InvocationStatus::Success, Some(0), 0.5)?;
+        let slow_fail = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(slow_fail, InvocationStatus::Failed, Some(1), 1.5)?;
+
+        let duration_sorted = InvocationQuery::new().sort_duration().run(&db)?;
+        assert_eq!(
+            duration_sorted.iter().map(|inv| inv.id).collect::<Vec<_>>(),
+            vec![slow_fail, medium, fast]
+        );
+
+        let paged = InvocationQuery::new()
+            .limit(1)
+            .offset(1)
+            .sort_started()
+            .run(&db)?;
+        assert_eq!(paged.len(), 1);
+        assert_eq!(paged[0].id, medium);
+
         Ok(())
     }
 

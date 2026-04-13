@@ -1,6 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 29
+assertion_line: 28
 expression: json
 ---
 {
@@ -1980,6 +1980,26 @@ expression: json
               "help": "Skip N entries (pagination)",
               "long": "offset",
               "name": "offset",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only show invocations with IDs greater than this invocation (`latest` allowed)",
+              "long": "after-invocation",
+              "name": "after_invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only show invocations with IDs less than this invocation (`latest` allowed)",
+              "long": "before-invocation",
+              "name": "before_invocation",
               "possible_values": [],
               "required": false,
               "short": null,
