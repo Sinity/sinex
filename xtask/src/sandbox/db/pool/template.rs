@@ -18,7 +18,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tracing::warn;
 
-use super::config::replace_db_name;
+use super::config::{recommended_shared_template_shard_count, replace_db_name};
 use super::meta::{TemplateInfo, TemplateMeta};
 use super::metrics::POOL_METRICS;
 use super::provisioning::{
@@ -38,7 +38,10 @@ static TEMPLATE_DB_NAME: std::sync::LazyLock<Mutex<Option<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 
 const SHARED_TEMPLATE_BASE_NAME: &str = "sinex_test_template_shared";
-const SHARED_TEMPLATE_SHARD_COUNT: usize = 4;
+const SHARED_POOL_TEMPLATE_SHARD_COUNT: usize = 4;
+const SHARED_ADHOC_TEMPLATE_BASE_NAME: &str = "sinex_test_template_shared_adhoc";
+static SHARED_ADHOC_TEMPLATE_SHARD_COUNT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(recommended_shared_template_shard_count);
 
 pub(crate) fn template_db_name() -> Option<String> {
     TEMPLATE_DB_NAME.lock().clone()
@@ -103,28 +106,55 @@ fn invalidate_template_trust_stamp(template_name: &str) {
     let _ = std::fs::remove_file(path);
 }
 
-fn shared_template_name_for_shard(shard: usize) -> String {
-    debug_assert!(shard < SHARED_TEMPLATE_SHARD_COUNT);
+fn shared_template_name_for_shard(
+    base_name: &str,
+    shard_count: usize,
+    shard: usize,
+) -> String {
+    debug_assert!(shard < shard_count);
     if shard == 0 {
-        SHARED_TEMPLATE_BASE_NAME.to_string()
+        base_name.to_string()
     } else {
-        format!("{SHARED_TEMPLATE_BASE_NAME}_{shard}")
+        format!("{base_name}_{shard}")
+    }
+}
+
+fn shared_adhoc_template_shard_count() -> usize {
+    *SHARED_ADHOC_TEMPLATE_SHARD_COUNT
+}
+
+fn is_managed_pool_slot_name(key: &str) -> bool {
+    key.strip_prefix("sinex_test_pool_")
+        .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+}
+
+fn shared_template_layout_for_key(key: &str) -> (&'static str, usize) {
+    if is_managed_pool_slot_name(key) {
+        (SHARED_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT)
+    } else {
+        (
+            SHARED_ADHOC_TEMPLATE_BASE_NAME,
+            shared_adhoc_template_shard_count(),
+        )
     }
 }
 
 fn shared_template_name_for_key(key: &str) -> String {
-    if SHARED_TEMPLATE_SHARD_COUNT <= 1 {
-        return SHARED_TEMPLATE_BASE_NAME.to_string();
+    let (base_name, shard_count) = shared_template_layout_for_key(key);
+    if shard_count <= 1 {
+        return base_name.to_string();
     }
 
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
-    let shard = (hasher.finish() as usize) % SHARED_TEMPLATE_SHARD_COUNT;
-    shared_template_name_for_shard(shard)
+    let shard = (hasher.finish() as usize) % shard_count;
+    shared_template_name_for_shard(base_name, shard_count, shard)
 }
 
-fn shared_template_names() -> impl Iterator<Item = String> {
-    (0..SHARED_TEMPLATE_SHARD_COUNT).map(shared_template_name_for_shard)
+fn shared_template_family_names(base_name: &str, shard_count: usize) -> Vec<String> {
+    (0..shard_count)
+        .map(|shard| shared_template_name_for_shard(base_name, shard_count, shard))
+        .collect()
 }
 
 pub(super) fn shared_template_names_for_keys(keys: &[String]) -> Vec<String> {
@@ -136,7 +166,17 @@ pub(super) fn shared_template_names_for_keys(keys: &[String]) -> Vec<String> {
 }
 
 pub(super) fn invalidate_shared_template_trust() {
-    for template_name in shared_template_names() {
+    for template_name in shared_template_family_names(
+        SHARED_TEMPLATE_BASE_NAME,
+        SHARED_POOL_TEMPLATE_SHARD_COUNT,
+    )
+    .into_iter()
+    .chain(
+        shared_template_family_names(
+            SHARED_ADHOC_TEMPLATE_BASE_NAME,
+            shared_adhoc_template_shard_count(),
+        ),
+    ) {
         invalidate_template_trust_stamp(&template_name);
     }
 }
@@ -283,10 +323,14 @@ mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
     use super::{
-        SHARED_TEMPLATE_BASE_NAME, SHARED_TEMPLATE_SHARD_COUNT, check_template_reuse,
+        SHARED_ADHOC_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT,
+        SHARED_TEMPLATE_BASE_NAME, check_template_reuse,
         connect_admin_with_retry, ensure_template_database_for_key, load_template_trust_stamp,
+        is_managed_pool_slot_name,
         schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
-        shared_template_names_for_keys, store_template_meta, store_template_trust_stamp,
+        shared_adhoc_template_shard_count, shared_template_name_for_key,
+        shared_template_names_for_keys, store_template_meta,
+        store_template_trust_stamp,
         template_trust_matches, template_trust_state_path_in,
     };
     use crate::sandbox::db::pool::PoolConfig;
@@ -372,20 +416,52 @@ mod tests {
 
     #[sinex_test]
     async fn shared_template_name_for_key_is_stable() -> TestResult<()> {
-        let first = super::shared_template_name_for_key("slot-alpha");
-        let second = super::shared_template_name_for_key("slot-alpha");
+        let first = shared_template_name_for_key("slot-alpha");
+        let second = shared_template_name_for_key("slot-alpha");
         assert_eq!(first, second, "template sharding must be deterministic");
         Ok(())
     }
 
     #[sinex_test]
-    async fn shared_template_name_for_key_spreads_across_available_shards() -> TestResult<()> {
+    async fn shared_template_name_for_key_spreads_ad_hoc_slots_across_available_shards()
+    -> TestResult<()> {
         let names = (0..64)
-            .map(|index| super::shared_template_name_for_key(&format!("slot-{index}")))
+            .map(|index| shared_template_name_for_key(&format!("slot-{index}")))
             .collect::<std::collections::HashSet<_>>();
         assert!(
-            names.len() >= SHARED_TEMPLATE_SHARD_COUNT.min(2),
-            "different keys should not all collapse onto one shared template shard"
+            names.len() >= shared_adhoc_template_shard_count().min(2),
+            "different ad hoc keys should not all collapse onto one shared template shard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shared_template_name_for_key_keeps_managed_pool_slots_on_legacy_family()
+    -> TestResult<()> {
+        let names = (0..64)
+            .map(|index| shared_template_name_for_key(&format!("sinex_test_pool_{index}")))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            names.iter()
+                .all(|name| name.starts_with(SHARED_TEMPLATE_BASE_NAME)),
+            "managed pool slots should stay on the legacy shared-template family"
+        );
+        assert!(
+            names.len() <= SHARED_POOL_TEMPLATE_SHARD_COUNT,
+            "managed pool slots should not fan out beyond the fixed pool shard count"
+        );
+        assert!(is_managed_pool_slot_name("sinex_test_pool_7"));
+        assert!(!is_managed_pool_slot_name("sinex_test_pool_recreate_7"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn shared_template_name_for_key_routes_ad_hoc_poolish_names_to_ad_hoc_family()
+    -> TestResult<()> {
+        let name = shared_template_name_for_key("sinex_test_pool_recreate_1234");
+        assert!(
+            name.starts_with(SHARED_ADHOC_TEMPLATE_BASE_NAME),
+            "non-managed pool-like names should use the ad hoc shared-template family"
         );
         Ok(())
     }
