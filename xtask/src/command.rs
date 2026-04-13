@@ -1048,26 +1048,48 @@ impl CommandContext {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let job = manager.spawn_xtask(subcommand, args, self.writer.format())?;
+        let history_selector = format!("job:{}", job.id);
+        let history_hint = format!("xtask history invocation {history_selector}");
+        let progress_hint = format!("xtask history progress --invocation {history_selector}");
+        let test_analysis_hint = (subcommand == "test")
+            .then(|| format!("xtask history tests analyze --invocation job:{}", job.id));
 
         let result = CommandResult::success()
-            .with_message(format!("Started background job {}", job.id))
+            .with_message(match job.invocation_id {
+                Some(invocation_id) => {
+                    format!("Started background job {} (invocation {invocation_id})", job.id)
+                }
+                None => format!("Started background job {}", job.id),
+            })
             .with_data(serde_json::json!({
                 "job_id": job.id,
+                "invocation_id": job.invocation_id,
                 "pid": job.pid,
                 "stdout": job.stdout_path.display().to_string(),
                 "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,
                 "args": args,
                 "hint": format!("Monitor with: xtask jobs status {}", job.id),
+                "history_hint": history_hint,
+                "progress_hint": progress_hint,
+                "test_analysis_hint": test_analysis_hint,
             }));
 
         if self.is_human() {
             println!("🚀 Started background job {}", job.id);
             println!("   Command: xtask {} {}", subcommand, args.join(" "));
+            if let Some(invocation_id) = job.invocation_id {
+                println!("   Invocation: {invocation_id}");
+            }
             println!("   Logs: {}", job.stdout_path.display());
             println!();
             println!("   Monitor: xtask jobs status {}", job.id);
             println!("   Output:  xtask jobs output {}", job.id);
+            println!("   History: {history_hint}");
+            println!("   Progress: {progress_hint}");
+            if let Some(test_analysis_hint) = &test_analysis_hint {
+                println!("   Analyze: {test_analysis_hint}");
+            }
             println!("   Cancel:  xtask jobs cancel {}", job.id);
             // Suppress the automatic CommandResult print — we already wrote the job summary.
             // In JSON mode is_silent is ignored when data is present, so the JSON envelope

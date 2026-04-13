@@ -199,7 +199,7 @@ async fn snapshot_history_progress_terminal_grid() -> ::xtask::sandbox::TestResu
         &[
             "history",
             "progress",
-            "--invocation-id",
+            "--invocation",
             &invocation_id.to_string(),
         ],
     )?
