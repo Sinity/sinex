@@ -179,7 +179,10 @@ async fn transaction_commits_data(ctx: TestContext) -> TestResult<()> {
 
     // Create a regular (not temp) table — visible across all pool connections in this
     // isolated test database. Temp tables are connection-scoped and break with pools.
-    sqlx::query("CREATE TABLE IF NOT EXISTS public.tx_commit_test (id int PRIMARY KEY)")
+    sqlx::query("DROP TABLE IF EXISTS public.tx_commit_test")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE TABLE public.tx_commit_test (id int PRIMARY KEY)")
         .execute(pool)
         .await?;
 
@@ -195,6 +198,9 @@ async fn transaction_commits_data(ctx: TestContext) -> TestResult<()> {
         .fetch_one(pool)
         .await?;
     assert_eq!(count.0, 1);
+    sqlx::query("DROP TABLE IF EXISTS public.tx_commit_test")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -204,7 +210,10 @@ async fn transaction_rolls_back_data(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
 
     // Create a regular (not temp) table — visible across all pool connections
-    sqlx::query("CREATE TABLE IF NOT EXISTS public.tx_rollback_test (id int PRIMARY KEY)")
+    sqlx::query("DROP TABLE IF EXISTS public.tx_rollback_test")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE TABLE public.tx_rollback_test (id int PRIMARY KEY)")
         .execute(pool)
         .await?;
 
@@ -220,6 +229,9 @@ async fn transaction_rolls_back_data(ctx: TestContext) -> TestResult<()> {
         .fetch_one(pool)
         .await?;
     assert_eq!(count.0, 0, "transaction should have been rolled back");
+    sqlx::query("DROP TABLE IF EXISTS public.tx_rollback_test")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -305,7 +317,10 @@ async fn retry_transaction_commits_data_on_success(ctx: TestContext) -> TestResu
     let config = RetryConfig::default();
 
     // Create a regular (not temp) table — visible across all pool connections
-    sqlx::query("CREATE TABLE IF NOT EXISTS public.retry_data (value text)")
+    sqlx::query("DROP TABLE IF EXISTS public.retry_data")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE TABLE public.retry_data (value text)")
         .execute(pool)
         .await?;
 
@@ -325,6 +340,9 @@ async fn retry_transaction_commits_data_on_success(ctx: TestContext) -> TestResu
         .fetch_one(pool)
         .await?;
     assert_eq!(row.0, "committed");
+    sqlx::query("DROP TABLE IF EXISTS public.retry_data")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
