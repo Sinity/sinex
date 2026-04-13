@@ -39,7 +39,7 @@ pub mod timing;
 pub mod workspace;
 
 // Re-export types referenced by proc macro expansion (`::xtask::sandbox::TestResult`, etc.)
-pub use db::pool::acquire_pool_test_guard;
+pub use db::pool::{acquire_process_test_guard, acquire_workspace_test_guard};
 
 // Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`
 pub use context::Sandbox;

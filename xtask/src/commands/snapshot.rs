@@ -294,7 +294,7 @@ fn probe_repomix(output: std::io::Result<Output>) -> RepomixProbe {
 
 /// Return distinct file paths from the most recent build_diagnostics invocation.
 fn collect_diagnostic_files(ctx: &CommandContext) -> Result<Vec<String>> {
-    match ctx.try_with_history_db(|db| {
+    match ctx.try_with_history_db_query(|db| {
         // Get current (package-scoped) diagnostics filtered to check command.
         let diags = db.get_current_diagnostics(None, None, None, Some("check"), false)?;
         let mut paths: Vec<String> = diags
@@ -370,7 +370,7 @@ fn build_context_block(ctx: &CommandContext) -> String {
     push_context_field(&mut lines, "coordinator_state", format_coordinator_state());
 
     // Active background jobs
-    push_context_field(&mut lines, "active_jobs", format_active_jobs());
+    push_context_field(&mut lines, "active_jobs", format_active_jobs(ctx));
 
     lines.join("\n")
 }
@@ -392,7 +392,7 @@ fn push_context_field(lines: &mut Vec<String>, name: &str, field: SnapshotContex
 }
 
 fn format_recent_runs(ctx: &CommandContext) -> SnapshotContextField {
-    match ctx.try_with_history_db(|db| {
+    match ctx.try_with_history_db_query(|db| {
         // get_recent(limit, command_filter)
         let invocations = db.get_recent(5, Some("check"))?;
 
@@ -427,7 +427,7 @@ fn format_recent_runs(ctx: &CommandContext) -> SnapshotContextField {
 }
 
 fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
-    match ctx.try_with_history_db(|db| {
+    match ctx.try_with_history_db_query(|db| {
         // get_current_diagnostics(level, file_pattern, package, command, fixable_only)
         let diags = db.get_current_diagnostics(Some("error"), None, None, None, false)?;
 
@@ -505,51 +505,39 @@ fn format_coordinator_state() -> SnapshotContextField {
     }
 }
 
-fn format_active_jobs() -> SnapshotContextField {
-    use crate::config::config;
-    use crate::jobs::JobManager;
-
-    let jobs_dir = config().jobs_dir();
-    let mgr = match JobManager::new(jobs_dir.clone()) {
-        Ok(m) => m,
-        Err(error) => {
-            return SnapshotContextField {
-                value: "[]".to_string(),
-                issue: Some(format!(
-                    "failed to open jobs state at {}: {error:#}",
-                    jobs_dir.display()
-                )),
-            };
+fn format_active_jobs(ctx: &CommandContext) -> SnapshotContextField {
+    match ctx.try_with_history_db_query(|db| db.get_active_background_jobs()) {
+        Some(Ok(active)) => {
+            let items: Vec<String> = active
+                .iter()
+                .map(|j| {
+                    format!(
+                        "{{id:{}, command:\"{}\", status:\"{}\"}}",
+                        j.id,
+                        j.command,
+                        j.job_status.as_str()
+                    )
+                })
+                .collect();
+            SnapshotContextField {
+                value: format!("[{}]", items.join(", ")),
+                issue: None,
+            }
         }
-    };
-
-    let active = match mgr.list_active() {
-        Ok(jobs) => jobs,
-        Err(error) => {
-            return SnapshotContextField {
-                value: "[]".to_string(),
-                issue: Some(format!(
-                    "failed to read active jobs from {}: {error:#}",
-                    jobs_dir.display()
-                )),
-            };
-        }
-    };
-
-    let items: Vec<String> = active
-        .iter()
-        .map(|j| {
-            format!(
-                "{{id:{}, command:\"{}\", status:\"{}\"}}",
-                j.id,
-                j.command,
-                j.job_status.as_str()
-            )
-        })
-        .collect();
-    SnapshotContextField {
-        value: format!("[{}]", items.join(", ")),
-        issue: None,
+        Some(Err(error)) => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "failed to read active jobs from history DB at {}: {error:#}",
+                ctx.history_db_path().display()
+            )),
+        },
+        None => SnapshotContextField {
+            value: "[]".to_string(),
+            issue: Some(format!(
+                "history DB unavailable while reading active jobs at {}",
+                ctx.history_db_path().display()
+            )),
+        },
     }
 }
 
@@ -844,14 +832,14 @@ exit 128
     async fn test_collect_diagnostic_files_reports_unavailable_history_db()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
-        let blocked_parent = temp.path().join("not-a-dir");
-        fs::write(&blocked_parent, "blocked")?;
+        let invalid_db_path = temp.path().join("history-db-dir");
+        fs::create_dir(&invalid_db_path)?;
         let ctx = CommandContext::new_with_db_override(
             OutputWriter::new(OutputFormat::Silent),
             false,
             None,
             "snapshot",
-            blocked_parent.join("history.db"),
+            invalid_db_path,
         );
 
         let error = collect_diagnostic_files(&ctx).expect_err("history DB failure should surface");
@@ -1052,20 +1040,20 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
     async fn test_build_context_block_reports_unavailable_history_db()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
-        let blocked_parent = temp.path().join("not-a-dir");
-        fs::write(&blocked_parent, "blocked")?;
-        let missing_db = blocked_parent.join("history.db");
+        let invalid_db_path = temp.path().join("history-db-dir");
+        fs::create_dir(&invalid_db_path)?;
         let ctx = CommandContext::new_with_db_override(
             OutputWriter::new(OutputFormat::Silent),
             false,
             None,
             "snapshot",
-            missing_db,
+            invalid_db_path,
         );
 
         let block = build_context_block(&ctx);
         assert!(block.contains("recent_runs_issue:"));
         assert!(block.contains("active_diagnostics_issue:"));
+        assert!(block.contains("active_jobs_issue:"));
         Ok(())
     }
 }

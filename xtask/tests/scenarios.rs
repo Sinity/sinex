@@ -11,6 +11,9 @@ mod support;
 
 use serde_json::Value;
 use sinex_primitives::prelude::*;
+use std::io::{BufRead, BufReader};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 use support::xtask_command;
 use xtask::sandbox::sinex_test;
 
@@ -179,9 +182,9 @@ async fn test_ingestd_runtime_health_when_down(
 /// verify that the initial log output consists of valid JSON objects with the
 /// fields produced by `tracing_subscriber::fmt::json()`.
 ///
-/// The test starts the binary, waits briefly for startup logs, then kills it.
-/// It does not wait for ingestd to become fully ready — we only need the
-/// first few log lines that the binary emits during startup.
+/// The test starts the binary, waits until it emits something or exits, then
+/// kills it. It does not wait for ingestd to become fully ready — we only need
+/// the first few log lines that the binary emits during startup.
 #[sinex_test]
 async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
     // Locate the binary
@@ -211,15 +214,44 @@ async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    // Give the binary a moment to emit startup log lines
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| color_eyre::eyre::eyre!("child stderr pipe was not available"))?;
+    let (line_tx, line_rx) = mpsc::channel();
+    let stderr_reader = std::thread::spawn(move || -> std::io::Result<Vec<String>> {
+        let mut captured = Vec::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                let _ = line_tx.send(());
+                captured.push(line);
+            }
+        }
+        Ok(captured)
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match line_rx.recv_timeout(Duration::from_millis(25)) {
+            Ok(()) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if child.try_wait()?.is_some() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
 
     // Kill the process — we only care about initial log output
     let _ = child.kill();
-    let output = child.wait_with_output()?;
+    let _ = child.wait();
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let lines: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
+    let stderr_lines = stderr_reader
+        .join()
+        .map_err(|_| color_eyre::eyre::eyre!("stderr reader thread panicked"))??;
+    let lines: Vec<&str> = stderr_lines.iter().map(String::as_str).collect();
 
     // Binary may not emit ANY logs if it errors out immediately (e.g., no DATABASE_URL)
     // In that case we skip rather than fail — the binary correctly emits JSON for

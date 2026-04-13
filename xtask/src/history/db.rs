@@ -21,7 +21,7 @@ const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
         GROUP BY ip.package
     )
 ";
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
@@ -39,6 +39,7 @@ const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 enum HistoryDbOpenMode {
     Persistent,
     Ephemeral,
+    Query,
 }
 
 impl HistoryDbOpenMode {
@@ -56,6 +57,11 @@ impl HistoryDbOpenMode {
                  PRAGMA synchronous=OFF;
                  PRAGMA temp_store=MEMORY;
                  PRAGMA busy_timeout=5000;"
+            }
+            Self::Query => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA query_only=ON;
+                 PRAGMA busy_timeout=1000;"
             }
         }
     }
@@ -352,6 +358,39 @@ impl HistoryDb {
             HistoryDbOpenMode::Persistent,
             Self::schema_version,
         )
+    }
+
+    /// Open an existing history database for read-only observational queries.
+    ///
+    /// Query surfaces like `xtask status`, `xtask history`, and `xtask analytics`
+    /// should not pay integrity sweeps or stale-cleanup work just to read recent
+    /// rows. If the database does not exist yet, return an empty in-memory view.
+    pub fn open_query(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Self::open_in_memory();
+        }
+
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| {
+                let path_display = path.display();
+                format!("failed to open history database for query: {path_display}")
+            })?;
+        Self::configure_connection(&conn, HistoryDbOpenMode::Query)?;
+
+        let mut db = Self {
+            conn,
+            is_synthetic: false,
+        };
+        let current_version = db
+            .schema_version()
+            .context("failed to read history DB schema version for query")?;
+        if current_version != HISTORY_DB_SCHEMA_VERSION {
+            color_eyre::eyre::bail!(
+                "history DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}; query open requires a compatible database"
+            );
+        }
+        db.is_synthetic = db.check_synthetic()?;
+        Ok(db)
     }
 
     /// Open an isolated in-memory history database.
@@ -4223,6 +4262,38 @@ mod tests {
 
         let unlock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
         assert_eq!(unlock_result, 0, "cleanup lock should release cleanly");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_query_does_not_mutate_stale_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-query-cleanup.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2000-01-01T00:00:00Z",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64
+            ],
+        )?;
+        drop(db);
+
+        let queried = HistoryDb::open_query(&db_path)?;
+        let status: String = queried
+            .conn
+            .query_row("SELECT status FROM invocations LIMIT 1", [], |row| row.get(0))?;
+        assert_eq!(
+            status, "running",
+            "query opens should not perform stale cleanup mutations"
+        );
         Ok(())
     }
 

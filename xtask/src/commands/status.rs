@@ -933,7 +933,7 @@ fn collect_history_and_jobs_snapshot(
     jobs_recent_limit: usize,
 ) -> (HistorySnapshot, JobsSnapshot) {
     let jobs_dir = config().jobs_dir();
-    let Some(result) = ctx.try_with_history_db(|db| {
+    let Some(result) = ctx.try_with_history_db_query(|db| {
         let history = collect_history_snapshot_from_db(db, history_recent_limit, include_analytics);
         let jobs_started_at = Instant::now();
         let jobs = crate::jobs::snapshot_recent_and_active_from_history_db(

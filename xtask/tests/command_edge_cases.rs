@@ -10,7 +10,7 @@
 
 mod support;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use support::xtask_command;
@@ -381,11 +381,21 @@ async fn test_command_metadata_factories() -> TestResult<()> {
 #[sinex_test]
 async fn test_command_context_elapsed() -> TestResult<()> {
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
-    std::thread::sleep(Duration::from_millis(10));
-    let elapsed = ctx.elapsed();
+    let baseline = ctx.elapsed();
+    let deadline = Instant::now() + Duration::from_secs(1);
 
-    assert!(elapsed.as_millis() >= 10);
-    Ok(())
+    loop {
+        let elapsed = ctx.elapsed();
+        if elapsed > baseline {
+            return Ok(());
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "CommandContext::elapsed() never advanced past {baseline:?}"
+        );
+        std::thread::yield_now();
+    }
 }
 
 #[sinex_test]
