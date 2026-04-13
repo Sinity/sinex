@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 mod cleanup;
 mod config;
 mod health;
+mod nextest_run;
 mod provisioning;
 mod reset;
 mod slot;
@@ -43,15 +44,17 @@ pub use test_database::TestDatabase;
 
 use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
+use nextest_run::prepare_nextest_lazy_pool;
 use provisioning::{
-    CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
+    CreateDatabaseOutcome, EnsurePoolDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     converge_pool_database_schema, create_database_from_template, database_exists,
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
-    ensure_pool_database_exists, grant_pool_database_permissions_checked,
-    is_missing_database_error, is_retryable_connection_error, is_timescaledb_missing_library_error,
-    load_pool_meta, mark_pool_database_clean, quote_ident, reconcile_existing_pool_database,
-    recreate_pool_database, store_pool_meta, store_pool_meta_checked, url_with_db_name,
-    wait_for_database_absence, wait_for_database_absence_admin,
+    grant_pool_database_permissions_checked, is_missing_database_error,
+    is_retryable_connection_error, is_retryable_connection_report,
+    is_timescaledb_missing_library_error, load_pool_meta, mark_pool_database_clean, quote_ident,
+    reconcile_existing_pool_database, recreate_pool_database, store_pool_meta,
+    store_pool_meta_checked, try_ensure_pool_database_exists, url_with_db_name, wait_for_database_absence,
+    wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -258,9 +261,13 @@ async fn try_recover_slot_connection(
     slot_max_connections: u32,
 ) -> Option<sinex_db::DbPool> {
     if is_missing_database_error(&err) {
-        if let Err(e) = ensure_pool_database_exists(&slot.name, &slot.url).await {
-            slog!(Level::Warn, "provision_failed", slot = slot.name, error = e);
-            return None;
+        match try_ensure_pool_database_exists(&slot.name, &slot.url).await {
+            Ok(EnsurePoolDatabaseOutcome::Ensured) => {}
+            Ok(EnsurePoolDatabaseOutcome::Deferred) => return None,
+            Err(e) => {
+                slog!(Level::Warn, "provision_failed", slot = slot.name, error = e);
+                return None;
+            }
         }
         let connect = || {
             slot_pool_options(slot_max_connections, SLOT_POOL_ACQUIRE_TIMEOUT).connect(&slot.url)
@@ -548,9 +555,10 @@ async fn prune_stale_lazy_slot_databases(
                         }
                     }
                 };
-                let schema_drift = reset::schema_mismatch_reason(&slot_pool).await?;
+                let schema_drift =
+                    lazy_slot_schema_drift_reason(&mut admin_conn, slot_name, &slot_pool).await?;
                 slot_pool.close().await;
-                schema_drift.map(|reason| format!("actual schema drift ({reason})"))
+                schema_drift
             }
             Ok(Some(meta)) => Some(format!(
                 "pool metadata mismatch (fingerprint={:?}, extensions={:?})",
@@ -600,6 +608,27 @@ async fn prune_stale_lazy_slot_databases(
     }
 
     Ok(summary)
+}
+
+async fn lazy_slot_schema_drift_reason(
+    admin_conn: &mut PgConnection,
+    slot_name: &str,
+    slot_pool: &DbPool,
+) -> TestResult<Option<String>> {
+    match reset::schema_mismatch_reason(slot_pool).await {
+        Ok(drift) => Ok(drift.map(|reason| format!("actual schema drift ({reason})"))),
+        Err(error) => {
+            if !provisioning::database_exists_admin(admin_conn, slot_name).await? {
+                return Ok(None);
+            }
+            if is_retryable_connection_report(&error) {
+                return Ok(None);
+            }
+            Err(eyre!(
+                "failed to verify lazy slot schema for {slot_name}: {error}"
+            ))
+        }
+    }
 }
 
 async fn try_lock_slot_database_for_drop(
@@ -719,54 +748,49 @@ impl DatabasePool {
             eprintln!("⚙️  Forcing eager pool provisioning for this run");
         }
         if is_nextest && !force_eager {
-            let template_guard = ensure_template_database(
+            let prepared = prepare_nextest_lazy_pool(
                 &config.admin_url,
                 &config.base_url,
                 config.slot_max_connections,
+                config.size,
             )
             .await?;
-            let expected_extensions = template_guard.info.extensions.clone();
-            template_guard.release().await?;
-            let expected_fingerprint = Some(schema_fingerprint()?);
-            let slot_names: Vec<String> = (0..config.size)
-                .map(|i| format!("sinex_test_pool_{i}"))
-                .collect();
-            let prune_summary = prune_stale_lazy_slot_databases(
-                &config.admin_url,
-                &slot_names,
-                &expected_fingerprint,
-                &expected_extensions,
-            )
-            .await?;
-            if prune_summary.pruned > 0 {
-                eprintln!(
-                    "♻️  Pruned {} stale lazy pool database(s) before acquisition",
-                    prune_summary.pruned
-                );
-            }
-            if !prune_summary.locked_stale_slots.is_empty() {
-                let preview_limit = 3usize;
-                let preview = prune_summary
-                    .locked_stale_slots
-                    .iter()
-                    .take(preview_limit)
-                    .map(|(slot_name, stale_reason)| format!("{slot_name} ({stale_reason})"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let remaining = prune_summary
-                    .locked_stale_slots
-                    .len()
-                    .saturating_sub(preview_limit);
-                if remaining == 0 {
+            let expected_extensions = prepared.expected_extensions;
+            let expected_fingerprint = prepared.expected_fingerprint;
+            let slot_names = prepared.slot_names;
+
+            if !prepared.reused {
+                let prune_summary = prepared.prune_summary;
+                if prune_summary.pruned > 0 {
                     eprintln!(
-                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}",
-                        prune_summary.locked_stale_slots.len()
+                        "♻️  Pruned {} stale lazy pool database(s) before acquisition",
+                        prune_summary.pruned
                     );
-                } else {
-                    eprintln!(
-                        "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}, +{remaining} more",
-                        prune_summary.locked_stale_slots.len()
-                    );
+                }
+                if !prune_summary.locked_stale_slots.is_empty() {
+                    let preview_limit = 3usize;
+                    let preview = prune_summary
+                        .locked_stale_slots
+                        .iter()
+                        .take(preview_limit)
+                        .map(|(slot_name, stale_reason)| format!("{slot_name} ({stale_reason})"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let remaining = prune_summary
+                        .locked_stale_slots
+                        .len()
+                        .saturating_sub(preview_limit);
+                    if remaining == 0 {
+                        eprintln!(
+                            "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}",
+                            prune_summary.locked_stale_slots.len()
+                        );
+                    } else {
+                        eprintln!(
+                            "ℹ️  Deferred pruning {} stale lazy pool database(s) because their slot locks are currently held: {preview}, +{remaining} more",
+                            prune_summary.locked_stale_slots.len()
+                        );
+                    }
                 }
             }
 
@@ -1536,7 +1560,7 @@ impl DatabasePool {
 mod tests {
     use super::*;
     use crate::sandbox::EnvGuard;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{sinex_serial_test, sinex_test};
 
     #[sinex_test]
     async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()>
@@ -1590,9 +1614,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_drops_mismatched_unlocked_db() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_{}", std::process::id());
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
@@ -1634,9 +1657,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_keeps_locked_db() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_locked_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1698,10 +1720,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_clean_metadata()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_schema_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1710,11 +1731,9 @@ mod tests {
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
         wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
         recreate_pool_database(&db_name, &slot_url).await?;
-
         let meta = load_pool_meta(&mut admin_conn, &db_name)
             .await?
             .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
-
         let slot_pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
             .connect(&slot_url)
@@ -1761,10 +1780,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_prune_stale_lazy_slot_databases_skips_transiently_unavailable_clean_slot()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_prune_deferred_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1815,10 +1833,73 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
+    async fn test_lazy_slot_schema_drift_reason_skips_clean_slot_when_schema_probe_loses_connection()
+    -> TestResult<()> {
+        let config = PoolConfig::default();
+        let db_name = format!("sinex_test_pool_prune_probe_{}", std::process::id());
+        let slot_url = url_with_db_name(&config.base_url, &db_name)?;
+        let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
+
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        recreate_pool_database(&db_name, &slot_url).await?;
+
+        let slot_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&slot_url)
+            .await?;
+        let slot_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&slot_pool)
+            .await?;
+
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        sqlx::query("SELECT pg_terminate_backend($1)")
+            .bind(slot_backend_pid)
+            .execute(&mut admin_conn)
+            .await?;
+
+        let probe_error = reset::schema_mismatch_reason(&slot_pool)
+            .await
+            .expect_err("schema probe should fail after the slot stops accepting connections");
+        assert!(
+            is_retryable_connection_report(&probe_error)
+                || probe_error
+                    .to_string()
+                    .contains("not currently accepting connections"),
+            "unexpected schema probe error: {probe_error:#}"
+        );
+
+        let stale_reason =
+            lazy_slot_schema_drift_reason(&mut admin_conn, &db_name, &slot_pool).await?;
+        assert!(
+            stale_reason.is_none(),
+            "transient schema verification loss should be treated as clean/deferred, got {stale_reason:?}"
+        );
+        assert!(
+            provisioning::database_exists_admin(&mut admin_conn, &db_name).await?,
+            "clean slot database should remain present after transient schema probe loss"
+        );
+        slot_pool.close().await;
+
+        sqlx::query(&format!(
+            "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS true"
+        ))
+        .execute(&mut admin_conn)
+        .await?;
+        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
+
+        Ok(())
+    }
+
+    #[sinex_serial_test]
     async fn test_try_lock_slot_database_for_drop_returns_gone_for_missing_database()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_missing_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -1833,10 +1914,9 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_try_lock_slot_database_for_drop_defers_transiently_unavailable_database()
     -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_busy_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;

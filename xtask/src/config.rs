@@ -275,7 +275,7 @@ pub fn ast_grep_catalog_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn test_config_from_env() -> TestResult<()> {
@@ -287,9 +287,28 @@ mod tests {
 
     #[sinex_test]
     async fn test_history_db_path() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR", "XTASK_HISTORY_DB"]);
+        env.set("SINEX_STATE_DIR", dir.path());
+        env.clear("XTASK_HISTORY_DB");
+
         let config = Config::from_env();
         let path = config.history_db_path();
-        assert!(path.ends_with("xtask-history.db"));
+        assert_eq!(path, dir.path().join("xtask-history.db"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_path_respects_override() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let override_path = dir.path().join("custom-history.db");
+        let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR", "XTASK_HISTORY_DB"]);
+        env.set("SINEX_STATE_DIR", dir.path());
+        env.set("XTASK_HISTORY_DB", &override_path);
+
+        let config = Config::from_env();
+        let path = config.history_db_path();
+        assert_eq!(path, override_path);
         Ok(())
     }
 

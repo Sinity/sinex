@@ -15,13 +15,17 @@ use std::process::Command;
 use tempfile::tempdir;
 use xtask::sandbox::sinex_test;
 
+type RenderCheck = fn(&str) -> bool;
+type FormatCheck<'a> = (&'a str, RenderCheck);
+type FormatMarker<'a> = (&'a str, &'a str, RenderCheck);
+
 // ============================================================================
 // Format Tests: parameterized over all formats
 // ============================================================================
 
 #[sinex_test]
 async fn test_graph_deps_formats_render_correctly() -> TestResult<()> {
-    let format_checks: &[(&str, fn(&str) -> bool)] = &[
+    let format_checks: &[FormatCheck<'_>] = &[
         ("ascii", |s| s.contains("─") || s.contains("├")),
         ("dot", |s| {
             s.contains("digraph") && s.contains('}') && s.lines().any(|l| l.contains("->"))
@@ -175,7 +179,7 @@ async fn test_graph_deps_depth_parameter_accepted() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_graph_deps_output_to_file_all_formats() -> TestResult<()> {
-    let format_markers: &[(&str, &str, fn(&str) -> bool)] = &[
+    let format_markers: &[FormatMarker<'_>] = &[
         ("ascii", "graph.txt", |s| {
             s.contains("─") || s.contains("├") || s.contains("└")
         }),

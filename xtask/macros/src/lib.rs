@@ -500,6 +500,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             let ctx_holder = if #expects_ctx {
                 Some(::xtask::sandbox::Sandbox::with_name(test_name).await?)
             } else {
@@ -984,6 +985,7 @@ fn expand_rstest_variant(
         quote! {
             #serial_guard
             #tracing_block
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             let ctx = ::xtask::Sandbox::with_name(test_name).await?;
             async { #fn_body }.await
         }
@@ -991,6 +993,7 @@ fn expand_rstest_variant(
         quote! {
             #serial_guard
             #tracing_block
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             async { #fn_body }.await
         }
     };
@@ -1010,6 +1013,7 @@ fn expand_rstest_variant(
         #(#other_attrs)*
         #[tokio::test]
         #fn_vis #new_sig {
+            #serial_guard
             let test_name = stringify!(#fn_name);
             let start = ::std::time::Instant::now();
             eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
@@ -1055,11 +1059,12 @@ fn expand_async_context_test(
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
+            #serial_guard
             let test_future = async {
-                #serial_guard
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
                 let ctx = ::xtask::Sandbox::with_name(test_name).await?;
                 let ctx_failure_snapshot = ctx.failure_snapshot();
@@ -1133,14 +1138,15 @@ fn expand_simple_async_test(
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
+            #serial_guard
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(#timeout_secs),
                 async {
-                    #serial_guard
                     #fn_body
                 }
             ).await

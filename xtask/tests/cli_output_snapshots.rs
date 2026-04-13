@@ -15,10 +15,11 @@
 //!
 //! Tests assert behavioral invariants visible to users, not implementation details.
 
-use std::process::Command;
+mod support;
 
 use color_eyre::eyre::eyre;
 use serde_json::{Value, json};
+use support::xtask_command;
 use xtask::history::{
     HistoryDb,
     seed::{SeedOptions, seed_history},
@@ -89,7 +90,7 @@ fn seed_history_db(state_dir: &std::path::Path) -> color_eyre::eyre::Result<()> 
 async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         .args(["status", "--summary", "--json"])
@@ -156,7 +157,7 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
 async fn snapshot_doctor_json() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         // Remove TLS env vars so the TLS section has stable null state
@@ -214,7 +215,7 @@ async fn snapshot_history_list_seeded() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     seed_history_db(dir.path())?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         .args(["history", "list", "--json", "--limit", "1"])
@@ -254,7 +255,7 @@ async fn snapshot_analytics_workspace_health_seeded() -> ::xtask::sandbox::TestR
     let dir = tempfile::tempdir()?;
     seed_history_db(dir.path())?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         .args(["analytics", "workspace-health", "--json"])

@@ -27,7 +27,7 @@ fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output 
         .env("NO_COLOR", "1")
         .env("FORCE_COLOR", "0")
         .output()
-        .unwrap_or_else(|error| panic!("failed to execute xtask in {:?}: {error}", ws.dir()))
+        .expect("failed to execute xtask in ephemeral workspace")
 }
 
 fn check_succeeded(output: &std::process::Output) -> bool {
@@ -43,7 +43,7 @@ fn check_succeeded(output: &std::process::Output) -> bool {
 /// fails, the history DB always grows by exactly one record per run.
 #[test]
 #[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
-fn workspace_property_historydb_consistency() -> Result<()> {
+fn workspace_property_historydb_consistency() {
     let config = ProptestConfig {
         cases: 3,
         ..ProptestConfig::default()
@@ -51,11 +51,11 @@ fn workspace_property_historydb_consistency() -> Result<()> {
 
     proptest!(config, |(inject_error in proptest::bool::ANY)| {
         let ws = EphemeralWorkspace::new()
-            .unwrap_or_else(|error| panic!("failed to create ephemeral workspace: {error}"));
+            .expect("failed to create ephemeral workspace");
 
         if inject_error {
             ws.inject_compile_error("ws-lib")
-                .unwrap_or_else(|error| panic!("failed to inject compile error: {error}"));
+                .expect("failed to inject compile error");
         }
 
         let db_path = ws.history_db_path();
@@ -71,11 +71,10 @@ fn workspace_property_historydb_consistency() -> Result<()> {
             db_path.exists(),
             "HistoryDb must exist after xtask check completes"
         );
-        let db = HistoryDb::open(&db_path)
-            .unwrap_or_else(|error| panic!("failed to open history db {db_path:?}: {error}"));
+        let db = HistoryDb::open(&db_path).expect("failed to open history db");
         let invocations = db
             .get_recent(10, Some("check"))
-            .unwrap_or_else(|error| panic!("failed to read check invocations: {error}"));
+            .expect("failed to read check invocations");
         prop_assert_eq!(
             invocations.len(),
             1,
@@ -101,7 +100,6 @@ fn workspace_property_historydb_consistency() -> Result<()> {
             inject_error, expected_status
         );
     });
-    Ok(())
 }
 
 // ─── Invariant 2: Fix idempotency ────────────────────────────────────────────
@@ -161,7 +159,7 @@ fn workspace_property_fix_idempotency() -> Result<()> {
 /// Verified across 5 random mutation combinations using proptest.
 #[test]
 #[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
-fn workspace_property_status_matches_exit_code() -> Result<()> {
+fn workspace_property_status_matches_exit_code() {
     let config = ProptestConfig {
         cases: 5,
         ..ProptestConfig::default()
@@ -172,25 +170,25 @@ fn workspace_property_status_matches_exit_code() -> Result<()> {
         add_extra_member in proptest::bool::ANY,
     )| {
         let ws = EphemeralWorkspace::new()
-            .unwrap_or_else(|error| panic!("failed to create workspace: {error}"));
+            .expect("failed to create workspace");
 
         if add_extra_member {
             ws.add_member("ws-lib-extra")
-                .unwrap_or_else(|error| panic!("failed to add workspace member: {error}"));
+                .expect("failed to add workspace member");
         }
         if inject_compile_error {
             ws.inject_compile_error("ws-lib")
-                .unwrap_or_else(|error| panic!("failed to inject compile error: {error}"));
+                .expect("failed to inject compile error");
         }
 
         let output = run_xtask_in(&ws, &["check", "--json"]);
         let exit_ok = output.status.code() == Some(0);
 
         let db = HistoryDb::open(&ws.history_db_path())
-            .unwrap_or_else(|error| panic!("failed to open history db: {error}"));
+            .expect("failed to open history db");
         let invocations = db
             .get_recent(5, Some("check"))
-            .unwrap_or_else(|error| panic!("failed to read check invocations: {error}"));
+            .expect("failed to read check invocations");
 
         prop_assert!(!invocations.is_empty(), "must have at least one check invocation");
         let latest = &invocations[0];
@@ -209,7 +207,6 @@ fn workspace_property_status_matches_exit_code() -> Result<()> {
             );
         }
     });
-    Ok(())
 }
 
 // ─── Invariant 4: Multiple invocations accumulate monotonically ───────────────

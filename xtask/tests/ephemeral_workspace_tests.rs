@@ -26,7 +26,7 @@ fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output 
         .env("NO_COLOR", "1")
         .env("FORCE_COLOR", "0")
         .output()
-        .unwrap_or_else(|error| panic!("failed to execute xtask in {:?}: {error}", ws.dir()))
+        .expect("failed to execute xtask in ephemeral workspace")
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ fn test_check_lint_records_clippy_warning_in_history() -> Result<()> {
     );
 
     let inv_id = check_inv
-        .unwrap_or_else(|| panic!("expected a 'check' invocation in history"))
+        .expect("expected a 'check' invocation in history")
         .id;
     let diagnostics = db.get_diagnostics(inv_id)?;
     assert!(
@@ -126,7 +126,7 @@ fn test_check_succeeds_on_clean_workspace() -> Result<()> {
     assert!(check_inv.is_some(), "expected check invocation in history");
     assert_eq!(
         check_inv
-            .unwrap_or_else(|| panic!("expected check invocation in history"))
+            .expect("expected check invocation in history")
             .status,
         InvocationStatus::Success,
         "clean workspace check should be Success"

@@ -687,7 +687,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_changed_files_surfaces_git_failures() -> TestResult<()> {
-        let dir = tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
 
         let error = changed_files_in(dir.path()).expect_err("non-git directory should surface");
         assert!(format!("{error:#}").contains("git diff --name-only HEAD failed"));

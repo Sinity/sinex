@@ -1,6 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 27
+assertion_line: 29
 expression: json
 ---
 {
@@ -2266,6 +2266,16 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Invocation ID or `latest`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
                 }
               ],
               "name": "failures",
@@ -2273,7 +2283,18 @@ expression: json
             },
             {
               "about": "Comprehensive analysis of the most recent test run",
-              "args": [],
+              "args": [
+                {
+                  "global": false,
+                  "help": "Invocation ID or `latest`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
               "name": "analyze",
               "subcommands": []
             },
@@ -2287,6 +2308,16 @@ expression: json
                   "name": "pattern",
                   "possible_values": [],
                   "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Invocation ID or `latest`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
                   "short": null,
                   "takes_value": true
                 }
@@ -2322,6 +2353,16 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Invocation ID or `latest`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
                 }
               ],
               "name": "grep",
@@ -2329,7 +2370,18 @@ expression: json
             },
             {
               "about": "Per-package pass rate, test count, avg duration, and flaky count (G7)",
-              "args": [],
+              "args": [
+                {
+                  "global": false,
+                  "help": "Invocation ID or `latest`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
               "name": "by-package",
               "subcommands": []
             },

@@ -8,13 +8,19 @@
 //! - JSON output structure validation
 //! - CLI error handling for invalid arguments
 
+use color_eyre::eyre::WrapErr;
 use serde_json::Value;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
+
+fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).wrap_err_with(|| format!("expected valid JSON output: {stdout}"))
+}
 
 // ============================================================================
 // Catalog Subcommand Tests
@@ -409,9 +415,6 @@ async fn test_key_generate_produces_unique_keys() -> TestResult<()> {
     };
     let result1 = cmd1.execute(&ctx).await?;
 
-    // Small delay to ensure different entropy
-    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-
     let cmd2 = PrivacyCommand {
         subcommand: PrivacySubcommand::Key { generate: true },
     };
@@ -569,9 +572,7 @@ async fn test_cli_privacy_catalog_json() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         assert_eq!(
             parsed["status"].as_str(),
@@ -598,9 +599,7 @@ async fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         if let Some(data) = parsed["data"].as_array() {
             for rule in data {
@@ -626,9 +625,7 @@ async fn test_cli_privacy_test_clean() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         assert_eq!(parsed["data"]["changed"], false);
         assert_eq!(parsed["data"]["suppressed"], false);
@@ -647,9 +644,7 @@ async fn test_cli_privacy_test_sensitive() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         assert_eq!(parsed["data"]["changed"], true);
         let processed = parsed["data"]["processed"].as_str().unwrap_or("");
@@ -689,9 +684,7 @@ async fn test_cli_privacy_key_generate_json() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         let key = parsed["data"]["key"].as_str().unwrap_or("");
         assert_eq!(key.len(), 64, "Key should be 64 hex chars");
@@ -708,9 +701,7 @@ async fn test_cli_privacy_config_init() -> TestResult<()> {
     let output = cmd.output()?;
     assert!(output.status.success());
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+    let parsed = parse_json_stdout(&output)?;
 
     let example = parsed["data"]["example"].as_str().unwrap_or("");
     assert!(!example.is_empty(), "Example config should not be empty");
@@ -731,9 +722,7 @@ async fn test_cli_privacy_config_status_json() -> TestResult<()> {
     let output = cmd.output()?;
 
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+        let parsed = parse_json_stdout(&output)?;
 
         // Verify required JSON fields
         let data = &parsed["data"];

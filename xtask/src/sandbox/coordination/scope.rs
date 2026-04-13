@@ -11,6 +11,7 @@ use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
 use crate::sandbox::orchestrator::{TestIngestdConfig, start_test_ingestd_with_config};
 use crate::sandbox::prelude::{EventId, TestResult};
 use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
+use sinex_db::DbPoolExt;
 use sinex_primitives::Timestamp;
 use sinex_primitives::events::{Publishable, SourceMaterial};
 use sinex_primitives::{EventType, Id};
@@ -296,12 +297,15 @@ impl<'ctx> PipelineScope<'ctx> {
     where
         F: Fn(usize) -> serde_json::Value,
     {
+        let event_source = sinex_primitives::EventSource::new(source)?;
+        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+            + count;
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
             let payload = payload_fn(i);
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source)?,
+                    event_source.clone(),
                     sinex_primitives::EventType::new(event_type)?,
                     payload,
                     EventOverrides::default(),
@@ -309,7 +313,7 @@ impl<'ctx> PipelineScope<'ctx> {
                 .await?;
             ids.push(id);
         }
-        self.wait_for_source_events(source, count).await?;
+        self.wait_for_source_events(source, expected_total).await?;
         Ok(ids)
     }
 
@@ -353,6 +357,9 @@ impl<'ctx> PipelineScope<'ctx> {
             time::Duration::seconds(0)
         };
 
+        let event_source = sinex_primitives::EventSource::new(source)?;
+        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+            + count;
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
             let timestamp = Timestamp::new(*start + step * (i as i32));
@@ -363,7 +370,7 @@ impl<'ctx> PipelineScope<'ctx> {
             };
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source)?,
+                    event_source.clone(),
                     sinex_primitives::EventType::new(event_type)?,
                     payload,
                     overrides,
@@ -372,7 +379,7 @@ impl<'ctx> PipelineScope<'ctx> {
             ids.push(id);
         }
 
-        self.wait_for_source_events(source, count).await?;
+        self.wait_for_source_events(source, expected_total).await?;
         Ok(ids)
     }
 
