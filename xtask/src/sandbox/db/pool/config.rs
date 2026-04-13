@@ -9,9 +9,6 @@ pub(super) const MIN_POOL_SIZE: usize = 64;
 pub(super) const POOL_SIZE_MULTIPLIER: usize = 2;
 pub(super) const SLOT_MAX_CONNECTIONS: u32 = 8;
 pub(super) const ADMIN_MAX_CONNECTIONS: u32 = 8;
-const MIN_SHARED_TEMPLATE_SHARDS: usize = 4;
-const MAX_SHARED_TEMPLATE_SHARDS: usize = 12;
-const TARGET_TEST_THREADS_PER_TEMPLATE_SHARD: usize = 2;
 
 /// Database pool configuration
 pub(super) struct PoolConfig {
@@ -61,22 +58,6 @@ pub(super) fn default_pool_size() -> usize {
     target.max(MIN_POOL_SIZE)
 }
 
-pub(super) fn recommended_shared_template_shard_count() -> usize {
-    if let Ok(raw) = std::env::var("SINEX_SANDBOX_TEMPLATE_SHARDS") {
-        match parse_shared_template_shard_override(&raw) {
-            Ok(value) => return clamp_shared_template_shard_count(value),
-            Err(error) => {
-                eprintln!(
-                    "⚠️  Ignoring invalid SINEX_SANDBOX_TEMPLATE_SHARDS={raw:?}: {error:#}. \
-                     Falling back to nextest-derived shard sizing."
-                );
-            }
-        }
-    }
-
-    shared_template_shard_count_from_test_threads(detected_nextest_test_threads_or_cpu_count())
-}
-
 fn detected_nextest_test_threads_or_cpu_count() -> usize {
     let cpu_count =
         std::thread::available_parallelism().map_or(MIN_POOL_SIZE, std::num::NonZero::get);
@@ -91,29 +72,6 @@ fn detected_nextest_test_threads_or_cpu_count() -> usize {
             cpu_count.max(1)
         }
     }
-}
-
-fn shared_template_shard_count_from_test_threads(test_threads: usize) -> usize {
-    clamp_shared_template_shard_count(
-        test_threads
-            .max(1)
-            .div_ceil(TARGET_TEST_THREADS_PER_TEMPLATE_SHARD),
-    )
-}
-
-fn clamp_shared_template_shard_count(value: usize) -> usize {
-    value.clamp(MIN_SHARED_TEMPLATE_SHARDS, MAX_SHARED_TEMPLATE_SHARDS)
-}
-
-fn parse_shared_template_shard_override(raw: &str) -> Result<usize> {
-    let trimmed = raw.trim();
-    let value: usize = trimmed
-        .parse()
-        .map_err(|err| eyre!("invalid template shard count `{trimmed}`: {err}"))?;
-    if value == 0 {
-        return Err(eyre!("template shard count must be greater than zero"));
-    }
-    Ok(value)
 }
 
 fn nextest_test_threads(cpu_count: usize) -> Result<Option<usize>> {
@@ -280,33 +238,6 @@ mod tests {
         assert_eq!(
             nextest_test_threads_from_config(&config, "default", 24)?,
             None
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_shared_template_shard_count_scales_with_nextest_threads() -> Result<()> {
-        assert_eq!(shared_template_shard_count_from_test_threads(1), 4);
-        assert_eq!(shared_template_shard_count_from_test_threads(8), 4);
-        assert_eq!(shared_template_shard_count_from_test_threads(24), 12);
-        assert_eq!(shared_template_shard_count_from_test_threads(64), 12);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_parse_shared_template_shard_override_validates_input() -> Result<()> {
-        assert_eq!(parse_shared_template_shard_override("7")?, 7);
-        assert!(
-            parse_shared_template_shard_override("0")
-                .expect_err("zero shards must fail")
-                .to_string()
-                .contains("greater than zero")
-        );
-        assert!(
-            parse_shared_template_shard_override("bad")
-                .expect_err("non-numeric override must fail")
-                .to_string()
-                .contains("invalid template shard count")
         );
         Ok(())
     }

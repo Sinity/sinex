@@ -18,7 +18,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tracing::warn;
 
-use super::config::{recommended_shared_template_shard_count, replace_db_name};
+use super::config::replace_db_name;
 use super::meta::{TemplateInfo, TemplateMeta};
 use super::metrics::POOL_METRICS;
 use super::provisioning::{
@@ -39,9 +39,7 @@ static TEMPLATE_DB_NAME: std::sync::LazyLock<Mutex<Option<String>>> =
 
 const SHARED_TEMPLATE_BASE_NAME: &str = "sinex_test_template_shared";
 const SHARED_POOL_TEMPLATE_SHARD_COUNT: usize = 4;
-const SHARED_ADHOC_TEMPLATE_BASE_NAME: &str = "sinex_test_template_shared_adhoc";
-static SHARED_ADHOC_TEMPLATE_SHARD_COUNT: std::sync::LazyLock<usize> =
-    std::sync::LazyLock::new(recommended_shared_template_shard_count);
+const ADHOC_TEMPLATE_BASE_NAME: &str = "sinex_test_template_adhoc";
 
 pub(crate) fn template_db_name() -> Option<String> {
     TEMPLATE_DB_NAME.lock().clone()
@@ -73,8 +71,7 @@ fn load_template_trust_stamp(path: &Path) -> TestResult<Option<TemplateTrustStam
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error)
-                .wrap_err_with(|| format!("failed to read {}", path.display()));
+            return Err(error).wrap_err_with(|| format!("failed to read {}", path.display()));
         }
     };
 
@@ -106,11 +103,7 @@ fn invalidate_template_trust_stamp(template_name: &str) {
     let _ = std::fs::remove_file(path);
 }
 
-fn shared_template_name_for_shard(
-    base_name: &str,
-    shard_count: usize,
-    shard: usize,
-) -> String {
+fn shared_template_name_for_shard(base_name: &str, shard_count: usize, shard: usize) -> String {
     debug_assert!(shard < shard_count);
     if shard == 0 {
         base_name.to_string()
@@ -119,36 +112,79 @@ fn shared_template_name_for_shard(
     }
 }
 
-fn shared_adhoc_template_shard_count() -> usize {
-    *SHARED_ADHOC_TEMPLATE_SHARD_COUNT
-}
-
 fn is_managed_pool_slot_name(key: &str) -> bool {
     key.strip_prefix("sinex_test_pool_")
         .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
 }
 
-fn shared_template_layout_for_key(key: &str) -> (&'static str, usize) {
-    if is_managed_pool_slot_name(key) {
-        (SHARED_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT)
+fn normalize_adhoc_template_key(key: &str) -> &str {
+    let Some((prefix, suffix)) = key.rsplit_once('_') else {
+        return key;
+    };
+    if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        prefix
     } else {
-        (
-            SHARED_ADHOC_TEMPLATE_BASE_NAME,
-            shared_adhoc_template_shard_count(),
-        )
+        key
     }
 }
 
-fn shared_template_name_for_key(key: &str) -> String {
-    let (base_name, shard_count) = shared_template_layout_for_key(key);
-    if shard_count <= 1 {
-        return base_name.to_string();
+fn sanitize_adhoc_template_slug(key: &str) -> String {
+    let mut slug = String::with_capacity(key.len().min(16));
+    let mut last_was_separator = false;
+    for ch in key.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if ch == '_' || ch == '-' {
+            Some('_')
+        } else {
+            None
+        };
+        let Some(normalized) = normalized else {
+            continue;
+        };
+        if normalized == '_' {
+            if last_was_separator {
+                continue;
+            }
+            last_was_separator = true;
+        } else {
+            last_was_separator = false;
+        }
+        slug.push(normalized);
+        if slug.len() >= 12 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('_');
+    if slug.is_empty() {
+        "key".to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
+fn adhoc_template_name_for_key(key: &str) -> String {
+    let semantic_key = normalize_adhoc_template_key(key);
+    let mut hasher = DefaultHasher::new();
+    semantic_key.hash(&mut hasher);
+    let hash = hasher.finish();
+    let slug = sanitize_adhoc_template_slug(semantic_key);
+    format!("{ADHOC_TEMPLATE_BASE_NAME}_{slug}_{hash:016x}")
+}
+
+fn template_name_for_key(key: &str) -> String {
+    if !is_managed_pool_slot_name(key) {
+        return adhoc_template_name_for_key(key);
     }
 
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
-    let shard = (hasher.finish() as usize) % shard_count;
-    shared_template_name_for_shard(base_name, shard_count, shard)
+    let shard = (hasher.finish() as usize) % SHARED_POOL_TEMPLATE_SHARD_COUNT;
+    shared_template_name_for_shard(
+        SHARED_TEMPLATE_BASE_NAME,
+        SHARED_POOL_TEMPLATE_SHARD_COUNT,
+        shard,
+    )
 }
 
 fn shared_template_family_names(base_name: &str, shard_count: usize) -> Vec<String> {
@@ -157,27 +193,41 @@ fn shared_template_family_names(base_name: &str, shard_count: usize) -> Vec<Stri
         .collect()
 }
 
-pub(super) fn shared_template_names_for_keys(keys: &[String]) -> Vec<String> {
+pub(super) fn template_names_for_keys(keys: &[String]) -> Vec<String> {
     let mut names = BTreeSet::new();
     for key in keys {
-        names.insert(shared_template_name_for_key(key));
+        names.insert(template_name_for_key(key));
     }
     names.into_iter().collect()
 }
 
-pub(super) fn invalidate_shared_template_trust() {
-    for template_name in shared_template_family_names(
-        SHARED_TEMPLATE_BASE_NAME,
-        SHARED_POOL_TEMPLATE_SHARD_COUNT,
-    )
-    .into_iter()
-    .chain(
-        shared_template_family_names(
-            SHARED_ADHOC_TEMPLATE_BASE_NAME,
-            shared_adhoc_template_shard_count(),
-        ),
-    ) {
+pub(super) fn invalidate_template_trust() {
+    for template_name in
+        shared_template_family_names(SHARED_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT)
+    {
         invalidate_template_trust_stamp(&template_name);
+    }
+    invalidate_template_trust_prefix(ADHOC_TEMPLATE_BASE_NAME);
+}
+
+fn invalidate_template_trust_prefix(prefix: &str) {
+    let Some(dir) = template_trust_state_path(prefix)
+        .parent()
+        .map(Path::to_path_buf)
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_name.starts_with(prefix) {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -323,15 +373,12 @@ mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.
     use super::{
-        SHARED_ADHOC_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT,
-        SHARED_TEMPLATE_BASE_NAME, check_template_reuse,
-        connect_admin_with_retry, ensure_template_database_for_key, load_template_trust_stamp,
-        is_managed_pool_slot_name,
+        ADHOC_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT, SHARED_TEMPLATE_BASE_NAME,
+        check_template_reuse, connect_admin_with_retry, ensure_template_database_for_key,
+        is_managed_pool_slot_name, load_template_trust_stamp, normalize_adhoc_template_key,
         schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
-        shared_adhoc_template_shard_count, shared_template_name_for_key,
-        shared_template_names_for_keys, store_template_meta,
-        store_template_trust_stamp,
-        template_trust_matches, template_trust_state_path_in,
+        store_template_meta, store_template_trust_stamp, template_name_for_key,
+        template_names_for_keys, template_trust_matches, template_trust_state_path_in,
     };
     use crate::sandbox::db::pool::PoolConfig;
     use crate::sandbox::db::pool::config::{SLOT_MAX_CONNECTIONS, replace_db_name};
@@ -340,8 +387,8 @@ mod tests {
         create_database_from_template_admin, wait_for_database_absence_admin,
     };
     use sinex_primitives::temporal::Timestamp;
-    use std::fs;
     use std::collections::HashMap;
+    use std::fs;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -406,7 +453,10 @@ mod tests {
     async fn unreadable_template_trust_stamp_is_removed() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let path = template_trust_state_path_in(dir.path(), SHARED_TEMPLATE_BASE_NAME);
-        std::fs::create_dir_all(path.parent().expect("template trust path should have parent"))?;
+        std::fs::create_dir_all(
+            path.parent()
+                .expect("template trust path should have parent"),
+        )?;
         std::fs::write(&path, "{ not-json }")?;
 
         assert!(load_template_trust_stamp(&path)?.is_none());
@@ -415,34 +465,41 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn shared_template_name_for_key_is_stable() -> TestResult<()> {
-        let first = shared_template_name_for_key("slot-alpha");
-        let second = shared_template_name_for_key("slot-alpha");
+    async fn template_name_for_key_is_stable() -> TestResult<()> {
+        let first = template_name_for_key("slot-alpha");
+        let second = template_name_for_key("slot-alpha");
         assert_eq!(first, second, "template sharding must be deterministic");
         Ok(())
     }
 
     #[sinex_test]
-    async fn shared_template_name_for_key_spreads_ad_hoc_slots_across_available_shards()
+    async fn template_name_for_key_reuses_semantic_adhoc_family_across_pid_suffixes()
     -> TestResult<()> {
-        let names = (0..64)
-            .map(|index| shared_template_name_for_key(&format!("slot-{index}")))
-            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            normalize_adhoc_template_key("sinex_test_pool_prune_repair_1234"),
+            "sinex_test_pool_prune_repair"
+        );
+        let first = template_name_for_key("sinex_test_pool_prune_repair_1234");
+        let second = template_name_for_key("sinex_test_pool_prune_repair_9876");
         assert!(
-            names.len() >= shared_adhoc_template_shard_count().min(2),
-            "different ad hoc keys should not all collapse onto one shared template shard"
+            first.starts_with(ADHOC_TEMPLATE_BASE_NAME),
+            "ad hoc template names should use the dedicated ad hoc family"
+        );
+        assert_eq!(
+            first, second,
+            "ephemeral numeric suffixes should not force fresh template families"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn shared_template_name_for_key_keeps_managed_pool_slots_on_legacy_family()
-    -> TestResult<()> {
+    async fn template_name_for_key_keeps_managed_pool_slots_on_shared_family() -> TestResult<()> {
         let names = (0..64)
-            .map(|index| shared_template_name_for_key(&format!("sinex_test_pool_{index}")))
+            .map(|index| template_name_for_key(&format!("sinex_test_pool_{index}")))
             .collect::<std::collections::HashSet<_>>();
         assert!(
-            names.iter()
+            names
+                .iter()
                 .all(|name| name.starts_with(SHARED_TEMPLATE_BASE_NAME)),
             "managed pool slots should stay on the legacy shared-template family"
         );
@@ -456,30 +513,35 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn shared_template_name_for_key_routes_ad_hoc_poolish_names_to_ad_hoc_family()
-    -> TestResult<()> {
-        let name = shared_template_name_for_key("sinex_test_pool_recreate_1234");
+    async fn template_name_for_key_isolates_distinct_adhoc_semantic_families() -> TestResult<()> {
+        let first = template_name_for_key("sinex_test_pool_recreate_1234");
+        let second = template_name_for_key("sinex_test_template_shared_drift_1234");
         assert!(
-            name.starts_with(SHARED_ADHOC_TEMPLATE_BASE_NAME),
-            "non-managed pool-like names should use the ad hoc shared-template family"
+            first.starts_with(ADHOC_TEMPLATE_BASE_NAME)
+                && second.starts_with(ADHOC_TEMPLATE_BASE_NAME),
+            "non-managed names should use the dedicated ad hoc template family"
+        );
+        assert_ne!(
+            first, second,
+            "distinct semantic ad hoc keys should not convoy on one shared template family"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn shared_template_names_for_keys_deduplicates_shards() -> TestResult<()> {
+    async fn template_names_for_keys_deduplicates_families() -> TestResult<()> {
         let keys = vec![
-            "slot-alpha".to_string(),
-            "slot-alpha".to_string(),
-            "slot-beta".to_string(),
-            "slot-gamma".to_string(),
+            "sinex_test_pool_0".to_string(),
+            "sinex_test_pool_0".to_string(),
+            "sinex_test_pool_1".to_string(),
+            "sinex_test_pool_2".to_string(),
         ];
-        let names = shared_template_names_for_keys(&keys);
+        let names = template_names_for_keys(&keys);
         let unique = names.iter().collect::<std::collections::HashSet<_>>();
         assert_eq!(
             names.len(),
             unique.len(),
-            "shared template warming should only visit each shard once"
+            "template warming should only visit each family once"
         );
         Ok(())
     }
@@ -495,14 +557,13 @@ mod tests {
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
-        let shared_guard =
-            ensure_template_database_for_key(
-                &config.admin_url,
-                &config.base_url,
-                SLOT_MAX_CONNECTIONS,
-                &template_name,
-            )
-            .await?;
+        let shared_guard = ensure_template_database_for_key(
+            &config.admin_url,
+            &config.base_url,
+            SLOT_MAX_CONNECTIONS,
+            &template_name,
+        )
+        .await?;
         let shared_template_name = shared_guard.info.name.clone();
         let shared_extensions = shared_guard.info.extensions.clone();
         shared_guard.release().await?;
@@ -567,14 +628,13 @@ mod tests {
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
-        let shared_guard =
-            ensure_template_database_for_key(
-                &config.admin_url,
-                &config.base_url,
-                SLOT_MAX_CONNECTIONS,
-                &template_name,
-            )
-            .await?;
+        let shared_guard = ensure_template_database_for_key(
+            &config.admin_url,
+            &config.base_url,
+            SLOT_MAX_CONNECTIONS,
+            &template_name,
+        )
+        .await?;
         let shared_template_name = shared_guard.info.name.clone();
         let shared_extensions = shared_guard.info.extensions.clone();
         shared_guard.release().await?;
@@ -685,24 +745,18 @@ pub(super) async fn ensure_template_database_for_key(
     slot_max_connections: u32,
     key: &str,
 ) -> TestResult<TemplateGuard> {
-    let template_name = shared_template_name_for_key(key);
-    ensure_template_database_named(
-        admin_url,
-        _base_url,
-        slot_max_connections,
-        &template_name,
-    )
-    .await
+    let template_name = template_name_for_key(key);
+    ensure_template_database_named(admin_url, _base_url, slot_max_connections, &template_name).await
 }
 
-pub(super) async fn ensure_shared_templates_for_keys(
+pub(super) async fn ensure_templates_for_keys(
     admin_url: &str,
     _base_url: &str,
     slot_max_connections: u32,
     keys: &[String],
 ) -> TestResult<TemplateInfo> {
     let mut warmed_info: Option<TemplateInfo> = None;
-    for template_name in shared_template_names_for_keys(keys) {
+    for template_name in template_names_for_keys(keys) {
         let template_guard = ensure_template_database_named(
             admin_url,
             _base_url,
@@ -716,7 +770,7 @@ pub(super) async fn ensure_shared_templates_for_keys(
         if let Some(existing) = &warmed_info {
             if existing.extensions != info.extensions {
                 return Err(eyre!(
-                    "shared template shards diverged on extension metadata: {} vs {}",
+                    "template families diverged on extension metadata: {} vs {}",
                     existing.name,
                     info.name,
                 ));
@@ -726,7 +780,7 @@ pub(super) async fn ensure_shared_templates_for_keys(
         }
     }
 
-    warmed_info.ok_or_else(|| eyre!("shared template warming requires at least one key"))
+    warmed_info.ok_or_else(|| eyre!("template warming requires at least one key"))
 }
 
 async fn ensure_template_database_named(
@@ -922,7 +976,9 @@ async fn check_template_reuse(
             invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
-        (None, Some(m)) if !m.extensions.is_empty() => (m.extensions, ReuseVerification::NoFingerprint),
+        (None, Some(m)) if !m.extensions.is_empty() => {
+            (m.extensions, ReuseVerification::NoFingerprint)
+        }
         (None, Some(_)) => {
             eprintln!(
                 "♻️  Template metadata missing extension versions ({template_name}); recreating template"
@@ -938,12 +994,7 @@ async fn check_template_reuse(
     };
 
     let trust_path = template_trust_state_path(template_name);
-    if template_trust_matches(
-        &trust_path,
-        template_name,
-        desired_fingerprint,
-        &extensions,
-    )? {
+    if template_trust_matches(&trust_path, template_name, desired_fingerprint, &extensions)? {
         eprintln!("⚡ Template database {template_name} reused (trusted cache)");
         return Ok(Some(extensions));
     }
