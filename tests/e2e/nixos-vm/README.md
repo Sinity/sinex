@@ -1,25 +1,22 @@
 # Sinex VM Test Suite
 
-This directory contains NixOS VM-based integration and performance tests for Sinex.
+This directory contains the NixOS VM scenarios used to exercise Sinex deployment
+paths and host/runtime behavior.
 
 ## Quick Start
 
 ```bash
-# Run smoke tests (quick validation)
-NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
-  ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke
+# List exported VM checks
+xtask test vm --list
 
-# Run all tests
-NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
-  ./tests/e2e/nixos-vm/run-vm-tests.sh -c all
+# Run the exported smoke slice
+xtask test vm --category smoke
 
-# Debug a specific test
-NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
-  ./tests/e2e/nixos-vm/run-vm-tests.sh -d basic
+# Run the exported integration slice
+xtask test vm --category integration
 
-# Run tests in parallel (experimental)
-NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
-  ./tests/e2e/nixos-vm/run-vm-tests.sh -p 2 -c smoke
+# Build one exported check and keep the failed VM derivation around
+xtask test vm --keep-failed basic
 ```
 
 ## Host Requirements
@@ -27,52 +24,28 @@ NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = t
 - Linux host with KVM enabled (`/dev/kvm` accessible for the current user).
 - Minimum 4 CPU cores (8+ recommended for integration/performance suites).
 - Minimum 8 GB RAM (16+ GB recommended for performance/parallel runs).
-- At least 20 GB free disk space (more if running performance + snapshot suites).
+- At least 20 GB free disk space.
 
 ## CI Coverage
 
 - The default GitHub Actions gate in `.github/workflows/ci.yml` does **not** execute
   this directory directly. It runs only the Postgres-backed `xtask ci workspace`
   gate.
-- Flake checks and other automation currently cover only a narrow VM slice:
-  `basic` smoke plus `preflight` coordination coverage.
-- All other scenarios (`maintenance`, `satellite-matrix`, `multi-source`,
-  `failure-recovery`, `performance`) are non-gating. Run them locally with
-  `./tests/e2e/nixos-vm/run-vm-tests.sh -c integration` or `-c all` before landing
-  changes that touch their areas.
+- The public VM runner surface is the exported flake-check suite from
+  `tests/e2e/nixos-vm/default.nix`.
+- `xtask test vm` runs those exported checks; updating the scenario registry there
+  changes the public VM surface.
 
-## Test Runner
+## Runner Model
 
-The enhanced test runner (`run-vm-tests.sh`) provides:
+`xtask test vm` builds exported flake checks under `.#checks.<system>.sinex-vm-*`.
+It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 
-- **Test categorization**: smoke, integration, performance, chaos
-- **Debugging support**: Keep VMs running after failure with `-d`
-- **Parallel execution**: Run tests concurrently with `-p`
-- **Detailed reporting**: Test results saved to `./test-results/`
-- **Configurable timeouts**: Default 15 minutes per test (override with `-t`)
-
-### Examples
-
-```bash
-# List available tests
-./tests/e2e/nixos-vm/run-vm-tests.sh -l
-
-# Run specific category
-./tests/e2e/nixos-vm/run-vm-tests.sh -c performance
-
-# Debug mode (keeps VM on failure)
-./tests/e2e/nixos-vm/run-vm-tests.sh -d basic
-
-# Custom timeout and output directory
-./tests/e2e/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
-```
-
-## Snapshot Pinning
-
-VM snapshot runs use the `virtualisation.baseSnapshot` option (default: `after-services`)
-from `tests/e2e/nixos-vm/common/vm-snapshot-base.nix`. Enable snapshot mode by setting
-`virtualisation.snapshotMode = true` in a scenario, and ensure the named snapshot exists
-in the qcow2 image.
+- `--list` shows the currently exported checks.
+- `--category smoke|integration|performance|chaos|all` selects from the built-in
+  catalogue.
+- `--validate` syntax-checks the scenario files without running them.
+- Positional test names run individual exported checks, for example `xtask test vm basic`.
 
 ## Test Structure
 
@@ -84,39 +57,35 @@ in the qcow2 image.
 
 ### Test Categories
 
-1. **Smoke Tests** (`test-scenarios/basic-flow.nix`)
-   - Quick validation of core functionality
-   - ~2-5 minutes runtime
-   - Minimal resource requirements
-
-2. **Integration Tests** 
-   - Comprehensive feature validation
-   - Multiple event source testing (`test-scenarios/satellite-matrix.nix`)
-   - Maintenance timers and git-annex flow (`test-scenarios/maintenance.nix`)
-   - Multi-source stress path (`test-scenarios/multi-source.nix`)
-   - Failure recovery drills (`test-scenarios/failure-recovery.nix`)
-   - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
-   - *(Coming soon: production scale)*
-
-3. **Performance Tests**
-   - Satellite performance harness (`test-scenarios/performance.nix`)
-   - Load-generator coverage across filesystem/system sources
-   - Metrics inspection via helper scripts
-
-4. **Chaos Tests** *(satellite port pending)*
-   - Failure injection across satellites and core services
-   - Cascading and resource-storm scenarios with recovery asserts
-   - Continuous monitoring via the chaos control plane
+1. **Smoke**
+   - `basic`
+   - `replay-smoke`
+2. **Integration**
+   - `preflight`
+   - `maintenance`
+   - `node-matrix`
+   - `multi-source`
+   - `failure-recovery`
+   - `kitty-eventsource`
+   - `mtls-enforcement`
+   - `sinexctl-e2e`
+   - `hostile-host`
+   - `migration-stress`
+3. **Performance**
+   - `performance`
+   - `production-scale`
+4. **Chaos**
+   - `chaos-network-partition`
+   - `chaos-process-restart`
+   - `chaos-clock-skew`
+   - `xtask-concurrency`
 
 ## Coverage Notes
 
-- `basic` and `preflight` are the scenarios most closely aligned with automated
-  gating today.
-- The rest of the suite exists to catch deployment-path regressions that ordinary
-  Rust/package tests will miss, but those scenarios currently rely on explicit local
-  runs or targeted follow-up automation.
-- Treat this directory as deployment-path coverage, not as a promise that every
-  scenario is exercised on every PR.
+- `xtask test vm --validate` is the cheap way to keep the scenario tree honest
+  when you touch scenario files or shared VM helper modules.
+- Default CI still does not exercise the VM suite automatically; treat these
+  scenarios as explicit deployment-path coverage that must be invoked on purpose.
 
 ## Writing New Tests
 
@@ -212,33 +181,11 @@ sinex-monitor [interval_seconds]
 ### Debugging Failed Tests
 
 ```bash
-# Run test in debug mode
-NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
-  ./tests/e2e/nixos-vm/run-vm-tests.sh -d failing-test
+# Keep failed derivation outputs for inspection
+xtask test vm --keep-failed basic
 
-# When test fails, VM keeps running
-# Find VM build directory in output
-cd /tmp/nix-build-*.drv-0/
+# Or build the check directly with full Nix logs
+nix build -L .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).sinex-vm-basic --keep-failed
 
-# Connect to VM
-./bin/nixos-test-driver
-
-# In Python REPL:
->>> machine.shell_interact()
-# Now you're in the VM shell for debugging
+# Inspect the kept-failed directory Nix prints on failure.
 ```
-
-### Performance Issues
-
-1. **Slow VM startup**: Use minimal profile for simple tests
-2. **High memory usage**: Check for memory leaks in test
-3. **Disk I/O bottleneck**: Ensure tmpfs is used for test data
-4. **CPU saturation**: Limit parallel event generation
-
-## Future Improvements
-
-- [ ] Automated snapshot creation + distribution for multi-host runs
-- [ ] Test result caching based on code changes
-- [ ] Distributed test execution across multiple machines
-- [ ] Integration with CI/CD pipelines
-- [ ] Visual test result dashboard

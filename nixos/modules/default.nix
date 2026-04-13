@@ -6,11 +6,13 @@ let
   cfg = config.services.sinex;
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
     renderDatabaseUrl
     ;
+  inherit (secretResolution) resolveNamedSecretPath;
 
   defaultSinexPackage =
     if pkgs ? sinex then
@@ -237,7 +239,15 @@ in
           passwordFile = mkOption {
             type = nullOr path;
             default = null;
-            description = "Path to a file containing the database password.";
+            description = ''
+              Optional PostgreSQL password file.
+              When unset, the module falls back to the conventional secret sources
+              <literal>sinex-local-db</literal> / <literal>sinex-remote-db</literal>
+              and the declarative files <literal>/etc/sinex/db-password</literal> /
+              <literal>/etc/sinex/remote-db-password</literal>.
+              Local loopback deployments using <literal>localAuth = "trust"</literal>
+              usually do not need this at all.
+            '';
           };
 
           localAuth = mkOption {
@@ -247,7 +257,8 @@ in
               Authentication method for loopback TCP connections (127.0.0.1/::1).
               Use "trust" for local-only deployments where the OS provides access control.
               Use "scram-sha-256" to require password authentication even on loopback;
-              requires services.sinex.database.passwordFile to be set.
+              requires a database password source (services.sinex.database.passwordFile or
+              an agenix secret named sinex-local-db / sinex-remote-db).
             '';
           };
 
@@ -1225,8 +1236,31 @@ in
                 grafana = mkOption {
                   type = submodule {
                     options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable Grafana."; };
+                      enable = mkOption { type = bool; default = false; description = "Enable Grafana."; };
                       port = mkOption { type = port; default = 3000; description = "Grafana port."; };
+                      secretKey = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = ''
+                          Optional literal Grafana secret key.
+                          When unset, the module first looks for the conventional secret sources
+                          <literal>sinex-grafana-secret-key</literal> or
+                          <literal>grafana-secret-key</literal> (including
+                          <literal>/etc/sinex/grafana-secret-key</literal> when declared via
+                          <literal>environment.etc</literal>), and otherwise derives a stable
+                          host-local key automatically.
+                        '';
+                      };
+                      secretKeyFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Optional path to a Grafana secret key file.
+                          This is only needed when you want the module to read the key from a
+                          specific file instead of using the agenix convention or the derived
+                          declarative default.
+                        '';
+                      };
                     };
                   };
                   default = {};
@@ -1431,8 +1465,8 @@ in
             default = null;
             description = ''
               Path to the directory containing age-encrypted secret files (.age).
-              When null, defaults to the <literal>secret/</literal> directory adjacent to the Sinex
-              NixOS modules (i.e., two levels above secrets.nix in the Sinex source tree).
+              When null, defaults to the <literal>nixos/secret/</literal> directory in the Sinex
+              source tree (i.e., adjacent to the Sinex NixOS modules).
               Set this when importing the Sinex NixOS module from an external flake and
               storing secrets in a project-specific location.
             '';
@@ -1441,7 +1475,13 @@ in
           gatewayAdminTokenFile = mkOption {
             type = nullOr str;
             default = null;
-            description = "Path to the gateway admin token file (typically under /run/agenix/...). If unset while the gateway is enabled, the unit will refuse to start.";
+            description = ''
+              Optional path to the gateway admin token file.
+              When unset, the module first looks for the conventional secret sources
+              <literal>sinex-gateway-admin-token</literal> (agenix) and
+              <literal>/etc/sinex/gateway-admin-token</literal> (declarative environment.etc),
+              and the gateway refuses to start only if none of those exist.
+            '';
           };
         };
       };
@@ -1475,29 +1515,31 @@ in
       dbCfg = cfg.database;
       databaseUrl = renderDatabaseUrl dbCfg;
       secretPaths = config.sinex.secrets.paths or {};
-      resolveSecretPath = explicit: names:
-        if explicit != null then explicit else
-        let
-          match = findFirst (name: builtins.hasAttr name secretPaths) null names;
-        in
-        if match == null then null else builtins.getAttr match secretPaths;
+      resolveSecretPath = resolveNamedSecretPath secretPaths;
       gatewayAdminTokenFile =
-        if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
-        else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
-        else null;
+        resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
+          "sinex-gateway-admin-token"
+        ];
+      effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
+        "sinex-local-db"
+        "sinex-remote-db"
+      ];
       natsTlsCfg = cfg.nodes.nats.tls;
       natsAuthCfg = cfg.nodes.nats.auth;
       effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
         "sinex-nats-ca"
         "nats-ca"
+        "sinex-remote-nats-ca"
       ];
       effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
         "sinex-nats-client-cert"
         "nats-client-cert"
+        "sinex-remote-nats-cert"
       ];
       effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
         "sinex-nats-client-key"
         "nats-client-key"
+        "sinex-remote-nats-key"
       ];
       effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
         "sinex-nats-token"
@@ -1599,7 +1641,7 @@ in
           gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
         };
         secrets = {
-          database_password_file = cfg.database.passwordFile;
+          database_password_file = effectiveDatabasePasswordFile;
           gateway_admin_token_file = gatewayAdminTokenFile;
           gateway_tls_cert_file = gatewayTlsCertFile;
           gateway_tls_key_file = gatewayTlsKeyFile;
@@ -1662,7 +1704,11 @@ in
           }
           {
             assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || gatewayAdminTokenFile != null;
-            message = "Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile or provide an agenix secret named sinex-gateway-admin-token.";
+            message = ''
+              Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile,
+              provide an agenix secret named sinex-gateway-admin-token, or define
+              environment.etc."sinex/gateway-admin-token".
+            '';
           }
           {
             assertion =
@@ -1842,7 +1888,7 @@ in
             ExecStart = mkDatabasePasswordExec {
               name = "dlq-cleanup";
               command = dlqCleanupScript;
-              passwordFile = if cfg.database.enable then cfg.database.passwordFile else null;
+              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
             };
             # Retry within the same calendar window if cleanup fails
             # (e.g. gateway unavailable, transient I/O error).

@@ -32,7 +32,6 @@ values derived from `stateRoot` and the global `logLevel`.
     enable = true;
     package = pkgs.sinex;
     users.target = "alice";
-    secrets.gatewayAdminTokenFile = "/run/agenix/sinex-gateway-admin-token";
 
     stateRoot = "/var/lib/sinex";
     logLevel = "info";
@@ -50,15 +49,20 @@ values derived from `stateRoot` and the global `logLevel`.
 
     observability.monitoring = {
       enable = true;
-      grafana.enable = true;
+      grafana = {
+        enable = true;
+      };
     };
   };
 }
 ```
 
 `core.gateway` is enabled by default, so the quick-start config needs a real
-gateway admin token file before the generated unit will start. The agenix
-fallback resolves to `/run/agenix/sinex-gateway-admin-token`.
+gateway admin token file before the generated unit will start. The module
+auto-resolves either an agenix secret named `sinex-gateway-admin-token` or a
+declarative `environment.etc."sinex/gateway-admin-token"` entry; set
+`services.sinex.secrets.gatewayAdminTokenFile` only when you need a non-standard
+path.
 
 ### Database
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
@@ -71,6 +75,11 @@ disabled (e.g. staging migrations).
 - `database.extraDatabases` lets you provision additional DBs (e.g. `sinex_dev`)
   alongside the primary `database.name`; the module applies extensions during
   PostgreSQL setup and declarative schema apply against each entry on boot.
+- `database.passwordFile` is only needed when local auth is password-based or
+  the DB is remote; otherwise loopback deployments can stay passwordless. When
+  you do need a file, the module resolves `sinex-local-db` /
+  `sinex-remote-db` and the conventional declarative files
+  `/etc/sinex/db-password` / `/etc/sinex/remote-db-password` automatically.
 - Shared preload libraries always include TimescaleDB support plus schema/vector extensions required by migrations.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both
   Postgres `max_connections` and the CLI flags passed to service binaries.
@@ -128,10 +137,20 @@ disabled (e.g. staging migrations).
   secured local NATS deployments do not need a separate bootstrap-only secret path.
 
 ### Secret Conventions
-- gateway admin token falls back to agenix secret `sinex-gateway-admin-token`
-  at `/run/agenix/sinex-gateway-admin-token`
-- local NATS server TLS falls back to `sinex-nats-server-cert`, `sinex-nats-server-key`, and `sinex-nats-client-ca`
-- shared NATS client TLS/auth falls back to `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, and `sinex-nats-token`
+- gateway admin token falls back to `sinex-gateway-admin-token`, which can come
+  from agenix or from declarative `environment.etc."sinex/gateway-admin-token"`
+- database password surfaces fall back to `sinex-local-db` / `sinex-remote-db`
+  and the conventional declarative files `/etc/sinex/db-password` /
+  `/etc/sinex/remote-db-password`
+- local NATS server TLS falls back to `sinex-nats-server-cert`,
+  `sinex-nats-server-key`, and `sinex-nats-client-ca`
+- shared NATS client TLS/auth falls back to `sinex-nats-ca`,
+  `sinex-nats-client-cert`, `sinex-nats-client-key`,
+  `sinex-nats-client-creds`, `sinex-nats-client-nkey`, and `sinex-nats-token`
+- those NATS/TLS names can also be provided declaratively through
+  `environment.etc` under `/etc/sinex/*.pem`, `/etc/sinex/*.creds`, and
+  `/etc/sinex/*.nk` using the matching filenames documented in
+  `nixos/modules/secrets-management.md`
 - compatibility aliases are also accepted for the shared NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`
 
 ### Environment Rendering
@@ -142,9 +161,19 @@ disabled (e.g. staging migrations).
 
 ### Observability
 - Structured log retention is configured via `observability.logging.retention`.
-- Prometheus/Grafana/exporters turn on automatically when
-  `observability.monitoring.enable = true`. Extra scrape configs drop straight
-  into `services.prometheus.extraScrapeConfigs`.
+- Prometheus/exporters turn on automatically when
+  `observability.monitoring.enable = true`.
+- Grafana stays opt-in under `observability.monitoring.grafana.enable`; when you
+  enable it, the module derives a stable local secret key automatically and will
+  prefer `sinex-grafana-secret-key` / `grafana-secret-key` from agenix or
+  declarative `environment.etc."sinex/grafana-secret-key"`, or an explicit
+  `secretKeyFile` when provided.
+- Extra scrape configs drop straight into `services.prometheus.extraScrapeConfigs`.
+- Grafana provisions a fixed Prometheus datasource (`sinex-prometheus`), a fixed
+  PostgreSQL datasource (`sinex-postgres`), and tracked dashboards from
+  `nixos/monitoring/grafana-dashboards/`.
+- The built-in dashboards intentionally use `sinex_telemetry.*`: continuous
+  aggregates for operator telemetry and live event-time views for recent activity.
 - Grafana binds to loopback by default; widen it explicitly if you truly need
   remote access and have matching firewall/TLS controls.
 - `observability.alerts.enable` adds the provided rule files to Prometheus.

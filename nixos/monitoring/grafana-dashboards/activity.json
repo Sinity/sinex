@@ -1,0 +1,270 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT last_focus_time, workspace, window_class, window_title, focus_event_count FROM sinex_telemetry.current_window_focus WHERE $__timeFilter(bucket) ORDER BY last_focus_time DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Focused Windows",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, workspace, SUM(focus_event_count) AS focus_events FROM sinex_telemetry.current_window_focus WHERE $__timeFilter(bucket) GROUP BY time, workspace ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Workspace Focus Events",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT command, shell, SUM(total_executions)::bigint AS total_executions, SUM(successful_executions)::bigint AS successful_executions, SUM(failed_executions)::bigint AS failed_executions, ROUND(AVG(avg_duration_ms)::numeric, 2) AS avg_duration_ms FROM sinex_telemetry.command_frequency_hourly WHERE $__timeFilter(bucket) GROUP BY command, shell ORDER BY total_executions DESC, command ASC LIMIT 25",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Commands",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, COALESCE(shell, 'unknown') AS shell, SUM(failed_executions)::bigint AS failed_executions FROM sinex_telemetry.command_frequency_hourly WHERE $__timeFilter(bucket) GROUP BY time, shell ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Command Failures by Shell",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, event_type, SUM(total_events)::bigint AS total_events FROM sinex_telemetry.file_activity_summary WHERE $__timeFilter(bucket) GROUP BY time, event_type ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "File Activity by Event Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT directory, event_type, SUM(total_events)::bigint AS total_events, SUM(unique_files)::bigint AS unique_files FROM sinex_telemetry.file_activity_summary WHERE $__timeFilter(bucket) GROUP BY directory, event_type ORDER BY total_events DESC, directory ASC LIMIT 25",
+          "refId": "A"
+        }
+      ],
+      "title": "Most Active Directories",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "sinex",
+    "activity"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "Sinex Activity",
+  "uid": "sinex-activity",
+  "version": 1,
+  "weekStart": ""
+}

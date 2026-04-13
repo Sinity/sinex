@@ -492,7 +492,7 @@ pkgs.testers.nixosTest {
     services.sinex = {
       database = {
         autoSetup = true;
-        name = "sinex_perf";
+        name = "sinex_perf_dev";
         user = "sinex_perf";
       };
 
@@ -620,7 +620,7 @@ pkgs.testers.nixosTest {
       # Optional CPU pinning for dedicated core isolation.
       # Set SINEX_BENCH_CPU_AFFINITY=2,3 (or similar) to enable.
       # Default: no pinning (safe for all CI environments).
-      qemu.package = pkgs.symlinkJoin {
+      qemu.package = lib.mkForce (pkgs.symlinkJoin {
         name = "qemu-bench";
         paths = [ pkgs.qemu_kvm ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -631,7 +631,7 @@ pkgs.testers.nixosTest {
                        --cpu-list "''${SINEX_BENCH_CPU_AFFINITY}" "''$0" "''$@"
                    fi'
         '';
-      };
+      });
     };
   };
 

@@ -7,19 +7,16 @@
 { config, lib, pkgs, ... }:
 
 {
-  imports = [ ./modules ];
+  imports = [ ../modules ];
 
   services.sinex = {
     enable = true;
     users.target = "sinex-prod"; # replace with the operator account to monitor
-    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
-
     database = {
       autoSetup = true;
       host = "127.0.0.1";
       name = "sinex_prod";
       user = "sinex";
-      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     lifecycle.maintenance.enable = true;
@@ -96,7 +93,6 @@
       kitty = {
         enable = true;
         autoConfigure = true;
-        configFile = "~/.config/kitty/kitty.conf";
       };
     };
   };
@@ -122,8 +118,7 @@
   };
 
   # Ensure the monitored operator account exists
-  environment.etc."sinex/gateway-admin-token".text = "example-coordination-admin:admin";
-  environment.etc."sinex/db-password".text = "example-db-password";
+  environment.etc."sinex/gateway-admin-token".text = "coordination-admin:admin";
 
   users.users."sinex-prod" = {
     isNormalUser = true;
