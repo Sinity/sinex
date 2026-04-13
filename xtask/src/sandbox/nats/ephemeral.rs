@@ -302,24 +302,8 @@ impl EphemeralNats {
             cfg.simulate_latency().await;
             cfg.maybe_fail("simulated connection failure")?;
         }
-
-        let mut config = NatsConnectionConfig::default();
-        config.url.clone_from(&self.url);
-        config.require_tls = self.tls.is_some();
-        if let Some(tls) = &self.tls {
-            config.ca_cert = Some(tls.ca_cert.clone());
-            config.client_cert = Some(tls.client_cert.clone());
-            config.client_key = Some(tls.client_key.clone());
-        }
-        if let Some(token) = &self.token {
-            config.token = Some(token.clone());
-        }
-        let opts = config
-            .to_options()
-            .await
-            .map_err(|e| eyre!("failed to build NATS connect options: {e}"))?;
-
-        timeout(Duration::from_secs(5), opts.connect(&self.url))
+        let config = self.connection_config();
+        timeout(Duration::from_secs(5), config.connect())
             .await
             .map_err(|_| eyre!("timed out connecting to NATS at {}", self.url))?
             .map_err(|err| eyre!("failed to connect to NATS at {}: {err}", self.url))

@@ -10,7 +10,7 @@ use color_eyre::eyre::Result;
 use std::path::PathBuf;
 
 use crate::affected;
-use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
 use crate::nextest::runner::TestRunner;
 use crate::process::ProcessBuilder;
 
@@ -327,6 +327,43 @@ pub struct VmArgs {
     pub args: Vec<String>,
 }
 
+impl TestCommand {
+    fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
+        let mut args = Vec::new();
+
+        if self.debug {
+            args.push("--debug".to_string());
+        }
+        if self.fail_fast {
+            args.push("--fail-fast".to_string());
+        }
+        if self.heavy {
+            args.push("--heavy".to_string());
+        }
+        if self.include_ignored {
+            args.push("--include-ignored".to_string());
+        }
+        if self.update_snapshots {
+            args.push("--update-snapshots".to_string());
+        }
+        if let Some(ref filter) = self.filter {
+            args.push(format!("--filter={filter}"));
+        }
+        if let Some(threads) = self.threads {
+            args.push(format!("--threads={threads}"));
+        }
+        if let Some(retries) = self.retries {
+            args.push(format!("--retries={retries}"));
+        }
+        if let Some(ref timeout) = self.timeout {
+            args.push(format!("--timeout={timeout}"));
+        }
+
+        args.push(scope.encode_marker());
+        args
+    }
+}
+
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
@@ -596,28 +633,39 @@ impl XtaskCommand for TestCommand {
 
         // Affected mode is default ON, --all disables it
         let use_affected = !self.all && self.packages.is_empty();
-        let affected_filter = if use_affected {
+        let (affected_filter, workload_scope) = if use_affected {
             let stage = ctx.start_stage("affected");
             let packages = affected::affected_packages();
             ctx.finish_stage(stage, packages.is_ok());
-            let packages = packages?;
+            let mut packages = packages?;
             if packages.is_empty() {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.
                 if ctx.is_human() {
                     println!("No changes detected. Running ALL tests.");
                 }
-                None
+                (None, WorkloadScope::Workspace)
             } else {
+                packages.sort();
+                packages.dedup();
                 let filter = affected::build_nextest_filter(&packages);
                 if ctx.is_human() {
                     println!("{}", affected::affected_summary(&packages));
                 }
-                Some(filter)
+                (Some(filter), WorkloadScope::Affected(packages))
             }
         } else {
-            None
+            let scope = if self.packages.is_empty() {
+                WorkloadScope::Workspace
+            } else {
+                let mut packages = self.packages.clone();
+                packages.sort();
+                packages.dedup();
+                WorkloadScope::Packages(packages)
+            };
+            (None, scope)
         };
+        ctx.record_invocation_args(&self.semantic_invocation_args(&workload_scope));
 
         // List: show tests only
         if self.list {
