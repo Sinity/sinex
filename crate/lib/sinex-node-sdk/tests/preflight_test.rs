@@ -627,13 +627,13 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
         || async {
             let (status, details, messages) = resources::verify_system_resources().await?;
 
-            assert_eq!(status, VerificationStatus::Fail);
+            assert_eq!(status, VerificationStatus::Warning);
             assert!(
                 messages
                     .iter()
                     .any(|message| message.contains(&work_dir_str)
-                        && message.contains("not writable")),
-                "missing work dir should be reported explicitly; messages={messages:#?}"
+                        && message.contains("can be created")),
+                "creatable missing work dir should be reported honestly; messages={messages:#?}"
             );
             assert!(
                 !work_dir.exists(),
@@ -653,7 +653,11 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
             );
             assert_eq!(
                 work_dir_details.get("writable").and_then(Value::as_bool),
-                Some(false)
+                Some(true)
+            );
+            assert_eq!(
+                work_dir_details.get("creatable").and_then(Value::as_bool),
+                Some(true)
             );
 
             Ok(())

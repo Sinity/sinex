@@ -18,8 +18,8 @@ const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::{JsonValue, error::SinexError};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use xtask::sandbox::sinex_serial_test;
-use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
+use xtask::sandbox::{EnvGuard, sinex_serial_test};
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 /// Minimal test node that doesn't require database access
 #[derive(Default)]
@@ -299,9 +299,10 @@ async fn test_automaton_requires_db_pool(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test(timeout = 30)]
 async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::with_keys(&["DATABASE_URL"]);
 
     // No DATABASE_URL needed - schema cache works without it
-    unsafe { std::env::remove_var("DATABASE_URL") };
+    env.clear("DATABASE_URL");
 
     let node = EdgeTestNode::new("edge_schema_cache");
     let mut runner = NodeRunner::new(node);
@@ -350,13 +351,14 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     nats_client
         .publish(subject, serde_json::to_vec(&entries)?.into())
         .await?;
+    nats_client.flush().await?;
 
     WaitHelpers::wait_for_condition(
         || {
             let cache = cache.clone();
             async move { Ok::<bool, SinexError>(!cache.get().await.is_empty()) }
         },
-        DEFAULT_WAIT_SECS,
+        Timeouts::SHORT,
     )
     .await?;
 
