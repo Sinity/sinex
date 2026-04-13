@@ -25,7 +25,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -38,6 +38,8 @@ const SQLITE_PERSISTENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SQLITE_EPHEMERAL_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SQLITE_QUERY_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
 const SQLITE_STALE_CLEANUP_BUSY_TIMEOUT: Duration = Duration::from_millis(50);
+const HISTORY_DB_INTEGRITY_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const HISTORY_DB_INTEGRITY_STAMP_EXTENSION: &str = "db.integrity.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryDbOpenMode {
@@ -90,11 +92,95 @@ static CURRENT_PROCESS_GIT_SNAPSHOT: LazyLock<GitSnapshot> = LazyLock::new(|| Gi
     dirty: is_git_dirty_uncached(),
 });
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HistoryIntegrityStamp {
+    schema_version: i32,
+    checked_at_unix: i64,
+}
+
+impl HistoryIntegrityStamp {
+    fn new(now: OffsetDateTime) -> Self {
+        Self {
+            schema_version: HISTORY_DB_SCHEMA_VERSION,
+            checked_at_unix: now.unix_timestamp(),
+        }
+    }
+
+    fn is_fresh(&self, now: OffsetDateTime, interval: Duration) -> bool {
+        if self.schema_version != HISTORY_DB_SCHEMA_VERSION {
+            return false;
+        }
+
+        let age_secs = now.unix_timestamp().saturating_sub(self.checked_at_unix);
+        age_secs <= interval.as_secs().min(i64::MAX as u64) as i64
+    }
+}
+
 fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).with_context(|| format!("{reason}: {}", path.display())),
+    }
+}
+
+fn history_integrity_stamp_path(path: &Path) -> PathBuf {
+    path.with_extension(HISTORY_DB_INTEGRITY_STAMP_EXTENSION)
+}
+
+fn history_integrity_check_interval() -> Duration {
+    match std::env::var("XTASK_HISTORY_INTEGRITY_INTERVAL_SECS") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .map(Duration::from_secs)
+            .unwrap_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL),
+        Err(_) => HISTORY_DB_INTEGRITY_CHECK_INTERVAL,
+    }
+}
+
+fn load_history_integrity_stamp(path: &Path) -> Option<HistoryIntegrityStamp> {
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn should_run_history_integrity_check(path: &Path, now: OffsetDateTime) -> bool {
+    let interval = history_integrity_check_interval();
+    if interval.is_zero() {
+        return true;
+    }
+
+    let stamp_path = history_integrity_stamp_path(path);
+    !load_history_integrity_stamp(&stamp_path)
+        .is_some_and(|stamp| stamp.is_fresh(now, interval))
+}
+
+fn persist_history_integrity_stamp(path: &Path, now: OffsetDateTime) -> Result<()> {
+    let stamp_path = history_integrity_stamp_path(path);
+    let temp_path = stamp_path.with_extension("db.integrity.json.tmp");
+    let payload = serde_json::to_vec_pretty(&HistoryIntegrityStamp::new(now))
+        .context("failed to serialize history integrity stamp")?;
+    std::fs::write(&temp_path, payload).with_context(|| {
+        format!(
+            "failed to write temporary history integrity stamp: {}",
+            temp_path.display()
+        )
+    })?;
+    std::fs::rename(&temp_path, &stamp_path).with_context(|| {
+        format!(
+            "failed to persist history integrity stamp: {}",
+            stamp_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn refresh_history_integrity_stamp(path: &Path, now: OffsetDateTime) {
+    if let Err(error) = persist_history_integrity_stamp(path, now) {
+        eprintln!(
+            "⚠️  Failed to refresh history DB integrity stamp at {}: {error:#}",
+            history_integrity_stamp_path(path).display()
+        );
     }
 }
 
@@ -495,6 +581,10 @@ impl HistoryDb {
                 path,
                 "failed to remove empty history database before recreation",
             )?;
+            remove_history_artifact(
+                &history_integrity_stamp_path(path),
+                "failed to remove empty history database integrity stamp before recreation",
+            )?;
             db_existed = false;
         }
 
@@ -515,46 +605,56 @@ impl HistoryDb {
             };
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+            refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
             return Ok(db);
         }
 
-        // Fast path: quick_check is materially cheaper on large history DBs and
-        // catches the common corruption cases. If it reports a problem, fall back
-        // to the full integrity sweep before deciding to recreate the DB.
-        let integrity_ok = sqlite_integrity_pragma_ok(&conn, "PRAGMA quick_check")
-            || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
-        if !integrity_ok {
-            drop(conn);
-            eprintln!(
-                "⚠️  History database at {} failed integrity check, recreating",
-                path.display()
-            );
-            remove_history_artifact(
-                path,
-                "failed to remove corrupt history database before recreation",
-            )?;
-            // Remove WAL and SHM files too
-            let wal_path = path.with_extension("db-wal");
-            let shm_path = path.with_extension("db-shm");
-            remove_history_artifact(
-                &wal_path,
-                "failed to remove corrupt history database WAL before recreation",
-            )?;
-            remove_history_artifact(
-                &shm_path,
-                "failed to remove corrupt history database SHM before recreation",
-            )?;
-            let conn = Connection::open(path).with_context(|| {
-                format!("failed to recreate history database: {}", path.display())
-            })?;
-            Self::configure_connection(&conn, mode)?;
-            let db = Self {
-                conn,
-                is_synthetic: false,
-            };
-            db.init_schema()?;
-            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
-            return Ok(db);
+        let now = OffsetDateTime::now_utc();
+        if should_run_history_integrity_check(path, now) {
+            // Integrity checks are expensive on large history databases. Run them
+            // only on a periodic maintenance cadence instead of taxing every
+            // tracked xtask command.
+            let integrity_ok = sqlite_integrity_pragma_ok(&conn, "PRAGMA quick_check")
+                || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
+            if !integrity_ok {
+                drop(conn);
+                eprintln!(
+                    "⚠️  History database at {} failed integrity check, recreating",
+                    path.display()
+                );
+                remove_history_artifact(
+                    path,
+                    "failed to remove corrupt history database before recreation",
+                )?;
+                let wal_path = path.with_extension("db-wal");
+                let shm_path = path.with_extension("db-shm");
+                let stamp_path = history_integrity_stamp_path(path);
+                remove_history_artifact(
+                    &wal_path,
+                    "failed to remove corrupt history database WAL before recreation",
+                )?;
+                remove_history_artifact(
+                    &shm_path,
+                    "failed to remove corrupt history database SHM before recreation",
+                )?;
+                remove_history_artifact(
+                    &stamp_path,
+                    "failed to remove corrupt history database integrity stamp before recreation",
+                )?;
+                let conn = Connection::open(path).with_context(|| {
+                    format!("failed to recreate history database: {}", path.display())
+                })?;
+                Self::configure_connection(&conn, mode)?;
+                let db = Self {
+                    conn,
+                    is_synthetic: false,
+                };
+                db.init_schema()?;
+                db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
+                return Ok(db);
+            }
+            refresh_history_integrity_stamp(path, now);
         }
 
         let mut db = Self {
@@ -592,6 +692,10 @@ impl HistoryDb {
                     &shm_path,
                     "failed to remove unreadable history database SHM before recreation",
                 )?;
+                remove_history_artifact(
+                    &history_integrity_stamp_path(path),
+                    "failed to remove unreadable history database integrity stamp before recreation",
+                )?;
                 let conn = Connection::open(path).with_context(|| {
                     format!(
                         "failed to recreate history database after unreadable schema version: {}",
@@ -605,6 +709,7 @@ impl HistoryDb {
                 };
                 recreated.init_schema()?;
                 recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
                 return Ok(recreated);
             }
             Err(error) => {
@@ -632,6 +737,7 @@ impl HistoryDb {
             db.drop_all_tables()?;
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+            refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
         }
         db.is_synthetic = db.check_synthetic()?;
         if let Err(error) = db.with_busy_timeout(
@@ -4478,6 +4584,73 @@ mod tests {
         assert_eq!(
             status, "running",
             "query opens should not perform stale cleanup mutations"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_writes_integrity_stamp_for_new_database() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-writes-integrity-stamp.db");
+
+        let db = HistoryDb::open(&db_path)?;
+        drop(db);
+
+        let stamp = load_history_integrity_stamp(&history_integrity_stamp_path(&db_path))
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "fresh history database should persist an integrity stamp"
+                )
+            })?;
+        assert_eq!(stamp.schema_version, HISTORY_DB_SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_is_due_without_recent_stamp() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-due.db");
+
+        assert!(
+            should_run_history_integrity_check(&db_path, OffsetDateTime::now_utc()),
+            "missing integrity stamp should force a maintenance check"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_skips_when_recent_stamp_exists() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-fresh.db");
+        let now = OffsetDateTime::now_utc();
+
+        persist_history_integrity_stamp(&db_path, now)?;
+
+        assert!(
+            !should_run_history_integrity_check(&db_path, now),
+            "recent integrity stamp should skip the expensive open-time sweep"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_runs_when_stamp_is_stale() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-stale.db");
+        let stamp_path = history_integrity_stamp_path(&db_path);
+        let now = OffsetDateTime::now_utc();
+        let stale_stamp = HistoryIntegrityStamp {
+            schema_version: HISTORY_DB_SCHEMA_VERSION,
+            checked_at_unix: now
+                .unix_timestamp()
+                .saturating_sub(history_integrity_check_interval().as_secs() as i64 + 1),
+        };
+
+        std::fs::write(&stamp_path, serde_json::to_vec_pretty(&stale_stamp)?)?;
+
+        assert!(
+            should_run_history_integrity_check(&db_path, now),
+            "stale integrity stamp should re-enable maintenance"
         );
         Ok(())
     }
