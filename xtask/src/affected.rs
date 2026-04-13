@@ -154,7 +154,7 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
         if test_names
             .iter()
             .any(|test_name| content_mentions_test_name(&content, test_name))
-            && let Some(package) = path_to_package(&relative_path)
+            && let Some(package) = package_for_path(&relative_path)
         {
             packages.insert(package);
         }
@@ -268,7 +268,7 @@ fn files_to_packages(files: &[String]) -> HashSet<String> {
     let mut packages = HashSet::new();
 
     for file in files {
-        if let Some(pkg) = path_to_package(file) {
+        if let Some(pkg) = package_for_path(file) {
             packages.insert(pkg);
         }
     }
@@ -277,7 +277,7 @@ fn files_to_packages(files: &[String]) -> HashSet<String> {
 }
 
 /// Map a file path to its package name.
-fn path_to_package(path: &str) -> Option<String> {
+pub(crate) fn package_for_path(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
 
     // crate/{lib,core,nodes,tools,cli}/<name>/... -> package name (with hyphens)
@@ -477,59 +477,59 @@ mod tests {
     async fn test_path_to_package() -> TestResult<()> {
         // Standard crate paths
         assert_eq!(
-            path_to_package("crate/lib/sinex-db/src/lib.rs"),
+            package_for_path("crate/lib/sinex-db/src/lib.rs"),
             Some("sinex-db".to_string())
         );
         assert_eq!(
-            path_to_package("crate/core/sinex-gateway/src/main.rs"),
+            package_for_path("crate/core/sinex-gateway/src/main.rs"),
             Some("sinex-gateway".to_string())
         );
         assert_eq!(
-            path_to_package("crate/nodes/sinex-fs-ingestor/src/lib.rs"),
+            package_for_path("crate/nodes/sinex-fs-ingestor/src/lib.rs"),
             Some("sinex-fs-ingestor".to_string())
         );
 
         // CLI crate
         assert_eq!(
-            path_to_package("crate/cli/src/main.rs"),
+            package_for_path("crate/cli/src/main.rs"),
             Some("sinexctl".to_string())
         );
         assert_eq!(
-            path_to_package("crate/cli/Cargo.toml"),
+            package_for_path("crate/cli/Cargo.toml"),
             Some("sinexctl".to_string())
         );
 
         // xtask
         assert_eq!(
-            path_to_package("xtask/src/lib.rs"),
+            package_for_path("xtask/src/lib.rs"),
             Some("xtask".to_string())
         );
         assert_eq!(
-            path_to_package("xtask/Cargo.toml"),
+            package_for_path("xtask/Cargo.toml"),
             Some("xtask".to_string())
         );
 
         // e2e tests
         assert_eq!(
-            path_to_package("tests/e2e/tests/some_test.rs"),
+            package_for_path("tests/e2e/tests/some_test.rs"),
             Some("sinex-e2e-tests".to_string())
         );
         assert_eq!(
-            path_to_package("tests/e2e/Cargo.toml"),
+            package_for_path("tests/e2e/Cargo.toml"),
             Some("sinex-e2e-tests".to_string())
         );
 
         // Non-package paths return None (workspace-level handled upstream)
-        assert_eq!(path_to_package("README.md"), None);
-        assert_eq!(path_to_package("Cargo.toml"), None);
-        assert_eq!(path_to_package("Cargo.lock"), None);
-        assert_eq!(path_to_package(".config/nextest.toml"), None);
+        assert_eq!(package_for_path("README.md"), None);
+        assert_eq!(package_for_path("Cargo.toml"), None);
+        assert_eq!(package_for_path("Cargo.lock"), None);
+        assert_eq!(package_for_path(".config/nextest.toml"), None);
         assert_eq!(
-            path_to_package("crate/lib/.sinex/test-artifacts/report.json"),
+            package_for_path("crate/lib/.sinex/test-artifacts/report.json"),
             None
         );
         assert_eq!(
-            path_to_package("crate/cli/.sinex/test-artifacts/report.json"),
+            package_for_path("crate/cli/.sinex/test-artifacts/report.json"),
             None
         );
         Ok(())
@@ -770,7 +770,7 @@ mod tests {
     async fn test_path_to_package_underscore_to_hyphen() -> TestResult<()> {
         // Package directories with underscores should map to hyphenated package names
         assert_eq!(
-            path_to_package("crate/lib/sinex_primitives/src/lib.rs"),
+            package_for_path("crate/lib/sinex_primitives/src/lib.rs"),
             Some("sinex-primitives".to_string())
         );
         Ok(())

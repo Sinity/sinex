@@ -26,6 +26,7 @@ mod config;
 pub mod coordinator;
 pub mod deps;
 pub mod graph;
+pub mod git_stack;
 pub mod history;
 pub mod infra;
 pub mod jobs;
@@ -48,9 +49,9 @@ pub mod watcher;
 
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
-    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
-    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand, ci::CiCommand,
-    completions::CompletionsCommand,
+    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
+    JobsCommand, PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand,
+    ci::CiCommand, completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -284,6 +285,8 @@ enum Commands {
     History(commands::history::HistoryCommand),
     #[command(hide = true)]
     Analytics(AnalyticsCommand),
+    #[command(hide = true)]
+    GitStack(GitStackCommand),
 
     // ─── Diagnostics ───────────────────────────────────────────────
     #[command(hide = true)]
@@ -396,6 +399,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
         Commands::History(cmd) => ("history", None, None, cmd.metadata()),
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
+        Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
@@ -518,6 +522,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
+            Commands::GitStack(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
