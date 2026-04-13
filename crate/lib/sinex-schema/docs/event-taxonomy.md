@@ -1,5 +1,3 @@
-Status: canonical  
-Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Provide canonical event families, naming rules, and minimal payload keys so producers stay consistent.
 # Event Taxonomy
 
@@ -75,4 +73,4 @@ Tags (planned)
 - Polymorphic tagging across events/entities/blobs; unique per (tag, kind, id).
 - Aliases for discoverability and simple UI properties (color/icon) as metadata.
 
-This taxonomy is summarised for quick reference in `docs/misc-including-high-level-overviews-and-plans/_data_models_event_taxonomy_analysis.md`. Keep both artefacts in sync when event schemas evolve.
+Treat this taxonomy as design guidance for naming and payload shape, not as a generated inventory of the live schema bundle.

@@ -1,6 +1,6 @@
-// Integration tests for the unified node architecture (Phase 1)
+// Integration tests for the unified node architecture.
 //
-// These tests verify Phase 1's Architectural Consolidation:
+// These tests verify:
 // - Unified Node trait
 // - Single-writer pattern through ingestd
 // - Schema contract enforcement
@@ -14,11 +14,10 @@ use xtask::sandbox::TestResult;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<()> {
-    info!("Testing Phase 1: Unified Node trait");
+async fn test_unified_stream_node_trait(ctx: TestContext) -> TestResult<()> {
+    info!("Testing unified stream node trait");
 
-    // Phase 1.1: Test that both ingestors and automata implement same trait
-    // This validates the unified processing primitive requirement
+    // Verify that both ingestors and automata share the same processing primitives.
 
     // Test 1: Verify unified checkpoint types work across both node types
     let external_checkpoint = Checkpoint::external(
@@ -35,9 +34,9 @@ async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<(
     assert!(internal_checkpoint.description().contains("event"));
     assert!(stream_checkpoint.description().contains("stream"));
 
-    info!("✓ Unified checkpoint types validated for Phase 1");
+    info!("✓ Unified checkpoint types validated");
 
-    // Test 2: Verify TimeHorizon modes (replacing sensor/scanner split)
+    // Test 2: Verify TimeHorizon modes.
     let snapshot = TimeHorizon::Snapshot;
     let historical = TimeHorizon::Historical {
         end_time: Timestamp::now(),
@@ -49,7 +48,7 @@ async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<(
     assert!(continuous.is_continuous());
     assert!(!continuous.is_bounded());
 
-    info!("✓ TimeHorizon modes validated for Phase 1");
+    info!("✓ TimeHorizon modes validated");
 
     // Test 3: Test checkpoint persistence for state recovery
     // Use NATS context for KV
@@ -59,20 +58,19 @@ async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<(
         checkpoint_test_result.is_ok(),
         "Checkpoint functionality should work"
     );
-    info!("✓ Checkpoint persistence works for Phase 1");
+    info!("✓ Checkpoint persistence works");
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
-    info!("Testing Phase 1.2: Single-writer pattern through ingestd");
+async fn test_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
+    info!("Testing single-writer pattern through ingestd");
 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
-    // Phase 1.2: Enforce that all events flow through ingestd
-    // No direct database writes from nodes
+    // Enforce that all events flow through ingestd.
 
     // Test that events created via TestContext (simulating ingestd) have proper structure
     let test_event = ctx
@@ -80,8 +78,7 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
             "single-writer-test",
             "pattern.validation",
             serde_json::json!({
-                "test": "All writes must go through ingestd",
-                "phase": "1.2"
+                "test": "All writes must go through ingestd"
             }),
         ))
         .await?;
@@ -111,13 +108,11 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
-    info!("Testing Phase 1.3: Schema contract enforcement");
+async fn test_schema_contracts(ctx: TestContext) -> TestResult<()> {
+    info!("Testing schema contract enforcement");
 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-
-    // Phase 1.3: Test schema validation and contracts
 
     // Test event with valid schema
     let valid_event = ctx
@@ -149,7 +144,7 @@ async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
     assert_eq!(retrieved.payload["numeric_value"], 42);
     assert_eq!(retrieved.payload["nested"]["structure"], "valid");
 
-    info!("✓ Schema contracts validated for Phase 1.3");
+    info!("✓ Schema contracts validated");
 
     Ok(())
 }
@@ -265,15 +260,13 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-// Add new test for Phase 2 acquisition integration
 #[sinex_test]
-async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()> {
-    info!("Testing Phase 2: Acquisition Layer");
+async fn test_acquisition_integration(ctx: TestContext) -> TestResult<()> {
+    info!("Testing acquisition layer integration");
 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
-    // Phase 2.1: Test source material tracking
     let material_id = Uuid::now_v7();
 
     // Simulate event with material provenance
@@ -296,9 +289,8 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
         .await?;
 
     assert!(event_with_material.id.is_some());
-    info!("✓ Source material tracking validated for Phase 2");
+    info!("✓ Source material tracking validated");
 
-    // Phase 2.2: Test temporal ledger concept
     let temporal_events = vec![
         (
             "acquisition",
@@ -331,9 +323,8 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
         assert!(event.id.is_some());
     }
 
-    info!("✓ Temporal ledger concept validated for Phase 2");
+    info!("✓ Temporal ledger concept validated");
 
-    // Phase 2.3: Test capture job submission pattern
     let job_event = ctx
         .publish(DynamicPayload::new(
             "acquisition",
@@ -352,7 +343,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
         .await?;
 
     assert!(job_event.id.is_some());
-    info!("✓ Sensor job submission pattern validated for Phase 2");
+    info!("✓ Capture job submission pattern validated");
 
     Ok(())
 }

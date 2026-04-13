@@ -2,7 +2,7 @@
 
 //! Tests for the derived node model family (`TransducerNode`, `DerivedNodeAdapter`, `DerivedNodeConfig`).
 //!
-//! These exercise the new API that replaces `AutomatonNode` + `AutomatonNodeAdapter`.
+//! These exercise the derived-node processing surface directly.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};

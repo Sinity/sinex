@@ -1,6 +1,6 @@
 //! Composable event query engine — unified read path.
 //!
-//! Replaces 22+ hardcoded query methods with two composable entry points:
+//! Exposes two composable entry points:
 //! - `EventRepository::query()` — filter + paginate + aggregate events
 //! - `EventRepository::lineage()` — traverse provenance chains via recursive CTE
 

@@ -179,8 +179,9 @@ fn main() {
     println!("  - Output: git.activity.detected");
     println!("  - State:  Command counts by repo and type");
     println!();
-    println!("In production, wrap with TransducerNodeAdapter and run:");
-    println!("  sx dev crate/lib/sinex-node-sdk --bin git-activity-detector");
+    println!("For local experimentation, run:");
+    println!("  cargo run -p sinex-node-sdk --example git_activity_detector");
+    println!("For workspace-managed binaries, use xtask run ... after wrapping with TransducerNodeAdapter.");
 }
 
 // ============================================================================

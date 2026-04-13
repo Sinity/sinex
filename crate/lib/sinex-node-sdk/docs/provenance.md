@@ -1,5 +1,4 @@
 # Ingestion & Provenance Patterns
-> Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Working guide for provenance rules, node/ingestor boundaries, and Stage-as-You-Go patterns.
 
 This note distils the actionable architecture guidance from longer-form

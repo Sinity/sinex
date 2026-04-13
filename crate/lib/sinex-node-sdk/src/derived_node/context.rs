@@ -1,4 +1,4 @@
-//! Trigger context for derived nodes — replaces `NodeEventContext`.
+//! Trigger context for derived nodes.
 
 use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
@@ -11,9 +11,6 @@ use crate::NodeResult;
 use crate::SinexError;
 
 /// Rich trigger context passed to every derived-node processing call.
-///
-/// Extends the old `NodeEventContext` with processing mode, trigger kind,
-/// and operation lineage — all required for replay-correct derived output.
 #[derive(Debug, Clone)]
 pub struct DerivedTriggerContext {
     /// The event that triggered this processing call.
