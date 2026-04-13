@@ -264,12 +264,10 @@ mod tests {
                 .new_tree(&mut runner)
                 .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                 .current();
-            let s = uuid.to_string();
-            assert_eq!(s.len(), 26);
-            assert!(
-                s.chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-            );
+            assert_eq!(uuid.get_version_num(), 7);
+            let parsed = Uuid::parse_str(&uuid.to_string())
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            assert_eq!(parsed, uuid);
         }
         Ok(())
     }

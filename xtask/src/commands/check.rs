@@ -13,7 +13,7 @@
 use color_eyre::eyre::{Result, WrapErr, eyre};
 
 use crate::cargo_diagnostics::{DiagnosticSummary, estimate_package_count};
-use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
 use crate::preflight;
 use crate::process::ProcessBuilder;
 use crate::resources;
@@ -76,11 +76,48 @@ impl CheckCommand {
         }
     }
 
+    fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
+        let mut args = Vec::new();
+
+        if self.fix {
+            args.push("--fix".to_string());
+        }
+        if self.full {
+            args.push("--full".to_string());
+        } else {
+            if self.lint {
+                args.push("--lint".to_string());
+            }
+            if self.fmt {
+                args.push("--fmt".to_string());
+            }
+            if self.forbidden {
+                args.push("--forbidden".to_string());
+            }
+            if self.nix {
+                args.push("--nix".to_string());
+            }
+        }
+        if self.heavy {
+            args.push("--heavy".to_string());
+        }
+        if self.skip_tests {
+            args.push("--skip-tests".to_string());
+        }
+
+        args.push(scope.encode_marker());
+        args
+    }
+
     /// Build cargo args based on package scope.
     ///
     /// `is_human` gates informational `eprintln!` output (B2 fix — these should
     /// not appear in JSON/machine output mode).
-    fn build_package_args(&self, include_tests: bool, is_human: bool) -> Result<Vec<String>> {
+    fn build_package_args(
+        &self,
+        include_tests: bool,
+        is_human: bool,
+    ) -> Result<(Vec<String>, WorkloadScope)> {
         let mut args = vec!["--all-features".to_string()];
 
         // Include tests by default (unless skip_tests is set)
@@ -91,19 +128,26 @@ impl CheckCommand {
         }
 
         if !self.packages.is_empty() {
-            for p in &self.packages {
+            let mut packages = self.packages.clone();
+            packages.sort();
+            packages.dedup();
+            for p in &packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
+            return Ok((args, WorkloadScope::Packages(packages)));
         } else if !self.all {
             // Affected mode is default ON, --all disables it
-            let affected_pkgs = crate::affected::affected_packages()?;
+            let mut affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
                 if is_human {
                     eprintln!("  ℹ No affected packages detected — checking full workspace");
                 }
                 args.push("--workspace".to_string());
+                return Ok((args, WorkloadScope::Workspace));
             } else {
+                affected_pkgs.sort();
+                affected_pkgs.dedup();
                 // H6: Narrate which packages were selected and why
                 if is_human {
                     let pkg_list = if affected_pkgs.len() <= 4 {
@@ -121,16 +165,16 @@ impl CheckCommand {
                         if affected_pkgs.len() == 1 { "" } else { "s" }
                     );
                 }
-                for p in affected_pkgs {
+                for p in &affected_pkgs {
                     args.push("-p".to_string());
-                    args.push(p);
+                    args.push(p.clone());
                 }
+                return Ok((args, WorkloadScope::Affected(affected_pkgs)));
             }
         } else {
             args.push("--workspace".to_string());
+            return Ok((args, WorkloadScope::Workspace));
         }
-
-        Ok(args)
     }
 
     /// Record diagnostics and compiled packages to history, add summary to result
@@ -269,7 +313,8 @@ impl XtaskCommand for CheckCommand {
             this.fix = false;
         }
 
-        let package_args = this.build_package_args(true, ctx.is_human())?;
+        let (package_args, workload_scope) = this.build_package_args(true, ctx.is_human())?;
+        ctx.record_invocation_args(&this.semantic_invocation_args(&workload_scope));
 
         // 1. Formatting (optional, off by default)
         if this.fmt {

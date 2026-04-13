@@ -41,6 +41,27 @@ use super::db::{
 };
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VelocityView {
+    Loop,
+    Baseline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VelocityScopeKind {
+    Workspace,
+    Packages,
+    Affected,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+struct VelocityWorkload {
+    identity: String,
+    scope_label: Option<String>,
+    baseline_candidate: bool,
+}
+
 // ─── Shared base ─────────────────────────────────────────────────────────────
 
 /// Filter state shared by all query builders.
@@ -568,8 +589,8 @@ impl<'db> HistoryAnalysis<'db> {
     pub fn workspace_health_report(&self) -> Result<WorkspaceHealthReport> {
         let packages = self.all_packages_health()?;
         let counts = self.db.get_current_diagnostic_counts()?;
-        let velocity_trends = self.velocity_trends()?;
-        Ok(self.build_workspace_health_report(packages, counts, &velocity_trends))
+        let baseline_velocity = self.workspace_baseline_velocity_trends()?;
+        Ok(self.build_workspace_health_report(packages, counts, &baseline_velocity))
     }
 
     pub fn analytics_snapshot(
@@ -577,14 +598,17 @@ impl<'db> HistoryAnalysis<'db> {
     ) -> Result<(
         WorkspaceHealthReport,
         Vec<VelocityTrend>,
+        Vec<VelocityTrend>,
         Vec<Recommendation>,
     )> {
         let packages = self.all_packages_health()?;
         let counts = self.db.get_current_diagnostic_counts()?;
-        let velocity_trends = self.velocity_trends()?;
-        let health = self.build_workspace_health_report(packages, counts, &velocity_trends);
-        let recommendations = self.build_recommendations(&health, &velocity_trends)?;
-        Ok((health, velocity_trends, recommendations))
+        let loop_velocity = self.loop_velocity_trends()?;
+        let baseline_velocity = self.workspace_baseline_velocity_trends()?;
+        let health = self.build_workspace_health_report(packages, counts, &baseline_velocity);
+        let recommendations =
+            self.build_recommendations(&health, &baseline_velocity, &loop_velocity)?;
+        Ok((health, loop_velocity, baseline_velocity, recommendations))
     }
 
     pub fn status_summary_snapshot(
@@ -592,21 +616,24 @@ impl<'db> HistoryAnalysis<'db> {
     ) -> Result<(
         WorkspaceHealthReport,
         Vec<VelocityTrend>,
+        Vec<VelocityTrend>,
         Vec<Recommendation>,
     )> {
         let counts = self.db.get_current_diagnostic_counts()?;
-        let velocity_trends = self.velocity_trends()?;
+        let loop_velocity = self.loop_velocity_trends()?;
+        let baseline_velocity = self.workspace_baseline_velocity_trends()?;
         let avg_test_pass_rate = self.compute_global_test_pass_rate()?;
         let health = self.build_workspace_health_report_from_scalars(
             counts,
-            &velocity_trends,
+            &baseline_velocity,
             avg_test_pass_rate,
             0,
             0,
             Vec::new(),
         );
-        let recommendations = self.build_status_recommendations(&health, &velocity_trends);
-        Ok((health, velocity_trends, recommendations))
+        let recommendations =
+            self.build_status_recommendations(&health, &baseline_velocity, &loop_velocity);
+        Ok((health, loop_velocity, baseline_velocity, recommendations))
     }
 
     fn build_workspace_health_report(
@@ -691,6 +718,348 @@ impl<'db> HistoryAnalysis<'db> {
 
         let avg_delta = measurable.iter().sum::<f64>() / measurable.len() as f64;
         ((75.0 - avg_delta * 0.5).clamp(0.0, 100.0)) as u32
+    }
+
+    fn parse_invocation_args(args_json: Option<&str>) -> Vec<String> {
+        args_json
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default()
+    }
+
+    fn has_flag(args: &[String], flag: &str) -> bool {
+        args.iter().any(|arg| arg == flag)
+    }
+
+    fn has_prefix(args: &[String], prefix: &str) -> bool {
+        args.iter().any(|arg| arg.starts_with(prefix))
+    }
+
+    fn compact_packages(prefix: Option<&str>, packages: &[String]) -> String {
+        match packages {
+            [] => prefix.unwrap_or("scope").to_string(),
+            [single] if prefix.is_none() => format!("-p {single}"),
+            [single] => format!("{} {single}", prefix.unwrap_or("scope")),
+            [first, second] if prefix.is_none() => format!("{first},{second}"),
+            [first, second] => format!("{} {first},{second}", prefix.unwrap_or("scope")),
+            many if prefix.is_none() => format!("packages {}", many.len()),
+            many => format!("{} {} pkgs", prefix.unwrap_or("scope"), many.len()),
+        }
+    }
+
+    fn extract_package_flags(args: &[String]) -> Vec<String> {
+        let mut packages = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-p" | "--package" => {
+                    if let Some(package) = iter.next() {
+                        packages.push(package.clone());
+                    }
+                }
+                _ => {
+                    if let Some(package) = arg.strip_prefix("--package=") {
+                        packages.push(package.to_string());
+                    }
+                }
+            }
+        }
+        packages.sort();
+        packages.dedup();
+        packages
+    }
+
+    fn parse_scope_marker(marker: &str) -> (VelocityScopeKind, String) {
+        fn parse_packages(raw: &str) -> Vec<String> {
+            raw.split(',')
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        }
+
+        let raw = marker.strip_prefix("--scope=").unwrap_or(marker);
+        if raw == "workspace" {
+            (VelocityScopeKind::Workspace, "workspace".to_string())
+        } else if let Some(packages) = raw.strip_prefix("packages:") {
+            (
+                VelocityScopeKind::Packages,
+                Self::compact_packages(None, &parse_packages(packages)),
+            )
+        } else if let Some(packages) = raw.strip_prefix("affected:") {
+            (
+                VelocityScopeKind::Affected,
+                Self::compact_packages(Some("affected"), &parse_packages(packages)),
+            )
+        } else {
+            (VelocityScopeKind::Unknown, raw.to_string())
+        }
+    }
+
+    fn legacy_scope_from_args(args: &[String]) -> Option<(VelocityScopeKind, String, String)> {
+        if Self::has_flag(args, "--workspace") || Self::has_flag(args, "--all") {
+            return Some((
+                VelocityScopeKind::Workspace,
+                "workspace".to_string(),
+                "--scope=workspace".to_string(),
+            ));
+        }
+
+        let packages = Self::extract_package_flags(args);
+        if packages.is_empty() {
+            return None;
+        }
+
+        Some((
+            VelocityScopeKind::Packages,
+            Self::compact_packages(None, &packages),
+            format!("--scope=packages:{}", packages.join(",")),
+        ))
+    }
+
+    fn fallback_scope_from_history(
+        &self,
+        command: &str,
+        invocation_id: i64,
+    ) -> Result<Option<(VelocityScopeKind, String, String)>> {
+        if command != "test" {
+            return Ok(None);
+        }
+
+        let mut stmt = self.db.conn.prepare(
+            "SELECT DISTINCT package FROM test_results WHERE invocation_id = ?1 ORDER BY package",
+        )?;
+        let packages: Vec<String> = stmt
+            .query_map(rusqlite::params![invocation_id], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        if packages.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            VelocityScopeKind::Packages,
+            Self::compact_packages(None, &packages),
+            format!("--scope=packages:{}", packages.join(",")),
+        )))
+    }
+
+    fn velocity_mode_tokens(command: &str, args: &[String]) -> Vec<String> {
+        let mut tokens = Vec::new();
+        match command {
+            "build" => {
+                if Self::has_flag(args, "--release") {
+                    tokens.push("release".to_string());
+                }
+            }
+            "check" => {
+                for flag in [
+                    "--fix",
+                    "--full",
+                    "--lint",
+                    "--fmt",
+                    "--forbidden",
+                    "--nix",
+                    "--heavy",
+                    "--skip-tests",
+                ] {
+                    if Self::has_flag(args, flag) {
+                        tokens.push(flag.trim_start_matches("--").to_string());
+                    }
+                }
+            }
+            "test" => {
+                for flag in [
+                    "--debug",
+                    "--fail-fast",
+                    "--heavy",
+                    "--include-ignored",
+                    "--update-snapshots",
+                ] {
+                    if Self::has_flag(args, flag) {
+                        tokens.push(flag.trim_start_matches("--").to_string());
+                    }
+                }
+                for prefix in ["--filter=", "--threads=", "--retries=", "--timeout="] {
+                    if let Some(value) = args.iter().find(|arg| arg.starts_with(prefix)) {
+                        tokens.push(value.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        tokens
+    }
+
+    fn velocity_workload(
+        &self,
+        command: &str,
+        invocation: &Invocation,
+    ) -> Result<VelocityWorkload> {
+        let args = Self::parse_invocation_args(invocation.args_json.as_deref());
+        let semantic_scope_marker = args.iter().find(|arg| arg.starts_with("--scope=")).cloned();
+        let (scope_kind, scope_label, canonical_scope_marker) =
+            match semantic_scope_marker.as_deref() {
+                Some(marker) => {
+                    let (kind, label) = Self::parse_scope_marker(marker);
+                    (kind, Some(label), Some(marker.to_string()))
+                }
+                None => {
+                    if let Some((kind, label, marker)) = Self::legacy_scope_from_args(&args) {
+                        (kind, Some(label), Some(marker))
+                    } else if let Some((kind, label, marker)) =
+                        self.fallback_scope_from_history(command, invocation.id)?
+                    {
+                        (kind, Some(label), Some(marker))
+                    } else {
+                        (VelocityScopeKind::Unknown, None, None)
+                    }
+                }
+            };
+
+        let mut identity_tokens = Self::velocity_mode_tokens(command, &args);
+        if let Some(subcommand) = invocation.subcommand.as_deref() {
+            identity_tokens.push(format!("subcommand={subcommand}"));
+        }
+        if let Some(marker) = canonical_scope_marker {
+            identity_tokens.push(marker);
+        }
+        if identity_tokens.is_empty() {
+            identity_tokens.push("default".to_string());
+        }
+        identity_tokens.sort();
+
+        let mut label_parts = Vec::new();
+        if let Some(subcommand) = invocation.subcommand.as_deref() {
+            label_parts.push(subcommand.to_string());
+        }
+        if let Some(scope) = scope_label.clone() {
+            label_parts.push(scope);
+        }
+        let mode_tokens = Self::velocity_mode_tokens(command, &args);
+        if !mode_tokens.is_empty() {
+            label_parts.push(format!("+{}", mode_tokens.join("+")));
+        }
+
+        let baseline_candidate = match command {
+            "build" => scope_kind == VelocityScopeKind::Workspace,
+            "check" => {
+                scope_kind == VelocityScopeKind::Workspace && !Self::has_flag(&args, "--fix")
+            }
+            "test" => {
+                scope_kind == VelocityScopeKind::Workspace
+                    && invocation.subcommand.is_none()
+                    && !Self::has_flag(&args, "--debug")
+                    && !Self::has_flag(&args, "--fail-fast")
+                    && !Self::has_flag(&args, "--heavy")
+                    && !Self::has_flag(&args, "--include-ignored")
+                    && !Self::has_flag(&args, "--update-snapshots")
+                    && !Self::has_prefix(&args, "--filter=")
+                    && !Self::has_prefix(&args, "--threads=")
+                    && !Self::has_prefix(&args, "--retries=")
+                    && !Self::has_prefix(&args, "--timeout=")
+            }
+            _ => false,
+        };
+
+        Ok(VelocityWorkload {
+            identity: identity_tokens.join("|"),
+            scope_label: (!label_parts.is_empty()).then(|| label_parts.join(" ")),
+            baseline_candidate,
+        })
+    }
+
+    fn velocity_trends_for(&self, view: VelocityView) -> Result<Vec<VelocityTrend>> {
+        let mut trends = Vec::new();
+        for command in ["check", "test", "build"] {
+            let invocations = InvocationQuery::new()
+                .command(command)
+                .succeeded()
+                .days(14)
+                .limit(60)
+                .run(self.db)?;
+
+            let mut scopes: Vec<(String, Option<String>, Vec<f64>)> = Vec::new();
+            for invocation in &invocations {
+                let Some(duration) = invocation.duration_secs else {
+                    continue;
+                };
+                let workload = self.velocity_workload(command, invocation)?;
+                if view == VelocityView::Baseline && !workload.baseline_candidate {
+                    continue;
+                }
+
+                if let Some((_, _, durations)) = scopes
+                    .iter_mut()
+                    .find(|(identity, _, _)| *identity == workload.identity)
+                {
+                    durations.push(duration);
+                } else {
+                    scopes.push((workload.identity, workload.scope_label, vec![duration]));
+                }
+            }
+
+            let fallback_scope = scopes.first();
+            let comparable_scope = scopes.iter().find(|(_, _, durations)| durations.len() >= 4);
+
+            let Some((_, scope_label, durations)) = comparable_scope.or(fallback_scope) else {
+                trends.push(VelocityTrend {
+                    command: command.to_string(),
+                    scope_label: None,
+                    recent_avg_secs: None,
+                    older_avg_secs: None,
+                    delta_pct: None,
+                    trend: "no_data".to_string(),
+                    sample_count: 0,
+                });
+                continue;
+            };
+
+            if durations.len() < 4 {
+                trends.push(VelocityTrend {
+                    command: command.to_string(),
+                    scope_label: scope_label.clone(),
+                    recent_avg_secs: durations.first().copied(),
+                    older_avg_secs: None,
+                    delta_pct: None,
+                    trend: "no_data".to_string(),
+                    sample_count: durations.len(),
+                });
+                continue;
+            }
+
+            let mid = durations.len() / 2;
+            let recent_avg = durations[..mid].iter().sum::<f64>() / mid as f64;
+            let older_avg = durations[mid..].iter().sum::<f64>() / (durations.len() - mid) as f64;
+            let delta_pct = if older_avg.abs() < f64::EPSILON {
+                0.0
+            } else {
+                ((recent_avg - older_avg) / older_avg) * 100.0
+            };
+
+            let trend = if delta_pct.abs() < 5.0 {
+                "stable"
+            } else if delta_pct < 0.0 {
+                "faster"
+            } else {
+                "slower"
+            };
+
+            trends.push(VelocityTrend {
+                command: command.to_string(),
+                scope_label: scope_label.clone(),
+                recent_avg_secs: Some(recent_avg),
+                older_avg_secs: Some(older_avg),
+                delta_pct: Some(delta_pct),
+                trend: trend.to_string(),
+                sample_count: durations.len(),
+            });
+        }
+        Ok(trends)
+    }
+
+    pub fn loop_velocity_trends(&self) -> Result<Vec<VelocityTrend>> {
+        self.velocity_trends_for(VelocityView::Loop)
     }
 
     /// J2: Diagnostic hotspots — most active (churning) diagnostics.
@@ -793,58 +1162,12 @@ impl<'db> HistoryAnalysis<'db> {
         Ok(results)
     }
 
-    /// J4: Build/test velocity trends (recent 7d vs prior 7d average duration).
-    ///
-    /// Returns one `VelocityTrend` per command with ≥ 4 data points.
-    /// A positive `delta_pct` means slower; negative means faster.
     pub fn velocity_trends(&self) -> Result<Vec<VelocityTrend>> {
-        let mut trends = Vec::new();
-        for command in ["check", "test", "build"] {
-            let invocations = InvocationQuery::new()
-                .command(command)
-                .succeeded()
-                .days(14)
-                .limit(30)
-                .run(self.db)?;
+        self.loop_velocity_trends()
+    }
 
-            let durations: Vec<f64> = invocations.iter().filter_map(|i| i.duration_secs).collect();
-
-            if durations.len() < 4 {
-                trends.push(VelocityTrend {
-                    command: command.to_string(),
-                    recent_avg_secs: durations.first().copied(),
-                    older_avg_secs: None,
-                    delta_pct: None,
-                    trend: "no_data".to_string(),
-                    sample_count: durations.len(),
-                });
-                continue;
-            }
-
-            // InvocationQuery returns DESC order — first half is most recent
-            let mid = durations.len() / 2;
-            let recent_avg = durations[..mid].iter().sum::<f64>() / mid as f64;
-            let older_avg = durations[mid..].iter().sum::<f64>() / (durations.len() - mid) as f64;
-            let delta_pct = ((recent_avg - older_avg) / older_avg) * 100.0;
-
-            let trend = if delta_pct.abs() < 5.0 {
-                "stable"
-            } else if delta_pct < 0.0 {
-                "faster"
-            } else {
-                "slower"
-            };
-
-            trends.push(VelocityTrend {
-                command: command.to_string(),
-                recent_avg_secs: Some(recent_avg),
-                older_avg_secs: Some(older_avg),
-                delta_pct: Some(delta_pct),
-                trend: trend.to_string(),
-                sample_count: durations.len(),
-            });
-        }
-        Ok(trends)
+    pub fn workspace_baseline_velocity_trends(&self) -> Result<Vec<VelocityTrend>> {
+        self.velocity_trends_for(VelocityView::Baseline)
     }
 
     /// J5: Actionable heuristic recommendations derived from J1-J4 data.
@@ -852,14 +1175,15 @@ impl<'db> HistoryAnalysis<'db> {
     /// Each recommendation includes the exact `xtask` command to run next.
     /// Sorted: critical → warning → info.
     pub fn recommendations(&self) -> Result<Vec<Recommendation>> {
-        let (_, _, recommendations) = self.analytics_snapshot()?;
+        let (_, _, _, recommendations) = self.analytics_snapshot()?;
         Ok(recommendations)
     }
 
     fn build_recommendations(
         &self,
         health: &WorkspaceHealthReport,
-        velocity_trends: &[VelocityTrend],
+        baseline_velocity: &[VelocityTrend],
+        loop_velocity: &[VelocityTrend],
     ) -> Result<Vec<Recommendation>> {
         let mut recs = Vec::new();
 
@@ -945,7 +1269,7 @@ impl<'db> HistoryAnalysis<'db> {
             });
         }
 
-        for trend in velocity_trends
+        for trend in baseline_velocity
             .iter()
             .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
         {
@@ -953,11 +1277,27 @@ impl<'db> HistoryAnalysis<'db> {
                 severity: "warning".to_string(),
                 category: "performance".to_string(),
                 description: format!(
-                    "`{}` is {:.0}% slower than the prior week",
-                    trend.command,
+                    "workspace `{}` is {:.0}% slower than the prior week",
+                    trend.display_label(),
                     trend.delta_pct.unwrap_or(0.0)
                 ),
                 action: "xtask history timeline".to_string(),
+            });
+        }
+
+        for trend in loop_velocity
+            .iter()
+            .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
+        {
+            recs.push(Recommendation {
+                severity: "info".to_string(),
+                category: "performance".to_string(),
+                description: format!(
+                    "recent loop `{}` is {:.0}% slower than its prior samples",
+                    trend.display_label(),
+                    trend.delta_pct.unwrap_or(0.0)
+                ),
+                action: "xtask analytics velocity".to_string(),
             });
         }
 
@@ -997,7 +1337,8 @@ impl<'db> HistoryAnalysis<'db> {
     fn build_status_recommendations(
         &self,
         health: &WorkspaceHealthReport,
-        velocity_trends: &[VelocityTrend],
+        baseline_velocity: &[VelocityTrend],
+        loop_velocity: &[VelocityTrend],
     ) -> Vec<Recommendation> {
         let mut recs = Vec::new();
 
@@ -1040,7 +1381,7 @@ impl<'db> HistoryAnalysis<'db> {
             });
         }
 
-        for trend in velocity_trends
+        for trend in baseline_velocity
             .iter()
             .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
         {
@@ -1048,11 +1389,27 @@ impl<'db> HistoryAnalysis<'db> {
                 severity: "warning".to_string(),
                 category: "performance".to_string(),
                 description: format!(
-                    "`{}` is {:.0}% slower than the prior week",
-                    trend.command,
+                    "workspace `{}` is {:.0}% slower than the prior week",
+                    trend.display_label(),
                     trend.delta_pct.unwrap_or(0.0)
                 ),
                 action: "xtask history timeline".to_string(),
+            });
+        }
+
+        for trend in loop_velocity
+            .iter()
+            .filter(|v| v.trend == "slower" && v.delta_pct.unwrap_or(0.0) > 20.0)
+        {
+            recs.push(Recommendation {
+                severity: "warning".to_string(),
+                category: "performance".to_string(),
+                description: format!(
+                    "recent loop `{}` is {:.0}% slower than its prior samples",
+                    trend.display_label(),
+                    trend.delta_pct.unwrap_or(0.0)
+                ),
+                action: "xtask analytics velocity".to_string(),
             });
         }
 
@@ -1108,12 +1465,23 @@ pub struct PackageReliability {
 #[derive(Debug, Clone, Serialize)]
 pub struct VelocityTrend {
     pub command: String,
+    pub scope_label: Option<String>,
     pub recent_avg_secs: Option<f64>,
     pub older_avg_secs: Option<f64>,
     /// Positive = slower, negative = faster (%)
     pub delta_pct: Option<f64>,
     pub trend: String,
     pub sample_count: usize,
+}
+
+impl VelocityTrend {
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        match self.scope_label.as_deref() {
+            Some(scope) if !scope.is_empty() => format!("{} [{}]", self.command, scope),
+            _ => self.command.clone(),
+        }
+    }
 }
 
 /// An actionable recommendation with the exact command to run (J5).
@@ -1505,7 +1873,8 @@ mod tests {
         )?;
 
         let analysis = HistoryAnalysis::new(&db);
-        let (health, _velocity, recommendations) = analysis.status_summary_snapshot()?;
+        let (health, _loop_velocity, _baseline_velocity, recommendations) =
+            analysis.status_summary_snapshot()?;
 
         assert!(health.packages.is_empty());
         assert_eq!(health.avg_test_pass_rate, Some(1.0));

@@ -150,29 +150,45 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
 
 /// Strategy for generating concurrent operation events
 fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
-    prop::collection::vec(
-        (0usize..10, 0u64..1000).prop_map(|(worker_id, operation_id)| {
-            let payload = json!({
-                "worker_id": worker_id,
-                "operation_id": operation_id,
-                "timestamp": (*Timestamp::now()).unix_timestamp_nanos() / 1_000_000
-            });
+    prop::collection::vec((0usize..10, 0u64..1000), 10..100).prop_map(|mut operations| {
+        operations.sort_unstable_by_key(|(worker_id, operation_id)| (*worker_id, *operation_id));
+        operations
+            .into_iter()
+            .map(|(worker_id, operation_id)| {
+                let payload = json!({
+                    "worker_id": worker_id,
+                    "operation_id": operation_id,
+                    "timestamp": (*Timestamp::now()).unix_timestamp_nanos() / 1_000_000
+                });
 
-            let mut event = event_fixture(
-                EventSource::from_static("concurrent_test"),
-                EventType::from_static("worker.operation"),
-                payload,
-            );
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
-            event
-        }),
-        10..100,
-    )
+                let mut event = event_fixture(
+                    EventSource::from_static("concurrent_test"),
+                    EventType::from_static("worker.operation"),
+                    payload,
+                );
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
+                event
+            })
+            .collect()
+    })
 }
 
 /// Strategy for performance characteristic events
 fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
-    prop::collection::vec(arbitrary_event(), 10..1000)
+    prop::collection::vec(event_payloads(), 10..250).prop_map(|payloads| {
+        payloads
+            .into_iter()
+            .map(|payload| {
+                let mut event = event_fixture(
+                    EventSource::from_static("perf_test"),
+                    EventType::from_static("perf.event"),
+                    payload,
+                );
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
+                event
+            })
+            .collect()
+    })
 }
 
 /// Production validation wrapper for events (avoid mock-only checks).
@@ -551,6 +567,7 @@ mod performance_tests {
     use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
+        #![cases(16)]
         #[ignore = "heavy: property throughput check"]
         fn property_event_creation_performance(
             events in performance_characteristic_events()

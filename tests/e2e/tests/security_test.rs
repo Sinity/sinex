@@ -13,7 +13,7 @@
 
 use serde_json::json;
 use sinex_primitives::events::Publishable;
-use sinex_primitives::{EventSource, Pagination};
+use sinex_primitives::{EventSource, EventType, Pagination};
 use xtask::sandbox::prelude::*;
 
 #[allow(dead_code)]
@@ -44,14 +44,19 @@ enum ExpectedBehavior {
 async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    // Test that path traversal patterns can be stored as source values safely.
-    // This verifies that the database layer treats them as data, not executable paths.
-    // Using parameterized queries makes injection impossible.
+    // Source identifiers are validated domain values, not arbitrary file paths.
+    // Path-traversal strings should be rejected at the identifier boundary.
+    let rejected = EventSource::new("../../etc/passwd");
+    assert!(
+        rejected.is_err(),
+        "path traversal strings must be rejected as EventSource identifiers"
+    );
 
     let payload = DynamicPayload::new(
-        "../../etc/passwd", // Malicious source - should be treated as data
+        "security.path-traversal",
         "file.created",
         json!({
+            "source_attempt": "../../etc/passwd",
             "path": "/legitimate/file.txt",
             "size": 1024
         }),
@@ -61,10 +66,9 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
     let payload_json = payload.to_json_value()?;
     assert!(!payload_json.is_null(), "Payload should be valid JSON");
 
-    // Verify parameterized query construction works with special characters
-    let _source = sinex_primitives::EventSource::new("../../etc/passwd");
+    // Parameterized queries still protect legitimate queries that carry the
+    // malicious string as payload data.
     let _pagination = Pagination::new(Some(100), None);
-    // These would be used in get_by_source which uses parameterized queries
     let _repo = pool.events();
 
     Ok(())
@@ -89,9 +93,13 @@ async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestR
     ];
 
     for pattern in traversal_patterns {
-        // Verify that each pattern can be used as a source field safely
+        assert!(
+            EventSource::new(pattern).is_err(),
+            "path traversal string {pattern:?} must be rejected as an EventSource identifier"
+        );
+
         let payload = DynamicPayload::new(
-            pattern,
+            "security.test",
             "security.test",
             json!({
                 "attempt": pattern,
@@ -126,11 +134,15 @@ async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
     // Test SQL injection attempts are safely handled as data via parameterized queries.
     // The system uses sqlx::query!() macros which prevent injection at compile time.
 
-    // Test 1: SQL injection in source field
+    // Test 1: SQL injection in source field must be rejected as an identifier.
+    assert!(
+        EventSource::new("'; DROP TABLE events; --").is_err(),
+        "SQL injection patterns must be rejected as EventSource identifiers"
+    );
     let payload1 = DynamicPayload::new(
-        "'; DROP TABLE events; --",
+        "safe-source",
         "test.event",
-        json!({"data": "test1"}),
+        json!({"data": "test1", "source_attempt": "'; DROP TABLE events; --"}),
     );
     let payload_json = payload1.to_json_value()?;
     assert!(
@@ -138,11 +150,15 @@ async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
         "SQL injection in source should be treated as data"
     );
 
-    // Test 2: SQL injection in event_type
+    // Test 2: SQL injection in event_type must be rejected as an identifier.
+    assert!(
+        EventType::new("'; DELETE FROM events; --").is_err(),
+        "SQL injection patterns must be rejected as EventType identifiers"
+    );
     let payload2 = DynamicPayload::new(
         "safe-source",
-        "'; DELETE FROM events; --",
-        json!({"data": "test2"}),
+        "safe.event",
+        json!({"data": "test2", "event_type_attempt": "'; DELETE FROM events; --"}),
     );
     let payload_json = payload2.to_json_value()?;
     assert!(
@@ -187,8 +203,21 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
     // Decomposed form: e + combining acute accent (U+0065 U+0301)
     let decomposed = "cafe\u{0301}";
 
-    // Event with decomposed unicode
-    let payload1 = DynamicPayload::new(decomposed, "test.unicode", json!({"file": decomposed}));
+    assert!(
+        EventSource::new(decomposed).is_err(),
+        "non-ASCII identifiers must be rejected as EventSource values"
+    );
+    assert!(
+        EventSource::new(composed).is_err(),
+        "non-ASCII identifiers must be rejected as EventSource values"
+    );
+
+    // Event payloads may still carry these strings as ordinary data.
+    let payload1 = DynamicPayload::new(
+        "unicode.test",
+        "test.unicode",
+        json!({"file": decomposed}),
+    );
     let payload_json1 = payload1.to_json_value()?;
     assert!(
         !payload_json1.is_null(),
@@ -196,7 +225,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
     );
 
     // Event with composed unicode
-    let payload2 = DynamicPayload::new(composed, "test.unicode", json!({"file": composed}));
+    let payload2 = DynamicPayload::new("unicode.test", "test.unicode", json!({"file": composed}));
     let payload_json2 = payload2.to_json_value()?;
     assert!(!payload_json2.is_null(), "Composed unicode should be valid");
 
@@ -222,8 +251,13 @@ async fn test_null_byte_injection(_ctx: TestContext) -> TestResult<()> {
         "content": "Safe content\u{0000}Injected content"
     });
 
-    // Construct event with null bytes
-    let payload = DynamicPayload::new("source\u{0000}injection", "file.created", payload_with_null);
+    assert!(
+        EventSource::new("source\u{0000}injection").is_err(),
+        "embedded nulls must be rejected as EventSource identifiers"
+    );
+
+    // Construct event with null bytes in payload data.
+    let payload = DynamicPayload::new("null-byte.test", "file.created", payload_with_null);
 
     // If payload construction succeeds, null bytes are treated as data
     let payload_json = payload.to_json_value()?;
@@ -371,13 +405,19 @@ async fn test_query_interface_exploits(_ctx: TestContext) -> TestResult<()> {
     ];
 
     for special_source in special_sources {
-        // Verify that special characters can be used as source fields safely
-        let _source_obj = EventSource::new(special_source);
+        assert!(
+            EventSource::new(special_source).is_err(),
+            "special-character source {special_source:?} must be rejected as an EventSource identifier"
+        );
         let _pagination = Pagination::new(Some(100), None);
-        // These are used with parameterized queries, preventing injection
+        // Parameterized queries still protect literal attack strings carried in
+        // payload data.
 
-        // Also test in a payload
-        let payload = DynamicPayload::new(special_source, "query.test", json!({"test": "payload"}));
+        let payload = DynamicPayload::new(
+            "query.test-source",
+            "query.test",
+            json!({"test": "payload", "source_attempt": special_source}),
+        );
         let payload_json = payload.to_json_value()?;
         assert!(
             !payload_json.is_null(),
