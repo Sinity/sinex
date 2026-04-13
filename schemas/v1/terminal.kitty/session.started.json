@@ -1,5 +1,15 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
+      "type": "string"
+    },
+    "ShellName": {
+      "description": "A shell name (e.g., `bash`, `zsh`, `fish`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Kitty terminal session start.",
   "properties": {
     "env_vars": {
@@ -12,7 +22,7 @@
       ]
     },
     "shell_type": {
-      "type": "string"
+      "$ref": "#/$defs/ShellName"
     },
     "tab_id": {
       "type": "string"
@@ -21,15 +31,18 @@
       "type": "string"
     },
     "working_directory": {
-      "type": "string"
+      "$ref": "#/$defs/RecordedPath"
     }
   },
   "required": [
-    "shell_type",
-    "tab_id",
     "window_id",
+    "tab_id",
+    "shell_type",
     "working_directory"
   ],
   "title": "KittySessionStartedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "session.started",
+  "x-sinex-source": "terminal.kitty",
+  "x-sinex-version": "1.0.0"
 }

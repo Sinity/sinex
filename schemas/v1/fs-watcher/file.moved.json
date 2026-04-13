@@ -1,22 +1,35 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "moved_at": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
     },
-    "new_path": {
-      "type": "string"
-    },
-    "old_path": {
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
       "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "moved_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "new_path": {
+      "$ref": "#/$defs/RecordedPath"
+    },
+    "old_path": {
+      "$ref": "#/$defs/RecordedPath"
+    }
+  },
   "required": [
-    "moved_at",
+    "old_path",
     "new_path",
-    "old_path"
+    "moved_at"
   ],
   "title": "FileMovedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "file.moved",
+  "x-sinex-source": "fs-watcher",
+  "x-sinex-version": "1.0.0"
 }

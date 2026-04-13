@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "failed_verifications": {
       "format": "int64",
@@ -18,11 +18,14 @@
     }
   },
   "required": [
-    "failed_verifications",
-    "storage_backend",
     "total_blobs",
-    "total_size_bytes"
+    "total_size_bytes",
+    "failed_verifications",
+    "storage_backend"
   ],
   "title": "StorageStatisticsPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "storage.statistics",
+  "x-sinex-source": "blob_storage",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,13 +1,19 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Knowledge extraction insights",
   "properties": {
     "analysis_type": {
       "type": "string"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "recent_items": {
       "items": true,
@@ -15,36 +21,36 @@
     },
     "time_window_hours": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "top_keywords": {
       "items": {
-        "items": [
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
           {
             "type": "string"
           },
           {
             "format": "uint",
-            "minimum": 0.0,
+            "minimum": 0,
             "type": "integer"
           }
         ],
-        "maxItems": 2,
-        "minItems": 2,
         "type": "array"
       },
       "type": "array"
     },
     "total_knowledge_items": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "type_distribution": {
       "additionalProperties": {
         "format": "uint",
-        "minimum": 0.0,
+        "minimum": 0,
         "type": "integer"
       },
       "type": "object"
@@ -52,13 +58,16 @@
   },
   "required": [
     "analysis_type",
-    "generated_at",
+    "total_knowledge_items",
+    "type_distribution",
+    "top_keywords",
     "recent_items",
     "time_window_hours",
-    "top_keywords",
-    "total_knowledge_items",
-    "type_distribution"
+    "generated_at"
   ],
   "title": "PKMKnowledgeExtractionPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "pkm.knowledge_extraction",
+  "x-sinex-source": "pkm-automaton",
+  "x-sinex-version": "1.0.0"
 }

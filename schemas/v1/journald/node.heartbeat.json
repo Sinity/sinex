@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "events_processed": {
       "format": "int64",
@@ -42,5 +42,8 @@
     "service_name"
   ],
   "title": "NodeHeartbeatPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "node.heartbeat",
+  "x-sinex-source": "journald",
+  "x-sinex-version": "1.0.0"
 }

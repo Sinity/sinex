@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Node event processing statistics\n\nAddresses Issues 24, 29: Event Processing Metrics",
   "properties": {
     "avg_latency_ms": {
@@ -13,19 +13,19 @@
     "error_count": {
       "description": "Errors encountered",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "events_dropped": {
       "description": "Events dropped (channel full, errors)",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "events_processed": {
       "description": "Events processed since last report",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "node_type": {
@@ -35,17 +35,20 @@
     "queue_depth": {
       "description": "Current queue depth",
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "error_count",
-    "events_dropped",
-    "events_processed",
     "node_type",
-    "queue_depth"
+    "events_processed",
+    "events_dropped",
+    "queue_depth",
+    "error_count"
   ],
   "title": "NodeProcessingStatsPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "processing.stats",
+  "x-sinex-source": "sinex.node",
+  "x-sinex-version": "1.0.0"
 }

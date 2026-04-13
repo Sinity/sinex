@@ -1,10 +1,32 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DBusBus": {
+      "description": "D-Bus bus type",
+      "oneOf": [
+        {
+          "const": "system",
+          "description": "System bus",
+          "type": "string"
+        },
+        {
+          "const": "session",
+          "description": "Session bus",
+          "type": "string"
+        }
+      ]
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Invocation of a D-Bus method.",
   "properties": {
     "args": true,
     "bus": {
-      "type": "string"
+      "$ref": "#/$defs/DBusBus"
     },
     "destination": {
       "type": "string"
@@ -22,19 +44,22 @@
       "type": "string"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "args",
     "bus",
+    "sender",
     "destination",
+    "path",
     "interface",
     "method",
-    "path",
-    "sender",
+    "args",
     "timestamp"
   ],
   "title": "DbusMethodCalledPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "method.called",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,10 +1,42 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "ScanType": {
+      "description": "Type of system scan",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Full system scan",
+          "type": "string"
+        },
+        {
+          "const": "incremental",
+          "description": "Incremental scan (only changes)",
+          "type": "string"
+        },
+        {
+          "const": "targeted",
+          "description": "Targeted scan of specific paths/resources",
+          "type": "string"
+        },
+        {
+          "const": "discovery",
+          "description": "Initial discovery scan",
+          "type": "string"
+        },
+        {
+          "const": "quick",
+          "description": "Quick health check scan",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Summarises a completed scan.",
   "properties": {
     "duration_ms": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "errors": {
@@ -15,29 +47,32 @@
     },
     "items_found": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "items_scanned": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "scan_type": {
-      "type": "string"
+      "$ref": "#/$defs/ScanType"
     },
     "target": {
       "type": "string"
     }
   },
   "required": [
-    "duration_ms",
-    "errors",
-    "items_found",
-    "items_scanned",
     "scan_type",
-    "target"
+    "target",
+    "items_scanned",
+    "items_found",
+    "duration_ms",
+    "errors"
   ],
   "title": "ScanCompletedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "scan.completed",
+  "x-sinex-source": "system",
+  "x-sinex-version": "1.0.0"
 }

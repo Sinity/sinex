@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "moved_at": {
       "type": "string"
@@ -13,10 +13,13 @@
     }
   },
   "required": [
-    "moved_at",
+    "window_address",
     "new_workspace_id",
-    "window_address"
+    "moved_at"
   ],
   "title": "HyprlandWindowMovedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "window.moved",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
 }

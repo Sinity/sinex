@@ -1,11 +1,33 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "MountEventType": {
+      "description": "Mount/unmount event type",
+      "oneOf": [
+        {
+          "const": "mounted",
+          "description": "Filesystem mounted",
+          "type": "string"
+        },
+        {
+          "const": "unmounted",
+          "description": "Filesystem unmounted",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "device": {
       "type": "string"
     },
     "event_type": {
-      "type": "string"
+      "$ref": "#/$defs/MountEventType"
     },
     "filesystem": {
       "type": "string"
@@ -21,14 +43,14 @@
     },
     "size_bytes": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": [
         "integer",
         "null"
       ]
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "uuid": {
       "type": [
@@ -38,12 +60,15 @@
     }
   },
   "required": [
-    "device",
     "event_type",
-    "filesystem",
+    "device",
     "mount_point",
+    "filesystem",
     "timestamp"
   ],
   "title": "DbusMountEventPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "mount.event",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

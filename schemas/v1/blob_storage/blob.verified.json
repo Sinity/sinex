@@ -1,5 +1,27 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "BlobVerificationStatus": {
+      "description": "Verification status of a stored blob.\n\nMatches the values stored in `core.blobs.verification_status`.",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Blob has not yet been verified",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "Blob content matches its stored checksum",
+          "type": "string"
+        },
+        {
+          "const": "corrupted",
+          "description": "Blob content does not match its stored checksum",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "blob_id": {
       "type": "string"
@@ -8,14 +30,17 @@
       "type": "boolean"
     },
     "verification_status": {
-      "type": "string"
+      "$ref": "#/$defs/BlobVerificationStatus"
     }
   },
   "required": [
     "blob_id",
-    "checksum_matched",
-    "verification_status"
+    "verification_status",
+    "checksum_matched"
   ],
   "title": "BlobVerifiedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "blob.verified",
+  "x-sinex-source": "blob_storage",
+  "x-sinex-version": "1.0.0"
 }

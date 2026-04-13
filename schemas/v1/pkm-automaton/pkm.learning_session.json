@@ -1,10 +1,17 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Learning session tracking",
   "properties": {
     "activity_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "analysis_type": {
@@ -15,31 +22,31 @@
       "type": "integer"
     },
     "end_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "intensity": {
       "format": "double",
       "type": "number"
     },
     "start_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "activity_count",
     "analysis_type",
-    "duration_minutes",
+    "start_time",
     "end_time",
-    "generated_at",
+    "duration_minutes",
+    "activity_count",
     "intensity",
-    "start_time"
+    "generated_at"
   ],
   "title": "PKMLearningSessionPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "pkm.learning_session",
+  "x-sinex-source": "pkm-automaton",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "close_reason": {
       "type": [
@@ -22,11 +22,14 @@
     }
   },
   "required": [
-    "window_class",
     "window_id",
+    "window_class",
     "window_title",
     "workspace_id"
   ],
   "title": "HyprlandWindowClosedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "window.closed",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
 }

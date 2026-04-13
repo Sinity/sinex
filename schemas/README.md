@@ -1,167 +1,103 @@
 # Sinex Event Schemas
 
-> **Source of Truth:** Rust `EventPayload` structs (via `derive(EventPayload)`) define every schema.
-> JSON files under `schemas/` are generated artifacts for GitOps distribution and downstream clients—do **not** edit them by hand.
-> Regenerate them with `xtask schema generate` (CI enforces this, similar to `cargo fmt`).
+Rust `EventPayload` registrations are the source of truth for the active schema
+set used by the running system.
+
+The JSON files under `schemas/` are the checked-in schema bundle used for:
+
+- repo-local GitOps tests and examples,
+- downstream consumers that need raw JSON Schema files,
+- reviewable source control history for published schema contracts.
+
+Each generated schema file also embeds `x-sinex-source`,
+`x-sinex-event-type`, and `x-sinex-version`, so the bundle is
+self-describing even outside the repo's own directory layout.
+
+`xtask` can regenerate this bundle from the live Rust `EventPayload` registry:
+
+```bash
+xtask docs schema-bundle
+xtask docs schema-bundle --check
+```
+
+That path is separate from the runtime Rust -> database schema sync used by
+preflight and `sinex-ingestd`.
 
 ## Directory Structure
 
-```
+```text
 schemas/
 ├── v1/
-│   ├── registry.json              # Metadata (source, event_type, version, hash)
-│   ├── fs-watcher/                # One directory per EventPayload::SOURCE
-│   │   ├── file.created.json      # Files are named after EVENT_TYPE
+│   ├── registry.json
+│   ├── fs-watcher/
+│   │   ├── file.created.json
 │   │   └── ...
 │   ├── canonical.terminal/
-│   ├── document-ingestor/
 │   └── ...
 └── (future versions live beside v1/)
 ```
 
-## Schema Management Workflow (GitOps)
+## Runtime Sync Path
 
-### Current Implementation
+The live schema registry is populated from Rust code, not from this directory:
 
-1. **Development**: Schemas are generated directly from the Rust `EventPayload`
-   implementations. Each run rewrites
-   `schemas/v1/<source>/<event>.json` plus the accompanying `registry.json`.
-   _Reminder: treat those files as generated output—run the generator rather than editing JSON manually._
+1. `EventPayload` implementations register schema metadata through the Rust
+   inventory.
+2. preflight / ingest startup runs the in-process discovery path and syncs the
+   discovered schemas into `sinex_schemas.event_payload_schemas`.
+3. ingestd reloads active schemas from the database and broadcasts schema
+   metadata to interested consumers.
 
-2. **CI/CD Pipeline**: `.github/workflows/schema-validation.yml`
-   - Validates JSON syntax on every push/PR
-   - Tests schema registry table functionality
-   - Runs compatibility checks between versions
+See:
 
-3. **Deployment**: `xtask schema deploy`
-   - Syncs schemas from Git to `sinex_schemas.event_payload_schemas` table
-   - Handles version activation/deactivation
-   - Idempotent - safe to run multiple times
+- `crate/core/sinex-ingestd/docs/schema_sync.md`
+- `crate/lib/sinex-primitives/docs/schema_registry.md`
 
-4. **Compatibility Checking**: `xtask schema compat --base <branch>`
-   - Diffs JSON schemas against the base branch and invokes the Rust validator for structural comparisons.
+## GitOps Path
 
-### Rust → JSON → Postgres Flow
+The checked-in JSON bundle matters for the GitOps import surface:
 
-1. **Update Rust types**: Change the relevant `EventPayload` (or supporting structs) inside `sinex-core`.
-2. **Regenerate artifacts**: Run `xtask schema generate` (inside `nix develop`). This rewrites the JSON files plus `registry.json`.
-3. **Review drift**: Use `xtask schema diff` to inspect the generated changes and commit them alongside the Rust patch.
-4. **Deploy**: Apply the update locally with `xtask schema deploy` (or let CI’s schema workflows publish them after merge). The CLI writes every schema into `sinex_schemas.event_payload_schemas`, which ingestd/gateway read at runtime.
+1. Register a repository containing JSON schema files with `sinexctl gitops`.
+2. `sinex-ingestd` polls or syncs that repository.
+3. Matching JSON files are discovered and upserted into
+   `sinex_schemas.event_payload_schemas`.
 
-Every stage is wired into CI: schema-validation regenerates + checks compatibility, and schema-management can sync the DB copy. Treat the JSON bundle just like `cargo fmt` output—if CI complains, rerun `xtask schema generate` and commit the results.
+Discovery is metadata-first. The `schemas/<source>/<event_type>/...` layout is a
+convenient export shape and a fallback convention, not the only valid layout.
 
-### Schema Evolution Strategy
-
-1. **Non-breaking changes** (add optional fields): Keep same version
-2. **Breaking changes**: Create new version directory (v1 → v2)
-3. **Deprecation**: Mark old versions as inactive but keep for reference
-4. **Migration**: Document upgrade path in schema descriptions
-
-## Schema Versioning
-
-- Schemas follow semantic versioning (e.g., `1.0.0`, `1.1.0`, `2.0.0`)
-- Breaking changes require a major version bump and new directory (e.g., `v1/` → `v2/`)
-- Non-breaking additions (new optional fields) increment minor version
-- Bug fixes increment patch version
-
-## Usage
-
-### For Rust Developers
-
-Use the helper command to regenerate schemas whenever an `EventPayload` changes:
+Useful commands:
 
 ```bash
-xtask schema generate
+sinexctl gitops list
+sinexctl gitops create <repo-url> --branch main --pattern "schemas/**/*.json"
+sinexctl gitops sync <source-id>
+
+# xtask wrapper around the same operator surface
+xtask gitops list
 ```
 
-Pass `DATABASE_URL=... xtask schema deploy` to push the freshly
-generated schemas into Postgres.
+Schema compatibility checks against another branch are wired through CI helpers:
 
-### For Python Plugin Developers
+```bash
+xtask ci compat --base master --glob schemas
+```
 
-Reference these JSON files directly to understand the expected event payload structure.
+## Updating This Bundle
 
-### For Database Validation
+When you change the schema contract for an event:
 
-Schemas are loaded into PostgreSQL and used for runtime validation via `pg_jsonschema`.
+1. update the Rust `EventPayload` and any related validation/runtime logic,
+2. regenerate the checked-in JSON bundle under `schemas/`,
+3. run the relevant tests / compatibility checks,
+4. review both the Rust-side and JSON-side diff together.
 
-### For Non-Rust Contributors
+Typical local sequence:
 
-If you need to propose a schema change but cannot edit the Rust source:
+```bash
+xtask docs schema-bundle
+xtask docs schema-bundle --check
+xtask ci compat --base master --glob schemas
+```
 
-1. Make your JSON edits under `schemas/v1/...` (or a new `v{n}` directory) and open a PR describing the intended change.
-2. CI will fail because the generated bundle no longer matches the Rust definition—that’s expected.
-3. Pair with a Rust contributor to update the corresponding `EventPayload` and rerun `xtask schema generate`; the PR can then merge once both sides are in sync.
-
-> **Tip:** Include sample events/tests demonstrating the desired shape so the Rust change is unambiguous.
-
-## Technical Implementation Notes
-
-### Schema Registry Table
-
-Schemas are stored in `sinex_schemas.event_payload_schemas` with:
-
-- UUIDv7 primary keys for time-ordered identification
-- `source`, `event_type`, and `schema_version` columns that uniquely identify a contract
-- JSON Schema definitions stored as JSONB, plus a SHA-256 content hash to detect drift
-
-### Event Validation
-
-Events reference schemas via `payload_schema_id` foreign key, enabling:
-
-- Runtime validation of event payloads
-- Schema evolution tracking
-- Type safety across language boundaries
-
-## Future Enhancements (Not Yet Implemented)
-
-These features were considered but represent additional capabilities rather than core requirements:
-
-### Schema Change Eventification
-
-Automatically log schema changes as events in `core.events` for audit trail:
-
-- Would use PostgreSQL trigger on schema registry table
-- Create `sinex.schema.definition_changed` events
-- Enable tracking schema evolution over time
-
-### Automatic Code Generation
-
-Generate type-safe structs/classes from JSON schemas:
-
-- Rust: Generate structs with serde derives
-- Python: Generate Pydantic models
-- TypeScript: Generate interfaces
-- Would ensure cross-language consistency
-
-### Advanced Schema Tooling
-
-- **Schema Diffing**: Visual/programmatic comparison between versions
-
-- **Migration Scripts**: Auto-generate data migration code for breaking changes
-  - SQL migrations for data transformation (v1.0-to-v1.1.sql)
-  - Validation of migrated data against new schema
-- **Schema Analytics**: Usage metrics, validation failure patterns
-  - Track which schemas are most used
-  - Identify common validation errors
-  - Visualize schema evolution over time
-- **Schema Composition**: Reference common definitions, inheritance patterns
-  - Cross-schema reference validation
-  - Custom validation functions
-  - Conditional schema selection based on event source
-
-### Multi-Tenant Schema Registry (Future Distributed Architecture)
-
-For potential future distributed deployments:
-
-- Per-tenant schema overrides
-- Schema federation across instances
-- Global vs local schema namespaces
-
-### Integration Points (Planned)
-
-- **OpenAPI spec generation**: Export schemas as OpenAPI definitions
-- **GraphQL schema derivation**: Generate GraphQL types from JSON schemas
-- **Protocol buffer compatibility**: Bridge to protobuf for binary protocols
-
-These enhancements would add value but the current GitOps workflow provides a solid foundation for schema management.
+This directory is therefore a tracked contract surface, not merely scratch
+output.
