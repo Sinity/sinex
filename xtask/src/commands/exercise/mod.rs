@@ -560,6 +560,7 @@ impl XtaskCommand for ExerciseCommand {
             timeout: Some(Duration::from_mins(30)),
             modifies_state: false,
             track_in_history: true,
+            history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
 }

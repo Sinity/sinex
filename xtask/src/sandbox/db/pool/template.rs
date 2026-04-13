@@ -1,12 +1,15 @@
 //! Template database management — creation, schema apply, fingerprinting.
 
+use crate::config::config;
 use crate::sandbox::prelude::*;
 use color_eyre::eyre::{WrapErr, eyre};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
 use sqlx::Connection;
 use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -42,6 +45,79 @@ static TEMPLATE_CREATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 
 const CREATE_TEMPLATE_DB_TIMEOUT: Duration = Duration::from_secs(10);
 const APPLY_TEMPLATE_SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct TemplateTrustStamp {
+    template_name: String,
+    fingerprint: Option<String>,
+    extensions: HashMap<String, String>,
+    trusted_at_rfc3339: String,
+}
+
+fn template_trust_state_path(template_name: &str) -> PathBuf {
+    template_trust_state_path_in(&config().state_dir, template_name)
+}
+
+fn template_trust_state_path_in(state_dir: &Path, template_name: &str) -> PathBuf {
+    state_dir
+        .join("sandbox-db-pool/template-trust")
+        .join(format!("{template_name}.json"))
+}
+
+fn load_template_trust_stamp(path: &Path) -> TestResult<Option<TemplateTrustStamp>> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .wrap_err_with(|| format!("failed to read {}", path.display()));
+        }
+    };
+
+    match serde_json::from_str(&raw) {
+        Ok(stamp) => Ok(Some(stamp)),
+        Err(error) => {
+            eprintln!(
+                "⚠️  Ignoring unreadable template trust state at {}: {error}",
+                path.display()
+            );
+            let _ = std::fs::remove_file(path);
+            Ok(None)
+        }
+    }
+}
+
+fn store_template_trust_stamp(path: &Path, stamp: &TemplateTrustStamp) -> TestResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
+    }
+    let raw = serde_json::to_string_pretty(stamp)?;
+    std::fs::write(path, raw).wrap_err_with(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+fn invalidate_template_trust_stamp(template_name: &str) {
+    let path = template_trust_state_path(template_name);
+    let _ = std::fs::remove_file(path);
+}
+
+pub(super) fn invalidate_shared_template_trust() {
+    invalidate_template_trust_stamp("sinex_test_template_shared");
+}
+
+fn template_trust_matches(
+    path: &Path,
+    template_name: &str,
+    desired_fingerprint: &Option<String>,
+    extensions: &HashMap<String, String>,
+) -> TestResult<bool> {
+    Ok(load_template_trust_stamp(path)?.is_some_and(|stamp| {
+        stamp.template_name == template_name
+            && stamp.fingerprint == *desired_fingerprint
+            && stamp.extensions == *extensions
+    }))
+}
 
 // ── TemplateGuard ───────────────────────────────────────────────────────────
 
@@ -173,16 +249,20 @@ mod tests {
     // fingerprint source list directly.
     use super::{
         check_template_reuse, connect_admin_with_retry, ensure_template_database,
-        schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
+        load_template_trust_stamp, schema_fingerprint, schema_fingerprint_sources,
+        schema_fingerprint_sources_in, store_template_trust_stamp,
         store_template_meta,
+        template_trust_matches, template_trust_state_path_in,
     };
+    use crate::sandbox::db::pool::PoolConfig;
     use crate::sandbox::db::pool::config::{SLOT_MAX_CONNECTIONS, replace_db_name};
     use crate::sandbox::db::pool::meta::TemplateMeta;
     use crate::sandbox::db::pool::provisioning::{
         create_database_from_template_admin, wait_for_database_absence_admin,
     };
-    use crate::sandbox::db::pool::PoolConfig;
+    use sinex_primitives::temporal::Timestamp;
     use std::fs;
+    use std::collections::HashMap;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -218,6 +298,40 @@ mod tests {
     async fn schema_fingerprint_is_computable_for_workspace_sources() -> TestResult<()> {
         let fingerprint = schema_fingerprint()?;
         assert!(!fingerprint.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn template_trust_stamp_roundtrip_supports_fast_match() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = template_trust_state_path_in(dir.path(), "sinex_test_template_shared");
+        let stamp = super::TemplateTrustStamp {
+            template_name: "sinex_test_template_shared".to_string(),
+            fingerprint: Some("fingerprint-1".to_string()),
+            extensions: HashMap::from([("timescaledb".to_string(), "2.18.0".to_string())]),
+            trusted_at_rfc3339: Timestamp::now().format_rfc3339(),
+        };
+
+        store_template_trust_stamp(&path, &stamp)?;
+        assert_eq!(load_template_trust_stamp(&path)?, Some(stamp.clone()));
+        assert!(template_trust_matches(
+            &path,
+            "sinex_test_template_shared",
+            &stamp.fingerprint,
+            &stamp.extensions,
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn unreadable_template_trust_stamp_is_removed() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = template_trust_state_path_in(dir.path(), "sinex_test_template_shared");
+        std::fs::create_dir_all(path.parent().expect("template trust path should have parent"))?;
+        std::fs::write(&path, "{ not-json }")?;
+
+        assert!(load_template_trust_stamp(&path)?.is_none());
+        assert!(!path.exists(), "unreadable trust stamp should be removed");
         Ok(())
     }
 
@@ -542,6 +656,7 @@ async fn check_template_reuse(
     .await?;
 
     if !exists {
+        invalidate_template_trust_stamp(template_name);
         return Ok(None);
     }
 
@@ -551,20 +666,26 @@ async fn check_template_reuse(
             eprintln!(
                 "♻️  Template metadata is unreadable for {template_name}; recreating template ({error:#})"
             );
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
     };
 
-    let extensions = match (&desired_fingerprint, meta) {
+    enum ReuseVerification {
+        FingerprintMatch,
+        NoFingerprint,
+    }
+
+    let (extensions, verification) = match (&desired_fingerprint, meta) {
         (Some(fp), Some(m)) if m.fingerprint == *fp && !m.extensions.is_empty() => {
-            eprintln!("✅ Template database {template_name} reused (schema unchanged)");
-            m.extensions
+            (m.extensions, ReuseVerification::FingerprintMatch)
         }
         (Some(fp), Some(m)) if m.fingerprint == *fp => {
             eprintln!(
                 "♻️  Template metadata missing extension versions ({template_name}); recreating template"
             );
             let _ = m;
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
         (Some(fp), Some(m)) => {
@@ -572,31 +693,44 @@ async fn check_template_reuse(
                 "♻️  Migration fingerprint changed ({} -> {fp}); recreating template",
                 m.fingerprint
             );
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
         (Some(_), None) => {
             eprintln!("ℹ️  No template metadata found; recreating template");
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
-        (None, Some(m)) if !m.extensions.is_empty() => {
-            eprintln!("✅ Template database {template_name} reused (no fingerprint)");
-            m.extensions
-        }
+        (None, Some(m)) if !m.extensions.is_empty() => (m.extensions, ReuseVerification::NoFingerprint),
         (None, Some(_)) => {
             eprintln!(
                 "♻️  Template metadata missing extension versions ({template_name}); recreating template"
             );
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
         (None, None) => {
             eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
+            invalidate_template_trust_stamp(template_name);
             return Ok(None);
         }
     };
 
+    let trust_path = template_trust_state_path(template_name);
+    if template_trust_matches(
+        &trust_path,
+        template_name,
+        desired_fingerprint,
+        &extensions,
+    )? {
+        eprintln!("⚡ Template database {template_name} reused (trusted cache)");
+        return Ok(Some(extensions));
+    }
+
     let schema_drift = probe_template_schema_drift(admin_conn, admin_url, template_name).await?;
     if let Some(reason) = schema_drift {
         eprintln!("♻️  Template schema drift detected ({reason}); recreating template");
+        invalidate_template_trust_stamp(template_name);
         return Ok(None);
     }
 
@@ -610,8 +744,28 @@ async fn check_template_reuse(
                 eprintln!(
                     "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
                 );
+                invalidate_template_trust_stamp(template_name);
                 return Ok(None);
             }
+        }
+    }
+
+    store_template_trust_stamp(
+        &trust_path,
+        &TemplateTrustStamp {
+            template_name: template_name.to_string(),
+            fingerprint: desired_fingerprint.clone(),
+            extensions: extensions.clone(),
+            trusted_at_rfc3339: Timestamp::now().format_rfc3339(),
+        },
+    )?;
+
+    match verification {
+        ReuseVerification::FingerprintMatch => {
+            eprintln!("✅ Template database {template_name} reused (schema unchanged)");
+        }
+        ReuseVerification::NoFingerprint => {
+            eprintln!("✅ Template database {template_name} reused (no fingerprint)");
         }
     }
 
@@ -723,6 +877,16 @@ async fn rebuild_template(
             tracing::warn!("Failed to persist template metadata for {template_name}: {err:#}");
         }
     }
+
+    store_template_trust_stamp(
+        &template_trust_state_path(template_name),
+        &TemplateTrustStamp {
+            template_name: template_name.to_string(),
+            fingerprint: desired_fingerprint.clone(),
+            extensions: extensions.clone(),
+            trusted_at_rfc3339: Timestamp::now().format_rfc3339(),
+        },
+    )?;
 
     harden_template_database(admin_conn, template_name).await?;
     cache_template_name(template_name);

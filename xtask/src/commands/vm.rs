@@ -163,6 +163,7 @@ impl XtaskCommand for VmCommand {
             timeout: None, // VMs can run indefinitely
             modifies_state: true,
             track_in_history: true,
+            history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
 

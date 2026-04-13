@@ -6,9 +6,11 @@
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{ContextCompat, Result, WrapErr, eyre};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
+use walkdir::WalkDir;
 
 /// Cached cargo metadata to avoid running the command multiple times.
 #[derive(Clone, Debug)]
@@ -128,22 +130,39 @@ pub fn affected_packages() -> Result<Vec<String>> {
     Ok(affected.into_iter().collect())
 }
 
-/// Build a nextest filter expression for the affected packages.
-pub fn build_nextest_filter(packages: &[String]) -> String {
-    if packages.is_empty() {
-        return String::new();
-    }
-
-    packages
-        .iter()
-        .filter(|package| is_valid_nextest_package_name(package))
-        .map(|p| format!("package({p})"))
-        .collect::<Vec<_>>()
-        .join(" | ")
+/// Infer package scope from a simple `nextest -E` test-name filter.
+///
+/// Supports expressions composed only of `test(name)` terms plus boolean
+/// operators/parentheses. More complex filters deliberately return an empty
+/// package set so the caller can fall back to workspace scope.
+pub fn infer_packages_for_test_filter(filter: &str) -> Result<Vec<String>> {
+    let repo_root = crate::config::workspace_root();
+    infer_packages_for_test_filter_in(&repo_root, filter)
 }
 
-fn is_valid_nextest_package_name(package: &str) -> bool {
-    !package.is_empty() && !package.starts_with('.')
+fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
+    let Some(test_names) = extract_simple_test_name_terms(filter) else {
+        return Ok(Vec::new());
+    };
+
+    let mut packages = HashSet::new();
+    for relative_path in candidate_rust_paths(repo_root)? {
+        let full_path = repo_root.join(&relative_path);
+        let content = fs::read_to_string(&full_path)
+            .wrap_err_with(|| format!("failed to read {}", full_path.display()))?;
+
+        if test_names
+            .iter()
+            .any(|test_name| content_mentions_test_name(&content, test_name))
+            && let Some(package) = path_to_package(&relative_path)
+        {
+            packages.insert(package);
+        }
+    }
+
+    let mut packages: Vec<String> = packages.into_iter().collect();
+    packages.sort();
+    Ok(packages)
 }
 
 /// Get list of changed files from git.
@@ -283,14 +302,105 @@ fn path_to_package(path: &str) -> Option<String> {
         return Some("xtask".to_string());
     }
 
-    // tests/e2e/ changes affect the e2e test package
-    if parts.len() >= 2 && parts[0] == "tests" && parts[1] == "e2e" {
-        return Some("sinex-e2e-tests".to_string());
+    if parts.len() >= 2 && parts[0] == "tests" {
+        return match parts[1] {
+            "e2e" => Some("sinex-e2e-tests".to_string()),
+            "workspace" => Some("sinex-workspace-tests".to_string()),
+            _ => None,
+        };
     }
 
     // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
     // upstream in affected_packages() as workspace-wide changes.
     None
+}
+
+fn extract_simple_test_name_terms(filter: &str) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    let mut stripped = String::with_capacity(filter.len());
+    let mut cursor = 0usize;
+
+    while let Some(relative_start) = filter[cursor..].find("test(") {
+        let start = cursor + relative_start;
+        stripped.push_str(&filter[cursor..start]);
+
+        let name_start = start + "test(".len();
+        let relative_end = filter[name_start..].find(')')?;
+        let end = name_start + relative_end;
+        let name = &filter[name_start..end];
+
+        if name.is_empty() || !name.chars().all(is_simple_test_name_char) {
+            return None;
+        }
+
+        names.push(name.to_string());
+        stripped.push(' ');
+        cursor = end + 1;
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    stripped.push_str(&filter[cursor..]);
+    if stripped
+        .chars()
+        .all(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '|' | '&' | '!'))
+    {
+        Some(names)
+    } else {
+        None
+    }
+}
+
+fn is_simple_test_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '$' | '-')
+}
+
+fn candidate_rust_paths(repo_root: &Path) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for root in ["crate", "tests", "xtask"] {
+        let root_path = repo_root.join(root);
+        if !root_path.exists() {
+            continue;
+        }
+
+        for entry in WalkDir::new(&root_path) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+
+            let relative = entry
+                .path()
+                .strip_prefix(repo_root)
+                .wrap_err_with(|| format!("failed to relativize {}", entry.path().display()))?;
+            paths.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+
+    Ok(paths)
+}
+
+fn content_mentions_test_name(content: &str, test_name: &str) -> bool {
+    signature_mentions_test_name(content, &format!("fn {test_name}"))
+        || signature_mentions_test_name(content, &format!("async fn {test_name}"))
+}
+
+fn signature_mentions_test_name(content: &str, needle: &str) -> bool {
+    let mut offset = 0usize;
+    while let Some(relative_index) = content[offset..].find(needle) {
+        let index = offset + relative_index;
+        let after = content[index + needle.len()..].chars().next();
+        if after.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_')) {
+            return true;
+        }
+        offset = index + needle.len();
+    }
+    false
 }
 
 /// Compute transitive dependents of the given packages.
@@ -426,15 +536,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_build_nextest_filter() -> TestResult<()> {
-        let packages = vec!["sinex-db".to_string(), "sinex-gateway".to_string()];
-        let filter = build_nextest_filter(&packages);
-        assert!(filter.contains("package(sinex-db)"));
-        assert!(filter.contains("package(sinex-gateway)"));
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_transitive_dependents() -> TestResult<()> {
         let mut reverse_deps = HashMap::new();
         reverse_deps.insert(
@@ -494,23 +595,54 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_build_nextest_filter_empty() -> TestResult<()> {
-        let filter = build_nextest_filter(&[]);
-        assert!(filter.is_empty());
+    async fn test_extract_simple_test_name_terms_accepts_boolean_test_names() -> TestResult<()> {
+        let names = extract_simple_test_name_terms("(test(alpha_case) | test(beta::gamma$delta))")
+            .expect("simple boolean test-name filter should parse");
+        assert_eq!(names, vec!["alpha_case", "beta::gamma$delta"]);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_build_nextest_filter_single_package() -> TestResult<()> {
-        let filter = build_nextest_filter(&["sinex-db".into()]);
-        assert_eq!(filter, "package(sinex-db)");
+    async fn test_extract_simple_test_name_terms_rejects_complex_filter_predicates()
+    -> TestResult<()> {
+        assert!(extract_simple_test_name_terms("package(xtask) & test(alpha_case)").is_none());
+        assert!(extract_simple_test_name_terms("not test(alpha_case)").is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_build_nextest_filter_ignores_hidden_checkout_state() -> TestResult<()> {
-        let filter = build_nextest_filter(&["sinex-db".into(), ".sinex".into()]);
-        assert_eq!(filter, "package(sinex-db)");
+    async fn test_infer_packages_for_test_filter_maps_matching_sources() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let graceful = repo
+            .path()
+            .join("tests/e2e/tests/graceful_shutdown_test.rs");
+        let xtask_test = repo.path().join("xtask/src/example_test.rs");
+        let workspace_test = repo.path().join("tests/workspace/tests/smoke.rs");
+        fs::create_dir_all(graceful.parent().expect("graceful parent"))?;
+        fs::create_dir_all(xtask_test.parent().expect("xtask parent"))?;
+        fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
+        fs::write(
+            &graceful,
+            "#[sinex_test]\nasync fn test_concurrent_service_shutdown() {}\n",
+        )?;
+        fs::write(&xtask_test, "#[sinex_test]\nasync fn test_compile_scope() {}\n")?;
+        fs::write(
+            &workspace_test,
+            "#[sinex_test]\nasync fn workspace_smoke_test() {}\n",
+        )?;
+
+        let inferred = infer_packages_for_test_filter_in(
+            repo.path(),
+            "test(test_concurrent_service_shutdown) | test(workspace_smoke_test) | test(test_compile_scope)",
+        )?;
+        assert_eq!(
+            inferred,
+            vec![
+                "sinex-e2e-tests".to_string(),
+                "sinex-workspace-tests".to_string(),
+                "xtask".to_string(),
+            ]
+        );
         Ok(())
     }
 

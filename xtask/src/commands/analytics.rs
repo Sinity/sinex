@@ -64,6 +64,8 @@ impl XtaskCommand for AnalyticsCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::analysis()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {

@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 29
 expression: json
 ---
 {
@@ -2167,7 +2168,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2298,7 +2299,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2315,7 +2316,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2342,7 +2343,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2385,7 +2386,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -2402,7 +2403,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],

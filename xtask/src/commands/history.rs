@@ -598,6 +598,8 @@ impl XtaskCommand for HistoryCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 }
 
