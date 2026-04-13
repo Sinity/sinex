@@ -34,6 +34,10 @@ const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
 const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
 const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
+const SQLITE_PERSISTENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const SQLITE_EPHEMERAL_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const SQLITE_QUERY_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+const SQLITE_STALE_CLEANUP_BUSY_TIMEOUT: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryDbOpenMode {
@@ -63,6 +67,14 @@ impl HistoryDbOpenMode {
                  PRAGMA query_only=ON;
                  PRAGMA busy_timeout=1000;"
             }
+        }
+    }
+
+    const fn busy_timeout(self) -> Duration {
+        match self {
+            Self::Persistent => SQLITE_PERSISTENT_BUSY_TIMEOUT,
+            Self::Ephemeral => SQLITE_EPHEMERAL_BUSY_TIMEOUT,
+            Self::Query => SQLITE_QUERY_BUSY_TIMEOUT,
         }
     }
 }
@@ -415,6 +427,32 @@ impl HistoryDb {
             .context("failed to configure history database connection")
     }
 
+    fn with_busy_timeout<T, F>(
+        &self,
+        timeout: Duration,
+        restore_mode: HistoryDbOpenMode,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.conn
+            .busy_timeout(timeout)
+            .context("failed to configure temporary history database busy timeout")?;
+
+        let operation_result = operation();
+        let restore_result = self
+            .conn
+            .busy_timeout(restore_mode.busy_timeout())
+            .context("failed to restore history database busy timeout");
+
+        match (operation_result, restore_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (_, Err(error)) => Err(error),
+        }
+    }
+
     fn open_with_schema_version_probe<F>(
         path: &Path,
         mode: HistoryDbOpenMode,
@@ -587,7 +625,11 @@ impl HistoryDb {
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
         db.is_synthetic = db.check_synthetic()?;
-        if let Err(error) = db.cleanup_stale_invocations_on_open(path) {
+        if let Err(error) = db.with_busy_timeout(
+            SQLITE_STALE_CLEANUP_BUSY_TIMEOUT,
+            HistoryDbOpenMode::Persistent,
+            || db.cleanup_stale_invocations_on_open(path),
+        ) {
             if is_sqlite_lock_error(&error) {
                 eprintln!(
                     "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"

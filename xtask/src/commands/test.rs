@@ -56,9 +56,7 @@ fn test_analysis_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>)
     }
 }
 
-fn load_current_test_analysis(
-    ctx: &CommandContext,
-) -> (Option<serde_json::Value>, Option<String>) {
+fn load_current_test_analysis(ctx: &CommandContext) -> (Option<serde_json::Value>, Option<String>) {
     let Some(invocation_id) = ctx.invocation_id() else {
         return (
             None,
@@ -413,6 +411,73 @@ impl TestCommand {
         args.push(scope.encode_marker());
         args
     }
+
+    fn resolve_execution_plan(&self, ctx: Option<&CommandContext>) -> Result<NextestExecutionPlan> {
+        let explicit_packages = normalize_packages(&self.packages);
+        let inferred_packages = if !self.all {
+            if let Some(filter) = &self.filter {
+                let inferred_result = if let Some(ctx) = ctx {
+                    let stage = ctx.start_stage("scope-inference");
+                    let inferred = affected::infer_packages_for_test_filter(filter);
+                    ctx.finish_stage(stage, inferred.is_ok());
+                    inferred
+                } else {
+                    affected::infer_packages_for_test_filter(filter)
+                };
+                let inferred = normalize_packages(&inferred_result?);
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                    && !inferred.is_empty()
+                {
+                    println!(
+                        "Inferred package scope from filter: {}",
+                        inferred.join(", ")
+                    );
+                }
+                inferred
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let affected_packages =
+            if !self.all && explicit_packages.is_empty() && inferred_packages.is_empty() {
+                let affected_result = if let Some(ctx) = ctx {
+                    let stage = ctx.start_stage("affected");
+                    let packages = affected::affected_packages();
+                    ctx.finish_stage(stage, packages.is_ok());
+                    packages
+                } else {
+                    affected::affected_packages()
+                };
+                let affected_packages = normalize_packages(&affected_result?);
+                if !affected_packages.is_empty() {
+                    if let Some(ctx) = ctx
+                        && ctx.is_human()
+                    {
+                        println!("{}", affected::affected_summary(&affected_packages));
+                    }
+                    Some(affected_packages)
+                } else {
+                    if let Some(ctx) = ctx
+                        && ctx.is_human()
+                    {
+                        println!("No changes detected. Running ALL tests.");
+                    }
+                    None
+                }
+            } else {
+                None
+            };
+
+        Ok(resolve_nextest_execution_plan(
+            &explicit_packages,
+            inferred_packages,
+            affected_packages,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -630,6 +695,16 @@ impl XtaskCommand for TestCommand {
                         args.push("--".to_string());
                         args.extend(self.args.clone());
                     }
+
+                    let execution_plan = self.resolve_execution_plan(None)?;
+                    let coordination_args =
+                        self.semantic_invocation_args(&execution_plan.workload_scope);
+                    return crate::coordinator::coordinate_and_spawn_with_scope(
+                        "test",
+                        &args,
+                        &coordination_args,
+                        ctx,
+                    );
                 }
             }
 
@@ -649,29 +724,6 @@ impl XtaskCommand for TestCommand {
 
         if self.dry_run {
             return Ok(CommandResult::success().with_detail("dry-run passed"));
-        }
-
-        // Record fingerprint+scope for coordinator freshness detection.
-        {
-            let mut scope_args = Vec::new();
-            for p in &self.packages {
-                scope_args.push("-p".to_string());
-                scope_args.push(p.clone());
-            }
-            if let Some(ref f) = self.filter {
-                scope_args.push("-E".to_string());
-                scope_args.push(f.clone());
-            }
-            if self.heavy {
-                scope_args.push("--heavy".to_string());
-            }
-            if self.include_ignored {
-                scope_args.push("--include-ignored".to_string());
-            }
-            if self.all {
-                scope_args.push("--all".to_string());
-            }
-            ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
         let disk_space_status = check_disk_space_gb(2);
@@ -733,56 +785,11 @@ impl XtaskCommand for TestCommand {
         let use_fail_fast = self.fail_fast;
 
         // Affected mode is default ON, --all disables it
-        let explicit_packages = normalize_packages(&self.packages);
-        let inferred_packages = if explicit_packages.is_empty() && !self.all {
-            if let Some(filter) = &self.filter {
-                let stage = ctx.start_stage("scope-inference");
-                let inferred = affected::infer_packages_for_test_filter(filter);
-                ctx.finish_stage(stage, inferred.is_ok());
-                let inferred = inferred?;
-                if ctx.is_human() && !inferred.is_empty() {
-                    println!(
-                        "Inferred package scope from filter: {}",
-                        inferred.join(", ")
-                    );
-                }
-                inferred
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        let use_affected = !self.all && explicit_packages.is_empty() && inferred_packages.is_empty();
-        let affected_packages = if use_affected {
-            let stage = ctx.start_stage("affected");
-            let packages = affected::affected_packages();
-            ctx.finish_stage(stage, packages.is_ok());
-            let mut packages = packages?;
-            if packages.is_empty() {
-                // Smart default: If no changes detected (clean repo), run EVERYTHING
-                // instead of running nothing.
-                if ctx.is_human() {
-                    println!("No changes detected. Running ALL tests.");
-                }
-                None
-            } else {
-                packages.sort();
-                packages.dedup();
-                if ctx.is_human() {
-                    println!("{}", affected::affected_summary(&packages));
-                }
-                Some(packages)
-            }
-        } else {
-            None
-        };
-
-        let execution_plan =
-            resolve_nextest_execution_plan(&explicit_packages, inferred_packages, affected_packages);
+        let execution_plan = self.resolve_execution_plan(Some(ctx))?;
         let workload_scope = execution_plan.workload_scope.clone();
-        ctx.record_invocation_args(&self.semantic_invocation_args(&workload_scope));
+        let coordination_args = self.semantic_invocation_args(&workload_scope);
+        ctx.record_coordination_fingerprint("test", &coordination_args);
+        ctx.record_invocation_args(&coordination_args);
 
         // List: show tests only
         if self.list {
