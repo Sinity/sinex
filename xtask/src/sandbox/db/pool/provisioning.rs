@@ -923,7 +923,7 @@ mod tests {
     use super::*;
     use crate::sandbox::db::pool::config::PoolConfig;
     use crate::sandbox::db::pool::reset;
-    use crate::sandbox::{sinex_serial_test, sinex_test};
+    use crate::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_sqlstate_classifiers() -> TestResult<()> {
@@ -1010,7 +1010,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held()
     -> TestResult<()> {
         let config = PoolConfig::default();
@@ -1044,7 +1044,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_recreate_pool_database_converges_schema_before_marking_clean() -> TestResult<()> {
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_recreate_{}", std::process::id());
@@ -1110,7 +1110,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_reconcile_existing_pool_database_refreshes_stale_metadata() -> TestResult<()> {
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_reconcile_{}", std::process::id());
@@ -1174,7 +1174,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_mark_pool_database_clean_rejects_residual_schema_drift() -> TestResult<()> {
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_pool_mark_clean_drift_{}", std::process::id());

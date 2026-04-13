@@ -5,16 +5,18 @@
 //! - `deps timings` parametrization
 //! - broader `deps list/tree/duplicates` behavior
 
+mod support;
+
 use clap::Parser;
-use std::process::Command;
+use support::xtask_command;
 use xtask::Cli;
 use xtask::sandbox::sinex_test;
 
 // --- Help & Discovery Tests ---
 
 #[sinex_test]
-async fn test_deps_unused_help() -> TestResult<()> {
-    let output = Command::new("xtask")
+async fn test_deps_unused_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
         .arg("deps")
         .arg("unused")
         .arg("--help")
@@ -31,8 +33,8 @@ async fn test_deps_unused_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_timings_help() -> TestResult<()> {
-    let output = Command::new("xtask")
+async fn test_deps_timings_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
         .arg("deps")
         .arg("timings")
         .arg("--help")
@@ -50,8 +52,8 @@ async fn test_deps_timings_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_subcommands_in_main_help() -> TestResult<()> {
-    let output = Command::new("xtask").arg("deps").arg("--help").output()?;
+async fn test_deps_subcommands_in_main_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?.arg("deps").arg("--help").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -66,9 +68,9 @@ async fn test_deps_subcommands_in_main_help() -> TestResult<()> {
 // --- Unused Dependencies Tests ---
 
 #[sinex_test]
-async fn test_deps_unused_human_format_default() -> TestResult<()> {
+async fn test_deps_unused_human_format_default() -> ::xtask::sandbox::TestResult<()> {
     // Test that the default output format is human-readable
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps").arg("unused");
 
@@ -93,10 +95,10 @@ async fn test_deps_unused_human_format_default() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_unused_execution_graceful() -> TestResult<()> {
+async fn test_deps_unused_execution_graceful() -> ::xtask::sandbox::TestResult<()> {
     // Test that the unused command executes gracefully
     // (Either succeeds if tool available, or provides helpful error)
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps").arg("unused");
 
@@ -114,9 +116,9 @@ async fn test_deps_unused_execution_graceful() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
+async fn test_deps_unused_ci_mode_flag() -> ::xtask::sandbox::TestResult<()> {
     // Test that CI mode accepts the flag
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps").arg("unused").arg("--ci");
 
@@ -136,9 +138,9 @@ async fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
 // --- Additional List/Tree/Duplicates Tests ---
 
 #[sinex_test]
-async fn test_deps_list_basic() -> TestResult<()> {
+async fn test_deps_list_basic() -> ::xtask::sandbox::TestResult<()> {
     // Test basic list command execution
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("list")
         .output()
@@ -149,9 +151,9 @@ async fn test_deps_list_basic() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
+async fn test_deps_tree_with_depth_parameter() -> ::xtask::sandbox::TestResult<()> {
     // Test tree with explicit depth
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("3");
 
@@ -161,9 +163,9 @@ async fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_tree_with_max_depth() -> TestResult<()> {
+async fn test_deps_tree_with_max_depth() -> ::xtask::sandbox::TestResult<()> {
     // Test tree with maximum depth
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("tree")
         .arg("--depth")
@@ -175,9 +177,9 @@ async fn test_deps_tree_with_max_depth() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_tree_with_zero_depth() -> TestResult<()> {
+async fn test_deps_tree_with_zero_depth() -> ::xtask::sandbox::TestResult<()> {
     // Test tree with zero depth (edge case)
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("0");
 
@@ -195,9 +197,9 @@ async fn test_deps_tree_with_zero_depth() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
+async fn test_deps_duplicates_threshold_parameter() -> ::xtask::sandbox::TestResult<()> {
     // Test duplicates with threshold parameter
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps")
         .arg("duplicates")
@@ -217,9 +219,9 @@ async fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
+async fn test_deps_duplicates_help_shows_threshold_param() -> ::xtask::sandbox::TestResult<()> {
     // Verify that the threshold parameter is documented in help
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("duplicates")
         .arg("--help")
@@ -234,13 +236,13 @@ async fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
 // --- Error Handling Tests ---
 
 #[sinex_test]
-async fn test_deps_timings_top_parameter_parsing() -> TestResult<()> {
+async fn test_deps_timings_top_parameter_parsing() -> ::xtask::sandbox::TestResult<()> {
     Cli::try_parse_from(["xtask", "deps", "timings", "--top", "15"])?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_deps_timings_invalid_top() -> TestResult<()> {
+async fn test_deps_timings_invalid_top() -> ::xtask::sandbox::TestResult<()> {
     let error = match Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"]) {
         Ok(_) => panic!("invalid --top should fail during clap parsing"),
         Err(error) => error,
@@ -251,9 +253,9 @@ async fn test_deps_timings_invalid_top() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_deps_duplicates_invalid_threshold() -> TestResult<()> {
+async fn test_deps_duplicates_invalid_threshold() -> ::xtask::sandbox::TestResult<()> {
     // Test with invalid threshold value
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("deps")
         .arg("duplicates")

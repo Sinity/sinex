@@ -748,7 +748,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_synchronizer_basic() -> TestResult<()> {
         let sync = TestSynchronizer::new(Duration::from_secs(5));
 
@@ -817,7 +817,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_barrier_basic() -> TestResult<()> {
         let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
@@ -1155,9 +1155,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_synchronizer(ctx: Sandbox) -> TestResult<()> {
-        let timing = ctx.timing();
-        let sync = timing.synchronizer(Duration::from_secs(5));
+    async fn test_timing_utils_synchronizer() -> TestResult<()> {
+        let sync = TestSynchronizer::new(Duration::from_secs(5));
 
         // Spawn signaler
         let sync_clone = Arc::new(sync);
@@ -1179,9 +1178,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_barrier(ctx: Sandbox) -> TestResult<()> {
-        let timing = ctx.timing();
-        let barrier = Arc::new(timing.barrier(2));
+    async fn test_timing_utils_barrier() -> TestResult<()> {
+        let barrier = Arc::new(TestBarrier::new(2));
 
         let b1 = barrier.clone();
         let h1 = tokio::spawn(async move { b1.wait(Duration::from_secs(5)).await });
@@ -1201,9 +1199,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_progress_tracker(ctx: Sandbox) -> TestResult<()> {
-        let timing = ctx.timing();
-        let tracker = timing.progress_tracker(3);
+    async fn test_timing_utils_progress_tracker() -> TestResult<()> {
+        let tracker = CoordinationPrimitive::progress_tracker(
+            3,
+            "timing_utils_progress_tracker".to_string(),
+        );
 
         assert_eq!(tracker.get(), 0);
         assert!(!tracker.is_ready());

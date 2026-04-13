@@ -2,9 +2,10 @@ mod support;
 
 use serde_json::Value;
 use support::xtask_command;
+use xtask::sandbox::sinex_test;
 
-#[test]
-fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
+#[sinex_test]
+async fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("--list-commands")
         .arg("--json")
@@ -29,8 +30,8 @@ fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-#[test]
-fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
+#[sinex_test]
+async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("--list-commands")
         .arg("--json")
@@ -55,8 +56,8 @@ fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask doctor --json`.
 /// Asserts the health-report envelope and per-component field presence.
-#[test]
-fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[sinex_test]
+async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?.args(["doctor", "--json"]).output()?;
 
     assert!(output.status.success(), "doctor --json should exit 0");
@@ -124,8 +125,8 @@ fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask jobs list --json`.
 /// Asserts the jobs array and per-job required fields.
-#[test]
-fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[sinex_test]
+async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .args(["jobs", "list", "--json"])
         .output()?;
@@ -157,8 +158,8 @@ fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask deps list --json`.
 /// Asserts the packages array and per-package required fields.
-#[test]
-fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[sinex_test]
+async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .args(["deps", "list", "--json"])
         .output()?;

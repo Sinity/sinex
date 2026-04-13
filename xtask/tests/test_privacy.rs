@@ -8,14 +8,17 @@
 //! - JSON output structure validation
 //! - CLI error handling for invalid arguments
 
-use color_eyre::eyre::WrapErr;
+mod support;
+
+use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
+use support::xtask_command;
 
 fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -27,7 +30,7 @@ fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_catalog_lists_rules() -> TestResult<()> {
+async fn test_catalog_lists_rules() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
             category: None,
@@ -80,7 +83,7 @@ async fn test_catalog_lists_rules() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_catalog_filters_by_category() -> TestResult<()> {
+async fn test_catalog_filters_by_category() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
             category: Some("secret".into()),
@@ -111,7 +114,7 @@ async fn test_catalog_filters_by_category() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_catalog_filters_pii_category() -> TestResult<()> {
+async fn test_catalog_filters_pii_category() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
             category: Some("pii".into()),
@@ -135,7 +138,7 @@ async fn test_catalog_filters_pii_category() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_catalog_unknown_category_returns_empty() -> TestResult<()> {
+async fn test_catalog_unknown_category_returns_empty() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Catalog {
             category: Some("nonexistent".into()),
@@ -156,7 +159,7 @@ async fn test_catalog_unknown_category_returns_empty() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_process_clean_input() -> TestResult<()> {
+async fn test_process_clean_input() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "hello world, this is clean text".into(),
@@ -180,7 +183,7 @@ async fn test_process_clean_input() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_process_sensitive_input_github_token() -> TestResult<()> {
+async fn test_process_sensitive_input_github_token() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "export TOKEN=ghp_ABCDEFghijklmnopqrstuvwxyz1234567890".into(),
@@ -210,7 +213,7 @@ async fn test_process_sensitive_input_github_token() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_process_sensitive_input_database_url() -> TestResult<()> {
+async fn test_process_sensitive_input_database_url() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "DATABASE_URL=postgres://user:password@localhost/db".into(),
@@ -235,7 +238,7 @@ async fn test_process_sensitive_input_database_url() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_process_private_key_causes_suppression() -> TestResult<()> {
+async fn test_process_private_key_causes_suppression() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "-----BEGIN RSA PRIVATE KEY-----".into(),
@@ -257,8 +260,8 @@ async fn test_process_private_key_causes_suppression() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_process_context_filtering() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_process_context_filtering() -> Result<()> {
     // SSN rule only applies to: command, clipboard, document, notification
     // It should NOT match in journal context
     let cmd = PrivacyCommand {
@@ -285,8 +288,8 @@ async fn test_process_context_filtering() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_process_context_matching() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_process_context_matching() -> Result<()> {
     // SSN rule should match in command context
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
@@ -306,8 +309,8 @@ async fn test_process_context_matching() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_process_window_title_privacy() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_process_window_title_privacy() -> Result<()> {
     // Window title rules should fire for window_title context
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
@@ -330,8 +333,8 @@ async fn test_process_window_title_privacy() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_invalid_context_returns_error() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_invalid_context_returns_error() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "hello".into(),
@@ -355,8 +358,8 @@ async fn test_invalid_context_returns_error() -> TestResult<()> {
 // Key Subcommand Tests
 // ============================================================================
 
-#[sinex_test]
-async fn test_key_status_no_key() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_status_no_key() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Key { generate: false },
     };
@@ -376,8 +379,8 @@ async fn test_key_status_no_key() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_key_generate() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_generate() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Key { generate: true },
     };
@@ -406,8 +409,8 @@ async fn test_key_generate() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_key_generate_produces_unique_keys() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_generate_produces_unique_keys() -> Result<()> {
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
 
     let cmd1 = PrivacyCommand {
@@ -437,8 +440,8 @@ async fn test_key_generate_produces_unique_keys() -> TestResult<()> {
 // Config Subcommand Tests
 // ============================================================================
 
-#[sinex_test]
-async fn test_config_init_generates_toml() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_config_init_generates_toml() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Config { init: true },
     };
@@ -478,8 +481,8 @@ async fn test_config_init_generates_toml() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_config_status_reports_state() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_config_status_reports_state() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Config { init: false },
     };
@@ -521,8 +524,8 @@ async fn test_config_status_reports_state() -> TestResult<()> {
 // Decrypt Subcommand Tests
 // ============================================================================
 
-#[sinex_test]
-async fn test_decrypt_invalid_token_reports_error() -> TestResult<()> {
+#[tokio::test(flavor = "current_thread")]
+async fn test_decrypt_invalid_token_reports_error() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Decrypt {
             token: "not-a-real-token".into(),
@@ -547,9 +550,9 @@ async fn test_decrypt_invalid_token_reports_error() -> TestResult<()> {
 // CLI Integration Tests
 // ============================================================================
 
-#[sinex_test]
-async fn test_cli_privacy_help() -> TestResult<()> {
-    let output = Command::new("xtask")
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_help() -> Result<()> {
+    let output = xtask_command()?
         .arg("privacy")
         .arg("--help")
         .output()?;
@@ -564,9 +567,9 @@ async fn test_cli_privacy_help() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_catalog_json() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_catalog_json() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json").arg("privacy").arg("catalog");
 
     let output = cmd.output()?;
@@ -587,9 +590,9 @@ async fn test_cli_privacy_catalog_json() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_catalog_category_filter() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json")
         .arg("privacy")
         .arg("catalog")
@@ -614,9 +617,9 @@ async fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_test_clean() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_test_clean() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json")
         .arg("privacy")
         .arg("test")
@@ -633,9 +636,9 @@ async fn test_cli_privacy_test_clean() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_test_sensitive() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_test_sensitive() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json")
         .arg("privacy")
         .arg("test")
@@ -656,9 +659,9 @@ async fn test_cli_privacy_test_sensitive() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
-    let output = Command::new("xtask")
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_test_invalid_context() -> Result<()> {
+    let output = xtask_command()?
         .arg("privacy")
         .arg("test")
         .arg("hello")
@@ -673,9 +676,9 @@ async fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_key_generate_json() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_key_generate_json() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json")
         .arg("privacy")
         .arg("key")
@@ -693,9 +696,9 @@ async fn test_cli_privacy_key_generate_json() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_config_init() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_config_init() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json").arg("privacy").arg("config").arg("--init");
 
     let output = cmd.output()?;
@@ -714,9 +717,9 @@ async fn test_cli_privacy_config_init() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cli_privacy_config_status_json() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+#[tokio::test(flavor = "current_thread")]
+async fn test_cli_privacy_config_status_json() -> Result<()> {
+    let mut cmd = xtask_command()?;
     cmd.arg("--json").arg("privacy").arg("config");
 
     let output = cmd.output()?;
