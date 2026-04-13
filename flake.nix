@@ -310,12 +310,36 @@
                   return 1
                 }
 
+                _sinex_xtask_is_observability_command() {
+                  case "''${1:-}" in
+                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
+                      return 0
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                bin_path="$root_dir/.sinex/target/debug/xtask"
+                force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
+
                 cd "$root_dir"
-                if _sinex_xtask_needs_build; then
+                if [ -x "$bin_path" ] \
+                  && [ "$force_rebuild" != "1" ] \
+                  && _sinex_xtask_is_observability_command "$@"
+                then
+                  if _sinex_xtask_needs_build; then
+                    echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
+                  fi
+                  exec "$bin_path" "$@"
+                fi
+
+                if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                   echo "ℹ  Rebuilding checkout-local xtask..." >&2
                   cargo build --quiet -p xtask
                 fi
-                exec "$root_dir/.sinex/target/debug/xtask" "$@"
+                exec "$bin_path" "$@"
               '';
             in
             pkgs.mkShell {
