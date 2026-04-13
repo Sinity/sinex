@@ -14,6 +14,7 @@
 use futures::StreamExt;
 use serde_json::json;
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
@@ -151,8 +152,8 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
 
     // ── Step 2: Determine time bounds for the replay scope ────────────────
     // Use a window that comfortably brackets the just-seeded events.
-    let scope_start = Timestamp::now() - time::Duration::seconds(30);
-    let scope_end = Timestamp::now() + time::Duration::seconds(30);
+    let scope_start = Timestamp::now() - TemporalDuration::seconds(30);
+    let scope_end = Timestamp::now() + TemporalDuration::seconds(30);
 
     // ── Step 3: Spawn fake scan node on the stack's NATS ─────────────────
     let nats = stack.nats_client();

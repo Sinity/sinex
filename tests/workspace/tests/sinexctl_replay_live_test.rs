@@ -5,18 +5,14 @@
 //! as a subprocess for each replay command.
 
 use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
+use sinex_workspace_tests::built_binary;
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
 use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 const TEST_TOKEN: &str = "test-token:admin";
-
-fn sinexctl_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".sinex/target/debug/sinexctl")
-}
 
 fn reserve_port() -> color_eyre::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -120,7 +116,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 /// a worker with `std::process::Command::output()` can starve the TLS
 /// acceptor and cause sinexctl's HTTPS requests to time out.
 async fn sinexctl_replay(url: &str, args: &[&str]) -> std::process::Output {
-    let mut cmd = tokio::process::Command::new(sinexctl_binary());
+    let mut cmd = tokio::process::Command::new(built_binary("sinexctl"));
     cmd.arg("--token")
         .arg(TEST_TOKEN)
         .arg("--insecure")
