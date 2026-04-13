@@ -509,7 +509,9 @@ async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> Te
 }
 
 #[sinex_test]
-async fn replay_dry_run_persists_preview_before_cancellation(ctx: TestContext) -> TestResult<()> {
+async fn replay_execute_dry_run_rejects_while_preserving_preview(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
@@ -551,6 +553,37 @@ async fn replay_dry_run_persists_preview_before_cancellation(ctx: TestContext) -
         .ok_or_else(|| color_eyre::eyre::eyre!("operation id missing"))?
         .to_string();
 
+    let preview_req = json!({
+        "command": "preview",
+        "operation_id": op_id,
+    });
+    let preview_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&preview_req)?.into(),
+        )
+        .await?;
+    let preview_resp: serde_json::Value = serde_json::from_slice(&preview_msg.payload)?;
+    if preview_resp["status"].as_str() == Some("error") {
+        bail!("preview failed: {preview_resp:?}");
+    }
+
+    let approve_req = json!({
+        "command": "approve",
+        "operation_id": op_id,
+        "approver": "admin:test-user",
+    });
+    let approve_msg = nats
+        .request(
+            control_subject.clone(),
+            serde_json::to_vec(&approve_req)?.into(),
+        )
+        .await?;
+    let approve_resp: serde_json::Value = serde_json::from_slice(&approve_msg.payload)?;
+    if approve_resp["status"].as_str() == Some("error") {
+        bail!("approve failed: {approve_resp:?}");
+    }
+
     let execute_req = json!({
         "command": "execute",
         "operation_id": op_id,
@@ -564,18 +597,13 @@ async fn replay_dry_run_persists_preview_before_cancellation(ctx: TestContext) -
         )
         .await?;
     let execute_resp: serde_json::Value = serde_json::from_slice(&execute_msg.payload)?;
-    if execute_resp["status"].as_str() == Some("error") {
-        bail!("dry-run execute failed: {execute_resp:?}");
-    }
-
-    assert_eq!(
-        execute_resp["operation"]["state"].as_str(),
-        Some("Cancelled"),
-        "dry-run execute should leave the operation cancelled"
-    );
-    assert_eq!(
-        execute_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),
-        Some("reexecute_material_roots_via_node_scan")
+    assert_eq!(execute_resp["status"].as_str(), Some("error"));
+    assert!(
+        execute_resp["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("does not support dry-run semantics"),
+        "dry-run execute should redirect callers back to preview, got {execute_resp:?}"
     );
 
     let status_req = json!({
@@ -595,7 +623,7 @@ async fn replay_dry_run_persists_preview_before_cancellation(ctx: TestContext) -
 
     assert_eq!(
         status_resp["operation"]["state"].as_str(),
-        Some("Cancelled")
+        Some("Approved")
     );
     assert_eq!(
         status_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),

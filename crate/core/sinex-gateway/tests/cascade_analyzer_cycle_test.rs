@@ -1,4 +1,5 @@
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
 use sinex_primitives::temporal;
 use sqlx::PgPool;
@@ -199,13 +200,16 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             max_depth: 1000, // Large depth
             include_weak_dependencies: false,
             memory_limit_bytes: Some(1024 * 1024),
-            timeout: std::time::Duration::from_millis(1), // Very short timeout
+            timeout: std::time::Duration::from_nanos(1), // Force timeout before analysis can complete
         },
     );
 
-    // Create a simple event
+    // Create a simple material-backed event that satisfies the provenance invariant.
+    let material = pool
+        .source_materials()
+        .register_in_flight("timeout.source", Some("/timeout"), json!({}))
+        .await?;
     let event_id = CoreUuid::now_v7();
-    let empty_parents: Vec<Uuid> = vec![];
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -215,7 +219,8 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             host,
             payload,
             ts_orig,
-            source_event_ids
+            source_material_id,
+            anchor_byte
         ) VALUES (
             $1::uuid,
             $2,
@@ -223,7 +228,8 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             $4,
             $5,
             $6,
-            $7::uuid[]::uuid[]
+            $7::uuid,
+            $8
         )
         "#,
         event_id,
@@ -232,7 +238,8 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
         "localhost",
         json!({"test": "timeout"}),
         *temporal::now(),
-        &empty_parents
+        material.id,
+        0_i64
     )
     .execute(&pool)
     .await?;
