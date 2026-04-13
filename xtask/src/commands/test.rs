@@ -43,6 +43,50 @@ fn flaky_test_probe_issue(ctx: &CommandContext, error: Option<&color_eyre::Repor
     }
 }
 
+fn test_analysis_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
+    match error {
+        Some(error) => format!(
+            "Failed to analyze current test run from history DB at {}: {error}",
+            ctx.history_db_path().display()
+        ),
+        None => format!(
+            "History DB unavailable at {} while analyzing the current test run",
+            ctx.history_db_path().display()
+        ),
+    }
+}
+
+fn load_current_test_analysis(
+    ctx: &CommandContext,
+) -> (Option<serde_json::Value>, Option<String>) {
+    let Some(invocation_id) = ctx.invocation_id() else {
+        return (
+            None,
+            Some("Current test invocation ID unavailable for analysis".to_string()),
+        );
+    };
+
+    match ctx.try_with_history_db(|db| db.analyze_test_run(invocation_id)) {
+        Some(Ok(Some(analysis))) => match serde_json::to_value(&analysis) {
+            Ok(value) => (Some(value), None),
+            Err(error) => (
+                None,
+                Some(format!(
+                    "Failed to serialize test analysis for invocation {invocation_id}: {error}"
+                )),
+            ),
+        },
+        Some(Ok(None)) => (
+            None,
+            Some(format!(
+                "No stored test analysis rows found for invocation {invocation_id}"
+            )),
+        ),
+        Some(Err(error)) => (None, Some(test_analysis_issue(ctx, Some(&error)))),
+        None => (None, Some(test_analysis_issue(ctx, None))),
+    }
+}
+
 fn load_failing_test_details(
     ctx: &CommandContext,
     limit: usize,
@@ -774,6 +818,7 @@ impl XtaskCommand for TestCommand {
         if stats.failed > 0 {
             // Query per-test failure details from history DB for structured output
             let (failures, failure_details_issue) = load_failing_test_details(ctx, 50);
+            let (analysis, analysis_issue) = load_current_test_analysis(ctx);
 
             // H4: Inline failure table for human mode (capped at 5)
             if ctx.is_human() && !failures.is_empty() {
@@ -809,6 +854,8 @@ impl XtaskCommand for TestCommand {
                 "ignored": stats.ignored,
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
+                "analysis": analysis,
+                "analysis_issue": analysis_issue.clone(),
             }))
             .with_detail(format!(
                 "Inspect with: xtask history tests analyze --invocation {}",
@@ -824,10 +871,14 @@ impl XtaskCommand for TestCommand {
             if let Some(issue) = failure_details_issue {
                 result = result.with_warning(issue);
             }
+            if let Some(issue) = analysis_issue {
+                result = result.with_warning(issue);
+            }
             Ok(result)
         } else {
             // H7: Surface flaky tests after a clean run
             let (flaky, flaky_issue) = load_flaky_tests(ctx, 5);
+            let (analysis, analysis_issue) = load_current_test_analysis(ctx);
             if ctx.is_human() && !flaky.is_empty() {
                 eprintln!(
                     "\n⚠  {} test{} passed on retry (flaky):",
@@ -859,6 +910,16 @@ impl XtaskCommand for TestCommand {
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
                 ))
+                .with_data(serde_json::json!({
+                    "invocation_id": ctx.invocation_id(),
+                    "passed": stats.passed,
+                    "failed": stats.failed,
+                    "ignored": stats.ignored,
+                    "flaky": flaky,
+                    "flaky_issue": flaky_issue.clone(),
+                    "analysis": analysis,
+                    "analysis_issue": analysis_issue.clone(),
+                }))
                 .with_detail(format!(
                     "Inspect with: xtask history tests analyze --invocation {}",
                     ctx.invocation_id().unwrap_or_default()
@@ -871,6 +932,9 @@ impl XtaskCommand for TestCommand {
                 result = result.with_warning(warning.clone());
             }
             if let Some(issue) = flaky_issue {
+                result = result.with_warning(issue);
+            }
+            if let Some(issue) = analysis_issue {
                 result = result.with_warning(issue);
             }
             Ok(result)
@@ -971,6 +1035,59 @@ mod tests {
         let (_db, invocation_id) =
             super::nextest_history(&ctx, &db).expect("history should keep the real invocation id");
         assert_eq!(invocation_id, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_current_test_analysis_surfaces_current_invocation_summary()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            invocation_id,
+            &[crate::history::TestResult {
+                test_name: "test_alpha".into(),
+                package: "pkg-a".into(),
+                status: crate::history::TestStatus::Pass,
+                duration_secs: Some(0.25),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let ctx = test_context_with_invocation(db_path, Some(invocation_id));
+        let (analysis, issue) = super::load_current_test_analysis(&ctx);
+
+        assert!(issue.is_none());
+        let analysis = analysis.expect("analysis should be available");
+        assert_eq!(analysis["invocation_id"], invocation_id);
+        assert_eq!(analysis["total_passed"], 1);
+        assert_eq!(analysis["total_failed"], 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_current_test_analysis_requires_invocation_id()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let ctx = test_context(db_path);
+
+        let (analysis, issue) = super::load_current_test_analysis(&ctx);
+        assert!(analysis.is_none());
+        assert_eq!(
+            issue.as_deref(),
+            Some("Current test invocation ID unavailable for analysis")
+        );
         Ok(())
     }
 

@@ -280,7 +280,8 @@ pub enum HistoryTestsSubcommand {
     Slowest {
         #[arg(long, default_value = "10")]
         limit: usize,
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long)]
         invocation: Option<String>,
     },
@@ -311,7 +312,8 @@ pub enum HistoryTestsSubcommand {
         /// Show captured failure output (can be verbose)
         #[arg(long)]
         output: bool,
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -319,7 +321,8 @@ pub enum HistoryTestsSubcommand {
     ///
     /// Shows duration distribution, probable timeouts, and per-package failure summaries.
     Analyze {
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -327,7 +330,8 @@ pub enum HistoryTestsSubcommand {
     Output {
         /// Test name pattern to search for
         pattern: String,
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -338,13 +342,15 @@ pub enum HistoryTestsSubcommand {
         text: String,
         #[arg(long, default_value = "20")]
         limit: usize,
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
     /// Per-package pass rate, test count, avg duration, and flaky count (G7)
     ByPackage {
-        /// Test run selector: `latest`, invocation ID, `inv:<id>`, or `job:<id>`
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -375,7 +381,7 @@ impl XtaskCommand for HistoryCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
-        ctx.try_with_history_db(|db| {
+        ctx.try_with_history_db_query(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
                 HistorySubcommand::List {

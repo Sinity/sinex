@@ -10,8 +10,14 @@ use sinex_primitives::temporal::Timestamp;
 use sqlx::Connection;
 use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::os::fd::AsRawFd;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+use nix::errno::Errno;
+use nix::fcntl::{FlockArg, flock};
 
 // ── Submodules ──────────────────────────────────────────────────────────────
 
@@ -53,8 +59,8 @@ use provisioning::{
     is_retryable_connection_error, is_retryable_connection_report,
     is_timescaledb_missing_library_error, load_pool_meta, mark_pool_database_clean, quote_ident,
     reconcile_existing_pool_database, recreate_pool_database, store_pool_meta,
-    store_pool_meta_checked, try_ensure_pool_database_exists, url_with_db_name, wait_for_database_absence,
-    wait_for_database_absence_admin,
+    store_pool_meta_checked, try_ensure_pool_database_exists, url_with_db_name,
+    wait_for_database_absence, wait_for_database_absence_admin,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -65,10 +71,72 @@ static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 const SLOT_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(15);
+const SERIAL_TEST_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// Acquire a global guard to run database pool tests exclusively.
-pub async fn acquire_pool_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DATABASE_POOL_TEST_LOCK.lock().await
+/// Guard that keeps the process-local serial-test lock held for the lifetime of a test.
+pub struct ProcessSerialTestGuard {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+/// Guard that keeps the repo-local serial-test lock held for the lifetime of a test.
+///
+/// The in-process mutex prevents same-process stampedes. The file lock extends the
+/// guarantee across nextest child processes so explicitly workspace-scoped serial
+/// tests really serialize at workspace scope.
+pub struct WorkspaceSerialTestGuard {
+    _process_guard: tokio::sync::MutexGuard<'static, ()>,
+    _lock_file: std::fs::File,
+}
+
+fn serial_test_lock_path() -> PathBuf {
+    crate::config::config()
+        .state_dir
+        .join("test-locks")
+        .join("db-pool-serial.lock")
+}
+
+/// Acquire a process-local guard for serial tests.
+pub async fn acquire_process_test_guard() -> ProcessSerialTestGuard {
+    ProcessSerialTestGuard {
+        _guard: DATABASE_POOL_TEST_LOCK.lock().await,
+    }
+}
+
+/// Acquire a workspace-wide guard for serial tests that must exclude other
+/// nextest child processes as well as same-process peers.
+pub async fn acquire_workspace_test_guard() -> TestResult<WorkspaceSerialTestGuard> {
+    let process_guard = DATABASE_POOL_TEST_LOCK.lock().await;
+    let lock_path = serial_test_lock_path();
+
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .wrap_err_with(|| format!("failed to open {}", lock_path.display()))?;
+
+    loop {
+        match flock(lock_file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
+            Ok(()) => break,
+            Err(Errno::EWOULDBLOCK) => tokio::time::sleep(SERIAL_TEST_LOCK_POLL_INTERVAL).await,
+            Err(error) => {
+                return Err(eyre!(
+                    "failed to acquire serial test lock {}: {error}",
+                    lock_path.display()
+                ));
+            }
+        }
+    }
+
+    Ok(WorkspaceSerialTestGuard {
+        _process_guard: process_guard,
+        _lock_file: lock_file,
+    })
 }
 
 fn format_acquisition_timeout_message(
@@ -1611,6 +1679,37 @@ mod tests {
     async fn test_format_lock_holder_field_renders_values() -> TestResult<()> {
         let rendered = format_lock_holder_field("state", Ok("active"));
         assert_eq!(rendered, "active");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_serial_test_lock_path_uses_repo_local_state_root() -> TestResult<()> {
+        let path = serial_test_lock_path();
+        assert!(
+            path.ends_with(".sinex/state/test-locks/db-pool-serial.lock"),
+            "unexpected serial lock path: {}",
+            path.display()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_acquire_process_test_guard_serializes_same_process_waiters() -> TestResult<()> {
+        let first_guard = acquire_process_test_guard().await;
+        let waiter = tokio::spawn(async { acquire_process_test_guard().await });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !waiter.is_finished(),
+            "second waiter acquired the serial guard before the first was dropped"
+        );
+
+        drop(first_guard);
+        let second_guard = tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .map_err(|_| eyre!("timed out waiting for second serial guard acquisition"))?;
+        let second_guard = second_guard?;
+        drop(second_guard);
         Ok(())
     }
 

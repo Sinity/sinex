@@ -615,6 +615,10 @@ impl XtaskCommand for CheckCommand {
 }
 
 fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
+    if ctx.invocation_id().is_none() {
+        return (None, None);
+    }
+
     match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
         Some(Ok(count)) => (Some(count), None),
         Some(Err(error)) => (
@@ -623,11 +627,10 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
                 "Failed to query auto-fixable diagnostic count from history DB: {error:#}"
             )),
         ),
-        None if ctx.invocation_id().is_some() => (
+        None => (
             None,
             Some("Failed to open history DB for auto-fixable diagnostic count".to_string()),
         ),
-        None => (None, None),
     }
 }
 
@@ -864,7 +867,9 @@ mod tests {
     async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning()
     -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
-        let ctx = mock_ctx(runner);
+        let temp = tempfile::tempdir()?;
+        let db_path = temp.path().join("history.db");
+        let ctx = mock_ctx_with_history(runner, None, db_path.clone());
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
         assert!(
@@ -878,6 +883,10 @@ mod tests {
                 .all(|warning| !warning.contains("auto-fixable diagnostic count")),
             "unexpected auto-fixable warning: {:?}",
             result.warnings
+        );
+        assert!(
+            !db_path.exists(),
+            "check without invocation_id should not even open the history DB"
         );
         Ok(())
     }
@@ -979,7 +988,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()>
+    {
         // Verify that the progress callback is fired once per compiled package.
         // MockCargoRunner fires on_package_done N times for N compiled_packages.
         let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
@@ -994,20 +1004,11 @@ mod tests {
     #[sinex_test]
     async fn test_ambient_optimizations_only_enabled_for_human_foreground()
     -> ::xtask::sandbox::TestResult<()> {
-        let human = CommandContext::new(
-            OutputWriter::new(OutputFormat::Human),
-            false,
-            None,
-            "check",
-        );
+        let human =
+            CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "check");
         assert!(human.allows_ambient_optimizations());
 
-        let json = CommandContext::new(
-            OutputWriter::new(OutputFormat::Json),
-            false,
-            None,
-            "check",
-        );
+        let json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "check");
         assert!(!json.allows_ambient_optimizations());
 
         let silent = CommandContext::new(
@@ -1018,12 +1019,8 @@ mod tests {
         );
         assert!(!silent.allows_ambient_optimizations());
 
-        let background = CommandContext::new(
-            OutputWriter::new(OutputFormat::Human),
-            true,
-            None,
-            "check",
-        );
+        let background =
+            CommandContext::new(OutputWriter::new(OutputFormat::Human), true, None, "check");
         assert!(!background.allows_ambient_optimizations());
 
         Ok(())

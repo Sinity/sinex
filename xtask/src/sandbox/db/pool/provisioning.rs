@@ -333,10 +333,14 @@ async fn recreate_pool_database_locked(
     drop_database_if_exists_admin(admin_conn, db_name).await?;
     wait_for_database_absence_admin(admin_conn, db_name).await?;
 
-    create_database_from_template_admin(admin_conn, db_name, template_name).await?;
-    grant_pool_database_permissions_checked(db_name).await?;
     let db_url = url_with_db_name(base_url, db_name)?;
-    converge_pool_database_schema(db_name, &db_url).await?;
+    match create_database_from_template_admin(admin_conn, db_name, template_name).await? {
+        CreateDatabaseOutcome::Created => {}
+        CreateDatabaseOutcome::AlreadyExists => {
+            grant_pool_database_permissions_checked(db_name).await?;
+            converge_pool_database_schema(db_name, &db_url).await?;
+        }
+    }
     mark_pool_database_clean(admin_conn, db_name, &db_url, template_extensions).await?;
     Ok(())
 }
@@ -466,6 +470,7 @@ async fn ensure_pool_database_exists_inner(
     let template_extensions = template_guard.info.extensions.clone();
 
     let provision_result: TestResult<EnsurePoolDatabaseOutcome> = async {
+        let mut created_from_fresh_template_clone = false;
         if !database_exists_admin(&mut lifecycle_admin_conn, db_name).await? {
             match create_database_from_template_admin(
                 &mut lifecycle_admin_conn,
@@ -475,6 +480,7 @@ async fn ensure_pool_database_exists_inner(
             .await?
             {
                 CreateDatabaseOutcome::Created => {
+                    created_from_fresh_template_clone = true;
                     eprintln!(
                         "  Created missing pool database: {db_name} (clone: {:?})",
                         start.elapsed()
@@ -483,8 +489,11 @@ async fn ensure_pool_database_exists_inner(
                 CreateDatabaseOutcome::AlreadyExists => {}
             }
         }
-        grant_pool_database_permissions_checked(db_name).await?;
-        converge_pool_database_schema(db_name, &db_url).await?;
+        if !created_from_fresh_template_clone {
+            // Existing or raced slot databases may still need grants and convergence.
+            grant_pool_database_permissions_checked(db_name).await?;
+            converge_pool_database_schema(db_name, &db_url).await?;
+        }
         mark_pool_database_clean(
             &mut lifecycle_admin_conn,
             db_name,

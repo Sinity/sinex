@@ -1,6 +1,6 @@
 //! Parse and store nextest JSON output.
 
-use super::db::HistoryDb;
+use super::db::{HistoryDb, InvocationStatus};
 use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -721,6 +721,9 @@ pub struct ResolvedTestRun {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestRunSelector {
     Latest,
+    Previous,
+    LatestSuccess,
+    LatestFailure,
     InvocationId(i64),
     BackgroundJobId(i64),
 }
@@ -729,6 +732,15 @@ impl HistoryDb {
     fn parse_test_run_selector(selector: &str) -> Result<TestRunSelector> {
         if selector == "latest" {
             return Ok(TestRunSelector::Latest);
+        }
+        if selector == "previous" {
+            return Ok(TestRunSelector::Previous);
+        }
+        if selector == "latest-success" {
+            return Ok(TestRunSelector::LatestSuccess);
+        }
+        if selector == "latest-failure" {
+            return Ok(TestRunSelector::LatestFailure);
         }
 
         let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
@@ -753,6 +765,40 @@ impl HistoryDb {
             "job" => TestRunSelector::BackgroundJobId(id),
             _ => TestRunSelector::InvocationId(id),
         })
+    }
+
+    fn resolve_recent_test_run(
+        &self,
+        status_filter: Option<InvocationStatus>,
+        offset: usize,
+    ) -> Result<Option<ResolvedTestRun>> {
+        let status_clause = match status_filter {
+            Some(InvocationStatus::Success) => "AND i.status = 'success'",
+            Some(InvocationStatus::Failed) => "AND i.status = 'failed'",
+            _ => "AND i.status IN ('success', 'failed')",
+        };
+        let sql = format!(
+            r"
+            SELECT i.id, i.started_at
+            FROM invocations i
+            WHERE i.command = 'test'
+              {status_clause}
+              AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ORDER BY i.started_at DESC
+            LIMIT 1 OFFSET ?1
+            "
+        );
+
+        self.conn
+            .query_row(&sql, [offset as i64], |row| {
+                Ok(ResolvedTestRun {
+                    invocation_id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    job_id: None,
+                })
+            })
+            .optional()
+            .map_err(Into::into)
     }
 
     fn resolve_test_run_invocation(&self, invocation_id: i64) -> Result<Option<ResolvedTestRun>> {
@@ -812,35 +858,17 @@ impl HistoryDb {
     /// invocation IDs, but fall back to matching background job IDs when the
     /// numeric invocation has no stored test results.
     pub fn resolve_test_run(&self, selector: Option<&str>) -> Result<Option<ResolvedTestRun>> {
-        let latest = || {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT i.id, i.started_at
-                    FROM invocations i
-                    WHERE i.command = 'test'
-                      AND i.status IN ('success', 'failed')
-                      AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-                    ORDER BY i.started_at DESC
-                    LIMIT 1
-                    ",
-                    [],
-                    |row| {
-                        Ok(ResolvedTestRun {
-                            invocation_id: row.get(0)?,
-                            started_at: row.get(1)?,
-                            job_id: None,
-                        })
-                    },
-                )
-                .optional()
-                .map_err(Into::into)
-        };
-
         match selector {
-            None | Some("latest") => latest(),
+            None | Some("latest") => self.resolve_recent_test_run(None, 0),
             Some(raw_selector) => match Self::parse_test_run_selector(raw_selector)? {
-                TestRunSelector::Latest => latest(),
+                TestRunSelector::Latest => self.resolve_recent_test_run(None, 0),
+                TestRunSelector::Previous => self.resolve_recent_test_run(None, 1),
+                TestRunSelector::LatestSuccess => {
+                    self.resolve_recent_test_run(Some(InvocationStatus::Success), 0)
+                }
+                TestRunSelector::LatestFailure => {
+                    self.resolve_recent_test_run(Some(InvocationStatus::Failed), 0)
+                }
                 TestRunSelector::BackgroundJobId(job_id) => self
                     .resolve_test_run_background_job(job_id)?
                     .ok_or_else(|| {
@@ -1640,6 +1668,72 @@ mod tests {
             .expect("plain numeric selector should fall back to background job id");
         assert_eq!(resolved_from_numeric.invocation_id, background_invocation);
         assert_eq!(resolved_from_numeric.job_id, Some(background_job));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_test_run_supports_freshness_selectors() -> TestResult<()> {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+        db.store_test_results(
+            first_inv,
+            &[TestResult {
+                test_name: "test_first".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(second_inv, InvocationStatus::Failed, Some(1), 1.0)?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_second".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let third_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(third_inv, InvocationStatus::Success, Some(0), 1.0)?;
+        db.store_test_results(
+            third_inv,
+            &[TestResult {
+                test_name: "test_third".into(),
+                package: "pkg-c".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.3),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let latest = db
+            .resolve_test_run(Some("latest"))?
+            .expect("latest run should resolve");
+        assert_eq!(latest.invocation_id, third_inv);
+
+        let previous = db
+            .resolve_test_run(Some("previous"))?
+            .expect("previous run should resolve");
+        assert_eq!(previous.invocation_id, second_inv);
+
+        let latest_success = db
+            .resolve_test_run(Some("latest-success"))?
+            .expect("latest successful run should resolve");
+        assert_eq!(latest_success.invocation_id, third_inv);
+
+        let latest_failure = db
+            .resolve_test_run(Some("latest-failure"))?
+            .expect("latest failed run should resolve");
+        assert_eq!(latest_failure.invocation_id, second_inv);
 
         Ok(())
     }
