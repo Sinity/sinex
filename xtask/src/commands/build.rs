@@ -27,6 +27,66 @@ pub struct BuildCommand {
     pub dry_run: bool,
 }
 
+impl BuildCommand {
+    fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.release {
+            args.push("--release".to_string());
+        }
+        args.push(scope.encode_marker());
+        args
+    }
+
+    fn resolve_execution_plan(
+        &self,
+        ctx: Option<&CommandContext>,
+    ) -> Result<(Vec<String>, WorkloadScope)> {
+        let mut packages = self.packages.clone();
+
+        if !self.all {
+            let affected_result = if let Some(ctx) = ctx {
+                let stage = ctx.start_stage("affected");
+                let affected = affected::affected_packages();
+                ctx.finish_stage(stage, affected.is_ok());
+                affected
+            } else {
+                affected::affected_packages()
+            };
+            let mut affected = affected_result?;
+            if affected.is_empty() {
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                {
+                    println!("No changes detected. Building ALL packages.");
+                }
+                if packages.is_empty() {
+                    return Ok((packages, WorkloadScope::Workspace));
+                }
+                packages.sort();
+                packages.dedup();
+                return Ok((packages.clone(), WorkloadScope::Packages(packages)));
+            }
+
+            affected.sort();
+            packages.extend(affected);
+            packages.sort();
+            packages.dedup();
+            if self.packages.is_empty() {
+                return Ok((packages.clone(), WorkloadScope::Affected(packages)));
+            }
+            return Ok((packages.clone(), WorkloadScope::Packages(packages)));
+        }
+
+        if packages.is_empty() {
+            Ok((packages, WorkloadScope::Workspace))
+        } else {
+            packages.sort();
+            packages.dedup();
+            Ok((packages.clone(), WorkloadScope::Packages(packages)))
+        }
+    }
+}
+
 impl XtaskCommand for BuildCommand {
     fn name(&self) -> &'static str {
         "build"
@@ -47,7 +107,14 @@ impl XtaskCommand for BuildCommand {
                 args.push("--all".to_string());
             }
 
-            return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
+            let (_, workload_scope) = self.resolve_execution_plan(None)?;
+            let coordination_args = self.semantic_invocation_args(&workload_scope);
+            return crate::coordinator::coordinate_and_spawn_with_scope(
+                "build",
+                &args,
+                &coordination_args,
+                ctx,
+            );
         }
 
         // Guard: same deadlock as xtask test — cargo target/ lock is held by nextest for the
@@ -66,66 +133,15 @@ impl XtaskCommand for BuildCommand {
         ctx.finish_stage(stage, ready.is_ok());
         ready?;
 
-        // Record fingerprint+scope for coordinator freshness detection.
-        {
-            let mut scope_args = Vec::new();
-            for p in &self.packages {
-                scope_args.push("-p".to_string());
-                scope_args.push(p.clone());
-            }
-            if self.release {
-                scope_args.push("--release".to_string());
-            }
-            if self.all {
-                scope_args.push("--all".to_string());
-            }
-            ctx.record_coordination_fingerprint("build", &scope_args);
-        }
-
         let mut args: Vec<String> = Vec::new();
 
         if self.release {
             args.push("--release".to_string());
         }
 
-        let mut packages = self.packages.clone();
-        let workload_scope;
-
-        // Affected mode is default ON, --all disables it
-        if !self.all {
-            let stage = ctx.start_stage("affected");
-            let affected = affected::affected_packages();
-            ctx.finish_stage(stage, affected.is_ok());
-            let mut affected = affected?;
-            if affected.is_empty() {
-                if ctx.is_human() {
-                    println!("No changes detected. Building ALL packages.");
-                }
-                // Fall through to build all (packages is empty -> --workspace)
-                workload_scope = if packages.is_empty() {
-                    WorkloadScope::Workspace
-                } else {
-                    packages.sort();
-                    WorkloadScope::Packages(packages.clone())
-                };
-            } else {
-                affected.sort();
-                packages.extend(affected);
-                packages.sort();
-                packages.dedup();
-                workload_scope = if self.packages.is_empty() {
-                    WorkloadScope::Affected(packages.clone())
-                } else {
-                    WorkloadScope::Packages(packages.clone())
-                };
-            }
-        } else if packages.is_empty() {
-            workload_scope = WorkloadScope::Workspace;
-        } else {
-            packages.sort();
-            packages.dedup();
-            workload_scope = WorkloadScope::Packages(packages.clone());
-        }
+        let (packages, workload_scope) = self.resolve_execution_plan(Some(ctx))?;
+        let coordination_args = self.semantic_invocation_args(&workload_scope);
+        ctx.record_coordination_fingerprint("build", &coordination_args);
 
         if packages.is_empty() {
             args.push("--workspace".to_string());
@@ -136,12 +152,7 @@ impl XtaskCommand for BuildCommand {
             }
         }
 
-        let mut workload_args = Vec::new();
-        if self.release {
-            workload_args.push("--release".to_string());
-        }
-        workload_args.push(workload_scope.encode_marker());
-        ctx.record_invocation_args(&workload_args);
+        ctx.record_invocation_args(&coordination_args);
 
         if ctx.is_human() {
             println!("Building packages (args: {args:?})...");

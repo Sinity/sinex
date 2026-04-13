@@ -552,6 +552,15 @@ struct LazySlotPruneSummary {
     locked_stale_slots: Vec<(String, String)>,
 }
 
+impl LazySlotPruneSummary {
+    fn has_activity(&self) -> bool {
+        self.pruned > 0
+            || !self.eagerly_recreated_slots.is_empty()
+            || !self.eager_recreate_failures.is_empty()
+            || !self.locked_stale_slots.is_empty()
+    }
+}
+
 enum SlotConnectionDisposition {
     Gone,
     Deferred,
@@ -862,7 +871,7 @@ impl DatabasePool {
             let expected_fingerprint = prepared.expected_fingerprint;
             let slot_names = prepared.slot_names;
 
-            if !prepared.reused {
+            if prepared.prune_summary.has_activity() {
                 let prune_summary = prepared.prune_summary;
                 if prune_summary.pruned > 0 {
                     eprintln!(
